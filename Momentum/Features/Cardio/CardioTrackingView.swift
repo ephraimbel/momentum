@@ -30,7 +30,10 @@ struct CardioTrackingView: View {
             mapLayer
             topBar
             if phase == .countdown { countdownOverlay }
-            else if let vm { trackingPanel(vm) }
+            else if let vm {
+                trackingPanel(vm)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .task { if vm == nil { beginCountdown() } }
     }
@@ -130,7 +133,10 @@ struct CardioTrackingView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.hairline)
-                    Capsule().fill(Theme.ink).frame(width: max(6, geo.size.width * progress))
+                    Capsule()
+                        .fill(goalReached ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                        .frame(width: max(6, geo.size.width * progress))
+                        .animation(.easeOut(duration: 0.4), value: progress)
                 }
             }
             .frame(height: 6)

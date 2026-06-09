@@ -51,11 +51,11 @@ struct StrengthSummaryContent: View {
     var body: some View {
         if let session = workout.strength {
             VStack(spacing: Theme.Space.xl) {
-                headline(workout, session)
-                AIReadCard(workout: workout, weightUnit: weightUnit)
-                if !prs.isEmpty { prSection }
-                muscleSection(session)
-                exercisesSection(session)
+                headline(workout, session).reveal(0)
+                AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.12)
+                if !prs.isEmpty { prSection.reveal(0.22) }
+                muscleSection(session).reveal(0.30)
+                exercisesSection(session).reveal(0.38)
             }
             .task {
                 prs = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context)
@@ -68,7 +68,9 @@ struct StrengthSummaryContent: View {
     private func headline(_ workout: Workout, _ session: StrengthSession) -> some View {
         let volume = weightUnit == .lb ? session.totalVolumeKg * Formatters.lbPerKg : session.totalVolumeKg
         return VStack(spacing: Theme.Space.lg) {
-            HeroMetric(value: "\(Int(volume))", label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))")
+            CountUpHero(target: volume,
+                        format: { "\(Int($0.rounded()))" },
+                        label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))")
             HStack(spacing: Theme.Space.xl) {
                 stat("\(session.totalSets)", "Sets")
                 stat(Formatters.duration(s: workout.durationS), "Duration")
@@ -81,8 +83,8 @@ struct StrengthSummaryContent: View {
 
     private func stat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
-            Text(value).font(.system(size: Theme.FontSize.headline, weight: .semibold)).monospacedDigit()
-            Text(label.uppercased()).font(.system(size: Theme.FontSize.label)).tracking(1).foregroundStyle(Theme.inkTertiary)
+            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
         }
     }
 
@@ -114,7 +116,7 @@ struct StrengthSummaryContent: View {
                     Text(sets == sets.rounded() ? "\(Int(sets))" : String(format: "%.1f", sets))
                         .monospacedDigit().foregroundStyle(Theme.inkSecondary)
                 }
-                .font(.system(size: Theme.FontSize.body))
+                .font(.rounded(Theme.FontSize.body, weight: .medium))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,10 +129,10 @@ struct StrengthSummaryContent: View {
                 let working = row.sets.filter { $0.isComplete && $0.type == .working }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.exercise?.name ?? "Exercise")
-                        .font(.system(size: Theme.FontSize.body, weight: .semibold))
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
                         .foregroundStyle(Theme.ink)
                     Text(summary(working))
-                        .font(.system(size: Theme.FontSize.caption))
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
                         .foregroundStyle(Theme.inkTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,8 +152,8 @@ struct StrengthSummaryContent: View {
 
     private func sectionTitle(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.system(size: Theme.FontSize.label, weight: .semibold))
-            .tracking(1.2)
+            .font(.rounded(Theme.FontSize.label, weight: .bold))
+            .tracking(1.4)
             .foregroundStyle(Theme.inkTertiary)
     }
 }

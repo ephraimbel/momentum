@@ -51,10 +51,10 @@ struct CardioSummaryContent: View {
     var body: some View {
         if let gps = workout.gps {
             VStack(spacing: Theme.Space.xl) {
-                routeMap(gps)
-                headline(workout, gps)
-                AIReadCard(workout: workout, distanceUnit: distanceUnit)
-                splitsSection(gps)
+                routeMap(gps).reveal(0)
+                headline(workout, gps).reveal(0.08)
+                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.18)
+                splitsSection(gps).reveal(0.28)
             }
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
@@ -77,10 +77,12 @@ struct CardioSummaryContent: View {
     }
 
     private func headline(_ workout: Workout, _ gps: GPSDetail) -> some View {
-        VStack(spacing: Theme.Space.lg) {
-            HeroMetric(value: Formatters.distance(meters: gps.distanceM, unit: distanceUnit)
-                        .components(separatedBy: " ").first ?? "0",
-                       label: distanceUnit.resolved() == .imperial ? "Miles" : "Kilometers")
+        let isImperial = distanceUnit.resolved() == .imperial
+        let distanceTarget = isImperial ? gps.distanceM / Formatters.metersPerMile : gps.distanceM / 1000
+        return VStack(spacing: Theme.Space.lg) {
+            CountUpHero(target: distanceTarget,
+                        format: { String(format: "%.2f", $0) },
+                        label: isImperial ? "Miles" : "Kilometers")
             HStack(spacing: Theme.Space.xl) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
                 stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")
@@ -105,8 +107,8 @@ struct CardioSummaryContent: View {
         let unitLabel = distanceUnit.resolved() == .imperial ? "mi" : "km"
         return VStack(alignment: .leading, spacing: Theme.Space.sm) {
             if !splits.isEmpty {
-                Text("Splits").font(.system(size: Theme.FontSize.label, weight: .semibold))
-                    .tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                Text("SPLITS").font(.rounded(Theme.FontSize.label, weight: .bold))
+                    .tracking(1.4).foregroundStyle(Theme.inkTertiary)
                 ForEach(splits, id: \.index) { split in
                     HStack {
                         Text("\(split.index + 1) \(unitLabel)\(split.isPartial ? " (partial)" : "")")
@@ -114,7 +116,7 @@ struct CardioSummaryContent: View {
                         Spacer()
                         Text(Formatters.duration(s: split.durationS)).monospacedDigit().foregroundStyle(Theme.ink)
                     }
-                    .font(.system(size: Theme.FontSize.body))
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
                 }
             }
         }
@@ -123,8 +125,8 @@ struct CardioSummaryContent: View {
 
     private func stat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
-            Text(value).font(.system(size: Theme.FontSize.headline, weight: .semibold)).monospacedDigit()
-            Text(label.uppercased()).font(.system(size: Theme.FontSize.label)).tracking(1).foregroundStyle(Theme.inkTertiary)
+            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
         }
     }
 
