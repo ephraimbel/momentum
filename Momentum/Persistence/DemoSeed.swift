@@ -44,7 +44,7 @@ enum DemoSeed {
                 run.durationS = dist / 1000 * 290
                 let gps = GPSDetail(); gps.distanceM = dist; gps.elevationGainM = 30 + Double(daysAgo % 5) * 8
                 gps.avgPaceSPerKm = 290
-                if daysAgo == 0 { gps.samples = loopSamples(start: start) } // today's run gets a route
+                gps.samples = loopSamples(start: start)   // every run gets a route to draw
                 run.gps = gps; context.insert(run)
             }
         }

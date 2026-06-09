@@ -122,6 +122,10 @@ final class CardioViewModel {
 
     var isPaused: Bool { state == .paused || state == .autoPaused }
 
+    /// True once the user has declined location — the route can't be tracked until they re-enable
+    /// it in Settings. Drives the in-recording banner.
+    var locationDenied: Bool { location.isDenied }
+
     /// 0 (weak) … 1 (strong) GPS strength from the latest fix accuracy.
     var gpsStrength: Double {
         guard let acc = lastAccuracyM, acc > 0 else { return 0 }

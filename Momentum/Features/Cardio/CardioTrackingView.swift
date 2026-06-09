@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 import SwiftData
 import CoreLocation
+import UIKit
 
 /// The immersive cardio recording experience (PRD §4.3) — presented after the user picks an
 /// activity + goal on the map-first Today. Runs a 3-2-1 countdown, then records: a solid black
@@ -21,6 +22,7 @@ struct CardioTrackingView: View {
     @State private var confirmStop = false
     @State private var vm: CardioViewModel?
     @State private var goalReached = false
+    @Environment(\.openURL) private var openURL
 
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
@@ -78,8 +80,34 @@ struct CardioTrackingView: View {
                 }
             }
             .padding(Theme.Space.md)
+            if phase == .tracking, let vm, vm.locationDenied {
+                deniedBanner.padding(.horizontal, Theme.Space.md)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             Spacer()
         }
+        .animation(Motion.standard, value: vm?.locationDenied)
+    }
+
+    /// Shown mid-recording when location is off — the time still counts, but no route is captured.
+    private var deniedBanner: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "location.slash.fill").font(.system(size: 15, weight: .bold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Location is off").font(.rounded(Theme.FontSize.caption, weight: .bold))
+                Text("Time still counts — enable location to map your route.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            }
+            Spacer(minLength: 0)
+            Button("Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            }
+            .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(Theme.Space.md)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
     }
 
     private var countdownOverlay: some View {

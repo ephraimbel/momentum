@@ -38,7 +38,10 @@ struct TodayView: View {
             bottomPanel
         }
         .navigationBarHidden(true)
-        .onAppear { PlanCoaching.reconcileMissed(plan, today: Date(), in: context) }
+        .onAppear {
+            PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
+            frameMapIfNeeded()
+        }
         .fullScreenCover(item: $launch) { liveScreen($0) }
         .fullScreenCover(item: $summary) { presented in
             if presented.type == .strength {
@@ -160,6 +163,24 @@ struct TodayView: View {
     }
 
     // MARK: Launch
+
+    /// Without a live fix (no permission yet, or still acquiring), `.userLocation` frames the whole
+    /// continent. If the user has a prior route, fall back to its neighborhood instead — and still
+    /// snap to their live location once a fix arrives.
+    private func frameMapIfNeeded() {
+        guard let c = lastKnownCoordinate else { return }
+        camera = .userLocation(fallback: .region(MKCoordinateRegion(
+            center: c, span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03))))
+    }
+
+    private var lastKnownCoordinate: CLLocationCoordinate2D? {
+        workouts
+            .sorted { $0.startedAt > $1.startedAt }
+            .lazy
+            .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
+            .first
+            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+    }
 
     private func startFree() {
         if activity == .strength { launch = .strength(planned: nil) }

@@ -1,23 +1,44 @@
 import Foundation
 import CoreLocation
+import Observation
 
 /// Live GPS source (PRD §8.3). Uses the iOS 17+ `CLLocationUpdate.liveUpdates` async sequence —
-/// no delegate, concurrency-clean — and a `CLLocationManager` only for authorization. Emits
-/// `GPSProcessor.Fix` values; the cardio view model pumps these into `GPSTrackingEngine`.
+/// no delegate for fixes — and a `CLLocationManager` for authorization, observed via its delegate
+/// so the UI can react when the user grants or denies access. Emits `GPSProcessor.Fix` values; the
+/// cardio view model pumps these into `GPSTrackingEngine`.
 @MainActor
-final class LocationService: LocationServing {
-    private let manager = CLLocationManager()
-    private var streamTask: Task<Void, Never>?
+@Observable
+final class LocationService: NSObject, LocationServing, CLLocationManagerDelegate {
+    @ObservationIgnored private let manager = CLLocationManager()
+    @ObservationIgnored private var streamTask: Task<Void, Never>?
+
+    /// Current authorization, kept live by the delegate so views update when the user responds.
+    private(set) var authorizationStatus: CLAuthorizationStatus
+
+    override init() {
+        authorizationStatus = .notDetermined
+        super.init()
+        manager.delegate = self
+        authorizationStatus = manager.authorizationStatus
+    }
 
     var isAuthorized: Bool {
-        switch manager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse: return true
-        default: return false
-        }
+        authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse
+    }
+
+    /// The user actively declined (or is restricted) — recording can't track a route until they
+    /// re-enable access in Settings.
+    var isDenied: Bool {
+        authorizationStatus == .denied || authorizationStatus == .restricted
     }
 
     func requestAuthorization() {
         manager.requestWhenInUseAuthorization()
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        Task { @MainActor in self.authorizationStatus = status }
     }
 
     /// Stream accepted-or-not raw fixes. The engine's `GPSProcessor` applies the accept gate.
