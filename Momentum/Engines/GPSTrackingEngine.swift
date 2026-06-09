@@ -4,13 +4,23 @@ import Foundation
 /// `LocationSample`), persisting each accepted sample immediately and checkpointing aggregates
 /// every 5s (PRD §8.3 durability). A no-op default keeps the engine testable in isolation.
 protocol GPSWorkoutSink: Sendable {
+    /// Create the durable `Workout` + `GPSDetail` and mark it the active (recoverable) workout.
+    func beginWorkout(type: WorkoutType, startedAt: Date) async
+    /// Persist a single fix immediately (the durability guarantee).
     func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) async
+    /// Update rolled-up aggregates (every ~5s).
     func checkpoint(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async
+    /// Finalize aggregates and clear the active-workout marker.
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
+                       smoothedPaceSPerKm: Double) async
 }
 
 struct NoopGPSWorkoutSink: GPSWorkoutSink {
+    func beginWorkout(type: WorkoutType, startedAt: Date) async {}
     func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) async {}
     func checkpoint(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async {}
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
+                       smoothedPaceSPerKm: Double) async {}
 }
 
 /// Cardio capture engine (PRD §8.3). A strict state machine over a pure `GPSProcessor`.
@@ -51,12 +61,13 @@ actor GPSTrackingEngine {
     var smoothedPaceSPerKm: Double { processor.smoothedPaceSPerKm }
     var elevationGainM: Double { processor.elevationGainM }
 
-    func begin(now: Date = Date()) {
+    func begin(now: Date = Date()) async {
         guard state == .idle || state == .recovered else { return }
         state = .acquiring
         startedAt = now
         lastMovingMark = now
         lastCheckpoint = now
+        await sink.beginWorkout(type: type, startedAt: now)
     }
 
     /// Ingest a raw location fix. Drives accept/reject, distance, auto-pause, and persistence.
@@ -101,9 +112,10 @@ actor GPSTrackingEngine {
 
     func finish() async {
         state = .saving
-        await sink.checkpoint(distanceM: processor.distanceM,
-                              durationS: movingTimeS,
-                              elevationGainM: processor.elevationGainM)
+        await sink.finishWorkout(distanceM: processor.distanceM,
+                                 durationS: movingTimeS,
+                                 elevationGainM: processor.elevationGainM,
+                                 smoothedPaceSPerKm: processor.smoothedPaceSPerKm)
         state = .summary
     }
 

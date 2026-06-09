@@ -4,15 +4,26 @@ import Foundation
 /// (persist every completed set immediately, §8.4 durability) and `NotificationService` (schedule
 /// the rest-timer local notification so it fires when backgrounded, §22/§24).
 protocol StrengthWorkoutSink: Sendable {
-    func persistSetComplete(exerciseId: UUID, setIndex: Int,
+    /// Create the durable `Workout` + `StrengthSession` and mark it the active (recoverable) workout.
+    func beginWorkout(startedAt: Date) async
+    /// Create the durable `WorkoutExercise` row for a live exercise (keyed by `rowId`).
+    func persistExercise(rowId: UUID, catalogExerciseId: UUID, order: Int, supersetGroup: Int?) async
+    /// Persist a completed set immediately (the durability guarantee), attached to its row.
+    func persistSetComplete(rowId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async
+    /// Schedule the rest-timer local notification so it fires when backgrounded.
     func scheduleRest(seconds: Double, exerciseName: String) async
+    /// Finalize aggregates and clear the active-workout marker.
+    func finishWorkout(totalVolumeKg: Double, totalSets: Int, durationS: TimeInterval) async
 }
 
 struct NoopStrengthWorkoutSink: StrengthWorkoutSink {
-    func persistSetComplete(exerciseId: UUID, setIndex: Int,
+    func beginWorkout(startedAt: Date) async {}
+    func persistExercise(rowId: UUID, catalogExerciseId: UUID, order: Int, supersetGroup: Int?) async {}
+    func persistSetComplete(rowId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async {}
     func scheduleRest(seconds: Double, exerciseName: String) async {}
+    func finishWorkout(totalVolumeKg: Double, totalSets: Int, durationS: TimeInterval) async {}
 }
 
 /// Strength capture engine (PRD §8.4 / §22). Owns the live logging session; no GPS.
@@ -89,16 +100,21 @@ actor StrengthSessionEngine {
 
     // MARK: Live session orchestration
 
-    func begin(now: Date = Date()) {
-        if startedAt == nil { startedAt = now }
+    func begin(now: Date = Date()) async {
+        guard startedAt == nil else { return }
+        startedAt = now
+        await sink.beginWorkout(startedAt: now)
     }
 
+    @discardableResult
     func addExercise(exerciseId: UUID, name: String, category: ExerciseCategory,
-                     defaultRestS: Double? = nil, supersetGroup: Int? = nil) -> UUID {
+                     defaultRestS: Double? = nil, supersetGroup: Int? = nil) async -> UUID {
         let rest = Self.defaultRest(category: category, override: defaultRestS)
         let ex = LiveExercise(exerciseId: exerciseId, name: name, category: category,
                               supersetGroup: supersetGroup, defaultRestS: rest)
         exercises.append(ex)
+        await sink.persistExercise(rowId: ex.id, catalogExerciseId: exerciseId,
+                                   order: exercises.count - 1, supersetGroup: supersetGroup)
         return ex.id
     }
 
@@ -126,9 +142,17 @@ actor StrengthSessionEngine {
         exercises[ei].sets[si].isComplete = true
 
         let set = exercises[ei].sets[si]
-        await sink.persistSetComplete(exerciseId: exercises[ei].exerciseId, setIndex: set.index,
+        await sink.persistSetComplete(rowId: exercises[ei].id, setIndex: set.index,
                                       weightKg: weightKg, reps: reps, rpe: rpe, type: set.type)
         await sink.scheduleRest(seconds: set.restS, exerciseName: exercises[ei].name)
+    }
+
+    /// Finalize: roll up volume/sets and clear the recovery marker.
+    func finish(now: Date = Date()) async {
+        let working = workingSets
+        let volume = StrengthMath.sessionVolume(working)
+        let setCount = exercises.reduce(0) { $0 + $1.sets.filter(\.isComplete).count }
+        await sink.finishWorkout(totalVolumeKg: volume, totalSets: setCount, durationS: elapsed(now: now))
     }
 
     func elapsed(now: Date = Date()) -> TimeInterval {

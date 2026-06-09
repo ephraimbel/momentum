@@ -50,9 +50,12 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 
 **▶ Gate 0:** GPS distance within ±2% on a real route; force-quit mid-activity recovers full route; log-a-set < 3s; rest timer fires backgrounded; force-quit mid-lift resumes all sets; all engine fixture tests green.
 
-**Phase 0 status — 2026-06-09 (scaffold + core landed):**
-- ✅ Done & verified (28 fixture tests green; clean simulator build): project scaffold (XcodeGen, iOS 18, Info.plist/entitlements, 4-tab shell), full SwiftData model + enums + PersistenceController + library seed, design tokens + `IridescentView` + `Formatters`, deterministic core (`PlateCalculator`, `StrengthMath` e1RM/volume/repmax/weekly-sets, `CardioMetrics` splits + fastest-window, `StreakCalculator` 2-day grace, `GPSProcessor` accept-gate/distance/auto-pause), both engine actors (`GPSTrackingEngine`, `StrengthSessionEngine`) over the pure cores with persistence **sink contracts**.
-- ⏳ Remaining for Gate 0: back the engine sinks with real SwiftData persistence + cold-launch "Resume?" recovery; wire `LocationService`/`CMPedometer`/`CMAltimeter` into the GPS engine; replay harness against **recorded** traces; **real-route ±2% field validation** and **force-quit recovery** (both require a physical device). Deferred external SPM deps (RevenueCat/Superwall/supabase-swift) stay out until their phases.
+**Phase 0 status — 2026-06-09 (engines + durability landed; 32 tests green, clean build):**
+- ✅ Done & verified: project scaffold (XcodeGen, iOS 18, Info.plist/entitlements, 4-tab shell), full SwiftData model + enums + PersistenceController + library seed, design tokens + `IridescentView` + `Formatters`, deterministic core (`PlateCalculator`, `StrengthMath` e1RM/volume/repmax/weekly-sets, `CardioMetrics` splits + fastest-window, `StreakCalculator` 2-day grace, `GPSProcessor` accept-gate/distance/auto-pause), both engine actors over the pure cores.
+- ✅ **Durability:** `@ModelActor` stores (`GPSWorkoutStore`/`StrengthWorkoutStore`) eagerly persist every sample/set; cold-launch recovery via `ActiveWorkoutMarker` + `WorkoutRecovery`. Verified by `DurabilityTests` (write → read back via separate context → recover → finish clears marker).
+- ✅ **CoreLocation/CoreMotion wiring:** `LocationService` (iOS 17+ `CLLocationUpdate.liveUpdates` → `GPSProcessor.Fix` stream) + `MotionService` (`CMPedometer` cadence, `CMAltimeter` elevation), wired into `Services.live()`.
+- ✅ **Replay harness:** `GPSReplayTests` drives a synthetic 1 km loop (+ noise injection) and asserts distance within ±2%.
+- ⏳ Remaining for full Gate 0 (device-only): **real-route ±2% field validation** and a **force-quit UI recovery** test on a physical device; the view-model pump loop (`LocationService.fixes()` → `GPSTrackingEngine.ingest`) lands with the Cardio live screen in Phase 1; Live Activity + rest-timer notifications also Phase 1. Deferred external SPM deps (RevenueCat/Superwall/supabase-swift) stay out until their phases.
 
 ---
 

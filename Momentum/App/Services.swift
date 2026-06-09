@@ -45,8 +45,8 @@ final class Services {
     /// The default wiring used by the running app.
     static func live() -> Services {
         Services(
-            location: StubLocationService(),
-            motion: StubMotionService(),
+            location: LocationService(),
+            motion: MotionService(),
             health: StubHealthService(),
             plan: StubPlanEngine(),
             ai: StubAIService(),
@@ -59,8 +59,25 @@ final class Services {
 
 // MARK: - Service protocols (contracts fixed in Phase 0)
 
-protocol LocationServing: AnyObject { var isAuthorized: Bool { get } }
-protocol MotionServing: AnyObject { var isAuthorized: Bool { get } }
+@MainActor
+protocol LocationServing: AnyObject {
+    var isAuthorized: Bool { get }
+    func requestAuthorization()
+    /// Live stream of raw fixes; the engine's `GPSProcessor` applies the accept gate.
+    func fixes() -> AsyncStream<GPSProcessor.Fix>
+    func stop()
+}
+
+@MainActor
+protocol MotionServing: AnyObject {
+    var isAuthorized: Bool { get }
+    func requestAuthorization()
+    func start()
+    func stop()
+    var cadenceStepsPerMin: Int? { get }
+    var elevationGainM: Double { get }
+}
+
 protocol HealthServing: AnyObject { var isAuthorized: Bool { get } }
 protocol PlanEngineServing: AnyObject {}
 protocol AIServing: AnyObject {}
@@ -81,8 +98,20 @@ enum Feature: String, CaseIterable, Sendable {
 
 // MARK: - Phase 0 stubs
 
-final class StubLocationService: LocationServing { var isAuthorized = false }
-final class StubMotionService: MotionServing { var isAuthorized = false }
+final class StubLocationService: LocationServing {
+    var isAuthorized = false
+    func requestAuthorization() {}
+    func fixes() -> AsyncStream<GPSProcessor.Fix> { AsyncStream { $0.finish() } }
+    func stop() {}
+}
+final class StubMotionService: MotionServing {
+    var isAuthorized = false
+    var cadenceStepsPerMin: Int? = nil
+    var elevationGainM: Double = 0
+    func requestAuthorization() {}
+    func start() {}
+    func stop() {}
+}
 final class StubHealthService: HealthServing { var isAuthorized = false }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubAIService: AIServing {}
