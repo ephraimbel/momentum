@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import SwiftData
 
 /// App-wide service container, injected via the SwiftUI environment.
 ///
@@ -21,6 +22,7 @@ final class Services {
     let sync: any SyncServing
     let paywall: any PaywallServing
     let notifications: any NotificationServing
+    let athleteModel: any AthleteModelServing
 
     init(
         location: any LocationServing,
@@ -30,7 +32,8 @@ final class Services {
         ai: any AIServing,
         sync: any SyncServing,
         paywall: any PaywallServing,
-        notifications: any NotificationServing
+        notifications: any NotificationServing,
+        athleteModel: any AthleteModelServing
     ) {
         self.location = location
         self.motion = motion
@@ -40,6 +43,7 @@ final class Services {
         self.sync = sync
         self.paywall = paywall
         self.notifications = notifications
+        self.athleteModel = athleteModel
     }
 
     /// The default wiring used by the running app.
@@ -52,7 +56,8 @@ final class Services {
             ai: AIService(),
             sync: StubSyncService(),
             paywall: StubPaywallService(),
-            notifications: StubNotificationService()
+            notifications: StubNotificationService(),
+            athleteModel: AthleteModelService()
         )
     }
 }
@@ -95,6 +100,21 @@ protocol PaywallServing: AnyObject {
 }
 protocol NotificationServing: AnyObject {}
 
+@MainActor
+protocol AthleteModelServing: AnyObject {
+    /// Recompute Tier A facts from the profile's history and persist them onto its `AthleteModel`,
+    /// upserting this week's `FitnessSnapshot` (see `docs/ATHLETE-MODEL.md`). Pure-local; never blocks.
+    func ingest(profile: UserProfile, in context: ModelContext, now: Date)
+    /// Seed initial memory notes from onboarding answers. Idempotent.
+    func seedOnboarding(for profile: UserProfile, in context: ModelContext)
+}
+
+extension AthleteModelServing {
+    func ingest(profile: UserProfile, in context: ModelContext) {
+        ingest(profile: profile, in: context, now: Date())
+    }
+}
+
 // MARK: - Pro gating
 
 /// The single `Feature` enum that is the source of truth for gating (PRD §10/§13.10).
@@ -123,6 +143,11 @@ final class StubHealthService: HealthServing { var isAuthorized = false }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {}
 final class StubNotificationService: NotificationServing {}
+/// No-op Athlete Model service for previews/tests that don't exercise learning.
+final class StubAthleteModelService: AthleteModelServing {
+    func ingest(profile: UserProfile, in context: ModelContext, now: Date) {}
+    func seedOnboarding(for profile: UserProfile, in context: ModelContext) {}
+}
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {
     func isEntitled(to feature: Feature) -> Bool { true }

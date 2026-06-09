@@ -92,6 +92,8 @@ final class OnboardingViewModel {
         profile.reason = reason
         context.insert(profile)
         PlanService.regenerate(for: profile, calibration: calibration, in: context)
+        // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).
+        AthleteModelService().seedOnboarding(for: profile, in: context)
         return profile
     }
 }

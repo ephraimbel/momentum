@@ -7,6 +7,7 @@ import MapKit
 /// the immersive recording cover (cardio) or the strength logger.
 struct TodayView: View {
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
 
@@ -286,6 +287,10 @@ struct TodayView: View {
         if let workout = fetchWorkout(id) {
             if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
             else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
+        }
+        // Let the Athlete Model learn from this session (local, never blocks the summary).
+        if let profile = profiles.first {
+            services.athleteModel.ingest(profile: profile, in: context)
         }
         summary = PresentedWorkout(id: id, type: type)
     }
