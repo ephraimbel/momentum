@@ -24,7 +24,7 @@ struct BuildingPlanView: View {
                     .font(.display(Theme.FontSize.title, weight: .black))
                     .foregroundStyle(Theme.ink)
                 Text(lines[lineIndex])
-                    .font(.system(size: Theme.FontSize.body))
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
                     .id(lineIndex)
                     .transition(.opacity)

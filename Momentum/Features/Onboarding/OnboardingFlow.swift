@@ -105,8 +105,10 @@ struct OnboardingFlow: View {
                     .font(.rounded(Theme.FontSize.headline, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
             }
+            .reveal(0.15)
             Spacer()
             OversizedButton(title: "Get started") { goNext() }
+                .reveal(0.3)
         }
     }
 
@@ -182,7 +184,7 @@ struct OnboardingFlow: View {
                 Toggle("Add a recent run", isOn: $vm.addRecentRun).tint(Theme.ink)
                 if vm.addRecentRun {
                     HStack {
-                        Text("5 km in").foregroundStyle(Theme.inkSecondary)
+                        Text("5 km in").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                         Spacer()
                         Stepper("\(Int(vm.recentRunSeconds / 60)) min",
                                 value: $vm.recentRunSeconds, in: 600...3600, step: 30)
@@ -199,13 +201,18 @@ struct OnboardingFlow: View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
             IridescentOrb(size: 96)
-            Text("You're all set")
-                .font(.display(Theme.FontSize.title, weight: .black)).foregroundStyle(Theme.ink)
-            Text("momentum asks for location, motion, and notifications only when a feature needs them — never up front.")
-                .font(.system(size: Theme.FontSize.body)).foregroundStyle(Theme.inkSecondary)
-                .multilineTextAlignment(.center)
+            VStack(spacing: Theme.Space.sm) {
+                Text("You're all set")
+                    .font(.display(Theme.FontSize.title, weight: .black)).foregroundStyle(Theme.ink)
+                Text("momentum asks for location, motion, and notifications only when a feature needs them — never up front.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .reveal(0.15)
             Spacer()
             OversizedButton(title: "Start training") { onComplete() }
+                .reveal(0.3)
         }
     }
 
@@ -221,7 +228,7 @@ struct OnboardingFlow: View {
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle {
-                    Text(subtitle).font(.system(size: Theme.FontSize.body)).foregroundStyle(Theme.inkSecondary)
+                    Text(subtitle).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 }
             }
             ScrollView {
@@ -239,7 +246,8 @@ struct OnboardingFlow: View {
             ForEach(values, id: \.self) { v in
                 Button { Haptics.selection(); action(v) } label: {
                     Text("\(v)\(suffix(v))")
-                        .font(.system(size: Theme.FontSize.body, weight: .semibold))
+                        .font(.rounded(Theme.FontSize.headline, weight: .bold))
+                        .monospacedDigit()
                         .frame(maxWidth: .infinity).frame(height: 64)
                         .background {
                             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(selected == v ? Theme.ink : Theme.surface)

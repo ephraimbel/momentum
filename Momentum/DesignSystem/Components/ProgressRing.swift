@@ -18,7 +18,8 @@ struct ProgressRing: View {
                         .rotationEffect(.degrees(-90))
                 }
         }
-        .animation(Motion.standard, value: progress)
+        // Fill timing is the caller's to choose (a slow build vs. a quick reveal), so the ring
+        // animates only when the caller mutates `progress` inside its own `withAnimation`.
     }
 }
 

@@ -9,6 +9,22 @@ struct RootView: View {
     @State private var showOnboarding = false
 
     var body: some View {
+        ZStack {
+            // Until onboarding is done, show a clean canvas — don't build the Today map yet, so it
+            // can't trigger a location prompt "up front" behind the cover (PRD §4.1, §11 privacy).
+            if showOnboarding {
+                Theme.background.ignoresSafeArea()
+            } else {
+                tabs
+            }
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingFlow { showOnboarding = false }
+        }
+        .onAppear { if profiles.isEmpty { showOnboarding = true } }
+    }
+
+    private var tabs: some View {
         TabView(selection: $selection) {
             ForEach(AppTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
@@ -19,10 +35,6 @@ struct RootView: View {
             }
         }
         .background(Theme.background)
-        .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingFlow { showOnboarding = false }
-        }
-        .onAppear { if profiles.isEmpty { showOnboarding = true } }
     }
 
     @ViewBuilder

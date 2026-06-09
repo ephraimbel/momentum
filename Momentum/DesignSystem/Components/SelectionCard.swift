@@ -24,10 +24,10 @@ struct SelectionCard: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: Theme.FontSize.body, weight: .semibold))
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
                     if let subtitle {
                         Text(subtitle)
-                            .font(.system(size: Theme.FontSize.caption))
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary)
                     }
                 }
