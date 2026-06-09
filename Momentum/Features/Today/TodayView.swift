@@ -50,7 +50,8 @@ struct TodayView: View {
             if presented.type == .strength {
                 StrengthSummaryView(workoutId: presented.id) { summary = nil }
             } else {
-                CardioSummaryView(workoutId: presented.id) { summary = nil }
+                // Strava-style: name + describe the run, Save → celebration → back to Today.
+                CardioSaveView(workoutId: presented.id) { summary = nil }
             }
         }
         .sheet(item: $confirmingPlan, onDismiss: {

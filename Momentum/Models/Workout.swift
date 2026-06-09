@@ -12,7 +12,8 @@ final class Workout {
     var elapsedS: Double = 0
     var calories: Double?
     var perceivedEffort: Int?       // 1–10 RPE, optional one-tap
-    var note: String = ""
+    var title: String = ""          // user-given activity name (Strava-style)
+    var note: String = ""           // user description
     var privacy: WorkoutPrivacy = WorkoutPrivacy.private
     var aiSummary: String?
     var syncedAt: Date?

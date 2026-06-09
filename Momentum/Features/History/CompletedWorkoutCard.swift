@@ -63,9 +63,10 @@ struct CompletedWorkoutCard: View {
     private var statsRow: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(workout.type.title)
+                Text(workout.title.isEmpty ? workout.type.title : workout.title)
                     .font(.rounded(Theme.FontSize.headline, weight: .bold))
                     .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
                 Text(workout.startedAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)

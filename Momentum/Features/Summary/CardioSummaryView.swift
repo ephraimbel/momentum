@@ -10,7 +10,6 @@ struct CardioSummaryView: View {
     var onDone: () -> Void
 
     @Query private var workouts: [Workout]
-    @State private var celebrating = true
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     var body: some View {
@@ -37,13 +36,6 @@ struct CardioSummaryView: View {
                 }
             }
         }
-        .overlay {
-            if celebrating {
-                CompletionCelebration(title: "\(workout?.type.title ?? "Workout") complete") {
-                    celebrating = false
-                }
-            }
-        }
     }
 }
 
@@ -51,6 +43,8 @@ struct CardioSummaryView: View {
 struct CardioSummaryContent: View {
     let workout: Workout
     var distanceUnit: DistanceUnit = .auto
+    /// Show the user's title/description header (off in the save editor, which has editable fields).
+    var showsHeader: Bool = true
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -59,6 +53,7 @@ struct CardioSummaryContent: View {
     var body: some View {
         if let gps = workout.gps {
             VStack(spacing: Theme.Space.xl) {
+                if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 routeMap(gps).reveal(0)
                 headline(workout, gps).reveal(0.08)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.18)
@@ -67,6 +62,19 @@ struct CardioSummaryContent: View {
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
         }
+    }
+
+    private var titleHeader: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            if !workout.title.isEmpty {
+                Text(workout.title).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
+            }
+            if !workout.note.isEmpty {
+                Text(workout.note).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
