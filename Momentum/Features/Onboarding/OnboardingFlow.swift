@@ -12,6 +12,7 @@ struct OnboardingFlow: View {
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
     @State private var goingBack = false
+    @State private var locator = LocationService()   // request location on the final primer
 
     var body: some View {
         ZStack {
@@ -204,7 +205,7 @@ struct OnboardingFlow: View {
             VStack(spacing: Theme.Space.sm) {
                 Text("You're all set")
                     .font(.display(Theme.FontSize.title, weight: .black)).foregroundStyle(Theme.ink)
-                Text("momentum asks for location, motion, and notifications only when a feature needs them — never up front.")
+                Text("We use your location to map your runs and rides. Allow it and your map opens right where you are.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -214,6 +215,8 @@ struct OnboardingFlow: View {
             OversizedButton(title: "Start training") { onComplete() }
                 .reveal(0.3)
         }
+        // Ask for location here so the app opens with the map already centered on the athlete.
+        .onAppear { locator.requestAuthorization() }
     }
 
     // MARK: Scaffolding
