@@ -182,7 +182,7 @@ struct TodayView: View {
         if launch.type == .strength {
             StrengthLiveView(container: context.container, plannedSession: planned, onFinish: finish)
         } else {
-            CardioLiveView(type: launch.type, container: context.container, onFinish: finish)
+            CardioRecordView(initialType: launch.type, container: context.container, onFinish: finish)
         }
     }
 

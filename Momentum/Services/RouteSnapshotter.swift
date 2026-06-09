@@ -20,28 +20,29 @@ enum RouteSnapshotter {
         options.traitCollection = UITraitCollection(userInterfaceStyle: .light)
 
         let snapshotter = MKMapSnapshotter(options: options)
-        guard let snapshot = await start(snapshotter) else { return nil }
-
-        let renderer = UIGraphicsImageRenderer(size: size)
         let routeColor = UIColor(Theme.route)
-        return renderer.pngData { _ in
-            snapshot.image.draw(at: .zero)
-            let path = UIBezierPath()
-            for (i, coord) in coordinates.enumerated() {
-                let p = snapshot.point(for: coord)
-                if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
-            }
-            path.lineWidth = 6
-            path.lineJoinStyle = .round
-            path.lineCapStyle = .round
-            routeColor.setStroke()
-            path.stroke()
-        }
-    }
 
-    private static func start(_ snapshotter: MKMapSnapshotter) async -> MKMapSnapshotter.Snapshot? {
-        await withCheckedContinuation { cont in
-            snapshotter.start(with: .main) { snapshot, _ in cont.resume(returning: snapshot) }
+        // Render the route on the snapshot inside the completion (on the main queue) and resume
+        // with the Sendable PNG `Data` — avoids sending the non-Sendable snapshot across actors.
+        return await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
+            snapshotter.start(with: .main) { snapshot, _ in
+                guard let snapshot else { cont.resume(returning: nil); return }
+                let renderer = UIGraphicsImageRenderer(size: size)
+                let data = renderer.pngData { _ in
+                    snapshot.image.draw(at: .zero)
+                    let path = UIBezierPath()
+                    for (i, coord) in coordinates.enumerated() {
+                        let p = snapshot.point(for: coord)
+                        if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                    }
+                    path.lineWidth = 6
+                    path.lineJoinStyle = .round
+                    path.lineCapStyle = .round
+                    routeColor.setStroke()
+                    path.stroke()
+                }
+                cont.resume(returning: data)
+            }
         }
     }
 
