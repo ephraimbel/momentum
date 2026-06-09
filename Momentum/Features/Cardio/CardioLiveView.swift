@@ -10,13 +10,19 @@ struct CardioLiveView: View {
     var onFinish: (UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var vm: CardioViewModel?
     @State private var camera: MapCameraPosition = .automatic
     @State private var confirmStop = false
+    @State private var bloomed = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            // Map grayscale "bloom" on start (PRD §6.2): the world eases up into view.
             mapLayer
+                .opacity(bloomed ? 1 : 0)
+                .saturation(bloomed ? 1 : 0)
+                .scaleEffect(bloomed ? 1 : 1.04)
             topBar
             if let vm { controls(vm) }
             if vm?.state == .acquiring || vm == nil { acquiringOverlay }
@@ -26,6 +32,9 @@ struct CardioLiveView: View {
             let model = CardioViewModel(type: type, container: container)
             await model.start()
             vm = model
+        }
+        .onAppear {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { bloomed = true }
         }
     }
 
