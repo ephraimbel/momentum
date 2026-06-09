@@ -3,11 +3,13 @@ import SwiftData
 
 /// The AI coach chat (PRD §4.7). A calm, on-brand conversation: the coach speaks from the left with
 /// a small iridescent orb, the athlete from the right; suggested prompts when fresh; a typing beat
-/// while it replies. Replies are grounded in the athlete's real data via `CoachResponder`.
+/// while it replies. The thread persists across launches (`ChatMessage`); replies are grounded in
+/// the athlete's real data via `CoachResponder`.
 struct CoachChatView: View {
     var onClose: () -> Void
 
     @Environment(\.modelContext) private var context
+    @Query(sort: \ChatMessage.createdAt, order: .forward) private var messages: [ChatMessage]
     @State private var vm: CoachChatViewModel?
     @FocusState private var inputFocused: Bool
 
@@ -16,6 +18,8 @@ struct CoachChatView: View {
             VStack(spacing: 0) {
                 if let vm {
                     transcript(vm)
+                    CoachDisclaimer(alignment: .center)
+                        .padding(.horizontal, Theme.Space.md).padding(.bottom, 6)
                     inputBar(vm)
                 } else {
                     Spacer()
@@ -28,6 +32,11 @@ struct CoachChatView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { onClose() }.fontWeight(.semibold)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { vm?.clear() } label: { Image(systemName: "arrow.counterclockwise") }
+                        .disabled(messages.count <= 1)
+                        .accessibilityLabel("Clear conversation")
+                }
             }
         }
         .task { if vm == nil { vm = CoachChatViewModel(context: context) } }
@@ -37,16 +46,16 @@ struct CoachChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Theme.Space.md) {
-                    ForEach(vm.messages) { msg in
+                    ForEach(messages) { msg in
                         bubble(msg).id(msg.id)
                     }
                     if vm.isResponding { typingIndicator.id("typing") }
-                    if vm.messages.count <= 1 { suggestionChips(vm).padding(.top, Theme.Space.sm) }
+                    if messages.count <= 1 { suggestionChips(vm).padding(.top, Theme.Space.sm) }
                 }
                 .padding(Theme.Space.lg)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: vm.messages.count) { scrollToEnd(proxy, vm) }
+            .onChange(of: messages.count) { scrollToEnd(proxy, vm) }
             .onChange(of: vm.isResponding) { scrollToEnd(proxy, vm) }
         }
     }
@@ -54,12 +63,12 @@ struct CoachChatView: View {
     private func scrollToEnd(_ proxy: ScrollViewProxy, _ vm: CoachChatViewModel) {
         withAnimation(.easeOut(duration: 0.25)) {
             if vm.isResponding { proxy.scrollTo("typing", anchor: .bottom) }
-            else { proxy.scrollTo(vm.messages.last?.id, anchor: .bottom) }
+            else { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
         }
     }
 
     @ViewBuilder
-    private func bubble(_ msg: CoachChatViewModel.Message) -> some View {
+    private func bubble(_ msg: ChatMessage) -> some View {
         if msg.role == .coach {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 IridescentOrb(size: 26, glow: false)

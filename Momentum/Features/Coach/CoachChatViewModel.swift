@@ -2,20 +2,13 @@ import Foundation
 import SwiftData
 import Observation
 
-/// Drives the coach chat. Builds context from the local store and replies via `CoachResponder`
-/// (deterministic, always available). When the `coach-chat` Edge Function is wired, the send path
-/// can prefer it and fall back to the responder — the moment never blocks (PRD §8.8).
+/// Drives the coach chat. Persists every turn as a `ChatMessage` (the view renders them via @Query)
+/// and replies via `CoachResponder` (deterministic, always available). When the `coach-chat` Edge
+/// Function is wired, the send path can prefer it and fall back to the responder — the moment never
+/// blocks (PRD §8.8).
 @MainActor
 @Observable
 final class CoachChatViewModel {
-    struct Message: Identifiable {
-        enum Role { case coach, user }
-        let id = UUID()
-        let role: Role
-        let text: String
-    }
-
-    private(set) var messages: [Message] = []
     private(set) var isResponding = false
     var input = ""
 
@@ -23,8 +16,7 @@ final class CoachChatViewModel {
 
     init(context: ModelContext) {
         self.context = context
-        messages = [.init(role: .coach,
-                          text: "Hey — I'm your coach. Ask me how you're trending, what to do today, or anything about your training.")]
+        seedGreetingIfEmpty()
     }
 
     var canSend: Bool { !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isResponding }
@@ -34,7 +26,7 @@ final class CoachChatViewModel {
         let text = (raw ?? input).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
         input = ""
-        messages.append(.init(role: .user, text: text))
+        insert(.user, text)
         isResponding = true
 
         Task {
@@ -42,8 +34,28 @@ final class CoachChatViewModel {
             try? await Task.sleep(for: .milliseconds(550))
             let reply = CoachResponder.reply(to: text, context: buildContext())
             isResponding = false
-            messages.append(.init(role: .coach, text: reply))
+            insert(.coach, reply)
         }
+    }
+
+    /// Wipe the thread and start fresh with the greeting.
+    func clear() {
+        for m in (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? [] { context.delete(m) }
+        try? context.save()
+        seedGreetingIfEmpty()
+    }
+
+    // MARK: - Persistence
+
+    private func insert(_ role: ChatMessage.Role, _ text: String) {
+        context.insert(ChatMessage(role: role, text: text))
+        try? context.save()
+    }
+
+    private func seedGreetingIfEmpty() {
+        let count = (try? context.fetchCount(FetchDescriptor<ChatMessage>())) ?? 0
+        guard count == 0 else { return }
+        insert(.coach, "Hey, I'm your coach. Ask me how you're trending, what to do today, or anything about your training.")
     }
 
     private func buildContext() -> CoachResponder.Context {
