@@ -30,9 +30,10 @@ struct QuickActionFAB: View {
                 fab
             }
             .padding(.trailing, Theme.Space.md)
-            .padding(.bottom, 34)   // sit beside the floating tab pill, not over Today's panel
+            .padding(.bottom, 26)   // align the FAB's center with the floating tab pill
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .ignoresSafeArea(.container, edges: .bottom)   // position from the physical bottom, like the tab bar
     }
 
     private var fab: some View {
