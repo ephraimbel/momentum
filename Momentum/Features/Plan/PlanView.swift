@@ -5,8 +5,11 @@ import SwiftData
 /// date badge + quiet session cards with discipline glyphs and status. Completed earns a soft
 /// iridescent tint; missed simply moves with a one-line note. No red, no guilt.
 struct PlanView: View {
+    @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
     @State private var weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+    @State private var showingAdd = false
+    @State private var addDay = Date()
 
     private var plan: TrainingPlan? { profiles.first?.plan }
     private var days: [Date] {
@@ -30,6 +33,21 @@ struct PlanView: View {
         }
         .background(Theme.background)
         .navigationBarHidden(true)
+        .sheet(isPresented: $showingAdd) {
+            if let plan {
+                AddSessionSheet(plan: plan, defaultDate: addDay) { showingAdd = false }
+            }
+        }
+    }
+
+    private func presentAdd(for day: Date) { addDay = day; showingAdd = true }
+
+    private func delete(_ session: PlannedSession) {
+        withAnimation(Motion.standard) {
+            context.delete(session)
+            try? context.save()
+        }
+        Haptics.light()
     }
 
     private var header: some View {
@@ -40,6 +58,7 @@ struct PlanView: View {
             }
             Spacer()
             HStack(spacing: Theme.Space.sm) {
+                navButton("plus") { presentAdd(for: Date()) }
                 navButton("chevron.left") { shiftWeek(-1) }
                 navButton("chevron.right") { shiftWeek(1) }
             }
@@ -54,9 +73,16 @@ struct PlanView: View {
             dateBadge(day, isToday: isToday)
             VStack(spacing: Theme.Space.sm) {
                 if sessions.isEmpty {
-                    restRow
+                    restRow(day)
                 } else {
-                    ForEach(sessions, id: \.persistentModelID) { sessionCard($0) }
+                    ForEach(sessions, id: \.persistentModelID) { session in
+                        sessionCard(session)
+                            .contextMenu {
+                                Button(role: .destructive) { delete(session) } label: {
+                                    Label("Remove", systemImage: "trash")
+                                }
+                            }
+                    }
                 }
             }
         }
@@ -109,13 +135,18 @@ struct PlanView: View {
         .accessibilityLabel("\(PlanCoaching.brief(for: session)), \(session.status.rawValue)")
     }
 
-    private var restRow: some View {
-        HStack {
-            Text("Rest").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-            Spacer()
+    private func restRow(_ day: Date) -> some View {
+        Button { presentAdd(for: day) } label: {
+            HStack {
+                Text("Rest").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                Spacer()
+                Image(systemName: "plus.circle").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-        .padding(Theme.Space.md)
-        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
     }
 
     private var emptyState: some View {
