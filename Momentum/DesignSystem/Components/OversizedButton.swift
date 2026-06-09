@@ -22,7 +22,7 @@ struct OversizedButton: View {
                 if let systemImage { Image(systemName: systemImage) }
                 Text(title)
             }
-            .font(.system(size: Theme.FontSize.body, weight: .semibold))
+            .font(.rounded(Theme.FontSize.body, weight: .semibold))
             .frame(maxWidth: .infinity)
             .frame(height: 56)
             .foregroundStyle(kind == .filled ? Theme.background : Theme.ink)

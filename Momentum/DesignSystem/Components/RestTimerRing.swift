@@ -21,7 +21,7 @@ struct RestTimerRing: View {
                         .rotationEffect(.degrees(-90))
                 }
             Text(remainingText)
-                .font(.system(size: Theme.FontSize.headline, weight: .semibold))
+                .font(.display(Theme.FontSize.headline, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(Theme.ink)
         }

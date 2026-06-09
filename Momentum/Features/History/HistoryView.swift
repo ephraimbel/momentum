@@ -25,10 +25,6 @@ struct HistoryView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
-                        Text("History")
-                            .font(.display(32, weight: .black))
-                            .foregroundStyle(Theme.ink)
-                            .padding(.top, Theme.Space.sm)
                         ForEach(weeks, id: \.start) { week in
                             VStack(alignment: .leading, spacing: Theme.Space.md) {
                                 Text(weekLabel(week.start))

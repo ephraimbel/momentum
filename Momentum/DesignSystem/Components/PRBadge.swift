@@ -15,7 +15,7 @@ struct PRBadge: View {
             Image(systemName: "rosette")
             Text(text)
         }
-        .font(.system(size: Theme.FontSize.caption, weight: .semibold))
+        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.sm)
         .padding(.vertical, 6)

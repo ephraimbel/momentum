@@ -36,7 +36,7 @@ struct CountUpHero: View {
     var body: some View {
         VStack(spacing: Theme.Space.xs) {
             AnimatedCounter(value: shown, format: format)
-                .font(.system(size: size, weight: .semibold, design: .rounded))
+                .font(.display(size, weight: .bold))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)

@@ -10,13 +10,13 @@ struct HeroMetric: View {
     var body: some View {
         VStack(spacing: Theme.Space.xs) {
             Text(value)
-                .font(.system(size: size, weight: .semibold, design: .rounded))
+                .font(.display(size, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
             Text(label.uppercased())
-                .font(.system(size: Theme.FontSize.label, weight: .medium))
+                .font(.rounded(Theme.FontSize.label, weight: .medium))
                 .tracking(1.2)
                 .foregroundStyle(Theme.inkTertiary)
         }

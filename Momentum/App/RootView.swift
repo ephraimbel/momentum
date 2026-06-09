@@ -43,7 +43,6 @@ struct RootView: View {
         case .today: TodayView()
         case .plan: PlanView()
         case .progress: ProgressScreen()
-        case .history: HistoryView()
         }
     }
 }

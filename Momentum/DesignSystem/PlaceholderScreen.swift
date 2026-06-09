@@ -21,7 +21,7 @@ struct PlaceholderScreen: View {
                         .foregroundStyle(Theme.ink)
                 }
                 Text(note)
-                    .font(.system(size: Theme.FontSize.body))
+                    .font(.rounded(Theme.FontSize.body, weight: .regular))
                     .foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, Theme.Space.xl)

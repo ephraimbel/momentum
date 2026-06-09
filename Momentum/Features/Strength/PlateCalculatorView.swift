@@ -23,10 +23,10 @@ struct PlateCalculatorView: View {
                 HStack {
                     TextField("Target (\(unit))", text: $targetText)
                         .keyboardType(.decimalPad)
-                        .font(.system(size: Theme.FontSize.title, weight: .semibold))
+                        .font(.display(Theme.FontSize.title, weight: .bold))
                         .monospacedDigit()
                     Text("Bar \(Int(bar)) \(unit)")
-                        .font(.system(size: Theme.FontSize.caption))
+                        .font(.rounded(Theme.FontSize.caption, weight: .regular))
                         .foregroundStyle(Theme.inkTertiary)
                 }
                 .padding()
@@ -72,7 +72,7 @@ private struct FlowPlates: View {
                         .font(.system(size: Theme.FontSize.headline, weight: .bold))
                         .monospacedDigit()
                     Text("×\(plate.count)")
-                        .font(.system(size: Theme.FontSize.caption))
+                        .font(.rounded(Theme.FontSize.caption, weight: .regular))
                         .foregroundStyle(Theme.inkTertiary)
                 }
                 .frame(minWidth: 56)

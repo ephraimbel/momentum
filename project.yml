@@ -46,6 +46,14 @@ targets:
         UIUserInterfaceStyle: Automatic
         UILaunchScreen:
           UIColorName: background
+        UIAppFonts:
+          - Inter-Regular.ttf
+          - Inter-Medium.ttf
+          - Inter-SemiBold.ttf
+          - Inter-Bold.ttf
+          - SpaceGrotesk-Regular.ttf
+          - SpaceGrotesk-Medium.ttf
+          - SpaceGrotesk-Bold.ttf
     # ── Later-phase dependencies (NOT in the Phase 0 build) ──────────────
     # Add when their phase begins, then re-run `xcodegen generate`:
     #   Phase 2/4 — supabase-swift  (https://github.com/supabase/supabase-swift)

@@ -11,6 +11,12 @@ struct ProgressScreen: View {
     @Query private var profiles: [UserProfile]
     @State private var animateCharts = false
     @State private var adjustedPlan = false
+    @State private var segment: Segment = .trends
+
+    enum Segment: String, CaseIterable, Identifiable {
+        case trends = "Trends", history = "History"
+        var id: Self { self }
+    }
 
     private var plan: TrainingPlan? { profiles.first?.plan }
 
@@ -20,10 +26,40 @@ struct ProgressScreen: View {
     private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
 
     var body: some View {
+        VStack(spacing: 0) {
+            segmentControl
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.top, Theme.Space.sm)
+                .padding(.bottom, Theme.Space.md)
+            switch segment {
+            case .trends: trends
+            case .history: HistoryView()
+            }
+        }
+        .background(Theme.background)
+        .navigationBarHidden(true)
+    }
+
+    private var segmentControl: some View {
+        HStack(spacing: 4) {
+            ForEach(Segment.allCases) { seg in
+                Button { Haptics.selection(); withAnimation(.easeOut(duration: 0.2)) { segment = seg } } label: {
+                    Text(seg.rawValue)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                        .foregroundStyle(segment == seg ? Theme.background : Theme.ink)
+                        .frame(maxWidth: .infinity).frame(height: 40)
+                        .background { if segment == seg { Capsule().fill(Theme.ink) } }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(Theme.surface))
+    }
+
+    private var trends: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                Text("Progress").font(.display(32, weight: .black)).foregroundStyle(Theme.ink)
-                    .padding(.top, Theme.Space.sm)
                 statusHero(insights)
                 coachCard(insights)
                 loadChart(insights)
@@ -35,8 +71,6 @@ struct ProgressScreen: View {
             .padding(Theme.Space.lg)
             .padding(.bottom, Theme.Space.xxl)
         }
-        .background(Theme.background)
-        .navigationBarHidden(true)
         .onAppear { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
     }
 
