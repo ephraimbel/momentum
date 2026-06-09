@@ -122,9 +122,13 @@ struct ShareCardContent: View {
 }
 
 /// A route traced into the card bounds (lat/lon normalized, latitude inverted for screen space).
+/// Downsamples to keep paths cheap for list thumbnails (PRD §13.1 jank-free at scale).
 struct RouteSilhouette: Shape {
     let coords: [CLLocationCoordinate2D]
+    var maxPoints: Int = 120
+
     func path(in rect: CGRect) -> Path {
+        let coords = Self.downsample(self.coords, to: maxPoints)
         guard coords.count > 1 else { return Path() }
         let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
         let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
@@ -138,5 +142,12 @@ struct RouteSilhouette: Shape {
             if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
         }
         return path
+    }
+
+    /// Keep endpoints; evenly sample the middle down to `max` points.
+    static func downsample(_ coords: [CLLocationCoordinate2D], to max: Int) -> [CLLocationCoordinate2D] {
+        guard coords.count > max, max > 2 else { return coords }
+        let stride = Double(coords.count - 1) / Double(max - 1)
+        return (0..<max).map { coords[Int((Double($0) * stride).rounded())] }
     }
 }

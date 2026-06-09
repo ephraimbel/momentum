@@ -20,6 +20,9 @@ struct HeroMetric: View {
                 .tracking(1.2)
                 .foregroundStyle(Theme.inkTertiary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(value)
     }
 }
 

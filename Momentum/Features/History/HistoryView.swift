@@ -82,6 +82,9 @@ private struct HistoryRow: View {
                 .foregroundStyle(Theme.inkTertiary)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(workout.type.title), \(workout.startedAt.formatted(.dateTime.weekday(.wide)))")
+        .accessibilityValue(stats)
     }
 
     @ViewBuilder

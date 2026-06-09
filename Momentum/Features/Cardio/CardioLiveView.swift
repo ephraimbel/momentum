@@ -44,6 +44,7 @@ struct CardioLiveView: View {
         .mapStyle(.standard(elevation: .flat, emphasis: .muted,
                             pointsOfInterest: .excludingAll, showsTraffic: false))
         .ignoresSafeArea()
+        .accessibilityLabel("Route map")
         .onChange(of: coords.count) {
             if let last = coords.last {
                 withAnimation(.easeInOut(duration: 0.5)) {
@@ -81,6 +82,9 @@ struct CardioLiveView: View {
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(.ultraThinMaterial, in: Capsule())
         .opacity(strength > 0 ? 1 : 0.5)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("GPS signal")
+        .accessibilityValue(strength > 0.66 ? "Strong" : strength > 0.33 ? "OK" : "Weak")
     }
 
     private func controls(_ vm: CardioViewModel) -> some View {
@@ -156,6 +160,7 @@ private struct BreathingDot: View {
         .scaleEffect(pulse && !reduceMotion ? 1.15 : 1)
         .animation(reduceMotion ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: pulse)
         .onAppear { pulse = true }
+        .accessibilityHidden(true)
     }
 }
 

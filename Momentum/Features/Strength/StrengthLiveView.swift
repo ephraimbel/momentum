@@ -160,10 +160,15 @@ private struct RestBar: View {
             Spacer()
             HStack(spacing: Theme.Space.lg) {
                 Button { vm.adjustRest(by: -15) } label: { Image(systemName: "gobackward.15") }
+                    .accessibilityLabel("Subtract 15 seconds")
                 RestTimerRing(progress: progress, remainingText: Formatters.duration(s: remaining),
                               isComplete: remaining <= 0)
                     .frame(width: 96, height: 96)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Rest timer")
+                    .accessibilityValue(remaining <= 0 ? "Done" : "\(Formatters.duration(s: remaining)) remaining")
                 Button { vm.adjustRest(by: 15) } label: { Image(systemName: "goforward.15") }
+                    .accessibilityLabel("Add 15 seconds")
             }
             .font(.system(size: 22))
             .foregroundStyle(Theme.ink)
@@ -173,6 +178,7 @@ private struct RestBar: View {
                 Button { vm.skipRest() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkTertiary)
                 }.padding(Theme.Space.sm)
+                .accessibilityLabel("Skip rest")
             }
             .padding(.bottom, 100)
         }

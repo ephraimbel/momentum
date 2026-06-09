@@ -44,6 +44,9 @@ struct ProfileView: View {
         }
         .padding(Theme.Space.lg)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Current streak")
+        .accessibilityValue("\(stats.currentStreak) days, longest \(stats.longestStreak)")
     }
 
     private func heatmap(_ stats: ProfileStats) -> some View {
@@ -64,6 +67,9 @@ struct ProfileView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Consistency, last 16 weeks")
+            .accessibilityValue("\((0..<(weeks * 7)).filter { stats.countingDays.contains(today - $0) }.count) active days")
         }
     }
 
