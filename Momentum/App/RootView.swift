@@ -1,9 +1,12 @@
 import SwiftUI
+import SwiftData
 
 /// App shell: a `TabView` with one `NavigationStack` per tab (PRD §13.10).
-/// Onboarding will later present as a gated `fullScreenCover` over this.
+/// Onboarding presents as a gated `fullScreenCover` over this on first launch.
 struct RootView: View {
+    @Query private var profiles: [UserProfile]
     @State private var selection: AppTab = .today
+    @State private var showOnboarding = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -16,6 +19,10 @@ struct RootView: View {
             }
         }
         .background(Theme.background)
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingFlow { showOnboarding = false }
+        }
+        .onAppear { if profiles.isEmpty { showOnboarding = true } }
     }
 
     @ViewBuilder
