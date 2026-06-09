@@ -12,6 +12,7 @@ struct StrengthLiveView: View {
     @State private var vm: StrengthViewModel?
     @State private var showingLibrary = false
     @State private var showingPlates = false
+    @State private var confirmExit = false
 
     var body: some View {
         ZStack {
@@ -72,13 +73,29 @@ struct StrengthLiveView: View {
         .sheet(isPresented: $showingPlates) {
             PlateCalculatorView(weightUnit: vm.weightUnit)
         }
+        .confirmationDialog("End this workout?", isPresented: $confirmExit, titleVisibility: .visible) {
+            if vm.completedSetCount > 0 {
+                Button("Finish & save") { Task { onFinish(await vm.finish()) } }
+            }
+            Button("Discard workout", role: .destructive) { Task { await vm.discard(); onFinish(nil) } }
+            Button("Keep going", role: .cancel) {}
+        } message: {
+            Text(vm.completedSetCount > 0
+                 ? "Save your \(vm.completedSetCount) logged set\(vm.completedSetCount == 1 ? "" : "s"), or discard the workout."
+                 : "Nothing's logged yet. Discard this workout?")
+        }
     }
 
     private func header(_ vm: StrengthViewModel) -> some View {
         HStack(alignment: .top) {
-            Button { dismiss() } label: {
+            Button {
+                // Never silently lose a workout: confirm if there's anything logged; the timer keeps
+                // running until the user explicitly finishes or discards.
+                if vm.hasContent { confirmExit = true } else { Task { await vm.discard(); onFinish(nil) } }
+            } label: {
                 Image(systemName: "xmark").font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
             Spacer()
             TimelineView(.periodic(from: vm.startedAt, by: 1)) { ctx in
@@ -100,6 +117,7 @@ struct StrengthLiveView: View {
             Button { showingPlates = true } label: {
                 Image(systemName: "rectangle.split.3x1").font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
         }
         .padding(.horizontal, Theme.Space.md)
@@ -157,8 +175,8 @@ private struct ExerciseSection: View {
                 Label("Add set", systemImage: "plus")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
+                    .frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }
-            .padding(.top, Theme.Space.xs)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -179,16 +197,20 @@ private struct RestBar: View {
         VStack {
             Spacer()
             HStack(spacing: Theme.Space.lg) {
-                Button { vm.adjustRest(by: -15) } label: { Image(systemName: "gobackward.15") }
-                    .accessibilityLabel("Subtract 15 seconds")
+                Button { vm.adjustRest(by: -15) } label: {
+                    Image(systemName: "gobackward.15").frame(width: 56, height: 56).contentShape(Rectangle())
+                }
+                .accessibilityLabel("Subtract 15 seconds")
                 RestTimerRing(progress: progress, remainingText: Formatters.duration(s: remaining),
                               isComplete: remaining <= 0)
                     .frame(width: 96, height: 96)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Rest timer")
                     .accessibilityValue(remaining <= 0 ? "Done" : "\(Formatters.duration(s: remaining)) remaining")
-                Button { vm.adjustRest(by: 15) } label: { Image(systemName: "goforward.15") }
-                    .accessibilityLabel("Add 15 seconds")
+                Button { vm.adjustRest(by: 15) } label: {
+                    Image(systemName: "goforward.15").frame(width: 56, height: 56).contentShape(Rectangle())
+                }
+                .accessibilityLabel("Add 15 seconds")
             }
             .font(.system(size: 22))
             .foregroundStyle(Theme.ink)
@@ -197,7 +219,8 @@ private struct RestBar: View {
             .overlay(alignment: .topTrailing) {
                 Button { vm.skipRest() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkTertiary)
-                }.padding(Theme.Space.sm)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
                 .accessibilityLabel("Skip rest")
             }
             .padding(.bottom, 100)

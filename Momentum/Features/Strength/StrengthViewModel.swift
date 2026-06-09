@@ -25,6 +25,7 @@ final class StrengthViewModel {
     // Rest timer (visible ring; the notification is the store/NotificationService's job).
     private(set) var restEndsAt: Date?
     private(set) var restTotal: TimeInterval = 0
+    private let restActivity = RestActivityController()   // lock-screen / Dynamic Island mirror
 
     init(container: ModelContainer, weightUnit: WeightUnit = .default()) {
         self.context = ModelContext(container)
@@ -41,9 +42,20 @@ final class StrengthViewModel {
     }
 
     func finish() async -> UUID? {
+        restActivity.end()
         await engine.finish()
         return workoutId
     }
+
+    /// User chose to throw the session away: delete the durable workout and clear the marker.
+    func discard() async {
+        restActivity.end()
+        await engine.discard()
+        workoutId = nil
+    }
+
+    /// Anything worth confirming before exit? (logged sets or added exercises)
+    var hasContent: Bool { completedSetCount > 0 || !exercises.isEmpty }
 
     // MARK: Mutations
 
@@ -107,8 +119,9 @@ final class StrengthViewModel {
         Haptics.light()
 
         let snapshot = await engine.exercises
-        if let set = snapshot.first(where: { $0.id == rowId })?.sets.first(where: { $0.id == setId }) {
-            startRest(seconds: set.restS)
+        if let ex = snapshot.first(where: { $0.id == rowId }),
+           let set = ex.sets.first(where: { $0.id == setId }) {
+            startRest(seconds: set.restS, exerciseName: ex.name)
         }
         await refresh()
     }
@@ -119,17 +132,25 @@ final class StrengthViewModel {
 
     // MARK: Rest timer
 
-    func startRest(seconds: TimeInterval) {
+    func startRest(seconds: TimeInterval, exerciseName: String = "Rest") {
+        let now = Date()
         restTotal = seconds
-        restEndsAt = Date().addingTimeInterval(seconds)
+        restEndsAt = now.addingTimeInterval(seconds)
+        restActivity.start(exerciseName: exerciseName, startedAt: now,
+                           endsAt: now.addingTimeInterval(seconds), setsDone: completedSetCount)
     }
 
-    func skipRest() { restEndsAt = nil }
+    func skipRest() {
+        restEndsAt = nil
+        restActivity.end()
+    }
 
     func adjustRest(by delta: TimeInterval) {
         guard let end = restEndsAt else { return }
-        restEndsAt = max(Date(), end.addingTimeInterval(delta))
+        let newEnd = max(Date(), end.addingTimeInterval(delta))
+        restEndsAt = newEnd
         restTotal = max(1, restTotal + delta)
+        restActivity.update(startedAt: newEnd.addingTimeInterval(-restTotal), endsAt: newEnd, setsDone: completedSetCount)
     }
 
     func restRemaining(at now: Date) -> TimeInterval? {

@@ -15,6 +15,8 @@ protocol StrengthWorkoutSink: Sendable {
     func scheduleRest(seconds: Double, exerciseName: String) async
     /// Finalize aggregates and clear the active-workout marker.
     func finishWorkout(totalVolumeKg: Double, totalSets: Int, durationS: TimeInterval) async
+    /// Delete the in-progress workout entirely and clear the marker (user discarded it).
+    func discardWorkout() async
 }
 
 struct NoopStrengthWorkoutSink: StrengthWorkoutSink {
@@ -24,6 +26,7 @@ struct NoopStrengthWorkoutSink: StrengthWorkoutSink {
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async {}
     func scheduleRest(seconds: Double, exerciseName: String) async {}
     func finishWorkout(totalVolumeKg: Double, totalSets: Int, durationS: TimeInterval) async {}
+    func discardWorkout() async {}
 }
 
 /// Strength capture engine (PRD §8.4 / §22). Owns the live logging session; no GPS.
@@ -153,6 +156,11 @@ actor StrengthSessionEngine {
         let volume = StrengthMath.sessionVolume(working)
         let setCount = exercises.reduce(0) { $0 + $1.sets.filter(\.isComplete).count }
         await sink.finishWorkout(totalVolumeKg: volume, totalSets: setCount, durationS: elapsed(now: now))
+    }
+
+    /// Discard the whole session (delete the durable workout + clear the marker).
+    func discard() async {
+        await sink.discardWorkout()
     }
 
     func elapsed(now: Date = Date()) -> TimeInterval {

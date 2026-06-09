@@ -136,6 +136,17 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         ActiveWorkoutMarker.clear()
     }
 
+    /// User discarded: delete the in-progress workout (cascades to its session/exercises/sets) and
+    /// clear the recovery marker so nothing lingers.
+    func discardWorkout() {
+        if let workoutID, let workout = self[workoutID, as: Workout.self] {
+            modelContext.delete(workout)
+            try? modelContext.save()
+        }
+        workoutID = nil; sessionID = nil; rowIDs = [:]
+        ActiveWorkoutMarker.clear()
+    }
+
     /// Resolve a catalog/custom exercise by its UUID. The library is small (≤ a few hundred),
     /// so an in-memory filter avoids a non-Sendable `#Predicate` keypath under strict concurrency.
     private func exercise(with id: UUID) -> Exercise? {
