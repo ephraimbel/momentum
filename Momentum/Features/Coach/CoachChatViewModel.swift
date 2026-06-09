@@ -13,6 +13,7 @@ final class CoachChatViewModel {
     var input = ""
 
     private let context: ModelContext
+    private let service = CoachChatService()
 
     init(context: ModelContext) {
         self.context = context
@@ -29,12 +30,34 @@ final class CoachChatViewModel {
         insert(.user, text)
         isResponding = true
 
+        let history = recentTurns()
+        let ctx = buildContext()
         Task {
-            // A brief, natural "thinking" beat (also where a real Edge Function call would await).
-            try? await Task.sleep(for: .milliseconds(550))
-            let reply = CoachResponder.reply(to: text, context: buildContext())
+            let reply = await coachReply(latest: text, history: history, context: ctx)
             isResponding = false
             insert(.coach, reply)
+        }
+    }
+
+    /// Prefer the `coach-chat` Edge Function when configured; otherwise (or on any failure) the
+    /// deterministic responder. Either way the result is de-dashed (no AI-slop em dashes).
+    private func coachReply(latest: String, history: [CoachChatService.Turn],
+                            context ctx: CoachResponder.Context) async -> String {
+        if service.isConfigured, let llm = await service.reply(history: history, context: ctx) {
+            return CoachResponder.deDash(llm)
+        }
+        // No backend (or it failed): a brief beat for a natural feel, then the local responder.
+        if !service.isConfigured { try? await Task.sleep(for: .milliseconds(550)) }
+        return CoachResponder.reply(to: latest, context: ctx)
+    }
+
+    /// The recent thread as wire turns (bounded), for the Edge Function. Includes the just-sent
+    /// user message since it's already persisted.
+    private func recentTurns(limit: Int = 12) -> [CoachChatService.Turn] {
+        let all = (try? context.fetch(FetchDescriptor<ChatMessage>(
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]))) ?? []
+        return all.suffix(limit).map {
+            .init(role: $0.role == .coach ? "assistant" : "user", text: $0.text)
         }
     }
 
