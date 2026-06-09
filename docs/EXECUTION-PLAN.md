@@ -91,6 +91,13 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 
 **▶ Gate 1:** Both live loops run start→finish→summary→share with correct metrics and all states designed; history scrolls jank-free at 1000+ items; Reduce Motion holds static iridescence; VoiceOver labels on set rows/rest timer/map.
 
+**Phase 1 status — 2026-06-09 (Slice A: strength loop landed):**
+- ✅ Shared components: `ProgressRing`/`RestTimerRing` (iridescent), `OversizedButton`, `HeroMetric`, `PRBadge` (sweep), `SelectionCard`.
+- ✅ Exercise library picker (`ExerciseLibraryView` search/filter/select + `CustomExerciseSheet`).
+- ✅ **Strength live loop end-to-end:** `StrengthViewModel` (bridges the engine actor + durable store) → `StrengthLiveView` (set rows w/ ghosted previous + one-tap ✓, auto rest-timer ring, plate calculator) → `StrengthSummaryView` (volume/sets/duration, PR badges via `StrengthPRs`, working-sets-by-muscle). Today `Start` → `ActivityChooserView` → strength live → summary.
+- ✅ Verified: clean build, **34 tests green** (incl. `StrengthFlowTests` full-loop + prefill-from-last-session integration), app launches and renders the hero dark look.
+- ⏳ Slice B (next): Cardio live (MapKit bloom/route/dot, `LocationService`→`GPSTrackingEngine` pump) + cardio summary. Slice C: History feed + Profile/analytics + Share cards. Deferred within Phase 1: anatomical muscle-map diagram, supersets UI, RPE polish, inline set reorder/swap, true-B/W route snapshot.
+
 ---
 
 ## Phase 2 — AI + multi-discipline plans

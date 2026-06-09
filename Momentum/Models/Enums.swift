@@ -30,7 +30,25 @@ enum WorkoutPrivacy: String, Codable, Sendable, CaseIterable {
     case `private`, friends, `public` // friends/public reserved for deferred social
 }
 
-extension WorkoutType {
+extension WorkoutType: Identifiable {
+    public var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .run: "Run"; case .ride: "Ride"; case .walk: "Walk"; case .hike: "Hike"; case .strength: "Strength"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .run: "figure.run"
+        case .ride: "bicycle"
+        case .walk: "figure.walk"
+        case .hike: "figure.hiking"
+        case .strength: "dumbbell.fill"
+        }
+    }
+
     /// Each `Workout` carries exactly one of `gps`/`strength`, determined by `type`.
     var isGPS: Bool { self != .strength }
     /// `hike` maps to the walking `Discipline` for planning/analytics (§8.7 notes).

@@ -118,15 +118,15 @@ actor StrengthSessionEngine {
         return ex.id
     }
 
+    /// Append a set to an exercise; returns the new set's id (for the UI to track/edit/complete).
     @discardableResult
-    func addSet(toExercise id: UUID, prefill: SetTarget = .init()) -> Bool {
-        guard let i = exercises.firstIndex(where: { $0.id == id }) else { return false }
-        let nextIndex = exercises[i].sets.count
-        exercises[i].sets.append(
-            LiveSet(index: nextIndex, weightKg: prefill.weightKg, reps: prefill.reps,
-                    restS: exercises[i].defaultRestS)
-        )
-        return true
+    func addSet(toExercise id: UUID, prefill: SetTarget = .init()) -> UUID? {
+        guard let i = exercises.firstIndex(where: { $0.id == id }) else { return nil }
+        let set = LiveSet(index: exercises[i].sets.count,
+                          weightKg: prefill.weightKg, reps: prefill.reps,
+                          restS: exercises[i].defaultRestS)
+        exercises[i].sets.append(set)
+        return set.id
     }
 
     /// Log a set: mark complete, persist immediately, and start the rest timer (§8.4).
