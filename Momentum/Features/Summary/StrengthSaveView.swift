@@ -85,8 +85,13 @@ struct StrengthSaveView: View {
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
     }
 
-    /// "Morning Workout" / "Evening Workout" — a friendly default keyed to time of day.
+    /// Names the workout by its split ("Push Day", "Leg Day", …); falls back to time-of-day when
+    /// there are no classifiable working sets yet.
     private static func defaultTitle(_ w: Workout) -> String {
+        if let session = w.strength {
+            let split = StrengthSplit.title(for: session)
+            if split != "Strength" { return split }
+        }
         let hour = Calendar.current.component(.hour, from: w.startedAt)
         switch hour {
         case 5..<12: return "Morning Workout"
