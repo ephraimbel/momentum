@@ -13,6 +13,7 @@ struct ProgressScreen: View {
     @State private var animateCharts = false
     @State private var adjustedPlan = false
     @State private var segment: Segment = .trends
+    @State private var correcting: LearnedItem?
 
     enum Segment: String, CaseIterable, Identifiable {
         case trends = "Trends", history = "History", you = "You"
@@ -284,11 +285,14 @@ struct ProgressScreen: View {
 
     // MARK: - You — what Momentum has learned (ATHLETE-MODEL.md §8)
 
-    /// One surfaced belief: a labelled fact with its confidence.
+    /// One surfaced belief: a labelled fact with its confidence, the memory category it maps to, and
+    /// the backing note id (if any) for "forget this".
     private struct LearnedItem: Identifiable {
         let title: String
         let value: String
         let confidence: Confidence
+        var category: MemoryCategory = .habit
+        var noteID: UUID? = nil
         var id: String { title }
     }
 
@@ -306,6 +310,12 @@ struct ProgressScreen: View {
             .padding(Theme.Space.lg)
             .padding(.bottom, Theme.Space.xxl)
         }
+        .sheet(item: $correcting) { item in
+            if let profile = profiles.first {
+                CorrectionSheet(belief: item.value, category: item.category, noteID: item.noteID, profile: profile)
+                    .presentationDetents([.medium])
+            }
+        }
         .onAppear {
             // Keep the model fresh and ensure seeds exist (both idempotent, local-only).
             guard let p = profiles.first else { return }
@@ -315,13 +325,21 @@ struct ProgressScreen: View {
     }
 
     private func identityHero(_ model: AthleteModel?, _ facts: AthleteFacts) -> some View {
-        let text = model?.notes.first { $0.isActive && $0.category == MemoryCategory.identity.rawValue }?.text
+        // A pinned user correction wins; then any AI/onboarding identity note; then the seed.
+        let notes = model?.notes.filter { $0.isActive && $0.category == MemoryCategory.identity.rawValue } ?? []
+        let pinned = notes.first(where: { $0.pinned && $0.source == MemorySource.user.rawValue })
+        let text = pinned?.text
+            ?? notes.first?.text
             ?? profiles.first.map { AthleteModelService.identitySeed($0) }
             ?? "Getting to know you."
         return VStack(alignment: .leading, spacing: Theme.Space.sm) {
             Text("WHAT MOMENTUM KNOWS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
             Text(text).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
+            if profiles.first != nil {
+                notQuiteRightButton(value: text, category: .identity, noteID: pinned?.id)
+                    .padding(.top, 2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.lg)
@@ -329,6 +347,19 @@ struct ProgressScreen: View {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.32)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
+    }
+
+    /// A quiet "not quite right?" affordance that opens the correction sheet.
+    private func notQuiteRightButton(value: String, category: MemoryCategory, noteID: UUID?) -> some View {
+        Button {
+            Haptics.light()
+            correcting = LearnedItem(title: "correction", value: value, confidence: .confident,
+                                     category: category, noteID: noteID)
+        } label: {
+            Text("Not quite right?").font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkTertiary).underline()
+        }
+        .buttonStyle(.plain)
     }
 
     private func learningState(_ facts: AthleteFacts) -> some View {
@@ -354,6 +385,8 @@ struct ProgressScreen: View {
             }
             Text(item.value).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
+            notQuiteRightButton(value: item.value, category: item.category, noteID: item.noteID)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.lg)
@@ -395,49 +428,84 @@ struct ProgressScreen: View {
     }
 
     /// Builds the surfaced cards from confident/growing facts (emerging signals are held back).
+    /// A category the user has corrected (a pinned user note) hides the derived card and shows the
+    /// correction instead — so a correction visibly "sticks".
     private func learnedItems(_ facts: AthleteFacts, _ model: AthleteModel?) -> [LearnedItem] {
         var items: [LearnedItem] = []
+        let pinnedUser = (model?.notes ?? []).filter {
+            $0.isActive && $0.pinned && $0.source == MemorySource.user.rawValue
+        }
+        let corrected = Set(pinnedUser.map(\.category))
+        func addDerived(_ item: LearnedItem) {
+            if !corrected.contains(item.category.rawValue) { items.append(item) }
+        }
 
-        // Rhythm
+        // Rhythm (.habit)
         let rhythmC = confidence(.rhythm, facts)
         if rhythmC != .emerging, let daypart = daypartLabel(facts.trainingHourHistogram) {
             let mins = Int(facts.preferredSessionMinutes)
             let lenBit = mins > 0 ? ", usually \(mins) min" : ""
-            items.append(.init(title: "YOUR RHYTHM", value: "\(daypart) workouts\(lenBit).", confidence: rhythmC))
+            addDerived(.init(title: "YOUR RHYTHM", value: "\(daypart) workouts\(lenBit).",
+                             confidence: rhythmC, category: .habit))
         }
 
-        // Getting fitter (easy pace at matched effort)
+        // Getting fitter — easy pace at matched effort (.response)
         let paceC = confidence(.paceAtEffort, facts)
         if paceC != .emerging, facts.paceAtEffortTrendPct <= -1 {
             let pct = Int(abs(facts.paceAtEffortTrendPct).rounded())
-            items.append(.init(title: "YOU'RE GETTING FITTER",
-                               value: "Easy pace down \(pct)% at the same effort over recent weeks.", confidence: paceC))
+            addDerived(.init(title: "YOU'RE GETTING FITTER",
+                             value: "Easy pace down \(pct)% at the same effort over recent weeks.",
+                             confidence: paceC, category: .response))
         }
 
-        // Strength trending up
-        if let top = facts.e1rmTrendByExercise.filter({ $0.value >= 1 }).max(by: { $0.value < $1.value }) {
+        // Strength trending up (.response)
+        if !corrected.contains(MemoryCategory.response.rawValue),
+           let top = facts.e1rmTrendByExercise.filter({ $0.value >= 1 }).max(by: { $0.value < $1.value }) {
             let pct = Int(top.value.rounded())
-            items.append(.init(title: "STRENGTH TRENDING UP",
-                               value: "\(top.key) e1RM up \(pct)% lately.", confidence: confidence(.strengthProgress, facts)))
+            items.append(.init(title: "STRENGTH TRENDING UP", value: "\(top.key) e1RM up \(pct)% lately.",
+                               confidence: confidence(.strengthProgress, facts), category: .response))
         }
 
-        // Discipline mix
+        // Discipline mix (.preference)
         let mixC = confidence(.disciplineMix, facts)
         if mixC != .emerging, !facts.disciplineShare.isEmpty {
             let parts = facts.disciplineShare.sorted { $0.value > $1.value }.prefix(3).map { kv -> String in
                 let name = WorkoutType(rawValue: kv.key)?.title ?? kv.key.capitalized
                 return "\(name) \(Int((kv.value * 100).rounded()))%"
             }
-            items.append(.init(title: "HOW YOU TRAIN", value: parts.joined(separator: " · "), confidence: mixC))
+            addDerived(.init(title: "HOW YOU TRAIN", value: parts.joined(separator: " · "),
+                             confidence: mixC, category: .preference))
         }
 
-        // What drives you (onboarding-seeded motivation)
-        if let m = model?.notes.first(where: { $0.isActive && $0.category == MemoryCategory.motivation.rawValue }) {
+        // What drives you — onboarding-seeded motivation (.motivation)
+        if !corrected.contains(MemoryCategory.motivation.rawValue),
+           let m = model?.notes.first(where: {
+               $0.isActive && $0.source != MemorySource.user.rawValue && $0.category == MemoryCategory.motivation.rawValue
+           }) {
             items.append(.init(title: "WHAT DRIVES YOU", value: m.text,
-                               confidence: Confidence(rawValue: m.confidence) ?? .emerging))
+                               confidence: Confidence(rawValue: m.confidence) ?? .emerging,
+                               category: .motivation, noteID: m.id))
+        }
+
+        // The user's own corrections, shown so they visibly stick (identity lives in the hero).
+        for note in pinnedUser where note.category != MemoryCategory.identity.rawValue {
+            let cat = MemoryCategory(rawValue: note.category) ?? .habit
+            items.append(.init(title: "\(categoryTitle(cat)) · YOU TOLD US", value: note.text,
+                               confidence: .confident, category: cat, noteID: note.id))
         }
 
         return items
+    }
+
+    private func categoryTitle(_ c: MemoryCategory) -> String {
+        switch c {
+        case .habit: "YOUR RHYTHM"
+        case .preference: "HOW YOU TRAIN"
+        case .response: "YOUR BODY"
+        case .motivation: "WHAT DRIVES YOU"
+        case .risk: "HEADS UP"
+        case .identity: "WHO YOU ARE"
+        }
     }
 
     /// The part of day the athlete trains most, if there's a clear peak.

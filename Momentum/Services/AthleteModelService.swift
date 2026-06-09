@@ -24,13 +24,48 @@ final class AthleteModelService: AthleteModelServing {
         try? context.save()
     }
 
+    /// The profile's model, created and attached on first use.
+    private func model(for profile: UserProfile, in context: ModelContext) -> AthleteModel {
+        if let m = profile.athlete { return m }
+        let m = AthleteModel()
+        context.insert(m)
+        profile.athlete = m
+        return m
+    }
+
+    func addCorrection(_ text: String, category: MemoryCategory, for profile: UserProfile, in context: ModelContext) {
+        guard let clean = MemoryConsolidation.clean(text) else { return }
+        let m = model(for: profile, in: context)
+        // One active pinned correction per category — replace if it exists.
+        if let existing = m.notes.first(where: {
+            $0.isActive && $0.pinned && $0.source == MemorySource.user.rawValue && $0.category == category.rawValue
+        }) {
+            existing.text = clean
+            existing.updatedAt = Date()
+        } else {
+            let note = MemoryNote()
+            note.category = category.rawValue
+            note.text = clean
+            note.source = MemorySource.user.rawValue
+            note.confidence = Confidence.confident.rawValue
+            note.pinned = true
+            note.isActive = true
+            context.insert(note)
+            m.notes.append(note)
+        }
+        try? context.save()
+    }
+
+    func forget(noteID: UUID, in context: ModelContext) {
+        let notes = (try? context.fetch(FetchDescriptor<MemoryNote>())) ?? []
+        guard let note = notes.first(where: { $0.id == noteID }) else { return }
+        note.isActive = false
+        note.updatedAt = Date()
+        try? context.save()
+    }
+
     func seedOnboarding(for profile: UserProfile, in context: ModelContext) {
-        let model = profile.athlete ?? {
-            let m = AthleteModel()
-            context.insert(m)
-            profile.athlete = m
-            return m
-        }()
+        let model = self.model(for: profile, in: context)
         // Idempotent: don't re-seed if onboarding notes already exist.
         guard !model.notes.contains(where: { $0.source == MemorySource.onboarding.rawValue }) else { return }
 

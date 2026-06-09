@@ -107,6 +107,11 @@ protocol AthleteModelServing: AnyObject {
     func ingest(profile: UserProfile, in context: ModelContext, now: Date)
     /// Seed initial memory notes from onboarding answers. Idempotent.
     func seedOnboarding(for profile: UserProfile, in context: ModelContext)
+    /// Record a user correction as a pinned note (the AI must honor it; never auto-retired).
+    /// Replaces any existing active pinned user note in the same category.
+    func addCorrection(_ text: String, category: MemoryCategory, for profile: UserProfile, in context: ModelContext)
+    /// "Forget this" — soft-retire a note so it's no longer surfaced or sent (kept for audit).
+    func forget(noteID: UUID, in context: ModelContext)
 }
 
 extension AthleteModelServing {
@@ -147,6 +152,8 @@ final class StubNotificationService: NotificationServing {}
 final class StubAthleteModelService: AthleteModelServing {
     func ingest(profile: UserProfile, in context: ModelContext, now: Date) {}
     func seedOnboarding(for profile: UserProfile, in context: ModelContext) {}
+    func addCorrection(_ text: String, category: MemoryCategory, for profile: UserProfile, in context: ModelContext) {}
+    func forget(noteID: UUID, in context: ModelContext) {}
 }
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {
