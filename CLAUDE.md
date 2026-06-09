@@ -39,6 +39,8 @@ One-liner: **keep moving.**
 - Quality bars: GPS distance ±2%; log-a-set < 3s; cold-start-to-start < 2s; crash-free > 99.5%.
 
 ## Decisions made
+- **Design direction (2026-06-09): LIGHT/white is the hero aesthetic** (overrides the PRD's dark-hero §5.1). Clean white canvas, faint-gray cards, near-black ink, soft iridescent gradient accents. App forced to `.light` in `MomentumApp`. The in-app brand element is the **glowing `IridescentOrb`** — do NOT use the M mark in-app (icon may change). Display typography is bold rounded (`Font.display` = SF Rounded heavy/black, "Cadence"-like); swap to a bundled `.ttf` in `Typography.swift` if provided. Today is workout-first (greeting + streak + quick-start tiles + prescribed hero + done-today); History is a Strava-style feed with real route-map snapshots (`RouteSnapshotter`); Plan is a clean date-badge planner.
+- `DemoSeed` (DEBUG + `--seed-demo` launch arg) seeds a profile + sample workouts at container init — for visual iteration only; never ships.
 - **Minimum deployment target: iOS 18.0** (locked 2026-06-09). We use `MeshGradient` natively for the true oil-slick iridescence — no `AngularGradient` fallback needed as primary. Build with Xcode 26.2.
 - Project is generated via **XcodeGen** from `project.yml` — regenerate with `xcodegen generate`, don't hand-edit `.xcodeproj`.
 
