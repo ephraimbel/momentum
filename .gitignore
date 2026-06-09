@@ -1,0 +1,23 @@
+# Xcode / build
+.build/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# XcodeGen generates the project from project.yml — regenerate with `xcodegen generate`.
+Momentum.xcodeproj/
+
+# SwiftPM
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Secrets (Supabase / RevenueCat / Superwall keys land here in later phases)
+*.xcconfig.local
+Secrets.plist
+.env

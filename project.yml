@@ -1,0 +1,79 @@
+name: Momentum
+options:
+  bundleIdPrefix: com.momentum
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
+
+targets:
+  Momentum:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Momentum
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        CODE_SIGN_ENTITLEMENTS: Momentum/Resources/Momentum.entitlements
+        ENABLE_PREVIEWS: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    info:
+      path: Momentum/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        UIBackgroundModes:
+          - location
+        NSLocationWhenInUseUsageDescription: "momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed."
+        NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
+        NSHealthShareUsageDescription: "momentum reads heart rate, body weight, and workout data to personalize your stats and coaching."
+        NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
+        UIUserInterfaceStyle: Automatic
+    # ── Later-phase dependencies (NOT in the Phase 0 build) ──────────────
+    # Add when their phase begins, then re-run `xcodegen generate`:
+    #   Phase 2/4 — supabase-swift  (https://github.com/supabase/supabase-swift)
+    #   Phase 3   — RevenueCat      (https://github.com/RevenueCat/purchases-ios)
+    #   Phase 3   — Superwall       (https://github.com/superwall/Superwall-iOS)
+    # dependencies:
+    #   - package: supabase-swift
+    #   - package: RevenueCat
+    #   - package: Superwall
+
+  MomentumTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MomentumTests
+    dependencies:
+      - target: Momentum
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Momentum:
+    build:
+      targets:
+        Momentum: all
+        MomentumTests: [test]
+    test:
+      targets:
+        - MomentumTests
