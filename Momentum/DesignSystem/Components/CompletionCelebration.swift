@@ -45,15 +45,15 @@ struct CompletionCelebration: View {
         Haptics.celebration()
         if reduceMotion {
             ring = 1; check = 1; bloom = 1
-            try? await Task.sleep(for: .seconds(0.9))
+            try? await Task.sleep(for: .seconds(0.5))
         } else {
-            withAnimation(.easeOut(duration: 0.65)) { ring = 1; bloom = 1 }
-            try? await Task.sleep(for: .seconds(0.28))
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.6)) { check = 1 }
-            try? await Task.sleep(for: .seconds(0.8))
+            withAnimation(.easeOut(duration: 0.5)) { ring = 1; bloom = 1 }
+            try? await Task.sleep(for: .seconds(0.18))
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.6)) { check = 1 }
+            try? await Task.sleep(for: .seconds(0.42))
         }
-        withAnimation(.easeIn(duration: 0.32)) { fade = 0 }
-        try? await Task.sleep(for: .seconds(0.32))
+        withAnimation(.easeIn(duration: 0.26)) { fade = 0 }
+        try? await Task.sleep(for: .seconds(0.26))
         onDone()
     }
 }
