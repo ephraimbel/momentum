@@ -20,6 +20,7 @@ struct TodayView: View {
     @State private var locator = LocationService()
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
+    @State private var showCoach = false
 
     enum GoalKind { case open, distance }
 
@@ -58,6 +59,9 @@ struct TodayView: View {
             if let session = pendingPlanStart { pendingPlanStart = nil; startPlanned(session) }
         }) { session in
             planConfirmSheet(session)
+        }
+        .fullScreenCover(isPresented: $showCoach) {
+            CoachChatView { showCoach = false }
         }
     }
 
@@ -131,14 +135,30 @@ struct TodayView: View {
 
     private var topBar: some View {
         VStack {
-            HStack {
+            HStack(spacing: Theme.Space.sm) {
                 activitySelector
                 Spacer()
+                coachButton
                 StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
             }
             .padding(Theme.Space.md)
             Spacer()
         }
+    }
+
+    /// Opens the AI coach chat.
+    private var coachButton: some View {
+        Button { Haptics.light(); showCoach = true } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                .padding(10)
+                .background {
+                    Circle().fill(.regularMaterial)
+                    Circle().fill(IridescentMaterial()).opacity(0.22)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Coach")
     }
 
     private var activitySelector: some View {
