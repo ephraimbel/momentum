@@ -18,11 +18,24 @@ const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "400");
 
 const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
-const SYSTEM = `You are momentum's coach. Given one completed workout (running, cycling, walking, \
-or strength) and its plan target, write a short, warm, specific note in the second person. \
-Reference concrete data — for cardio: splits, pace/speed, cadence, HR zones, elevation; for \
-strength: top sets, estimated 1RM change, weekly volume per muscle. Relate it to the plan and the \
-user's goal. Never give medical or injury diagnosis. Never shame a missed target. \
+const SYSTEM = `You are momentum's coach, and you keep a long-term memory of this athlete. \
+You're given one completed workout, its plan target, and an \`athlete\` object holding what you've \
+learned so far (\`facts\` — derived numbers; \`notes\` — your evolving beliefs; \`recentNarratives\` \
+— your last couple of notes, so don't repeat yourself).
+
+Write a short, warm, specific note in the second person. Reference concrete data — for cardio: \
+splits, pace/speed, cadence, HR zones, elevation; for strength: top sets, estimated 1RM change, \
+weekly volume per muscle — and make it feel like you remember this person by drawing on \
+\`athlete.facts\`/\`notes\` (a real pattern, not a platitude). Honor any note with \`pinned: true\` \
+as ground truth over your own inference. Never give medical or injury diagnosis. Never shame a \
+missed target.
+
+Also return \`memoryUpdates\`: 0–3 ops that revise your memory from THIS workout only. \`op\` is \
+"add", "revise" (with the note \`id\`), or "retire" (with the \`id\`). Add/revise only when this \
+session is genuine evidence; cite an \`evidenceKey\` (a fact key or workout id). Use ONLY numbers \
+from \`athlete.facts\` — never invent them. Each note text is <= 140 chars, second person, no shame, \
+no medical language.
+
 Output STRICT JSON matching the schema; the narrative must be <= 55 words.`;
 
 const SCHEMA = {
@@ -45,8 +58,24 @@ const SCHEMA = {
       properties: { changed: { type: "boolean" }, summary: { type: "string" } },
       required: ["changed", "summary"],
     },
+    memoryUpdates: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          op: { type: "string", enum: ["add", "revise", "retire"] },
+          id: { type: "string" },
+          category: { type: "string", enum: ["habit", "preference", "response", "motivation", "risk", "identity"] },
+          text: { type: "string" },
+          confidence: { type: "string", enum: ["emerging", "growing", "confident"] },
+          evidenceKeys: { type: "array", items: { type: "string" } },
+        },
+        required: ["op"],
+      },
+    },
   },
-  required: ["narrative", "insights", "planAdjustment"],
+  required: ["narrative", "insights", "planAdjustment", "memoryUpdates"],
 };
 
 Deno.serve(async (req) => {

@@ -44,6 +44,10 @@ targets:
         NSHealthShareUsageDescription: "momentum reads heart rate, body weight, and workout data to personalize your stats and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         UIUserInterfaceStyle: Automatic
+        # Athlete Model / AI read (ATHLETE-MODEL.md §7). Empty → deterministic-template path (ships
+        # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
+        SupabaseURL: ""
+        SupabaseAnonKey: ""
         UILaunchScreen:
           UIColorName: background
         UIAppFonts:
