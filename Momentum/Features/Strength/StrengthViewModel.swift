@@ -60,6 +60,22 @@ final class StrengthViewModel {
         await refresh()
     }
 
+    /// Pre-load a planned strength day: each target exercise with its prescribed set count and
+    /// rep target (PRD §4.4 "from today's plan day").
+    func loadPlanned(_ session: PlannedSession) async {
+        for pe in session.strengthTargets.sorted(by: { $0.order < $1.order }) {
+            guard let exercise = pe.exercise else { continue }
+            await addExercise(exercise)
+            guard let rowId = exercises.last?.id else { continue }
+            for _ in 1..<max(1, pe.targetSets) { await addSet(rowId: rowId) }
+            if let row = exercises.first(where: { $0.id == rowId }) {
+                for set in row.sets where (drafts[set.id]?.reps ?? "").isEmpty {
+                    drafts[set.id, default: .init()].reps = String(pe.targetRepLow)
+                }
+            }
+        }
+    }
+
     private func addSetInternal(rowId: UUID) async {
         let snapshot = await engine.exercises
         guard let ex = snapshot.first(where: { $0.id == rowId }) else { return }

@@ -5,6 +5,7 @@ import SwiftData
 /// Owns a `StrengthViewModel`; presents the library to add exercises and a summary on finish.
 struct StrengthLiveView: View {
     let container: ModelContainer
+    var plannedSession: PlannedSession? = nil
     var onFinish: (UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -26,6 +27,7 @@ struct StrengthLiveView: View {
             guard vm == nil else { return }
             let model = StrengthViewModel(container: container)
             await model.start()
+            if let plannedSession { await model.loadPlanned(plannedSession) }
             vm = model
         }
     }
