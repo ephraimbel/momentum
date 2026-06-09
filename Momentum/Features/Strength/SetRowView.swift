@@ -14,7 +14,7 @@ struct SetRowView: View {
         HStack(spacing: Theme.Space.sm) {
             marker
             field(.weight, placeholder: vm.weightUnitLabel, binding: bind(\.weight), width: 60)
-            Text("×").foregroundStyle(Theme.inkTertiary)
+            Text("×").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
             field(.reps, placeholder: "reps", binding: bind(\.reps), width: 50)
             field(.rpe, placeholder: "rpe", binding: bind(\.rpe), width: 42)
             Spacer(minLength: 0)
@@ -29,12 +29,12 @@ struct SetRowView: View {
     private var marker: some View {
         HStack(spacing: Theme.Space.sm) {
             Text(set.type == .warmup ? "W" : "\(set.index + 1)")
-                .font(.system(size: Theme.FontSize.caption, weight: .bold))
+                .font(.rounded(Theme.FontSize.caption, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(Theme.inkTertiary)
                 .frame(width: 22)
             Text(vm.ghost(rowId: rowId, setIndex: set.index) ?? "—")
-                .font(.system(size: Theme.FontSize.caption))
+                .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
                 .frame(width: 64, alignment: .leading)
                 .lineLimit(1)
@@ -61,6 +61,7 @@ struct SetRowView: View {
             Image(systemName: set.isComplete ? "checkmark.circle.fill" : "checkmark.circle")
                 .font(.system(size: 26))
                 .foregroundStyle(set.isComplete ? Theme.ink : Theme.inkTertiary)
+                .symbolEffect(.bounce, value: set.isComplete)
         }
         .buttonStyle(.plain)
         .disabled(set.isComplete)
@@ -72,7 +73,7 @@ struct SetRowView: View {
         TextField(placeholder, text: binding)
             .keyboardType(f == .reps ? .numberPad : .decimalPad)
             .multilineTextAlignment(.center)
-            .font(.system(size: Theme.FontSize.body, weight: .semibold))
+            .font(.rounded(Theme.FontSize.body, weight: .bold))
             .monospacedDigit()
             .focused($focused, equals: f)
             .frame(width: width, height: 38)

@@ -18,11 +18,15 @@ struct StrengthLiveView: View {
             Theme.background.ignoresSafeArea()
             if let vm {
                 content(vm)
-                if vm.restEndsAt != nil { RestBar(vm: vm) }
+                if vm.restEndsAt != nil {
+                    RestBar(vm: vm)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             } else {
                 ProgressView()
             }
         }
+        .animation(Motion.standard, value: vm?.restEndsAt)
         .task {
             guard vm == nil else { return }
             let model = StrengthViewModel(container: container)
@@ -43,11 +47,13 @@ struct StrengthLiveView: View {
                     LazyVStack(spacing: Theme.Space.lg) {
                         ForEach(vm.exercises) { exercise in
                             ExerciseSection(vm: vm, exercise: exercise)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                         addExerciseButton(vm).padding(.top, Theme.Space.sm)
                     }
                     .padding(Theme.Space.md)
                     .padding(.bottom, 120)
+                    .animation(Motion.standard, value: vm.exercises.count)
                 }
             }
         }
@@ -73,12 +79,15 @@ struct StrengthLiveView: View {
                 let elapsed = ctx.date.timeIntervalSince(vm.startedAt)
                 VStack(spacing: 2) {
                     Text(Formatters.duration(s: elapsed))
-                        .font(.system(size: Theme.FontSize.title, weight: .semibold, design: .rounded))
+                        .font(.display(Theme.FontSize.title, weight: .heavy))
                         .monospacedDigit()
                         .foregroundStyle(Theme.ink)
                     Text("\(Int(vm.liveVolumeDisplay)) \(vm.weightUnitLabel) vol · \(vm.completedSetCount) sets")
-                        .font(.system(size: Theme.FontSize.caption))
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .monospacedDigit()
                         .foregroundStyle(Theme.inkTertiary)
+                        .contentTransition(.numericText())
+                        .animation(.snappy(duration: 0.3), value: vm.completedSetCount)
                 }
             }
             Spacer()
@@ -95,7 +104,9 @@ struct StrengthLiveView: View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
             Image(systemName: "dumbbell.fill").font(.system(size: 40)).foregroundStyle(Theme.inkTertiary)
-            Text("Add your first exercise").foregroundStyle(Theme.inkSecondary)
+            Text("Add your first exercise")
+                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
             addExerciseButton(vm).frame(maxWidth: 260)
             Spacer()
         }
@@ -128,7 +139,7 @@ private struct ExerciseSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             Text(exercise.name)
-                .font(.system(size: Theme.FontSize.headline, weight: .semibold))
+                .font(.rounded(Theme.FontSize.headline, weight: .bold))
                 .foregroundStyle(Theme.ink)
             ForEach(exercise.sets) { set in
                 SetRowView(vm: vm, rowId: exercise.id, set: set)
@@ -138,13 +149,14 @@ private struct ExerciseSection: View {
                 Task { await vm.addSet(rowId: exercise.id) }
             } label: {
                 Label("Add set", systemImage: "plus")
-                    .font(.system(size: Theme.FontSize.caption, weight: .medium))
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
             }
             .padding(.top, Theme.Space.xs)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .animation(Motion.standard, value: exercise.sets.count)
     }
 }
 
