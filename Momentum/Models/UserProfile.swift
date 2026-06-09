@@ -25,6 +25,7 @@ final class UserProfile {
     @Relationship(deleteRule: .cascade) var workouts: [Workout] = []
     @Relationship(deleteRule: .cascade) var plan: TrainingPlan?
     @Relationship(deleteRule: .cascade) var prs: [PersonalRecord] = []
+    @Relationship(deleteRule: .cascade) var athlete: AthleteModel?
 
     init() {}
 }

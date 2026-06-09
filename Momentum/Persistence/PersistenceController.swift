@@ -17,6 +17,7 @@ final class PersistenceController {
         Exercise.self,
         TrainingPlan.self, PlannedSession.self, PlannedExercise.self,
         PersonalRecord.self,
+        AthleteModel.self, MemoryNote.self, FitnessSnapshot.self,
     ]
 
     private init(inMemory: Bool = false) {
