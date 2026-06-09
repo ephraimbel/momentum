@@ -6,8 +6,13 @@ import Charts
 /// that says how you're trending and how to tweak the plan, beautifully animated trend charts, a
 /// consistency heatmap, PR shelves, and lifetime totals.
 struct ProgressScreen: View {
+    @Environment(\.modelContext) private var context
     @Query private var workouts: [Workout]
+    @Query private var profiles: [UserProfile]
     @State private var animateCharts = false
+    @State private var adjustedPlan = false
+
+    private var plan: TrainingPlan? { profiles.first?.plan }
 
     private var weightUnit: WeightUnit { .default() }
     private var distanceUnit: DistanceUnit { .auto }
@@ -81,17 +86,44 @@ struct ProgressScreen: View {
             Text(ProgressNarrator.coach(insights, streak: stats.currentStreak))
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.forward").font(.system(size: 11, weight: .bold))
-                Text(ProgressNarrator.action(insights.recommendation)).font(.rounded(Theme.FontSize.caption, weight: .bold))
-            }
-            .foregroundStyle(Theme.ink)
-            .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
-            .background { Capsule().fill(IridescentMaterial()).opacity(0.3); Capsule().stroke(Theme.hairline) }
+            recommendationChip(insights.recommendation)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.lg)
         .background(card)
+    }
+
+    /// The recommendation chip. For actionable recs (increase/ease/rest) it's a button that
+    /// reshapes the upcoming plan; hold/start are informational only.
+    @ViewBuilder
+    private func recommendationChip(_ rec: ProgressInsights.Recommendation) -> some View {
+        let actionable = rec == .increase || rec == .ease || rec == .rest
+        if adjustedPlan {
+            chipLabel("Plan updated", icon: "checkmark")
+        } else if actionable {
+            Button {
+                let changed = PlanCoaching.apply(rec, to: plan, in: context)
+                if changed > 0 {
+                    Haptics.success()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { adjustedPlan = true }
+                }
+            } label: {
+                chipLabel(ProgressNarrator.action(rec), icon: "wand.and.stars")
+            }
+            .buttonStyle(.plain)
+        } else {
+            chipLabel(ProgressNarrator.action(rec), icon: "arrow.up.forward")
+        }
+    }
+
+    private func chipLabel(_ text: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 11, weight: .bold))
+            Text(text).font(.rounded(Theme.FontSize.caption, weight: .bold))
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
+        .background { Capsule().fill(IridescentMaterial()).opacity(0.3); Capsule().stroke(Theme.hairline) }
     }
 
     // MARK: Charts

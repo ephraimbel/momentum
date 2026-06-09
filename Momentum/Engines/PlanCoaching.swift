@@ -78,6 +78,74 @@ enum PlanCoaching {
         if changed { try? context.save() }
     }
 
+    /// Apply the Progress coach's recommendation to **future** planned sessions (PRD §4.7, §9).
+    /// Adjusts only sessions dated today-or-later and still `.planned` — completed work and history
+    /// are never touched. Deterministic: rules reshape the plan, the coach only narrates it.
+    /// Returns the number of sessions changed (0 ⇒ nothing upcoming, or an advisory-only rec).
+    ///
+    /// Note: the recommendation is derived from *completed* load, not from the plan, so applying
+    /// the same rec repeatedly compounds. The UI confirms once and disables re-tapping per render.
+    @discardableResult
+    static func apply(_ rec: ProgressInsights.Recommendation, to plan: TrainingPlan?,
+                      from date: Date = Date(), in context: ModelContext,
+                      calendar: Calendar = .current) -> Int {
+        guard let plan else { return 0 }
+        let todayStart = calendar.startOfDay(for: date)
+        let future = plan.sessions
+            .filter { $0.status == .planned && $0.completedWorkout == nil
+                      && calendar.startOfDay(for: $0.date) >= todayStart }
+            .sorted { $0.date < $1.date }
+        guard !future.isEmpty else { return 0 }
+        let p5k = plan.p5kSPerKm
+
+        // Scale a cardio session's targets and soften any hard quality work to easy.
+        func soften(_ s: PlannedSession, factor: Double, note: String) {
+            if let d = s.targetDistanceM { s.targetDistanceM = (d * factor).rounded() }
+            if let dur = s.targetDurationS { s.targetDurationS = (dur * factor).rounded() }
+            if s.runType == .intervals || s.runType == .tempo || s.runType == .long {
+                s.runType = .easy
+                s.intervals = nil
+                s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+            }
+            s.rationale = note
+        }
+
+        switch rec {
+        case .increase:
+            for s in future {
+                if let d = s.targetDistanceM { s.targetDistanceM = (d * 1.1).rounded() }
+                if let dur = s.targetDurationS { s.targetDurationS = (dur * 1.1).rounded() }
+                for pe in s.strengthTargets { pe.targetSets = min(6, pe.targetSets + 1) }
+                s.rationale = "Nudged up ~10% — your load says you've earned more."
+            }
+        case .ease:
+            for s in future {
+                soften(s, factor: 0.85, note: "Eased ~15% to absorb your recent load.")
+                for pe in s.strengthTargets { pe.targetSets = max(2, pe.targetSets - 1) }
+            }
+        case .rest:
+            for s in future {
+                soften(s, factor: 0.8, note: "Pulled back to bank recovery.")
+                for pe in s.strengthTargets { pe.targetSets = max(2, pe.targetSets - 1) }
+            }
+            // Make the very next session a true recovery day.
+            let next = future[0]
+            if next.strengthTargets.isEmpty {
+                next.runType = .recovery
+                next.intervals = nil
+                next.targetDistanceM = min(next.targetDistanceM ?? 3200, 3200)
+                next.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
+            } else {
+                for pe in next.strengthTargets { pe.targetSets = 2 }
+            }
+            next.rationale = "Recovery day — rest is where the gains land."
+        case .hold, .start:
+            return 0   // advisory only — nothing to change
+        }
+        try? context.save()
+        return future.count
+    }
+
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.
     static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto) -> String {
         if session.discipline == .strength {

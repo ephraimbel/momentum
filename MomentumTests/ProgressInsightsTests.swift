@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SwiftData
 @testable import Momentum
 
 /// Verifies the ACWR training-status logic that drives the Progress coach (PRD §9).
@@ -40,5 +41,62 @@ struct ProgressInsightsTests {
         let i = ProgressInsights(workouts: [run(daysAgo: 2, minutes: 40)])
         #expect(i.weeks.count == 8)
         #expect(i.weeks.last!.load > 0)   // current week has the workout
+    }
+
+    // MARK: applying a recommendation to the plan
+
+    private func inMemoryContainer() -> ModelContainer {
+        try! ModelContainer(
+            for: TrainingPlan.self, PlannedSession.self, PlannedExercise.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    }
+
+    private func futureRun(in ctx: ModelContext, distanceM: Double) -> TrainingPlan {
+        let plan = TrainingPlan()
+        plan.p5kSPerKm = 300
+        let s = PlannedSession()
+        s.date = Date().addingTimeInterval(2 * 86_400)
+        s.discipline = .running
+        s.runType = .intervals
+        s.targetDistanceM = distanceM
+        s.targetPaceSPerKm = 300
+        s.status = .planned
+        plan.sessions = [s]
+        ctx.insert(plan)
+        return plan
+    }
+
+    @Test func increaseScalesFutureUpAndKeepsHardWork() {
+        let container = inMemoryContainer()
+        let plan = futureRun(in: container.mainContext, distanceM: 5000)
+        let changed = PlanCoaching.apply(.increase, to: plan, in: container.mainContext)
+        #expect(changed == 1)
+        #expect(plan.sessions[0].targetDistanceM == 5500)   // +10%
+        #expect(plan.sessions[0].runType == .intervals)     // intensity preserved
+    }
+
+    @Test func easeScalesDownAndSoftensIntensity() {
+        let container = inMemoryContainer()
+        let plan = futureRun(in: container.mainContext, distanceM: 5000)
+        PlanCoaching.apply(.ease, to: plan, in: container.mainContext)
+        #expect(plan.sessions[0].targetDistanceM == 4250)   // -15%
+        #expect(plan.sessions[0].runType == .easy)          // hard work softened
+        #expect(plan.sessions[0].intervals == nil)
+    }
+
+    @Test func restConvertsNextSessionToRecovery() {
+        let container = inMemoryContainer()
+        let plan = futureRun(in: container.mainContext, distanceM: 8000)
+        PlanCoaching.apply(.rest, to: plan, in: container.mainContext)
+        #expect(plan.sessions[0].runType == .recovery)
+        #expect(plan.sessions[0].targetDistanceM! <= 3200)
+    }
+
+    @Test func holdLeavesPlanUntouched() {
+        let container = inMemoryContainer()
+        let plan = futureRun(in: container.mainContext, distanceM: 5000)
+        let changed = PlanCoaching.apply(.hold, to: plan, in: container.mainContext)
+        #expect(changed == 0)
+        #expect(plan.sessions[0].targetDistanceM == 5000)
     }
 }
