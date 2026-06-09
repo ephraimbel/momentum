@@ -10,7 +10,8 @@ import Observation
 final class CardioViewModel {
     let type: WorkoutType
     let distanceUnit: DistanceUnit
-    let startedAt = Date()
+    /// When recording actually began (set in `start()`, i.e. right after the countdown).
+    private(set) var startedAt = Date()
 
     private let engine: GPSTrackingEngine
     private let store: GPSWorkoutStore
@@ -20,6 +21,11 @@ final class CardioViewModel {
     private(set) var lastAccuracyM: Double?
     private(set) var workoutId: UUID?
     private var pumpTask: Task<Void, Never>?
+
+    // Elapsed-time clock — ticks continuously from start, freezing while paused (manual or auto).
+    // Independent of GPS-fix cadence so the timer always advances every second.
+    private var pausedTotalS: TimeInterval = 0
+    private var pauseStartedAt: Date?
 
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto) {
         self.type = type
@@ -31,6 +37,7 @@ final class CardioViewModel {
     }
 
     func start() async {
+        startedAt = Date()
         location.requestAuthorization()
         await engine.begin(now: startedAt)
         workoutId = ActiveWorkoutMarker.pendingID
@@ -41,17 +48,35 @@ final class CardioViewModel {
                 self.lastAccuracyM = fix.accuracyM
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
+                self.syncPauseClock()
             }
         }
     }
 
-    func pause() async { await engine.pause(); snapshot = await engine.snapshot() }
-    func resume() async { await engine.resume(); snapshot = await engine.snapshot() }
+    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock() }
+    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock() }
+
+    /// Elapsed (moving) time since start, frozen while paused — ticks every second regardless of
+    /// GPS fixes. This is the timer shown on the live screen and saved as the workout duration.
+    func elapsed(at now: Date = Date()) -> TimeInterval {
+        let end = pauseStartedAt ?? now
+        return max(0, end.timeIntervalSince(startedAt) - pausedTotalS)
+    }
+
+    /// Open/close a paused span when the recording state changes (manual pause or GPS auto-pause).
+    private func syncPauseClock() {
+        if isPaused {
+            if pauseStartedAt == nil { pauseStartedAt = Date() }
+        } else if let started = pauseStartedAt {
+            pausedTotalS += Date().timeIntervalSince(started)
+            pauseStartedAt = nil
+        }
+    }
 
     func finish() async -> UUID? {
         pumpTask?.cancel()
         location.stop()
-        await engine.finish()
+        await engine.finish(durationOverrideS: elapsed())
         // Render the Strava-style route snapshot from accepted coordinates (PRD §8.5).
         let coords = coordinates
         if coords.count > 1, let data = await RouteSnapshotter.snapshot(coordinates: coords) {
@@ -75,7 +100,8 @@ final class CardioViewModel {
     var heroValue: String {
         switch type {
         case .ride:
-            let speed = movingTimeS > 0 ? distanceM / movingTimeS : 0
+            let t = elapsed()
+            let speed = t > 0 ? distanceM / t : 0
             return Formatters.speed(ms: speed, unit: distanceUnit)
         case .walk, .hike:
             return Formatters.distance(meters: distanceM, unit: distanceUnit)

@@ -135,10 +135,12 @@ actor GPSTrackingEngine {
     func resume() { if state == .paused { state = .tracking; lastMovingMark = Date() } }
     func markGPSLost() { if state == .tracking { state = .gpsLost } }
 
-    func finish() async {
+    /// `durationOverrideS` lets the view model supply its continuous elapsed-time clock (which
+    /// ticks independently of GPS-fix cadence); falls back to engine-accumulated moving time.
+    func finish(durationOverrideS: TimeInterval? = nil) async {
         state = .saving
         await sink.finishWorkout(distanceM: processor.distanceM,
-                                 durationS: movingTimeS,
+                                 durationS: durationOverrideS ?? movingTimeS,
                                  elevationGainM: processor.elevationGainM,
                                  smoothedPaceSPerKm: processor.smoothedPaceSPerKm)
         state = .summary

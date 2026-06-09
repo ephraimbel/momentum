@@ -200,8 +200,8 @@ struct CardioRecordView: View {
                 }
                 HeroMetric(value: distanceNumber(vm), label: unitLabel == "mi" ? "Miles" : "Kilometers")
                 HStack(spacing: Theme.Space.xl) {
-                    TimelineView(.periodic(from: vm.startedAt, by: 1)) { _ in
-                        stat(Formatters.duration(s: vm.movingTimeS), "Time")
+                    TimelineView(.periodic(from: vm.startedAt, by: 1)) { ctx in
+                        stat(Formatters.duration(s: vm.elapsed(at: ctx.date)), "Time")
                     }
                     stat(vm.heroValue, vm.heroLabel)
                 }
