@@ -38,7 +38,6 @@ struct TodayView: View {
             bottomPanel
         }
         .navigationBarHidden(true)
-        .task { locator.requestAuthorization() }
         .onAppear { PlanCoaching.reconcileMissed(plan, today: Date(), in: context) }
         .fullScreenCover(item: $launch) { liveScreen($0) }
         .fullScreenCover(item: $summary) { presented in
@@ -164,13 +163,19 @@ struct TodayView: View {
 
     private func startFree() {
         if activity == .strength { launch = .strength(planned: nil) }
-        else { launch = .cardio(type: activity, goalMeters: goalMeters, planned: nil) }
+        else {
+            locator.requestAuthorization()   // ask for GPS exactly when they Start — never up front
+            launch = .cardio(type: activity, goalMeters: goalMeters, planned: nil)
+        }
     }
 
     private func startPlanned(_ session: PlannedSession) {
         let t = workoutType(for: session.discipline)
         if t == .strength { launch = .strength(planned: session) }
-        else { launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session) }
+        else {
+            locator.requestAuthorization()
+            launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session)
+        }
     }
 
     @ViewBuilder
