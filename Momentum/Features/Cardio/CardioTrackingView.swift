@@ -16,6 +16,7 @@ struct CardioTrackingView: View {
 
     enum Phase { case countdown, tracking }
 
+    @Query private var workouts: [Workout]
     @State private var phase: Phase = .countdown
     @State private var countdown = 3
     @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
@@ -24,8 +25,22 @@ struct CardioTrackingView: View {
     @State private var goalReached = false
     @Environment(\.openURL) private var openURL
 
+    /// Tight street-level framing (~400m across) for running.
+    private static let runSpan = MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
+
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
+
+    /// Most recent prior route's location, used to frame the map until a live fix arrives — so we
+    /// never show the whole country while waiting for GPS.
+    private var lastKnownCoordinate: CLLocationCoordinate2D? {
+        workouts
+            .sorted { $0.startedAt > $1.startedAt }
+            .lazy
+            .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
+            .first
+            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -38,6 +53,13 @@ struct CardioTrackingView: View {
             }
         }
         .task { if vm == nil { beginCountdown() } }
+        .onAppear {
+            // Center on the user (follows live); until a fix lands, fall back to their last route's
+            // neighborhood rather than the default country-wide view.
+            let fallback: MapCameraPosition = lastKnownCoordinate
+                .map { .region(MKCoordinateRegion(center: $0, span: Self.runSpan)) } ?? .automatic
+            camera = .userLocation(fallback: fallback)
+        }
     }
 
     private var mapLayer: some View {
@@ -55,9 +77,9 @@ struct CardioTrackingView: View {
         .ignoresSafeArea()
         .onChange(of: routeCoords.count) {
             guard let last = routeCoords.last else { return }
-            withAnimation(.easeInOut(duration: 0.5)) {
-                camera = .region(MKCoordinateRegion(center: last,
-                    span: MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)))
+            // Smoothly trail the runner; constant span so it pans (never zooms) for a steady feel.
+            withAnimation(.easeInOut(duration: 0.9)) {
+                camera = .region(MKCoordinateRegion(center: last, span: Self.runSpan))
             }
         }
     }
