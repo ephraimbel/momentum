@@ -7,6 +7,7 @@ import Charts
 /// consistency heatmap, PR shelves, and lifetime totals.
 struct ProgressScreen: View {
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @Query private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
     @State private var animateCharts = false
@@ -14,7 +15,7 @@ struct ProgressScreen: View {
     @State private var segment: Segment = .trends
 
     enum Segment: String, CaseIterable, Identifiable {
-        case trends = "Trends", history = "History"
+        case trends = "Trends", history = "History", you = "You"
         var id: Self { self }
     }
 
@@ -34,6 +35,7 @@ struct ProgressScreen: View {
             switch segment {
             case .trends: trends
             case .history: HistoryView()
+            case .you: you
             }
         }
         .background(Theme.background)
@@ -278,5 +280,175 @@ struct ProgressScreen: View {
 
     private var card: some View {
         RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+    }
+
+    // MARK: - You — what Momentum has learned (ATHLETE-MODEL.md §8)
+
+    /// One surfaced belief: a labelled fact with its confidence.
+    private struct LearnedItem: Identifiable {
+        let title: String
+        let value: String
+        let confidence: Confidence
+        var id: String { title }
+    }
+
+    private var you: some View {
+        let facts = AthleteModelEngine(workouts: workouts, plan: plan).facts
+        let model = profiles.first?.athlete
+        let items = learnedItems(facts, model)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                identityHero(model, facts)
+                if confidentCount(facts) < 3 { learningState(facts) }
+                ForEach(items) { learnedCard($0) }
+                if let model, model.snapshots.count >= 2 { trajectory(model) }
+            }
+            .padding(Theme.Space.lg)
+            .padding(.bottom, Theme.Space.xxl)
+        }
+        .onAppear {
+            // Keep the model fresh and ensure seeds exist (both idempotent, local-only).
+            guard let p = profiles.first else { return }
+            services.athleteModel.seedOnboarding(for: p, in: context)
+            services.athleteModel.ingest(profile: p, in: context)
+        }
+    }
+
+    private func identityHero(_ model: AthleteModel?, _ facts: AthleteFacts) -> some View {
+        let text = model?.notes.first { $0.isActive && $0.category == MemoryCategory.identity.rawValue }?.text
+            ?? profiles.first.map { AthleteModelService.identitySeed($0) }
+            ?? "Getting to know you."
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("WHAT MOMENTUM KNOWS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            Text(text).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.lg)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.32)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    private func learningState(_ facts: AthleteFacts) -> some View {
+        let count = facts.signalSampleCounts[AthleteModelEngine.Signal.rhythm.rawValue] ?? 0
+        let need = max(1, 8 - count)
+        return HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "sparkles").foregroundStyle(Theme.inkTertiary)
+            Text("Still learning your rhythm — about \(need) more session\(need == 1 ? "" : "s") and I'll have it.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.lg)
+        .background(card)
+    }
+
+    private func learnedCard(_ item: LearnedItem) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            HStack {
+                Text(item.title).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                Spacer()
+                confidencePip(item.confidence)
+            }
+            Text(item.value).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.lg)
+        .background(card)
+    }
+
+    private func confidencePip(_ c: Confidence) -> some View {
+        let filled = c == .confident ? 3 : (c == .growing ? 2 : 1)
+        return HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle().fill(i < filled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.hairline))
+                    .frame(width: 5, height: 5)
+            }
+        }
+    }
+
+    private func trajectory(_ model: AthleteModel) -> some View {
+        let snapshots = model.snapshots.sorted { $0.weekStart < $1.weekStart }
+        return chartSection("Your trajectory", subtitle: "Weekly load over time") {
+            Chart(snapshots, id: \.weekStart) { snap in
+                LineMark(x: .value("Week", snap.weekStart, unit: .weekOfYear),
+                         y: .value("Load", snap.weeklyLoad))
+                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .interpolationMethod(.catmullRom)
+            }
+            .chartXAxis(.hidden).chartYAxis(.hidden)
+            .frame(height: 130)
+        }
+    }
+
+    // MARK: You — fact → copy
+
+    private func confidence(_ signal: AthleteModelEngine.Signal, _ facts: AthleteFacts) -> Confidence {
+        AthleteModelEngine.confidence(signal, count: facts.signalSampleCounts[signal.rawValue] ?? 0)
+    }
+
+    private func confidentCount(_ facts: AthleteFacts) -> Int {
+        AthleteModelEngine.Signal.allCases.filter { confidence($0, facts) == .confident }.count
+    }
+
+    /// Builds the surfaced cards from confident/growing facts (emerging signals are held back).
+    private func learnedItems(_ facts: AthleteFacts, _ model: AthleteModel?) -> [LearnedItem] {
+        var items: [LearnedItem] = []
+
+        // Rhythm
+        let rhythmC = confidence(.rhythm, facts)
+        if rhythmC != .emerging, let daypart = daypartLabel(facts.trainingHourHistogram) {
+            let mins = Int(facts.preferredSessionMinutes)
+            let lenBit = mins > 0 ? ", usually \(mins) min" : ""
+            items.append(.init(title: "YOUR RHYTHM", value: "\(daypart) workouts\(lenBit).", confidence: rhythmC))
+        }
+
+        // Getting fitter (easy pace at matched effort)
+        let paceC = confidence(.paceAtEffort, facts)
+        if paceC != .emerging, facts.paceAtEffortTrendPct <= -1 {
+            let pct = Int(abs(facts.paceAtEffortTrendPct).rounded())
+            items.append(.init(title: "YOU'RE GETTING FITTER",
+                               value: "Easy pace down \(pct)% at the same effort over recent weeks.", confidence: paceC))
+        }
+
+        // Strength trending up
+        if let top = facts.e1rmTrendByExercise.filter({ $0.value >= 1 }).max(by: { $0.value < $1.value }) {
+            let pct = Int(top.value.rounded())
+            items.append(.init(title: "STRENGTH TRENDING UP",
+                               value: "\(top.key) e1RM up \(pct)% lately.", confidence: confidence(.strengthProgress, facts)))
+        }
+
+        // Discipline mix
+        let mixC = confidence(.disciplineMix, facts)
+        if mixC != .emerging, !facts.disciplineShare.isEmpty {
+            let parts = facts.disciplineShare.sorted { $0.value > $1.value }.prefix(3).map { kv -> String in
+                let name = WorkoutType(rawValue: kv.key)?.title ?? kv.key.capitalized
+                return "\(name) \(Int((kv.value * 100).rounded()))%"
+            }
+            items.append(.init(title: "HOW YOU TRAIN", value: parts.joined(separator: " · "), confidence: mixC))
+        }
+
+        // What drives you (onboarding-seeded motivation)
+        if let m = model?.notes.first(where: { $0.isActive && $0.category == MemoryCategory.motivation.rawValue }) {
+            items.append(.init(title: "WHAT DRIVES YOU", value: m.text,
+                               confidence: Confidence(rawValue: m.confidence) ?? .emerging))
+        }
+
+        return items
+    }
+
+    /// The part of day the athlete trains most, if there's a clear peak.
+    private func daypartLabel(_ hist: [Int]) -> String? {
+        guard hist.count == 24, hist.reduce(0, +) > 0 else { return nil }
+        let peak = hist.indices.max { hist[$0] < hist[$1] } ?? 0
+        switch peak {
+        case 5..<11: return "Morning"
+        case 11..<17: return "Afternoon"
+        case 17..<22: return "Evening"
+        default: return "Late-night"
+        }
     }
 }
