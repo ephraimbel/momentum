@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Momentum/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png"
+MODE = sys.argv[2] if len(sys.argv) > 2 else "color"   # color | dark | tinted
 FINAL = 1024
 SS = 3
 S = FINAL * SS
@@ -63,14 +64,26 @@ for (ax, ay), (bx, by) in SEGS:
 mask = np.clip((HALF - dist) / EDGE + 0.5, 0, 1)          # 1 inside stroke → 0 outside
 
 grad = gradient(S)
-bg = np.zeros((S, S, 3), np.float32)                       # pure black
+glow_a = np.clip((HALF * 1.0 - dist) / (HALF * 1.7), 0, 1) ** 1.5   # soft bloom around the M
 
-# Soft iridescent bloom around the M.
-glow_a = np.clip((HALF * 1.0 - dist) / (HALF * 1.7), 0, 1) ** 1.5
-img = bg + grad * glow_a[..., None] * 0.28                 # additive glow
-img = img * (1 - mask[..., None]) + grad * mask[..., None] # the solid M on top
-img = np.clip(img, 0, 1)
+if MODE == "color":
+    # Light/default: solid iridescent M + bloom on pure black.
+    img = grad * glow_a[..., None] * 0.28
+    img = img * (1 - mask[..., None]) + grad * mask[..., None]
+    out = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8), "RGB")
+else:
+    # Dark + tinted: transparent background so iOS supplies its own backdrop (HIG). RGB is filled
+    # everywhere (no black) so downscaling never leaves a dark halo at the edges.
+    if MODE == "tinted":
+        lum = (0.299 * grad[..., 0] + 0.587 * grad[..., 1] + 0.114 * grad[..., 2])
+        val = 0.6 + 0.4 * lum                       # light grayscale so the system tint reads bright
+        rgb = np.stack([val, val, val], axis=-1)
+    else:  # dark
+        rgb = grad
+    alpha = np.clip(mask + glow_a * 0.30, 0, 1)
+    rgba = np.dstack([np.clip(rgb, 0, 1), alpha])
+    out = Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
 
-im = Image.fromarray((img * 255).astype(np.uint8), "RGB").resize((FINAL, FINAL), Image.LANCZOS)
-im.save(OUT)
-print("wrote", OUT, im.size)
+out = out.resize((FINAL, FINAL), Image.LANCZOS)
+out.save(OUT)
+print("wrote", OUT, MODE, out.size)
