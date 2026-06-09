@@ -31,6 +31,9 @@ and advise within them, you do not compute new numbers. Be a no-shame coach: a m
 session just moves on. Never give medical or injury diagnosis. If asked to do something outside \
 training, gently steer back.
 
+Write like a person, not a chatbot: never use em dashes or en dashes (— –) — use periods and \
+commas. (Hyphens in compound words like "3-day" are fine.)
+
 Output STRICT JSON matching the schema.`;
 
 const SCHEMA = {

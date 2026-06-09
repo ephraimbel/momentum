@@ -57,7 +57,24 @@ final class CoachChatViewModel {
             todaySession: today,
             goal: profile?.goal ?? .generalFitness,
             disciplines: profile?.disciplines ?? [],
-            distanceUnit: .auto
+            distanceUnit: .auto,
+            athlete: athleteSummary(profile)
+        )
+    }
+
+    /// Decoupled projection of the Athlete Model (the coach's long-term memory) for the responder.
+    /// Reads only stable fields so it won't break as that model evolves.
+    private func athleteSummary(_ profile: UserProfile?) -> CoachResponder.AthleteSummary? {
+        guard let m = profile?.athlete else { return nil }
+        let active = m.notes.filter(\.isActive)
+        let ordered = active.filter(\.pinned) + active.filter { !$0.pinned }
+        let topShare = m.disciplineShare.max { $0.value < $1.value }?.key
+        return .init(
+            notes: ordered.prefix(5).map(\.text),
+            preferredSessionMinutes: Int(m.preferredSessionMinutes.rounded()),
+            topDiscipline: topShare.flatMap { WorkoutType(rawValue: $0)?.title },
+            overreachACWR: m.overreachThresholdACWR,
+            paceTrendPct: m.paceAtEffortTrendPct
         )
     }
 }

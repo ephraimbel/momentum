@@ -41,11 +41,11 @@ enum WorkoutReadTemplates {
             }
         }
 
-        var narrative = "Strong work — \(Int(volume)) \(unit) across \(session.totalSets) sets."
+        var narrative = "Strong work. \(Int(volume)) \(unit) across \(session.totalSets) sets."
         if bestE1RM > 0 {
             narrative += " \(bestName) topped \(Formatters.weight(kg: bestW, unit: weightUnit)) × \(bestReps)."
         }
-        narrative += planned ? " Counts toward today's plan ✓ — right on track." : " Logged and saved."
+        narrative += planned ? " Counts toward today's plan ✓, right on track." : " Logged and saved."
 
         var insights = [WorkoutRead.Insight(label: "Volume", value: "\(Int(volume)) \(unit)", note: "")]
         if bestE1RM > 0 {
@@ -73,7 +73,7 @@ enum WorkoutReadTemplates {
 
         var narrative = "\(typeWord) of \(dist) \(metric)."
         if let trend = splitTrend(gps) { narrative += " \(trend)." }
-        narrative += planned ? " That's today's session ✓ — base is building." : " Nice work — saved."
+        narrative += planned ? " That's today's session ✓, base is building." : " Nice work, saved."
 
         let insights = [
             WorkoutRead.Insight(label: "Distance", value: dist, note: ""),
@@ -96,7 +96,7 @@ enum WorkoutReadTemplates {
             if s.t <= midTime { distFirst += d } else { distSecond += d }
             prev = s
         }
-        if distSecond > distFirst * 1.03 { return "You sped up — a negative split" }
+        if distSecond > distFirst * 1.03 { return "You sped up into a negative split" }
         if distFirst > distSecond * 1.03 { return "Even, honest effort" }
         return "Steady throughout"
     }
@@ -106,10 +106,26 @@ enum WorkoutReadTemplates {
         let banned = ["injur", "pain", "diagnos", "medical", "rehab"]
         let lower = text.lowercased()
         if banned.contains(where: { lower.contains($0) }) {
-            return "Session saved — momentum's got the details."
+            return "Session saved, momentum's got the details."
         }
+        // Em/en dashes read as generic-AI slop; convert to clean sentence punctuation.
+        let cleaned = deDash(text)
         // Trim to <= 55 words defensively.
-        let words = text.split(separator: " ")
-        return words.count <= 55 ? text : words.prefix(55).joined(separator: " ") + "…"
+        let words = cleaned.split(separator: " ")
+        return words.count <= 55 ? cleaned : words.prefix(55).joined(separator: " ") + "…"
+    }
+
+    /// Replace em/en dashes with sentence punctuation; leave hyphens in compound words alone.
+    static func deDash(_ s: String) -> String {
+        guard s.contains("—") || s.contains("–") else { return s }
+        let pieces = s.replacingOccurrences(of: "–", with: "—")
+            .components(separatedBy: "—")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return pieces.enumerated().reduce("") { acc, e in
+            let (idx, p) = e
+            let capped = idx == 0 ? p : p.prefix(1).uppercased() + p.dropFirst()
+            return idx == 0 ? capped : acc + ". " + capped
+        }
     }
 }

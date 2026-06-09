@@ -36,6 +36,9 @@ session is genuine evidence; cite an \`evidenceKey\` (a fact key or workout id).
 from \`athlete.facts\` — never invent them. Each note text is <= 140 chars, second person, no shame, \
 no medical language.
 
+Write like a person, not a chatbot: never use em dashes or en dashes (— –); use periods and commas \
+instead. (Hyphens in compound words like "3-day" are fine.)
+
 Output STRICT JSON matching the schema; the narrative must be <= 55 words.`;
 
 const SCHEMA = {

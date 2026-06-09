@@ -40,8 +40,10 @@ struct WorkoutReadTemplatesTests {
 
     @Test func sanitizeStripsMedicalLanguage() {
         #expect(WorkoutReadTemplates.sanitize("You risk injury if you continue")
-                == "Session saved — momentum's got the details.")
+                == "Session saved, momentum's got the details.")
         #expect(WorkoutReadTemplates.sanitize("Great pace today") == "Great pace today")
+        // Em dashes are converted to clean sentence punctuation (no AI-slop dashes).
+        #expect(WorkoutReadTemplates.sanitize("Strong work — nice splits") == "Strong work. Nice splits")
     }
 
     private func assertNoMedicalClaims(_ text: String) {
