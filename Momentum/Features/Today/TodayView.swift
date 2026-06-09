@@ -37,7 +37,9 @@ struct TodayView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            mapLayer
+            // Discipline-adaptive backdrop: a live map for cardio, a strength home for lifting —
+            // so Strength isn't a second-class citizen staring at a meaningless map.
+            if isCardio { mapLayer } else { strengthHome }
             topBar
             bottomPanel
         }
@@ -133,11 +135,60 @@ struct TodayView: View {
             .ignoresSafeArea()
     }
 
+    /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
+    /// so lifting has its own identity (the brand orb + a quiet last-session readout), not a dead map.
+    private var strengthHome: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            VStack(spacing: Theme.Space.lg) {
+                Spacer()
+                IridescentOrb(size: 132)
+                lastStrengthReadout
+                Spacer(); Spacer()   // bias the orb to the upper-middle, clear of the bottom panel
+            }
+            .padding(.horizontal, Theme.Space.xl)
+        }
+    }
+
+    @ViewBuilder
+    private var lastStrengthReadout: some View {
+        if let last = lastStrength, let s = last.strength {
+            let unit = WeightUnit.default()
+            let volume = unit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
+            VStack(spacing: 4) {
+                Text("LAST SESSION").font(.rounded(Theme.FontSize.label, weight: .bold))
+                    .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                Text("\(Int(volume.rounded())) \(unit == .lb ? "lb" : "kg") · \(relativeDay(last.startedAt))")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
+        } else {
+            Text("Your first lift starts here.")
+                .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+        }
+    }
+
+    private var lastStrength: Workout? {
+        workouts.filter { $0.type == .strength }.max(by: { $0.startedAt < $1.startedAt })
+    }
+
+    private func relativeDay(_ date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "today" }
+        if cal.isDateInYesterday(date) { return "yesterday" }
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: Date())).day ?? 0
+        if days < 7 { return "\(days) days ago" }
+        let weeks = days / 7
+        return weeks == 1 ? "1 week ago" : "\(weeks) weeks ago"
+    }
+
     private var topBar: some View {
         VStack {
             HStack(spacing: Theme.Space.sm) {
                 activitySelector
                 Spacer()
+                // The one cross-discipline load read — same `ProgressInsights` the Progress tab speaks,
+                // so runs and lifts roll into a single status the home surfaces too.
+                if insights.acwr > 0 { TrainingLoadChip(status: insights.status) }
                 coachButton
                 StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
             }
@@ -145,6 +196,8 @@ struct TodayView: View {
             Spacer()
         }
     }
+
+    private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
 
     /// Opens the AI coach chat.
     private var coachButton: some View {
@@ -169,9 +222,10 @@ struct TodayView: View {
         } label: {
             HStack(spacing: Theme.Space.sm) {
                 Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
-                Text(activity.title).font(.rounded(Theme.FontSize.body, weight: .bold))
+                Text(activity.title).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
             }
+            .fixedSize()
             .foregroundStyle(Theme.ink)
             .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
             .background(.regularMaterial, in: Capsule())
@@ -194,7 +248,7 @@ struct TodayView: View {
         .padding(Theme.Space.md)
     }
 
-    private var startTitle: String { isCardio ? "Start \(activity.title.lowercased())" : "Start strength" }
+    private var startTitle: String { isCardio ? "Start \(activity.title.lowercased())" : "Start workout" }
 
     /// A slim, proactive line of what Momentum has learned (ATHLETE-MODEL.md §8 — Today teaser).
     /// Reads the already-persisted `AthleteModel` — no recompute on the map-heavy Today screen.
@@ -380,6 +434,25 @@ enum TodayLaunch: Identifiable {
 }
 
 struct PresentedWorkout: Identifiable { let id: UUID; let type: WorkoutType }
+
+/// A glanceable cross-discipline training-status pill — the home's read of the same ACWR-based
+/// `ProgressInsights` the Progress tab uses, so runs + lifts roll into one status. Informational
+/// (not an achievement) → monochrome, no iridescence.
+struct TrainingLoadChip: View {
+    let status: ProgressInsights.Status
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "waveform.path.ecg").font(.system(size: 13, weight: .bold))
+            Text(status.rawValue).font(.rounded(Theme.FontSize.caption, weight: .bold)).lineLimit(1)
+        }
+        .fixedSize()
+        .foregroundStyle(Theme.ink)
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
+        .background(Capsule().fill(.regularMaterial))
+        .accessibilityLabel("Training status")
+        .accessibilityValue(status.rawValue)
+    }
+}
 
 /// A streak chip — flame + count; lights up iridescent when the streak is alive.
 struct StreakChip: View {
