@@ -12,6 +12,12 @@ struct QuickActionFAB: View {
 
     private let actions: [WorkoutType] = [.run, .walk, .ride, .hike, .strength]
 
+    private let fabSize: CGFloat = 60
+    /// The floating (Liquid Glass) tab bar sits at a fixed distance from the *physical* bottom edge —
+    /// not the safe-area inset — so its center measures ~55pt up on every device (verified on 17 Pro
+    /// inset 34 and SE inset 0). Anchoring the FAB's center there lines it up everywhere.
+    private let tabCenterFromBottom: CGFloat = 55
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             if isOpen {
@@ -30,17 +36,17 @@ struct QuickActionFAB: View {
                 fab
             }
             .padding(.trailing, Theme.Space.md)
-            .padding(.bottom, 26)   // align the FAB's center with the floating tab pill
+            .padding(.bottom, tabCenterFromBottom - fabSize / 2)   // center the FAB on the tab bar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .ignoresSafeArea(.container, edges: .bottom)   // position from the physical bottom, like the tab bar
+        .ignoresSafeArea(.container, edges: .bottom)   // measure from the physical bottom, like the tab bar
     }
 
     private var fab: some View {
         Button { toggle() } label: {
             ZStack {
                 Circle().fill(Theme.ink)
-                    .frame(width: 60, height: 60)
+                    .frame(width: fabSize, height: fabSize)
                     .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
                 Image(systemName: "plus")
                     .font(.system(size: 25, weight: .bold))
