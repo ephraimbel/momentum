@@ -161,6 +161,7 @@ struct TodayView: View {
 
     private var bottomPanel: some View {
         VStack(spacing: Theme.Space.md) {
+            learningTeaser
             if let session = pendingToday { plannedBanner(session) }
             VStack(spacing: Theme.Space.lg) {
                 if isCardio { goalSection }
@@ -173,6 +174,42 @@ struct TodayView: View {
     }
 
     private var startTitle: String { isCardio ? "Start \(activity.title.lowercased())" : "Start strength" }
+
+    /// A slim, proactive line of what Momentum has learned (ATHLETE-MODEL.md §8 — Today teaser).
+    /// Reads the already-persisted `AthleteModel` — no recompute on the map-heavy Today screen.
+    @ViewBuilder
+    private var learningTeaser: some View {
+        if let line = topLearnedLine {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(line).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+            }
+            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(IridescentMaterial()).opacity(0.18)
+                RoundedRectangle(cornerRadius: Theme.Radius.sheet).stroke(Theme.hairline)
+            }
+        }
+    }
+
+    private var topLearnedLine: String? {
+        guard let m = profiles.first?.athlete else {
+            return profiles.first.map { AthleteModelService.identitySeed($0) }
+        }
+        let paceCount = m.signalSampleCounts[AthleteModelEngine.Signal.paceAtEffort.rawValue] ?? 0
+        if m.paceAtEffortTrendPct <= -2, AthleteModelEngine.confidence(.paceAtEffort, count: paceCount) != .emerging {
+            return "You're getting fitter — easy pace down \(Int(abs(m.paceAtEffortTrendPct).rounded()))%"
+        }
+        if let top = m.e1rmTrendByExercise.filter({ $0.value >= 2 }).max(by: { $0.value < $1.value }) {
+            return "\(top.key) e1RM up \(Int(top.value.rounded()))% lately"
+        }
+        if let id = m.notes.first(where: { $0.isActive && $0.category == MemoryCategory.identity.rawValue })?.text {
+            return id
+        }
+        return profiles.first.map { AthleteModelService.identitySeed($0) }
+    }
 
     private func plannedBanner(_ session: PlannedSession) -> some View {
         Button { Haptics.light(); confirmingPlan = session } label: {
