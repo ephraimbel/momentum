@@ -46,4 +46,16 @@ enum StrengthSplit {
         }
         return title(forSetsByMuscle: StrengthMath.weeklySetsByMuscle(entries))
     }
+
+    /// The intended split for a planned session (from its prescribed targets) — used so a
+    /// half-finished "Push Day" still names itself after the plan.
+    @MainActor
+    static func title(forPlanned session: PlannedSession) -> String {
+        let entries = session.strengthTargets.map { pe in
+            (primary: (pe.exercise?.primaryMuscles ?? []).compactMap(MuscleGroup.init(rawValue:)),
+             secondary: (pe.exercise?.secondaryMuscles ?? []).compactMap(MuscleGroup.init(rawValue:)),
+             sets: max(1, pe.targetSets))
+        }
+        return title(forSetsByMuscle: StrengthMath.weeklySetsByMuscle(entries))
+    }
 }

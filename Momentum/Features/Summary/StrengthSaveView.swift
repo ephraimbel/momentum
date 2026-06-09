@@ -88,6 +88,11 @@ struct StrengthSaveView: View {
     /// Names the workout by its split ("Push Day", "Leg Day", …); falls back to time-of-day when
     /// there are no classifiable working sets yet.
     private static func defaultTitle(_ w: Workout) -> String {
+        // Prefer the plan's intended split (so a half-finished day still names itself by the plan).
+        if let planned = w.plannedSession, planned.discipline == .strength {
+            let split = StrengthSplit.title(forPlanned: planned)
+            if split != "Strength" { return split }
+        }
         if let session = w.strength {
             let split = StrengthSplit.title(for: session)
             if split != "Strength" { return split }
