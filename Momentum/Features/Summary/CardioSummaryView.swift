@@ -53,6 +53,7 @@ struct CardioSummaryContent: View {
             VStack(spacing: Theme.Space.xl) {
                 routeMap(gps)
                 headline(workout, gps)
+                AIReadCard(workout: workout, distanceUnit: distanceUnit)
                 splitsSection(gps)
             }
         } else {

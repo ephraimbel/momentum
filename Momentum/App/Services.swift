@@ -49,7 +49,7 @@ final class Services {
             motion: MotionService(),
             health: StubHealthService(),
             plan: StubPlanEngine(),
-            ai: StubAIService(),
+            ai: AIService(),
             sync: StubSyncService(),
             paywall: StubPaywallService(),
             notifications: StubNotificationService()
@@ -80,8 +80,15 @@ protocol MotionServing: AnyObject {
 
 protocol HealthServing: AnyObject { var isAuthorized: Bool { get } }
 protocol PlanEngineServing: AnyObject {}
-protocol AIServing: AnyObject {}
 protocol SyncServing: AnyObject {}
+
+@MainActor
+protocol AIServing: AnyObject {
+    /// The post-workout read (PRD §8.8). Tries the server Edge Function when configured; always
+    /// falls back to the deterministic template so the moment never blocks.
+    func workoutRead(for workout: Workout, planned: Bool,
+                     weightUnit: WeightUnit, distanceUnit: DistanceUnit) async -> WorkoutRead
+}
 protocol PaywallServing: AnyObject {
     /// Single source of truth for Pro gating (PRD §10). Stubbed true-for-dev in Phase 0.
     func isEntitled(to feature: Feature) -> Bool
@@ -114,7 +121,6 @@ final class StubMotionService: MotionServing {
 }
 final class StubHealthService: HealthServing { var isAuthorized = false }
 final class StubPlanEngine: PlanEngineServing {}
-final class StubAIService: AIServing {}
 final class StubSyncService: SyncServing {}
 final class StubNotificationService: NotificationServing {}
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.

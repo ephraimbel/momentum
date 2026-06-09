@@ -52,6 +52,7 @@ struct StrengthSummaryContent: View {
         if let session = workout.strength {
             VStack(spacing: Theme.Space.xl) {
                 headline(workout, session)
+                AIReadCard(workout: workout, weightUnit: weightUnit)
                 if !prs.isEmpty { prSection }
                 muscleSection(session)
                 exercisesSection(session)

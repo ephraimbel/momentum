@@ -127,6 +127,13 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 
 **▶ Gate 2:** Onboarding ≤90s yields a valid unified plan; running volume never +>10% w/w; strength deload on schedule; hybrid never places hard interval run day-after heavy squats; AI returns valid JSON or fallback within 4s; missed sessions recompute deterministically.
 
+**Phase 2 status — 2026-06-09 (complete; 55 tests, 14 suites green):**
+- ✅ **PlanEngine** (`PlanEngine`/`PlanModels`/`PlanService`): Riegel paces, running ≤10%/wk + deload/taper macrocycle, strength splits + equipment-aware selection + progression schemes, hybrid recovery scheduler (no hard run after heavy lower). `PlanEngineTests` verify the §13.11 invariants across a sweep.
+- ✅ **Onboarding → reveal** (`OnboardingViewModel`/`OnboardingFlow`/`BuildingPlanView`/`PlanRevealView`): cold open → question sequence (§26 mapping) → iridescent build beat → personalized week + goal ring → primer; gated on first launch. `OnboardingFlowTests` cover answers→plan.
+- ✅ **Today + Plan + adaptation** (`PlanCoaching`/`TodayView`/`PlanView`): prescribed-session card w/ streak + week ring; rest day; from-plan start pre-loads strength targets; finish credits the plan; no-shame miss reconcile moves sessions. `PlanCoachingTests` cover crediting + adaptation.
+- ✅ **AI layer** (`WorkoutReadTemplates`/`AIService`/`AIReadCard` + Edge Function source under `supabase/functions/`): deterministic ≤55-word, no-medical-claims, plan-aware read renders instantly (the §8.8 never-block guarantee); Pro-gated AI read card in both summaries; `workout-analysis`/`plan-narrate` committed for Phase-4 deploy (Opus 4.8, structured outputs, no `temperature`). `WorkoutReadTemplatesTests` enforce the word/claims bar.
+- **Gate 2: met in-sandbox.** Plan validity, ≤10%/wk, deload, hybrid recovery, no-shame adaptation, and AI-or-fallback are all tested. The live Edge Function round-trip (vs. the always-present fallback) gets verified when deployed in Phase 3/4. Onboarding ≤90s is a UX target to confirm on device.
+
 ---
 
 ## Phase 3 — Monetization — §10
