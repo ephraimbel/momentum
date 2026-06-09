@@ -20,44 +20,45 @@ enum DemoSeed {
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
 
-        // A completed run earlier today (with a loop route for the silhouette/snapshot).
-        let run = Workout()
-        run.type = .run
-        run.startedAt = Date().addingTimeInterval(-3 * 3600)
-        run.durationS = 1750
-        let gps = GPSDetail()
-        gps.distanceM = 6050
-        gps.elevationGainM = 42
-        gps.avgPaceSPerKm = 289
-        gps.samples = loopSamples(start: run.startedAt)
-        run.gps = gps
-        context.insert(run)
+        let bench = (try? context.fetch(FetchDescriptor<Exercise>()))?.first(where: { $0.name == "Barbell Bench Press" })
 
-        // A completed strength session yesterday.
-        if let bench = (try? context.fetch(FetchDescriptor<Exercise>()))?.first(where: { $0.name == "Barbell Bench Press" }) {
-            let sw = Workout()
-            sw.type = .strength
-            sw.startedAt = Date().addingTimeInterval(-26 * 3600)
-            sw.durationS = 3120
-            let session = StrengthSession()
-            session.totalVolumeKg = 5400
-            session.totalSets = 18
-            let row = WorkoutExercise()
-            row.exercise = bench
-            let set = SetEntry(); set.weightKg = 70; set.reps = 6; set.isComplete = true; set.type = .working
-            row.sets = [set]
-            session.exercises = [row]
-            sw.strength = session
-            context.insert(sw)
+        // ~5 weeks of history with a gently building trend, so Progress charts + ACWR populate.
+        for daysAgo in [0, 2, 4, 7, 9, 11, 14, 16, 18, 21, 24, 26, 30, 33] {
+            let start = Date().addingTimeInterval(Double(-daysAgo) * 86_400 - 3 * 3600)
+            let week = Double(daysAgo) / 7
+            if daysAgo % 4 == 0 {
+                let sw = Workout(); sw.type = .strength; sw.startedAt = start
+                sw.durationS = 2700 + Double(14 - daysAgo) * 20
+                let session = StrengthSession()
+                session.totalVolumeKg = 4800 + (5 - week) * 250
+                session.totalSets = 16
+                if let bench {
+                    let row = WorkoutExercise(); row.exercise = bench
+                    let set = SetEntry(); set.weightKg = 62 + (5 - week) * 2; set.reps = 6; set.isComplete = true; set.type = .working
+                    row.sets = [set]; session.exercises = [row]
+                }
+                sw.strength = session; context.insert(sw)
+            } else {
+                let run = Workout(); run.type = .run; run.startedAt = start
+                let dist = 5000 + (5 - week) * 400 + Double((daysAgo * 137) % 1200)
+                run.durationS = dist / 1000 * 290
+                let gps = GPSDetail(); gps.distanceM = dist; gps.elevationGainM = 30 + Double(daysAgo % 5) * 8
+                gps.avgPaceSPerKm = 290
+                if daysAgo == 0 { gps.samples = loopSamples(start: start) } // today's run gets a route
+                run.gps = gps; context.insert(run)
+            }
         }
         try? context.save()
 
-        // Render a real route snapshot for the demo run so the Strava-style image is visible.
-        let coords = gps.samples.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-        Task { @MainActor in
-            if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
-                gps.mapSnapshotData = data
-                try? context.save()
+        // Render a real route snapshot for today's run so the Strava-style image is visible.
+        if let todayGPS = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
+            .first(where: { $0.type == .run && !($0.gps?.samples.isEmpty ?? true) })?.gps {
+            let coords = todayGPS.samples.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+            Task { @MainActor in
+                if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
+                    todayGPS.mapSnapshotData = data
+                    try? context.save()
+                }
             }
         }
     }

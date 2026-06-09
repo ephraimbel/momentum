@@ -30,8 +30,8 @@ struct RootView: View {
         switch tab {
         case .today: TodayView()
         case .plan: PlanView()
+        case .progress: ProgressScreen()
         case .history: HistoryView()
-        case .you: ProfileView()
         }
     }
 }

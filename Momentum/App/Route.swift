@@ -3,24 +3,24 @@ import Foundation
 /// The four tabs of the app shell (PRD §7.0): Today · Plan · History · You.
 /// Named `AppTab` to avoid colliding with SwiftUI's iOS 18 `Tab` view.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
-    case today, plan, history, you
+    case today, plan, progress, history
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .today: "Today"
         case .plan: "Plan"
+        case .progress: "Progress"
         case .history: "History"
-        case .you: "You"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .today: "bolt.heart"
+        case .today: "map"
         case .plan: "calendar"
+        case .progress: "chart.line.uptrend.xyaxis"
         case .history: "list.bullet.rectangle"
-        case .you: "person"
         }
     }
 }
