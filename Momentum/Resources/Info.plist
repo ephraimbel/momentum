@@ -32,6 +32,11 @@
 	<array>
 		<string>location</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>background</string>
+	</dict>
 	<key>UIUserInterfaceStyle</key>
 	<string>Automatic</string>
 </dict>

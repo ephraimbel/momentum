@@ -1,29 +1,36 @@
 import SwiftUI
 import SwiftData
 
-/// Onboarding → plan reveal (PRD §4.1, §7.1) — the conversion engine. One question per screen,
-/// springy transitions, the iridescent "building your plan" beat, then the reveal. Paywall slots
-/// in here in Phase 3; for now it flows into permission primers → Today.
+/// Onboarding → plan reveal (PRD §4.1, §7.1) — the conversion engine. Cal-AI-grade structure
+/// (continuous progress, back chevron, one bold question per screen, tactile cards, a pinned
+/// Continue, an anticipation "building" beat, a celebratory reveal) rendered in momentum's
+/// monochrome + earned-iridescence identity.
 struct OnboardingFlow: View {
     var onComplete: () -> Void
 
     @Environment(\.modelContext) private var context
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
+    @State private var goingBack = false
 
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
             VStack(spacing: Theme.Space.lg) {
-                if isQuestion { progressBar }
+                if isQuestion { header }
                 content
-                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                            removal: .opacity))
+                    .transition(.asymmetric(
+                        insertion: .move(edge: goingBack ? .leading : .trailing).combined(with: .opacity),
+                        removal: .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity)))
                     .id(vm.step)
             }
-            .padding(Theme.Space.lg)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.sm)
         }
-        .animation(Motion.lively, value: vm.step)
+        .safeAreaInset(edge: .bottom) {
+            if isQuestion { continueBar }
+        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: vm.step)
     }
 
     private var isQuestion: Bool {
@@ -31,15 +38,40 @@ struct OnboardingFlow: View {
             .contains(vm.step.rawValue)
     }
 
-    private var progressBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Theme.hairline).frame(height: 4)
-                Capsule().fill(Theme.ink).frame(width: geo.size.width * vm.progress, height: 4)
+    // MARK: Header (back + progress)
+
+    private var header: some View {
+        HStack(spacing: Theme.Space.md) {
+            Button { goBack() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 28, height: 28)
             }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.hairline)
+                    Capsule().fill(Theme.ink)
+                        .frame(width: max(8, geo.size.width * vm.progress))
+                }
+            }
+            .frame(height: 6)
         }
-        .frame(height: 4)
+        .padding(.top, Theme.Space.xs)
     }
+
+    private var continueBar: some View {
+        OversizedButton(title: "Continue", isEnabled: vm.canAdvance) { goNext() }
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.sm)
+            .background(Theme.background)
+    }
+
+    private func goNext() { goingBack = false; vm.advance() }
+    private func goBack() { goingBack = true; vm.back() }
+
+    // MARK: Content router
 
     @ViewBuilder
     private var content: some View {
@@ -53,38 +85,41 @@ struct OnboardingFlow: View {
         case .session: sessionStep
         case .why: whyStep
         case .calibration: calibrationStep
-        case .building: BuildingPlanView()
-                .task { await buildPlan() }
-        case .reveal: PlanRevealView(vm: vm, profile: profile) { vm.advance() }
+        case .building: BuildingPlanView().task { await buildPlan() }
+        case .reveal: PlanRevealView(vm: vm, profile: profile) { goNext() }
         case .primers: primersStep
         }
     }
 
-    // MARK: Steps
+    // MARK: Cold open
 
     private var coldOpen: some View {
-        VStack(spacing: Theme.Space.xl) {
+        VStack(spacing: Theme.Space.lg) {
             Spacer()
-            ZStack {
-                IridescentView(intensity: 0.5).frame(width: 160, height: 160).clipShape(Circle()).blur(radius: 4)
+            MomentumMark()
+                .frame(width: 132, height: 132)
+                .shadow(color: Theme.iridescent[0].opacity(0.5), radius: 28)
+            VStack(spacing: Theme.Space.sm) {
                 Text("momentum")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.ink)
+                Text("keep moving.")
+                    .font(.system(size: Theme.FontSize.headline))
+                    .foregroundStyle(Theme.inkSecondary)
             }
-            Text("keep moving.").font(.system(size: Theme.FontSize.headline)).foregroundStyle(Theme.inkSecondary)
             Spacer()
-            OversizedButton(title: "Get started") { vm.advance() }
+            OversizedButton(title: "Get started") { goNext() }
         }
     }
 
+    // MARK: Question steps
+
     private var disciplinesStep: some View {
         questionScaffold("What do you want to do?", subtitle: "Pick all that apply.") {
-            VStack(spacing: Theme.Space.sm) {
-                ForEach([Discipline.running, .cycling, .walking, .strength], id: \.self) { d in
-                    SelectionCard(title: label(d), systemImage: icon(d),
-                                  isSelected: vm.disciplines.contains(d)) {
-                        if vm.disciplines.contains(d) { vm.disciplines.remove(d) } else { vm.disciplines.insert(d) }
-                    }
+            ForEach([Discipline.running, .cycling, .walking, .strength], id: \.self) { d in
+                SelectionCard(title: label(d), systemImage: icon(d),
+                              isSelected: vm.disciplines.contains(d)) {
+                    if vm.disciplines.contains(d) { vm.disciplines.remove(d) } else { vm.disciplines.insert(d) }
                 }
             }
         }
@@ -96,75 +131,60 @@ struct OnboardingFlow: View {
             (.getStronger, "Get stronger", "dumbbell.fill"), (.raceDistance, "Run a distance", "figure.run"),
             (.endurance, "Improve endurance", "wind"), (.stayConsistent, "Stay consistent", "calendar")]
         return questionScaffold("What's your main goal?") {
-            VStack(spacing: Theme.Space.sm) {
-                ForEach(goals, id: \.0) { g in
-                    SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) { vm.goal = g.0 }
-                }
+            ForEach(goals, id: \.0) { g in
+                SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) { vm.goal = g.0 }
             }
         }
     }
 
     private var experienceStep: some View {
         questionScaffold("How experienced are you?") {
-            VStack(spacing: Theme.Space.sm) {
-                ForEach([ExperienceLevel.new, .some, .experienced], id: \.self) { e in
-                    SelectionCard(title: e == .new ? "New" : e == .some ? "Some experience" : "Experienced",
-                                  isSelected: vm.experience == e) { vm.experience = e }
-                }
+            ForEach([ExperienceLevel.new, .some, .experienced], id: \.self) { e in
+                SelectionCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
+                              isSelected: vm.experience == e) { vm.experience = e }
             }
         }
     }
 
     private var daysStep: some View {
-        questionScaffold("How many days a week?") {
-            HStack(spacing: Theme.Space.sm) {
-                ForEach([2, 3, 4, 5, 6], id: \.self) { n in
-                    chip("\(n)\(n == 6 ? "+" : "")", selected: vm.daysPerWeek == n) { vm.daysPerWeek = n }
-                }
-            }
+        questionScaffold("How many days a week?", subtitle: "We'll shape your week around this.") {
+            chipRow([2, 3, 4, 5, 6], selected: vm.daysPerWeek, suffix: { $0 == 6 ? "+" : "" }) { vm.daysPerWeek = $0 }
         }
     }
 
     private var equipmentStep: some View {
-        let opts: [(Equipment, String)] = [(.fullGym, "Full gym"), (.dumbbellsOnly, "Dumbbells only"),
-                                           (.homeMinimal, "Home minimal"), (.bodyweight, "Bodyweight")]
+        let opts: [(Equipment, String, String)] = [
+            (.fullGym, "Full gym", "building.2"), (.dumbbellsOnly, "Dumbbells only", "dumbbell"),
+            (.homeMinimal, "Home minimal", "house"), (.bodyweight, "Bodyweight", "figure.cooldown")]
         return questionScaffold("What equipment do you have?") {
-            VStack(spacing: Theme.Space.sm) {
-                ForEach(opts, id: \.0) { o in
-                    SelectionCard(title: o.1, isSelected: vm.equipment == o.0) { vm.equipment = o.0 }
-                }
+            ForEach(opts, id: \.0) { o in
+                SelectionCard(title: o.1, systemImage: o.2, isSelected: vm.equipment == o.0) { vm.equipment = o.0 }
             }
         }
     }
 
     private var sessionStep: some View {
         questionScaffold("How long per session?") {
-            HStack(spacing: Theme.Space.sm) {
-                ForEach([30, 45, 60, 75], id: \.self) { m in
-                    chip("\(m)\(m == 75 ? "+" : "") min", selected: vm.sessionMinutes == m) { vm.sessionMinutes = m }
-                }
-            }
+            chipRow([30, 45, 60, 75], selected: vm.sessionMinutes, suffix: { $0 == 75 ? "+ min" : " min" }) { vm.sessionMinutes = $0 }
         }
     }
 
     private var whyStep: some View {
         let reasons = ["clear head", "health", "look better", "compete", "me-time"]
         return questionScaffold("Why are you doing this?", subtitle: "It sets your coach's tone.") {
-            VStack(spacing: Theme.Space.sm) {
-                ForEach(reasons, id: \.self) { r in
-                    SelectionCard(title: r.capitalized, isSelected: vm.reason == r) { vm.reason = r }
-                }
+            ForEach(reasons, id: \.self) { r in
+                SelectionCard(title: r.capitalized, isSelected: vm.reason == r) { vm.reason = r }
             }
         }
     }
 
     private var calibrationStep: some View {
-        questionScaffold("Calibrate?", subtitle: "Optional — seeds your paces. You can skip.") {
+        questionScaffold("Calibrate?", subtitle: "Optional — seeds your paces. Skip and we'll learn from your first sessions.") {
             VStack(spacing: Theme.Space.md) {
                 Toggle("Add a recent run", isOn: $vm.addRecentRun).tint(Theme.ink)
                 if vm.addRecentRun {
                     HStack {
-                        Text("5 km in")
+                        Text("5 km in").foregroundStyle(Theme.inkSecondary)
                         Spacer()
                         Stepper("\(Int(vm.recentRunSeconds / 60)) min",
                                 value: $vm.recentRunSeconds, in: 600...3600, step: 30)
@@ -180,9 +200,10 @@ struct OnboardingFlow: View {
     private var primersStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            Image(systemName: "checkmark.seal.fill").font(.system(size: 44)).foregroundStyle(Theme.ink)
-            Text("You're all set").font(.system(size: Theme.FontSize.title, weight: .semibold))
-            Text("momentum will ask for location, motion, and notifications only when a feature needs them — never up front.")
+            MomentumMark().frame(width: 84, height: 84)
+            Text("You're all set")
+                .font(.system(size: Theme.FontSize.title, weight: .bold)).foregroundStyle(Theme.ink)
+            Text("momentum asks for location, motion, and notifications only when a feature needs them — never up front.")
                 .font(.system(size: Theme.FontSize.body)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
             Spacer()
@@ -196,29 +217,41 @@ struct OnboardingFlow: View {
     private func questionScaffold<C: View>(_ title: String, subtitle: String? = nil,
                                            @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                Text(title).font(.system(size: Theme.FontSize.title, weight: .bold)).foregroundStyle(Theme.ink)
-                if let subtitle { Text(subtitle).font(.system(size: Theme.FontSize.body)).foregroundStyle(Theme.inkSecondary) }
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                Text(title)
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle {
+                    Text(subtitle).font(.system(size: Theme.FontSize.body)).foregroundStyle(Theme.inkSecondary)
+                }
             }
-            content()
-            Spacer()
-            OversizedButton(title: "Continue", isEnabled: vm.canAdvance) { vm.advance() }
+            ScrollView {
+                VStack(spacing: Theme.Space.sm) { content() }
+                    .padding(.bottom, Theme.Space.md)
+            }
+            .scrollIndicators(.hidden)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func chip(_ text: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button { Haptics.selection(); action() } label: {
-            Text(text)
-                .font(.system(size: Theme.FontSize.body, weight: .semibold))
-                .frame(maxWidth: .infinity).frame(height: 52)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(selected ? Theme.ink : Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+    private func chipRow(_ values: [Int], selected: Int, suffix: @escaping (Int) -> String,
+                         action: @escaping (Int) -> Void) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach(values, id: \.self) { v in
+                Button { Haptics.selection(); action(v) } label: {
+                    Text("\(v)\(suffix(v))")
+                        .font(.system(size: Theme.FontSize.body, weight: .semibold))
+                        .frame(maxWidth: .infinity).frame(height: 64)
+                        .background {
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(selected == v ? Theme.ink : Theme.surface)
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                        }
+                        .foregroundStyle(selected == v ? Theme.background : Theme.ink)
                 }
-                .foregroundStyle(selected ? Theme.background : Theme.ink)
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private func label(_ d: Discipline) -> String {
@@ -230,7 +263,7 @@ struct OnboardingFlow: View {
 
     private func buildPlan() async {
         if profile == nil { profile = vm.finish(in: context) }
-        try? await Task.sleep(for: .seconds(2.5))
-        vm.advance()
+        try? await Task.sleep(for: .seconds(2.6))
+        goNext()
     }
 }
