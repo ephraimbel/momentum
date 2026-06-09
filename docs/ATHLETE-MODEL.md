@@ -450,9 +450,10 @@ thresholds in §4. Rules:
 
 ## 14. Phased build order (dependencies first)
 
-> **Status (2026-06-09):** Phases 0–4 implemented on branch `docs/athlete-model` (full suite green;
-> You surface + Today teaser verified in the simulator). Phase 4 ships **dark** — set `SupabaseURL`
-> + `SupabaseAnonKey` and deploy `workout-analysis` to turn it on. Phases 5–8 are next.
+> **Status (2026-06-09):** Phases 0–5 implemented on branch `docs/athlete-model` (full suite green;
+> You surface, Today teaser, and the "Not quite right?" correction affordance verified in the
+> simulator). Phase 4 ships **dark** — set `SupabaseURL` + `SupabaseAnonKey` and deploy
+> `workout-analysis` to turn it on. Phases 6–8 (sync · weekly consolidation · conversational) next.
 
 0. **Models + registration** — `AthleteModel`, `MemoryNote`, `FitnessSnapshot`; add to
    `PersistenceController.models`; relate to `UserProfile`. (Schema migration is lightweight.)
