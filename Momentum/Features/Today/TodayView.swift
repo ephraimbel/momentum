@@ -152,19 +152,50 @@ struct TodayView: View {
 
     @ViewBuilder
     private var lastStrengthReadout: some View {
-        if let last = lastStrength, let s = last.strength {
+        if let last = lastStrength, let s = last.strength, !s.exercises.isEmpty {
             let unit = WeightUnit.default()
-            let volume = unit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
-            VStack(spacing: 4) {
-                Text("LAST SESSION").font(.rounded(Theme.FontSize.label, weight: .bold))
+            let rows = s.exercises.sorted { $0.order < $1.order }
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                Text("LAST SESSION · \(relativeDay(last.startedAt).uppercased())")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold))
                     .tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                Text("\(Int(volume.rounded())) \(unit == .lb ? "lb" : "kg") · \(relativeDay(last.startedAt))")
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                ForEach(rows.prefix(4), id: \.persistentModelID) { row in
+                    HStack {
+                        Text(row.exercise?.name ?? "Exercise")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(Theme.ink).lineLimit(1)
+                        Spacer(minLength: Theme.Space.md)
+                        Text(setSummary(row, unit: unit))
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                if rows.count > 4 {
+                    Text("+\(rows.count - 4) more")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
             }
+            .padding(Theme.Space.lg)
+            .frame(maxWidth: 340)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
         } else {
             Text("Your first lift starts here.")
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
         }
+    }
+
+    /// "3 × 6 · 62 kg" — working sets × reps and the top weight (rep range shown if reps varied).
+    private func setSummary(_ row: WorkoutExercise, unit: WeightUnit) -> String {
+        let working = row.sets.filter { $0.isComplete && $0.type == .working }
+        guard !working.isEmpty else { return "—" }
+        let n = working.count
+        let reps = working.compactMap(\.reps)
+        let repText: String
+        if let first = reps.first, reps.allSatisfy({ $0 == first }) { repText = "\(first)" }
+        else if let lo = reps.min(), let hi = reps.max() { repText = "\(lo)–\(hi)" }
+        else { repText = "" }
+        let weight = working.compactMap(\.weightKg).max().map { " · \(Formatters.weight(kg: $0, unit: unit))" } ?? ""
+        return repText.isEmpty ? "\(n) set\(n == 1 ? "" : "s")\(weight)" : "\(n) × \(repText)\(weight)"
     }
 
     private var lastStrength: Workout? {
