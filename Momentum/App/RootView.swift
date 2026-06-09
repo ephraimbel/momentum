@@ -7,7 +7,6 @@ struct RootView: View {
     @Query private var profiles: [UserProfile]
     @State private var selection: AppTab = .today
     @State private var showOnboarding = false
-    @State private var launcher = WorkoutLauncher()
 
     var body: some View {
         ZStack {
@@ -17,13 +16,11 @@ struct RootView: View {
                 Theme.background.ignoresSafeArea()
             } else {
                 tabs
-                QuickActionFAB(launcher: launcher)
             }
         }
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingFlow { showOnboarding = false }
         }
-        .workoutLaunchHost(launcher)
         .onAppear { if profiles.isEmpty { showOnboarding = true } }
     }
 
