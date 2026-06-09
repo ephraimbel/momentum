@@ -303,6 +303,8 @@ struct ProgressScreen: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 identityHero(model, facts)
+                let nudges = AthleteNudges.generate(facts)
+                if !nudges.isEmpty { weeklyDigest(nudges) }
                 if confidentCount(facts) < 3 { learningState(facts) }
                 ForEach(items) { learnedCard($0) }
                 if let model, model.snapshots.count >= 2 { trajectory(model) }
@@ -370,6 +372,30 @@ struct ProgressScreen: View {
             Text("Still learning your rhythm — about \(need) more session\(need == 1 ? "" : "s") and I'll have it.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.lg)
+        .background(card)
+    }
+
+    /// "This week with Momentum" — proactive nudges the model surfaces on its own (§9).
+    private func weeklyDigest(_ nudges: [AthleteNudges.Nudge]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("THIS WEEK").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            ForEach(nudges) { nudge in
+                HStack(alignment: .top, spacing: Theme.Space.md) {
+                    Image(systemName: nudge.kind.systemImage)
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(IridescentMaterial()).opacity(0.3))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(nudge.title).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text(nudge.text).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.lg)
