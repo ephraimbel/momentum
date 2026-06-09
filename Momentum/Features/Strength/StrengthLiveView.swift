@@ -65,8 +65,8 @@ struct StrengthLiveView: View {
         }
         .safeAreaInset(edge: .bottom) { bottomBar(vm) }
         .sheet(isPresented: $showingLibrary) {
-            ExerciseLibraryView { exercise in
-                Task { await vm.addExercise(exercise) }
+            ExerciseLibraryView { exercises in
+                Task { for exercise in exercises { await vm.addExercise(exercise) } }
             }
         }
         .sheet(isPresented: $showingPlates) {

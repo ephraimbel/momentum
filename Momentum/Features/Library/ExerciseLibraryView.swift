@@ -1,10 +1,11 @@
 import SwiftUI
 import SwiftData
 
-/// Exercise library as a picker sheet (PRD §4.5). Search by name, filter by muscle/equipment,
-/// create a custom exercise. Calls `onSelect` with the chosen exercise and dismisses.
+/// Exercise library as a multi-select picker sheet (PRD §4.5). Search by name, filter by
+/// muscle/equipment, tap to select several, create a custom exercise. On Done it returns the chosen
+/// exercises in the order they were picked.
 struct ExerciseLibraryView: View {
-    var onSelect: (Exercise) -> Void
+    var onSelect: ([Exercise]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
@@ -14,6 +15,7 @@ struct ExerciseLibraryView: View {
     @State private var muscleFilter: MuscleGroup?
     @State private var equipmentFilter: EquipmentType?
     @State private var showingCustom = false
+    @State private var picked: [Exercise] = []
 
     private var filtered: [Exercise] {
         allExercises
@@ -26,6 +28,24 @@ struct ExerciseLibraryView: View {
             .sorted { $0.name < $1.name }
     }
 
+    private func isPicked(_ e: Exercise) -> Bool {
+        picked.contains { $0.persistentModelID == e.persistentModelID }
+    }
+
+    private func toggle(_ e: Exercise) {
+        if let i = picked.firstIndex(where: { $0.persistentModelID == e.persistentModelID }) {
+            picked.remove(at: i)
+        } else {
+            picked.append(e)
+        }
+    }
+
+    private func commit() {
+        guard !picked.isEmpty else { return }
+        onSelect(picked)
+        dismiss()
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -34,11 +54,11 @@ struct ExerciseLibraryView: View {
                     ForEach(filtered) { exercise in
                         Button {
                             Haptics.selection()
-                            onSelect(exercise)
-                            dismiss()
+                            withAnimation(.easeOut(duration: Motion.fast)) { toggle(exercise) }
                         } label: {
-                            ExerciseRowLabel(exercise: exercise)
+                            ExerciseRowLabel(exercise: exercise, isSelected: isPicked(exercise))
                         }
+                        .buttonStyle(.plain)
                         .listRowBackground(Theme.surface)
                     }
                 }
@@ -51,7 +71,7 @@ struct ExerciseLibraryView: View {
                 }
             }
             .background(Theme.background)
-            .navigationTitle("Add Exercise")
+            .navigationTitle("Add Exercises")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always))
             .toolbar {
@@ -59,11 +79,13 @@ struct ExerciseLibraryView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showingCustom = true } label: { Image(systemName: "plus") }
+                    Button(picked.isEmpty ? "Add" : "Add \(picked.count)") { commit() }
+                        .fontWeight(.semibold)
+                        .disabled(picked.isEmpty)
                 }
             }
             .sheet(isPresented: $showingCustom) {
-                CustomExerciseSheet { onSelect($0); dismiss() }
+                CustomExerciseSheet { ex in withAnimation(.easeOut(duration: Motion.fast)) { picked.append(ex) } }
             }
         }
     }
@@ -89,6 +111,9 @@ struct ExerciseLibraryView: View {
                     FilterChipLabel(title: equipmentFilter?.rawValue.capitalized ?? "Equipment",
                                     isActive: equipmentFilter != nil)
                 }
+                Button { showingCustom = true } label: {
+                    FilterChipLabel(title: "New", isActive: false, systemImage: "plus")
+                }
             }
             .padding(.horizontal, Theme.Space.md)
             .padding(.vertical, Theme.Space.sm)
@@ -98,24 +123,35 @@ struct ExerciseLibraryView: View {
 
 private struct ExerciseRowLabel: View {
     let exercise: Exercise
+    var isSelected: Bool = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(exercise.name)
-                    .font(.rounded(Theme.FontSize.body, weight: .bold))
-                    .foregroundStyle(Theme.ink)
-                if exercise.isCustom {
-                    Text("Custom")
-                        .font(.rounded(Theme.FontSize.label, weight: .bold))
-                        .foregroundStyle(Theme.inkTertiary)
+        HStack(spacing: Theme.Space.md) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(exercise.name)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                        .foregroundStyle(Theme.ink)
+                    if exercise.isCustom {
+                        Text("Custom")
+                            .font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .foregroundStyle(Theme.inkTertiary)
+                    }
                 }
+                Text(subtitle)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
             }
-            Text(subtitle)
-                .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                .foregroundStyle(Theme.inkTertiary)
+            Spacer(minLength: 0)
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 22))
+                .foregroundStyle(isSelected ? Theme.ink : Theme.hairline)
+                .symbolEffect(.bounce, value: isSelected)
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
+
     private var subtitle: String {
         let muscles = exercise.primaryMuscles.map { $0.capitalized }.joined(separator: ", ")
         return "\(exercise.equipment.rawValue.capitalized) · \(muscles)"
@@ -125,10 +161,17 @@ private struct ExerciseRowLabel: View {
 private struct FilterChipLabel: View {
     let title: String
     let isActive: Bool
+    var systemImage: String = "chevron.down"
+
     var body: some View {
         HStack(spacing: 4) {
-            Text(title)
-            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
+            if systemImage == "plus" {
+                Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                Text(title)
+            } else {
+                Text(title)
+                Image(systemName: systemImage).font(.system(size: 10, weight: .bold))
+            }
         }
         .font(.rounded(Theme.FontSize.caption, weight: .semibold))
         .foregroundStyle(isActive ? Theme.background : Theme.ink)
