@@ -173,9 +173,3 @@ private struct BreathingDot: View {
     }
 }
 
-/// Small helper so the dot's halo reads as iridescent without a full MeshGradient per annotation.
-private struct IridescentMaterial: ShapeStyle {
-    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
-        AngularGradient(colors: Theme.iridescent + [Theme.iridescent[0]], center: .center)
-    }
-}

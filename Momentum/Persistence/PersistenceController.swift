@@ -28,6 +28,9 @@ final class PersistenceController {
             fatalError("Failed to create ModelContainer: \(error)")
         }
         ExerciseLibrarySeed.seedIfNeeded(into: container.mainContext)
+        #if DEBUG
+        DemoSeed.seedIfRequested(container.mainContext)
+        #endif
     }
 
     /// In-memory container for tests and previews.
