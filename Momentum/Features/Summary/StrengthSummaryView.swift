@@ -1,32 +1,22 @@
 import SwiftUI
 import SwiftData
 
-/// Post-workout summary for a strength session (PRD §4.4 finish, §4.6). Headline volume/sets/
-/// duration, PR badges (iridescent sweep), per-muscle working sets, per-exercise breakdown.
-/// AI read is added in Phase 2; muscle *map* diagram in the analytics pass.
+/// Post-workout summary screen for strength (PRD §4.4 finish, §4.6): a presented cover with Done.
+/// Renders `StrengthSummaryContent`, which is also reused by `WorkoutDetailView`.
 struct StrengthSummaryView: View {
     let workoutId: UUID
     var weightUnit: WeightUnit = .default()
     var onDone: () -> Void
 
-    @Environment(\.modelContext) private var context
     @Query private var workouts: [Workout]
-
-    @State private var prs: [StrengthPRs.Hit] = []
-
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let workout, let session = workout.strength {
-                    VStack(spacing: Theme.Space.xl) {
-                        headline(workout, session)
-                        if !prs.isEmpty { prSection }
-                        muscleSection(session)
-                        exercisesSection(session)
-                    }
-                    .padding(Theme.Space.md)
+                if let workout {
+                    StrengthSummaryContent(workout: workout, weightUnit: weightUnit, celebratePRs: true)
+                        .padding(Theme.Space.md)
                 } else {
                     ContentUnavailableView("Workout not found", systemImage: "questionmark")
                 }
@@ -38,10 +28,39 @@ struct StrengthSummaryView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { onDone() }.fontWeight(.semibold)
                 }
+                if let workout {
+                    ToolbarItem(placement: .topBarLeading) {
+                        ShareButton(workout: workout, weightUnit: weightUnit)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Reusable strength summary body (PRD §4.4): headline volume/sets/duration, PR badges,
+/// working-sets-by-muscle, per-exercise breakdown. No navigation chrome of its own.
+struct StrengthSummaryContent: View {
+    let workout: Workout
+    var weightUnit: WeightUnit = .default()
+    var celebratePRs: Bool = false
+
+    @Environment(\.modelContext) private var context
+    @State private var prs: [StrengthPRs.Hit] = []
+
+    var body: some View {
+        if let session = workout.strength {
+            VStack(spacing: Theme.Space.xl) {
+                headline(workout, session)
+                if !prs.isEmpty { prSection }
+                muscleSection(session)
+                exercisesSection(session)
             }
             .task {
-                if let workout { prs = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context) }
+                prs = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context)
             }
+        } else {
+            Text("No strength data").foregroundStyle(Theme.inkTertiary)
         }
     }
 
@@ -70,7 +89,7 @@ struct StrengthSummaryView: View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             sectionTitle("Personal records")
             ForEach(prs) { hit in
-                PRBadge(text: "\(hit.exerciseName) · \(hit.label) \(hit.detail)", celebrate: true)
+                PRBadge(text: "\(hit.exerciseName) · \(hit.label) \(hit.detail)", celebrate: celebratePRs)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,11 +141,10 @@ struct StrengthSummaryView: View {
 
     private func summary(_ sets: [SetEntry]) -> String {
         guard !sets.isEmpty else { return "No working sets" }
-        let parts = sets.map { s -> String in
+        return sets.map { s in
             let w = s.weightKg.map { Formatters.weight(kg: $0, unit: weightUnit) } ?? "—"
             return "\(w) × \(s.reps ?? 0)"
-        }
-        return parts.joined(separator: "  ·  ")
+        }.joined(separator: "  ·  ")
     }
 
     private func sectionTitle(_ text: String) -> some View {

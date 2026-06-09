@@ -2,9 +2,8 @@ import SwiftUI
 import MapKit
 import SwiftData
 
-/// Post-workout summary for a cardio session (PRD §4.3 finish, §4.6). Route map + distance/pace/
-/// duration/elevation + per-unit splits + fastest-window PRs. AI read and true-B/W share snapshot
-/// land in later phases.
+/// Post-workout summary screen for cardio (PRD §4.3 finish, §4.6): presented cover with Done.
+/// Renders `CardioSummaryContent`, reused by `WorkoutDetailView`.
 struct CardioSummaryView: View {
     let workoutId: UUID
     var distanceUnit: DistanceUnit = .auto
@@ -13,20 +12,12 @@ struct CardioSummaryView: View {
     @Query private var workouts: [Workout]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
-    private var unitMeters: Double {
-        distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let workout, let gps = workout.gps {
-                    VStack(spacing: Theme.Space.xl) {
-                        routeMap(gps)
-                        headline(workout, gps)
-                        splitsSection(gps)
-                    }
-                    .padding(Theme.Space.md)
+                if let workout {
+                    CardioSummaryContent(workout: workout, distanceUnit: distanceUnit)
+                        .padding(Theme.Space.md)
                 } else {
                     ContentUnavailableView("Workout not found", systemImage: "questionmark")
                 }
@@ -38,7 +29,34 @@ struct CardioSummaryView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { onDone() }.fontWeight(.semibold)
                 }
+                if let workout {
+                    ToolbarItem(placement: .topBarLeading) {
+                        ShareButton(workout: workout, distanceUnit: distanceUnit)
+                    }
+                }
             }
+        }
+    }
+}
+
+/// Reusable cardio summary body: route map, distance/pace/elevation, per-unit splits.
+struct CardioSummaryContent: View {
+    let workout: Workout
+    var distanceUnit: DistanceUnit = .auto
+
+    private var unitMeters: Double {
+        distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
+    }
+
+    var body: some View {
+        if let gps = workout.gps {
+            VStack(spacing: Theme.Space.xl) {
+                routeMap(gps)
+                headline(workout, gps)
+                splitsSection(gps)
+            }
+        } else {
+            Text("No GPS data").foregroundStyle(Theme.inkTertiary)
         }
     }
 
@@ -59,23 +77,24 @@ struct CardioSummaryView: View {
 
     private func headline(_ workout: Workout, _ gps: GPSDetail) -> some View {
         VStack(spacing: Theme.Space.lg) {
-            HeroMetric(value: Formatters.distance(meters: gps.distanceM, unit: distanceUnit).components(separatedBy: " ").first ?? "0",
+            HeroMetric(value: Formatters.distance(meters: gps.distanceM, unit: distanceUnit)
+                        .components(separatedBy: " ").first ?? "0",
                        label: distanceUnit.resolved() == .imperial ? "Miles" : "Kilometers")
             HStack(spacing: Theme.Space.xl) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
-                stat(paceOrSpeed(gps), workout.type == .ride ? "Avg speed" : "Avg pace")
+                stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")
                 stat("\(Int(gps.elevationGainM)) m", "Elevation")
             }
         }
         .padding(.vertical, Theme.Space.md)
     }
 
-    private func paceOrSpeed(_ gps: GPSDetail) -> String {
-        if workout?.type == .ride {
-            let speed = workout!.durationS > 0 ? gps.distanceM / workout!.durationS : 0
+    private func paceOrSpeed(_ workout: Workout, _ gps: GPSDetail) -> String {
+        if workout.type == .ride {
+            let speed = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
             return Formatters.speed(ms: speed, unit: distanceUnit)
         }
-        let pace = gps.distanceM > 0 ? workout!.durationS / (gps.distanceM / 1000) : 0
+        let pace = gps.distanceM > 0 ? workout.durationS / (gps.distanceM / 1000) : 0
         return Formatters.pace(secPerKm: pace, unit: distanceUnit)
     }
 
