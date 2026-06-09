@@ -17,6 +17,8 @@ struct TodayView: View {
     @State private var launch: TodayLaunch?
     @State private var summary: PresentedWorkout?
     @State private var locator = LocationService()
+    @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
+    @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
 
     enum GoalKind { case open, distance }
 
@@ -49,6 +51,71 @@ struct TodayView: View {
             } else {
                 CardioSummaryView(workoutId: presented.id) { summary = nil }
             }
+        }
+        .sheet(item: $confirmingPlan, onDismiss: {
+            if let session = pendingPlanStart { pendingPlanStart = nil; startPlanned(session) }
+        }) { session in
+            planConfirmSheet(session)
+        }
+    }
+
+    // MARK: Plan confirmation
+
+    /// A calm confirmation before a planned session begins — review the prescription, then Start.
+    private func planConfirmSheet(_ session: PlannedSession) -> some View {
+        VStack(spacing: Theme.Space.lg) {
+            Spacer(minLength: 0)
+            ZStack {
+                Circle().fill(IridescentMaterial()).opacity(0.3).frame(width: 72, height: 72)
+                Image(systemName: disciplineIcon(session.discipline))
+                    .font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
+            }
+            VStack(spacing: Theme.Space.xs) {
+                Text("TODAY'S PLAN")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                Text(planTitle(session))
+                    .font(.display(28, weight: .black)).foregroundStyle(Theme.ink)
+                Text(PlanCoaching.brief(for: session))
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            if let rationale = session.rationale, !rationale.isEmpty {
+                Text(rationale)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            VStack(spacing: Theme.Space.sm) {
+                OversizedButton(title: planStartCTA(session)) {
+                    pendingPlanStart = session
+                    confirmingPlan = nil
+                }
+                Button("Not now") { confirmingPlan = nil }
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            }
+        }
+        .padding(Theme.Space.lg)
+        .frame(maxWidth: .infinity)
+        .presentationDetents([.height(380)])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Theme.background)
+    }
+
+    private func planTitle(_ s: PlannedSession) -> String {
+        switch s.discipline {
+        case .strength: s.strengthTargets.count >= 5 ? "Full Body" : "Strength"
+        case .running: "\(s.runType?.rawValue.capitalized ?? "Easy") Run"
+        case .cycling: "Ride"
+        case .walking: "Walk"
+        }
+    }
+
+    private func planStartCTA(_ s: PlannedSession) -> String {
+        switch s.discipline {
+        case .strength: "Start lifting"
+        case .running: "Start run"
+        case .cycling: "Start ride"
+        case .walking: "Start walk"
         }
     }
 
@@ -107,7 +174,7 @@ struct TodayView: View {
     private var startTitle: String { isCardio ? "Start \(activity.title.lowercased())" : "Start strength" }
 
     private func plannedBanner(_ session: PlannedSession) -> some View {
-        Button { startPlanned(session) } label: {
+        Button { Haptics.light(); confirmingPlan = session } label: {
             HStack(spacing: Theme.Space.md) {
                 Image(systemName: disciplineIcon(session.discipline))
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
