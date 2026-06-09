@@ -102,16 +102,16 @@ private struct ExerciseRowLabel: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(exercise.name)
-                    .font(.system(size: Theme.FontSize.body, weight: .medium))
+                    .font(.rounded(Theme.FontSize.body, weight: .bold))
                     .foregroundStyle(Theme.ink)
                 if exercise.isCustom {
                     Text("Custom")
-                        .font(.system(size: Theme.FontSize.label, weight: .semibold))
+                        .font(.rounded(Theme.FontSize.label, weight: .bold))
                         .foregroundStyle(Theme.inkTertiary)
                 }
             }
             Text(subtitle)
-                .font(.system(size: Theme.FontSize.caption))
+                .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
         }
         .padding(.vertical, 4)
@@ -130,7 +130,7 @@ private struct FilterChipLabel: View {
             Text(title)
             Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
         }
-        .font(.system(size: Theme.FontSize.caption, weight: .medium))
+        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
         .foregroundStyle(isActive ? Theme.background : Theme.ink)
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 8)

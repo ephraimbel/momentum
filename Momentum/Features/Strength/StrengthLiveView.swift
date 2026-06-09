@@ -33,6 +33,12 @@ struct StrengthLiveView: View {
             await model.start()
             if let plannedSession { await model.loadPlanned(plannedSession) }
             vm = model
+            // Free start with nothing loaded → open the library straight away so the user picks
+            // from our exercise catalog instead of staring at an empty log.
+            if plannedSession == nil && model.exercises.isEmpty {
+                try? await Task.sleep(for: .milliseconds(350))   // let the cover settle first
+                showingLibrary = true
+            }
         }
     }
 
