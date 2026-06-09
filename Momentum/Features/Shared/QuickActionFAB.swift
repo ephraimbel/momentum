@@ -12,7 +12,9 @@ struct QuickActionFAB: View {
 
     private let actions: [WorkoutType] = [.run, .walk, .ride, .hike, .strength]
 
-    private let fabSize: CGFloat = 60
+    /// 50pt (not 60) so it clears the centered tab pill with a real gap on both sides.
+    private let fabSize: CGFloat = 50
+    private let trailingInset: CGFloat = 12   // edge margin; leaves a ~14pt gap from the pill
     /// The floating (Liquid Glass) tab bar sits at a fixed distance from the *physical* bottom edge —
     /// not the safe-area inset — so its center measures ~55pt up on every device (verified on 17 Pro
     /// inset 34 and SE inset 0). Anchoring the FAB's center there lines it up everywhere.
@@ -35,7 +37,7 @@ struct QuickActionFAB: View {
                 }
                 fab
             }
-            .padding(.trailing, Theme.Space.md)
+            .padding(.trailing, trailingInset)
             .padding(.bottom, tabCenterFromBottom - fabSize / 2)   // center the FAB on the tab bar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -49,7 +51,7 @@ struct QuickActionFAB: View {
                     .frame(width: fabSize, height: fabSize)
                     .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
                 Image(systemName: "plus")
-                    .font(.system(size: 25, weight: .bold))
+                    .font(.system(size: 21, weight: .bold))
                     .foregroundStyle(Theme.background)
                     .rotationEffect(.degrees(isOpen ? 45 : 0))
             }
