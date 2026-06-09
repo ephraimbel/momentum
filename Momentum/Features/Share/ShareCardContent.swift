@@ -37,7 +37,7 @@ struct ShareCardContent: View {
             Text(workout.startedAt.formatted(date: .abbreviated, time: .omitted).uppercased())
                 .tracking(1)
         }
-        .font(.system(size: size.width * 0.035, weight: .semibold))
+        .font(.rounded(size.width * 0.035, weight: .semibold))
         .foregroundStyle(.white.opacity(0.7))
     }
 
@@ -49,7 +49,7 @@ struct ShareCardContent: View {
                 bigStat("\(Int(volume))", weightUnit == .lb ? "lb volume" : "kg volume")
                 accentBar
                 Text("\(s.totalSets) sets · \(s.exercises.count) exercises")
-                    .font(.system(size: size.width * 0.045, weight: .medium))
+                    .font(.rounded(size.width * 0.045, weight: .medium))
                     .foregroundStyle(.white.opacity(0.8))
             }
         } else if let gps = workout.gps {
@@ -58,7 +58,7 @@ struct ShareCardContent: View {
                 bigStat(distanceString(gps), distanceUnit.resolved() == .imperial ? "miles" : "km")
                 accentBar
                 Text(secondary(gps))
-                    .font(.system(size: size.width * 0.045, weight: .medium))
+                    .font(.rounded(size.width * 0.045, weight: .medium))
                     .foregroundStyle(.white.opacity(0.8))
             }
         }
@@ -67,12 +67,12 @@ struct ShareCardContent: View {
     private func bigStat(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(value)
-                .font(.system(size: size.width * 0.20, weight: .bold, design: .rounded))
+                .font(.display(size.width * 0.20, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .lineLimit(1).minimumScaleFactor(0.5)
             Text(label.uppercased())
-                .font(.system(size: size.width * 0.04, weight: .semibold))
+                .font(.rounded(size.width * 0.04, weight: .semibold))
                 .tracking(2)
                 .foregroundStyle(.white.opacity(0.6))
         }
@@ -100,7 +100,7 @@ struct ShareCardContent: View {
 
     private var wordmark: some View {
         Text("momentum")
-            .font(.system(size: size.width * 0.05, weight: .bold, design: .rounded))
+            .font(.display(size.width * 0.05, weight: .bold))
             .foregroundStyle(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
             .opacity(0.85)
     }

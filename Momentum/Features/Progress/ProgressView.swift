@@ -162,8 +162,14 @@ struct ProgressScreen: View {
 
     // MARK: Charts
 
+    /// "↑12%" / "↓8%" vs the prior 3-week average; empty when essentially flat or no data.
+    private func trendSuffix(_ pct: Double) -> String {
+        guard abs(pct) >= 1 else { return "" }
+        return " · \(pct >= 0 ? "↑" : "↓")\(Int(abs(pct).rounded()))%"
+    }
+
     private func loadChart(_ insights: ProgressInsights) -> some View {
-        chartSection("Weekly training load", subtitle: "Last 8 weeks") {
+        chartSection("Weekly training load", subtitle: "Last 8 weeks\(trendSuffix(insights.loadTrendPct))") {
             Chart(insights.weeks) { wk in
                 BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                         y: .value("Load", animateCharts ? wk.load : 0))
@@ -178,7 +184,7 @@ struct ProgressScreen: View {
     private func distanceChart(_ insights: ProgressInsights) -> some View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
-        return chartSection("Weekly distance", subtitle: "In \(unit)") {
+        return chartSection("Weekly distance", subtitle: "In \(unit)\(trendSuffix(insights.distanceTrendPct))") {
             Chart(insights.weeks) { wk in
                 AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                          y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))

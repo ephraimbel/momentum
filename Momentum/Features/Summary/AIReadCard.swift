@@ -33,12 +33,12 @@ struct AIReadCard: View {
                 Image(systemName: "sparkles")
                 Text("COACH").tracking(1.5)
             }
-            .font(.system(size: Theme.FontSize.label, weight: .semibold))
+            .font(.rounded(Theme.FontSize.label, weight: .semibold))
             .foregroundStyle(Theme.inkTertiary)
 
             if let read {
                 Text(read.narrative)
-                    .font(.system(size: Theme.FontSize.body))
+                    .font(.rounded(Theme.FontSize.body, weight: .regular))
                     .foregroundStyle(Theme.ink)
                     .opacity(appeared ? 1 : 0)
             } else {

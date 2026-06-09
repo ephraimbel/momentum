@@ -35,7 +35,7 @@ struct PlateCalculatorView: View {
                 if let result {
                     VStack(spacing: Theme.Space.sm) {
                         Text("Per side")
-                            .font(.system(size: Theme.FontSize.label, weight: .medium))
+                            .font(.rounded(Theme.FontSize.label, weight: .medium))
                             .tracking(1.2)
                             .foregroundStyle(Theme.inkTertiary)
                         if result.perSide.isEmpty {
@@ -45,7 +45,7 @@ struct PlateCalculatorView: View {
                         }
                         if !result.isExact {
                             Text("+\(String(format: "%.2f", result.totalShortfall)) \(unit) short")
-                                .font(.system(size: Theme.FontSize.caption, weight: .medium))
+                                .font(.rounded(Theme.FontSize.caption, weight: .medium))
                                 .foregroundStyle(Theme.inkSecondary)
                         }
                     }
@@ -69,7 +69,7 @@ private struct FlowPlates: View {
             ForEach(Array(plates.enumerated()), id: \.offset) { _, plate in
                 VStack(spacing: 2) {
                     Text(plateString(plate.weight))
-                        .font(.system(size: Theme.FontSize.headline, weight: .bold))
+                        .font(.display(Theme.FontSize.headline, weight: .bold))
                         .monospacedDigit()
                     Text("×\(plate.count)")
                         .font(.rounded(Theme.FontSize.caption, weight: .regular))

@@ -44,7 +44,7 @@ struct ShareCardView: View {
 
                 ShareLink(item: rendered, preview: SharePreview("momentum", image: rendered)) {
                     Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.system(size: Theme.FontSize.body, weight: .semibold))
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .frame(maxWidth: .infinity).frame(height: 56)
                         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
                         .foregroundStyle(Theme.background)
