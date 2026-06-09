@@ -47,10 +47,10 @@ struct TodayView: View {
         }
         .fullScreenCover(item: $launch) { liveScreen($0) }
         .fullScreenCover(item: $summary) { presented in
+            // Strava-style: name + describe the workout, Save → celebration → back to Today.
             if presented.type == .strength {
-                StrengthSummaryView(workoutId: presented.id) { summary = nil }
+                StrengthSaveView(workoutId: presented.id) { summary = nil }
             } else {
-                // Strava-style: name + describe the run, Save → celebration → back to Today.
                 CardioSaveView(workoutId: presented.id) { summary = nil }
             }
         }

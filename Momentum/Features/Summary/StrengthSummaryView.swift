@@ -9,7 +9,6 @@ struct StrengthSummaryView: View {
     var onDone: () -> Void
 
     @Query private var workouts: [Workout]
-    @State private var celebrating = true
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     var body: some View {
@@ -36,11 +35,6 @@ struct StrengthSummaryView: View {
                 }
             }
         }
-        .overlay {
-            if celebrating {
-                CompletionCelebration(title: "Workout complete") { celebrating = false }
-            }
-        }
     }
 }
 
@@ -50,6 +44,8 @@ struct StrengthSummaryContent: View {
     let workout: Workout
     var weightUnit: WeightUnit = .default()
     var celebratePRs: Bool = false
+    /// Show the user's title/description header (off in the save editor, which has editable fields).
+    var showsHeader: Bool = true
 
     @Environment(\.modelContext) private var context
     @State private var prs: [StrengthPRs.Hit] = []
@@ -57,6 +53,7 @@ struct StrengthSummaryContent: View {
     var body: some View {
         if let session = workout.strength {
             VStack(spacing: Theme.Space.xl) {
+                if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, session).reveal(0)
                 AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.12)
                 if !prs.isEmpty { prSection.reveal(0.22) }
@@ -85,6 +82,19 @@ struct StrengthSummaryContent: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.Space.lg)
+    }
+
+    private var titleHeader: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            if !workout.title.isEmpty {
+                Text(workout.title).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
+            }
+            if !workout.note.isEmpty {
+                Text(workout.note).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func stat(_ value: String, _ label: String) -> some View {
