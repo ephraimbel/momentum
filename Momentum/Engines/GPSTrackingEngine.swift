@@ -31,6 +31,18 @@ actor GPSTrackingEngine {
         case idle, acquiring, tracking, autoPaused, paused, gpsLost, saving, summary, recovered
     }
 
+    struct Coordinate: Sendable, Equatable { let lat: Double; let lon: Double }
+
+    /// One-hop snapshot for the view model (avoids many cross-actor reads per frame).
+    struct LiveSnapshot: Sendable {
+        let state: State
+        let distanceM: Double
+        let smoothedPaceSPerKm: Double
+        let movingTimeS: TimeInterval
+        let elevationGainM: Double
+        let route: [Coordinate]
+    }
+
     enum Const {
         static let heroUpdateThrottleS = 1.0
         static let routeRedrawThrottleS = 0.5
@@ -43,6 +55,8 @@ actor GPSTrackingEngine {
     private(set) var state: State = .idle
     private var processor: GPSProcessor
     private let sink: GPSWorkoutSink
+    /// Accepted coordinates for the live route polyline.
+    private(set) var route: [Coordinate] = []
 
     private var startedAt: Date?
     private var lastCheckpoint: Date?
@@ -61,6 +75,13 @@ actor GPSTrackingEngine {
     var smoothedPaceSPerKm: Double { processor.smoothedPaceSPerKm }
     var elevationGainM: Double { processor.elevationGainM }
 
+    func snapshot() -> LiveSnapshot {
+        LiveSnapshot(state: state, distanceM: processor.distanceM,
+                     smoothedPaceSPerKm: processor.smoothedPaceSPerKm,
+                     movingTimeS: movingTimeS, elevationGainM: processor.elevationGainM,
+                     route: route)
+    }
+
     func begin(now: Date = Date()) async {
         guard state == .idle || state == .recovered else { return }
         state = .acquiring
@@ -78,6 +99,10 @@ actor GPSTrackingEngine {
 
         let result = processor.ingest(fix)
         let accepted = result != .rejected
+        // Build the route: the first accepted fix (anchor) plus every real move.
+        if case .accepted(let added) = result, added > 0 || route.isEmpty {
+            route.append(Coordinate(lat: fix.lat, lon: fix.lon))
+        }
         await sink.persistSample(fix, accepted: accepted)
 
         // Moving-time accounting only while actively tracking.

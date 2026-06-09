@@ -10,7 +10,6 @@ struct TodayView: View {
     @State private var showingChooser = false
     @State private var liveType: WorkoutType?
     @State private var summary: PresentedWorkout?
-    @State private var comingSoon = false
 
     var body: some View {
         ZStack {
@@ -38,38 +37,38 @@ struct TodayView: View {
         .sheet(isPresented: $showingChooser) {
             ActivityChooserView { type in
                 showingChooser = false
-                switch type {
-                case .strength: liveType = .strength
-                default: comingSoon = true
-                }
+                liveType = type
             }
             .presentationDetents([.medium])
         }
         .fullScreenCover(item: $liveType) { type in
-            switch type {
-            case .strength:
+            if type == .strength {
                 StrengthLiveView(container: context.container) { finishedId in
                     liveType = nil
-                    if let finishedId { summary = PresentedWorkout(id: finishedId) }
+                    if let finishedId { summary = PresentedWorkout(id: finishedId, type: type) }
                 }
-            default:
-                // Cardio live arrives in the next Phase 1 slice.
-                Color.clear.onAppear { liveType = nil }
+            } else {
+                CardioLiveView(type: type, container: context.container) { finishedId in
+                    liveType = nil
+                    if let finishedId { summary = PresentedWorkout(id: finishedId, type: type) }
+                }
             }
         }
         .fullScreenCover(item: $summary) { presented in
-            StrengthSummaryView(workoutId: presented.id) { summary = nil }
-        }
-        .alert("Coming soon", isPresented: $comingSoon) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Run, ride, and walk tracking arrives in the next update.")
+            if presented.type == .strength {
+                StrengthSummaryView(workoutId: presented.id) { summary = nil }
+            } else {
+                CardioSummaryView(workoutId: presented.id) { summary = nil }
+            }
         }
     }
 }
 
 /// Identifiable wrapper so a finished workout id can drive `fullScreenCover(item:)`.
-struct PresentedWorkout: Identifiable { let id: UUID }
+struct PresentedWorkout: Identifiable {
+    let id: UUID
+    let type: WorkoutType
+}
 
 #Preview {
     NavigationStack { TodayView() }

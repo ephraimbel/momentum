@@ -96,7 +96,8 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 - ✅ Exercise library picker (`ExerciseLibraryView` search/filter/select + `CustomExerciseSheet`).
 - ✅ **Strength live loop end-to-end:** `StrengthViewModel` (bridges the engine actor + durable store) → `StrengthLiveView` (set rows w/ ghosted previous + one-tap ✓, auto rest-timer ring, plate calculator) → `StrengthSummaryView` (volume/sets/duration, PR badges via `StrengthPRs`, working-sets-by-muscle). Today `Start` → `ActivityChooserView` → strength live → summary.
 - ✅ Verified: clean build, **34 tests green** (incl. `StrengthFlowTests` full-loop + prefill-from-last-session integration), app launches and renders the hero dark look.
-- ⏳ Slice B (next): Cardio live (MapKit bloom/route/dot, `LocationService`→`GPSTrackingEngine` pump) + cardio summary. Slice C: History feed + Profile/analytics + Share cards. Deferred within Phase 1: anatomical muscle-map diagram, supersets UI, RPE polish, inline set reorder/swap, true-B/W route snapshot.
+- ✅ **Slice B: Cardio live loop** — engine exposes live route + snapshot; `CardioViewModel` pumps `LocationService.fixes()` → `GPSTrackingEngine.ingest`; `CardioLiveView` (muted MapKit map, bright route polyline, breathing iridescent dot, per-discipline hero metric, pause/auto-pause, two-step stop, GPS-strength glyph, acquiring overlay); `CardioSummaryView` (route map, distance/pace/elevation, per-unit splits). Run/ride/walk wired through Today → live → summary. Builds clean; app launches without regression; 34 tests green. Visual map verification + ±2% still need a device / location-sim tap-through (Gate-1 device item).
+- ⏳ Slice C (next): History feed + WorkoutDetail, Profile (PR shelves, streak, consistency heatmap, muscle balance), Share cards. Deferred within Phase 1: anatomical muscle-map diagram, supersets UI, RPE polish, inline set reorder/swap, true-B/W route snapshot, map "bloom" transition.
 
 ---
 
