@@ -23,9 +23,9 @@ struct HistoryView: View {
         Group {
             if allWorkouts.isEmpty {
                 VStack(spacing: Theme.Space.lg) {
-                    MomentumMark(iridescent: false).frame(width: 56, height: 56).opacity(0.45)
+                    IridescentOrb(size: 72)
                     Text("No workouts yet")
-                        .font(.system(size: Theme.FontSize.headline, weight: .semibold))
+                        .font(.display(Theme.FontSize.headline, weight: .heavy))
                         .foregroundStyle(Theme.ink)
                     Text("Your runs, rides, walks, and lifts will live here.")
                         .font(.system(size: Theme.FontSize.body))

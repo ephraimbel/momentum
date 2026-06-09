@@ -12,7 +12,7 @@ struct MomentumApp: App {
             RootView()
                 .environment(services)
                 .tint(Theme.ink)
-                .preferredColorScheme(nil) // honor system; dark is the hero look
+                .preferredColorScheme(.light) // light/white is the hero aesthetic
         }
         .modelContainer(PersistenceController.shared.container)
     }

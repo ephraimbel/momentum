@@ -96,15 +96,13 @@ struct OnboardingFlow: View {
     private var coldOpen: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            MomentumMark()
-                .frame(width: 132, height: 132)
-                .shadow(color: Theme.iridescent[0].opacity(0.5), radius: 28)
+            IridescentOrb(size: 128)
             VStack(spacing: Theme.Space.sm) {
                 Text("momentum")
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
+                    .font(.display(42, weight: .black))
                     .foregroundStyle(Theme.ink)
                 Text("keep moving.")
-                    .font(.system(size: Theme.FontSize.headline))
+                    .font(.rounded(Theme.FontSize.headline, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
             }
             Spacer()
@@ -200,9 +198,9 @@ struct OnboardingFlow: View {
     private var primersStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            MomentumMark().frame(width: 84, height: 84)
+            IridescentOrb(size: 96)
             Text("You're all set")
-                .font(.system(size: Theme.FontSize.title, weight: .bold)).foregroundStyle(Theme.ink)
+                .font(.display(Theme.FontSize.title, weight: .black)).foregroundStyle(Theme.ink)
             Text("momentum asks for location, motion, and notifications only when a feature needs them — never up front.")
                 .font(.system(size: Theme.FontSize.body)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
@@ -219,7 +217,7 @@ struct OnboardingFlow: View {
         VStack(alignment: .leading, spacing: Theme.Space.lg) {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 Text(title)
-                    .font(.system(size: 32, weight: .bold))
+                    .font(.display(32, weight: .black))
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle {

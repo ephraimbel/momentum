@@ -16,12 +16,12 @@ struct BuildingPlanView: View {
         VStack(spacing: Theme.Space.xl) {
             Spacer()
             ZStack {
-                ProgressRing(progress: progress).frame(width: 156, height: 156)
-                MomentumMark().frame(width: 66, height: 66)
+                ProgressRing(progress: progress).frame(width: 160, height: 160)
+                IridescentOrb(size: 96)
             }
             VStack(spacing: Theme.Space.sm) {
                 Text("Building your plan")
-                    .font(.system(size: Theme.FontSize.title, weight: .bold))
+                    .font(.display(Theme.FontSize.title, weight: .black))
                     .foregroundStyle(Theme.ink)
                 Text(lines[lineIndex])
                     .font(.system(size: Theme.FontSize.body))
