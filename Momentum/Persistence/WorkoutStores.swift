@@ -63,6 +63,13 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
         ActiveWorkoutMarker.clear()
     }
+
+    /// Attach the rendered route snapshot (PRD §8.5) to the finished workout's GPS detail.
+    func attachSnapshot(_ data: Data) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.mapSnapshotData = data
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row

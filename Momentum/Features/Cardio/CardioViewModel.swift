@@ -13,6 +13,7 @@ final class CardioViewModel {
     let startedAt = Date()
 
     private let engine: GPSTrackingEngine
+    private let store: GPSWorkoutStore
     private let location: LocationService
 
     private(set) var snapshot: GPSTrackingEngine.LiveSnapshot?
@@ -24,7 +25,9 @@ final class CardioViewModel {
         self.type = type
         self.distanceUnit = distanceUnit
         self.location = LocationService()
-        self.engine = GPSTrackingEngine(type: type, sink: GPSWorkoutStore(modelContainer: container))
+        let store = GPSWorkoutStore(modelContainer: container)
+        self.store = store
+        self.engine = GPSTrackingEngine(type: type, sink: store)
     }
 
     func start() async {
@@ -49,6 +52,11 @@ final class CardioViewModel {
         pumpTask?.cancel()
         location.stop()
         await engine.finish()
+        // Render the Strava-style route snapshot from accepted coordinates (PRD §8.5).
+        let coords = coordinates
+        if coords.count > 1, let data = await RouteSnapshotter.snapshot(coordinates: coords) {
+            await store.attachSnapshot(data)
+        }
         return workoutId
     }
 

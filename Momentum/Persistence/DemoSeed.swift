@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import SwiftData
+import CoreLocation
 
 /// DEBUG-only sample data for visual iteration. Runs **only** when launched with `--seed-demo`
 /// and the store has no profile yet. Never ships behavior in release builds.
@@ -50,6 +51,15 @@ enum DemoSeed {
             context.insert(sw)
         }
         try? context.save()
+
+        // Render a real route snapshot for the demo run so the Strava-style image is visible.
+        let coords = gps.samples.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        Task { @MainActor in
+            if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
+                gps.mapSnapshotData = data
+                try? context.save()
+            }
+        }
     }
 
     /// ~24 samples tracing a rough loop near SF for a believable route.

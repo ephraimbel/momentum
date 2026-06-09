@@ -1,9 +1,8 @@
 import SwiftUI
 import SwiftData
-import CoreLocation
 
-/// History — one mixed monochrome timeline grouped by week (PRD §4.8, §7.10), with the right
-/// thumbnail per type (route silhouette vs strength glyph). Tap → `WorkoutDetailView`.
+/// History — a clean, Strava-style feed (PRD §4.8, §7.10). Each workout is a rich card with its
+/// route snapshot (cardio) or glyph banner (strength), grouped by week. Tap → workout detail.
 struct HistoryView: View {
     @Query private var allWorkouts: [Workout]
 
@@ -22,108 +21,61 @@ struct HistoryView: View {
     var body: some View {
         Group {
             if allWorkouts.isEmpty {
-                VStack(spacing: Theme.Space.lg) {
-                    IridescentOrb(size: 72)
-                    Text("No workouts yet")
-                        .font(.display(Theme.FontSize.headline, weight: .heavy))
-                        .foregroundStyle(Theme.ink)
-                    Text("Your runs, rides, walks, and lifts will live here.")
-                        .font(.system(size: Theme.FontSize.body))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(Theme.Space.xl)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState
             } else {
-                List {
-                    ForEach(weeks, id: \.start) { week in
-                        Section(weekLabel(week.start)) {
-                            ForEach(week.items, id: \.persistentModelID) { workout in
-                                NavigationLink {
-                                    WorkoutDetailView(workout: workout,
-                                                      weightUnit: weightUnit, distanceUnit: distanceUnit)
-                                } label: {
-                                    HistoryRow(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
+                        Text("History")
+                            .font(.display(32, weight: .black))
+                            .foregroundStyle(Theme.ink)
+                            .padding(.top, Theme.Space.sm)
+                        ForEach(weeks, id: \.start) { week in
+                            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                                Text(weekLabel(week.start))
+                                    .font(.rounded(Theme.FontSize.label, weight: .bold))
+                                    .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                                ForEach(week.items, id: \.persistentModelID) { workout in
+                                    NavigationLink {
+                                        WorkoutDetailView(workout: workout,
+                                                          weightUnit: weightUnit, distanceUnit: distanceUnit)
+                                    } label: {
+                                        CompletedWorkoutCard(workout: workout,
+                                                             weightUnit: weightUnit, distanceUnit: distanceUnit)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .listRowBackground(Theme.surface)
                             }
                         }
                     }
+                    .padding(Theme.Space.lg)
+                    .padding(.bottom, Theme.Space.xxl)
                 }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
             }
         }
         .background(Theme.background)
-        .navigationTitle("History")
+        .navigationBarHidden(true)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: Theme.Space.lg) {
+            IridescentOrb(size: 72)
+            Text("No workouts yet")
+                .font(.display(Theme.FontSize.headline, weight: .heavy))
+                .foregroundStyle(Theme.ink)
+            Text("Your runs, rides, walks, and lifts will live here.")
+                .font(.rounded(Theme.FontSize.body, weight: .regular))
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(Theme.Space.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func weekLabel(_ start: Date) -> String {
         let cal = Calendar.current
-        if cal.isDate(start, equalTo: Date(), toGranularity: .weekOfYear) { return "This week" }
+        if cal.isDate(start, equalTo: Date(), toGranularity: .weekOfYear) { return "THIS WEEK" }
         if let lastWeek = cal.date(byAdding: .weekOfYear, value: -1, to: Date()),
-           cal.isDate(start, equalTo: lastWeek, toGranularity: .weekOfYear) { return "Last week" }
-        return start.formatted(.dateTime.month().day())
-    }
-}
-
-private struct HistoryRow: View {
-    let workout: Workout
-    let weightUnit: WeightUnit
-    let distanceUnit: DistanceUnit
-
-    var body: some View {
-        HStack(spacing: Theme.Space.md) {
-            thumbnail
-                .frame(width: 52, height: 52)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.background))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.chip))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(workout.type.title)
-                    .font(.system(size: Theme.FontSize.body, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Text(stats)
-                    .font(.system(size: Theme.FontSize.caption))
-                    .foregroundStyle(Theme.inkTertiary)
-            }
-            Spacer()
-            Text(workout.startedAt.formatted(.dateTime.weekday(.abbreviated)))
-                .font(.system(size: Theme.FontSize.caption))
-                .foregroundStyle(Theme.inkTertiary)
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(workout.type.title), \(workout.startedAt.formatted(.dateTime.weekday(.wide)))")
-        .accessibilityValue(stats)
-    }
-
-    @ViewBuilder
-    private var thumbnail: some View {
-        if workout.type == .strength {
-            Image(systemName: "dumbbell.fill")
-                .font(.system(size: 20))
-                .foregroundStyle(Theme.inkSecondary)
-        } else {
-            let coords = (workout.gps?.samples ?? []).filter(\.accepted).sorted { $0.t < $1.t }
-                .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-            if coords.count > 1 {
-                RouteSilhouette(coords: coords)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                    .padding(8)
-            } else {
-                Image(systemName: workout.type.systemImage)
-                    .font(.system(size: 20)).foregroundStyle(Theme.inkSecondary)
-            }
-        }
-    }
-
-    private var stats: String {
-        if workout.type == .strength, let s = workout.strength {
-            let vol = weightUnit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
-            return "\(Int(vol)) \(weightUnit == .lb ? "lb" : "kg") · \(s.totalSets) sets · \(Formatters.duration(s: workout.durationS))"
-        } else if let gps = workout.gps {
-            return "\(Formatters.distance(meters: gps.distanceM, unit: distanceUnit)) · \(Formatters.duration(s: workout.durationS))"
-        }
-        return Formatters.duration(s: workout.durationS)
+           cal.isDate(start, equalTo: lastWeek, toGranularity: .weekOfYear) { return "LAST WEEK" }
+        return start.formatted(.dateTime.month().day()).uppercased()
     }
 }
