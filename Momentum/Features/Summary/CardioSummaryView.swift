@@ -10,6 +10,7 @@ struct CardioSummaryView: View {
     var onDone: () -> Void
 
     @Query private var workouts: [Workout]
+    @State private var celebrating = true
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     var body: some View {
@@ -33,6 +34,13 @@ struct CardioSummaryView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         ShareButton(workout: workout, distanceUnit: distanceUnit)
                     }
+                }
+            }
+        }
+        .overlay {
+            if celebrating {
+                CompletionCelebration(title: "\(workout?.type.title ?? "Workout") complete") {
+                    celebrating = false
                 }
             }
         }
