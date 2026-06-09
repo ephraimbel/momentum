@@ -334,7 +334,56 @@ above the bottom panel: "Momentum learned 2 new things about you →".
 
 ---
 
-## 9. Cold-start & confidence (the "don't promise perfectly" arc)
+## 9. Conversational layer (deferred — gated on a rich model)
+
+**Status: deferred, and never a generic "chat" tab.** Rationale (2026-06-09): Momentum's edge
+is *proactive* understanding — the app tells you what matters without being asked. A blank
+"ask anything" box is reactive, faces every user with an empty prompt they don't know how to
+fill, and invites the LLM to compute loads / give medical advice — against §1 and PRD §9. We
+build conversation only **after Phase 4** (the model already speaks) and only once the Athlete
+Model is rich enough to make it special. The differentiator isn't "chat with an AI"; it's
+**"talk to the coach who has watched your training for weeks."**
+
+When built, three rules keep it on-brand:
+
+**(a) Contextual, not a tab.** Conversation is entered from an "ask about this" affordance on a
+specific object — a workout read, a plan day, a You-surface belief — so it always starts
+grounded. Preserves the 3-tab structure (no 4th tab; matches §15 placement decision).
+
+**(b) Grounded & scoped.** The coach reasons only over *this* athlete: the `AthleteModel`
+facts, active `MemoryNote`s, workout history, and current plan. It surfaces numbers from Tier A
+— **never computes them** — and obeys the same guardrails as the reads (no medical/injury, no
+shame, sanitizer reused). Server-side, same edge-function pattern. This is the one surface
+where we relax the ≤4s budget (a conversation may take a beat), but turns and context are
+capped and reuse the cached athlete context — no extra compute to assemble it.
+
+**(c) Smart suggestions — never a blank box.** Every entry point offers 2–4 suggested prompt
+chips generated *from the user's current state*, so the interaction is tap-first, type-second:
+- from the plan day → "Why is tomorrow easy?"
+- from a fitness trend → "How's my 10k coming?"
+- from a confident belief → "Why do you think I'm a morning runner?"
+- from a likely correction → "Actually, I prefer evenings" (writes a pinned note)
+
+Chips are derived **deterministically** from context (plan, recent reads, confident notes,
+churn/overreach flags), so the model proposes the conversation the user didn't know to start.
+
+**Proactive "updates on you" — the model speaks first.** This is the other half, and the more
+on-brand one: rather than wait to be asked, Momentum surfaces what it has learned.
+- **Weekly digest** ("Your week with Momentum") on the You tab + optional push: what changed,
+  what it learned, the trajectory delta.
+- **"Momentum noticed…" nudges** — event-triggered: a new `confident` belief formed, a fitness
+  milestone, overreach risk ahead, or fading frequency caught early (softened — never shown as
+  "you're slipping", per §15). Delivered via the Today teaser (§8) and opt-in notifications
+  (the `NotificationServing` stub, `App/Services.swift`).
+- Triggers are deterministic (Tier A); the wording is AI-narrated (Tier B) and bounded.
+
+**Memory loop.** Every conversation can write `MemoryNote`s through the same apply path as
+§6–7 (corrections pin; new beliefs cite evidence). Chat is thus a first-class way the model
+*learns*, not just answers — which is the only reason it earns a place at all.
+
+---
+
+## 10. Cold-start & confidence (the "don't promise perfectly" arc)
 
 Each Tier-A signal maps `signalSampleCounts[key]` → `{emerging | growing | confident}` via the
 thresholds in §4. Rules:
@@ -350,7 +399,7 @@ thresholds in §4. Rules:
 
 ---
 
-## 10. Reliability, privacy, sync
+## 11. Reliability, privacy, sync
 
 - **Continuity is existential** (per the category research): losing history means the AI
   forgets who the user is. Tier A is reconstructable (safety net); **Tier B notes +
@@ -365,7 +414,7 @@ thresholds in §4. Rules:
 
 ---
 
-## 11. Testing — so it's correct, not just plausible
+## 12. Testing — so it's correct, not just plausible
 
 - **Tier A is fixture-tested** exactly like the existing engines (the repo already has
   `MomentumTests`): hand-built workout histories → asserted facts (e.g. a history of 9am runs →
@@ -379,7 +428,7 @@ thresholds in §4. Rules:
 
 ---
 
-## 12. Worked walkthrough (how it feels when it's right)
+## 13. Worked walkthrough (how it feels when it's right)
 
 - **Onboarding.** User picks running+strength, goal "race a 10k", reason "clear head", adds a
   recent 5k (calibration). We seed: identity-seed "new-ish hybrid runner", motivation "here for
@@ -399,7 +448,7 @@ thresholds in §4. Rules:
 
 ---
 
-## 13. Phased build order (dependencies first)
+## 14. Phased build order (dependencies first)
 
 0. **Models + registration** — `AthleteModel`, `MemoryNote`, `FitnessSnapshot`; add to
    `PersistenceController.models`; relate to `UserProfile`. (Schema migration is lightweight.)
@@ -414,23 +463,29 @@ thresholds in §4. Rules:
 6. **Sync of Tier B + snapshots** — the continuity guarantee (depends on the broader
    auth/sync foundation; sequence with that roadmap).
 7. **(Optional) weekly `athlete-consolidate`** — identity re-authoring + stale-belief pruning.
+8. **Conversational layer (deferred, §9)** — contextual, grounded coach Q&A with smart
+   suggested prompts, plus proactive "Momentum noticed…" nudges and the weekly digest. Gate:
+   only after phase 4 *and* a rich model; depends on `NotificationServing`. Not v1.
 
 Each phase ships value alone: by phase 3 the app visibly learns you *with no AI cost*; phase 4
-makes it speak; phase 6 makes it permanent.
+makes it speak; phase 6 makes it permanent; phase 8 lets you talk back.
 
 ---
 
-## 14. Decisions
+## 15. Decisions
 
 1. **You-surface placement** — ✅ **DECIDED (2026-06-09): third Progress segment**
    (`Trends | History | You`) plus a Today teaser card. (Not a 4th tab; not Today-led.)
 2. **One LLM call vs two** — ✅ **DECIDED (2026-06-09): one folded call.** Memory updates ride
    back with the post-workout read in a single `workout-analysis` round trip. Optional weekly
    `athlete-consolidate` remains a later enhancement, not v1.
+3. **Conversational layer** — ✅ **DECIDED (2026-06-09): deferred; never a generic chat tab.**
+   When built it is contextual, grounded, suggestion-led, and proactive (§9), entered from
+   objects rather than a 4th tab. Not before phase 4 / a rich model.
 
 Still to confirm (don't block early phases):
 
-3. **Note ceiling**: 20 active notes — tune after seeing real density.
-4. **Churn-risk visibility**: do we ever *show* the fading-frequency signal to the user, or
+4. **Note ceiling**: 20 active notes — tune after seeing real density.
+5. **Churn-risk visibility**: do we ever *show* the fading-frequency signal to the user, or
    only use it to soften coaching? (Leaning: never show "you're slipping"; use it to nudge.)
-5. **Confidence thresholds** in §4 are first estimates — calibrate against real histories.
+6. **Confidence thresholds** in §4 are first estimates — calibrate against real histories.
