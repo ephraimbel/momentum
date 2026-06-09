@@ -82,9 +82,16 @@ struct TodayView: View {
 
     private func todayCard(_ session: PlannedSession, secondary: PlannedSession?) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text(session.status == .completed ? "Done today ✓" : "Today")
-                .font(.system(size: Theme.FontSize.label, weight: .semibold)).tracking(1.2)
-                .foregroundStyle(Theme.inkTertiary)
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: disciplineIcon(session.discipline))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Theme.background))
+                Text(session.status == .completed ? "DONE TODAY ✓" : "TODAY")
+                    .font(.system(size: Theme.FontSize.label, weight: .semibold)).tracking(1.4)
+                    .foregroundStyle(Theme.inkTertiary)
+            }
             Text(PlanCoaching.brief(for: session))
                 .font(.system(size: Theme.FontSize.title, weight: .bold))
                 .foregroundStyle(Theme.ink)
@@ -166,6 +173,10 @@ struct TodayView: View {
 
     private func fetchWorkout(_ id: UUID) -> Workout? {
         ((try? context.fetch(FetchDescriptor<Workout>())) ?? []).first { $0.id == id }
+    }
+
+    private func disciplineIcon(_ d: Discipline) -> String {
+        switch d { case .running: "figure.run"; case .cycling: "bicycle"; case .walking: "figure.walk"; case .strength: "dumbbell.fill" }
     }
 }
 

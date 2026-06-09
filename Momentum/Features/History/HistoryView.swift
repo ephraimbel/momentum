@@ -22,8 +22,18 @@ struct HistoryView: View {
     var body: some View {
         Group {
             if allWorkouts.isEmpty {
-                ContentUnavailableView("No workouts yet", systemImage: "list.bullet.rectangle",
-                                       description: Text("Your runs, rides, walks, and lifts will live here."))
+                VStack(spacing: Theme.Space.lg) {
+                    MomentumMark(iridescent: false).frame(width: 56, height: 56).opacity(0.45)
+                    Text("No workouts yet")
+                        .font(.system(size: Theme.FontSize.headline, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                    Text("Your runs, rides, walks, and lifts will live here.")
+                        .font(.system(size: Theme.FontSize.body))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(Theme.Space.xl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(weeks, id: \.start) { week in
