@@ -10,6 +10,7 @@ struct RouteSuggestionView: View {
     private let onClose: () -> Void
 
     @State private var camera: MapCameraPosition = .automatic
+    @State private var mapStyle: MapStyleOption = .standard
 
     init(start: GeoPoint, targetM: Double = 5000, distanceUnit: DistanceUnit = .auto,
          directions: DirectionsProviding = MapKitDirectionsProvider(),
@@ -42,7 +43,7 @@ struct RouteSuggestionView: View {
             // Non-selected first, so the selected loop draws on top.
             ForEach(vm.candidates.filter { $0.id != vm.selectedID }) { loop in
                 MapPolyline(coordinates: loop.polyline.map(\.clCoordinate))
-                    .stroke(Theme.inkTertiary.opacity(0.35),
+                    .stroke(mapStyle.isImagery ? Color.white.opacity(0.7) : Theme.inkTertiary.opacity(0.35),
                             style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             }
             if let sel = vm.selected {
@@ -54,7 +55,7 @@ struct RouteSuggestionView: View {
                             style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
             }
         }
-        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
+        .mapStyle(mapStyle.mapStyle)
         .ignoresSafeArea()
     }
 
@@ -78,10 +79,28 @@ struct RouteSuggestionView: View {
                         .overlay(Circle().stroke(Theme.hairline))
                 }
                 Spacer()
+                layersButton
             }
             .padding(Theme.Space.md)
             Spacer()
         }
+    }
+
+    /// Strava-style layer switcher — Map / Hybrid / Satellite.
+    private var layersButton: some View {
+        Menu {
+            Picker("Map style", selection: $mapStyle) {
+                ForEach(MapStyleOption.allCases) { style in
+                    Label(style.label, systemImage: style.systemImage).tag(style)
+                }
+            }
+        } label: {
+            Image(systemName: "square.3.layers.3d").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 38, height: 38)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().stroke(Theme.hairline))
+        }
+        .accessibilityLabel("Map style")
     }
 
     private var panel: some View {
