@@ -49,6 +49,7 @@ actor GPSTrackingEngine {
         static let checkpointIntervalS = 5.0
         static let liveActivityUpdateS = 3.0
         static let gpsLostTimeoutS = 8.0   // no accepted fix for this long → GPSLost (keep timing)
+        static let maxFixAgeS = 10.0       // drop fixes older than this (e.g. a cached background fix)
     }
 
     let type: WorkoutType
@@ -94,6 +95,9 @@ actor GPSTrackingEngine {
     /// Ingest a raw location fix. Drives accept/reject, distance, auto-pause, and persistence.
     func ingest(_ fix: GPSProcessor.Fix, now: Date = Date()) async {
         guard state != .idle, state != .saving, state != .summary else { return }
+        // Drop stale fixes (e.g. a cached location delivered on return from background) — a runner
+        // covers ~40m in 10s, so an old position would distort both the route and the distance.
+        guard now.timeIntervalSince(fix.t) <= Const.maxFixAgeS else { return }
 
         if state == .acquiring { state = .tracking }
 

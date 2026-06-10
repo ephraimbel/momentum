@@ -14,16 +14,19 @@ struct CardioTrackingView: View {
     var distanceUnit: DistanceUnit = .auto
     var onFinish: (UUID?) -> Void
 
-    enum Phase { case countdown, tracking }
+    enum Phase { case acquiring, countdown, tracking }
 
     @Query private var workouts: [Workout]
-    @State private var phase: Phase = .countdown
+    @State private var phase: Phase = .acquiring
     @State private var countdown = 3
     @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var confirmStop = false
     @State private var vm: CardioViewModel?
     @State private var goalReached = false
+    @State private var acquirePulse = false
+    @State private var acquireTimedOut = false
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Tight street-level framing (~400m across) for running.
     private static let runSpan = MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
@@ -46,13 +49,32 @@ struct CardioTrackingView: View {
         ZStack(alignment: .bottom) {
             mapLayer
             topBar
-            if phase == .countdown { countdownOverlay }
-            else if let vm {
-                trackingPanel(vm)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            switch phase {
+            case .acquiring: acquiringOverlay
+            case .countdown: countdownOverlay
+            case .tracking:
+                if let vm {
+                    trackingPanel(vm)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
         }
-        .task { if vm == nil { beginCountdown() } }
+        .task {
+            if vm == nil {
+                let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit)
+                model.beginAcquiring()
+                vm = model
+            }
+        }
+        // Leave the acquiring gate the instant we have a usable lock (Strava's "GPS Signal Acquired").
+        .onChange(of: vm?.hasGPSLock ?? false) { _, locked in
+            if locked, phase == .acquiring { proceedToCountdown() }
+        }
+        // Never imply we're still searching forever: after a beat, soften the copy to nudge "Start now".
+        .task {
+            try? await Task.sleep(for: .seconds(12))
+            if phase == .acquiring { withAnimation(Motion.standard) { acquireTimedOut = true } }
+        }
         .onAppear {
             // Center on the user (follows live); until a fix lands, fall back to their last route's
             // neighborhood rather than the default country-wide view.
@@ -65,9 +87,13 @@ struct CardioTrackingView: View {
     private var mapLayer: some View {
         Map(position: $camera) {
             UserAnnotation()
-            if routeCoords.count > 1 {
-                MapPolyline(coordinates: routeCoords)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+            if smoothedRoute.count > 1 {
+                // Earned-iridescence live route (PRD §6): a soft white halo makes the gradient read
+                // as glowing on the light map. The gradient is static — safe under Reduce Motion.
+                MapPolyline(coordinates: smoothedRoute)
+                    .stroke(.white.opacity(0.55), style: StrokeStyle(lineWidth: 11, lineCap: .round, lineJoin: .round))
+                MapPolyline(coordinates: smoothedRoute)
+                    .stroke(routeGradient, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
             }
             if let last = routeCoords.last {
                 Annotation("", coordinate: last) { BreathingDot() }
@@ -75,19 +101,38 @@ struct CardioTrackingView: View {
         }
         .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false))
         .ignoresSafeArea()
-        .onChange(of: routeCoords.count) {
-            guard let last = routeCoords.last else { return }
-            // Smoothly trail the runner; constant span so it pans (never zooms) for a steady feel.
-            withAnimation(.easeInOut(duration: 0.9)) {
-                camera = .region(MKCoordinateRegion(center: last, span: Self.runSpan))
-            }
+        // MapKit follows the user natively in `.userLocation` mode — smooth and jitter-free. We no
+        // longer re-issue a region animation per fix (overlapping animations fought each other and
+        // snapped the camera to raw, noisy points). If the user pans away, MapKit drops follow; the
+        // recenter button re-engages it.
+        .overlay(alignment: .bottomTrailing) { if phase == .tracking { recenterButton } }
+    }
+
+    /// The live trace, corner-rounded so the sparse (≥2m) accepted points read as a fluid GPS track.
+    private var smoothedRoute: [CLLocationCoordinate2D] { RouteSmoothing.smooth(routeCoords) }
+
+    /// Oil-slick gradient for the live route — the earned-progress accent (PRD §6, §18).
+    private var routeGradient: LinearGradient {
+        LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing)
+    }
+
+    private var recenterButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.4)) { camera = .userLocation(fallback: .automatic) }
+        } label: {
+            Image(systemName: "location.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 40, height: 40).background(.regularMaterial, in: Circle())
+                .overlay(Circle().stroke(Theme.hairline))
         }
+        .padding(.trailing, Theme.Space.md)
+        .padding(.bottom, 220) // clear the stats panel
+        .accessibilityLabel("Recenter map")
     }
 
     private var topBar: some View {
         VStack {
             HStack {
-                Button { phase == .tracking ? (confirmStop = true) : onFinish(nil) } label: {
+                Button { phase == .tracking ? (confirmStop = true) : cancelAndDismiss() } label: {
                     Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
                         .frame(width: 38, height: 38).background(.regularMaterial, in: Circle())
                 }
@@ -130,6 +175,62 @@ struct CardioTrackingView: View {
         .padding(Theme.Space.md)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+    }
+
+    /// Pre-start gate: hold on the user's position while GPS locks, so the trace begins clean rather
+    /// than teleporting from a bad first fix. Auto-advances on lock; "Start now" overrides. If location
+    /// is off, says so honestly (with Settings) instead of pretending to search forever.
+    private var acquiringOverlay: some View {
+        let denied = vm?.locationDenied == true
+        return VStack(spacing: Theme.Space.lg) {
+            Spacer()
+            VStack(spacing: Theme.Space.md) {
+                ZStack {
+                    Circle().fill(IridescentMaterial()).frame(width: 64, height: 64).opacity(denied ? 0.25 : 0.5)
+                        .scaleEffect(acquirePulse && !denied ? 1.12 : 0.92)
+                        .animation(reduceMotion || denied ? nil : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                                   value: acquirePulse)
+                    Image(systemName: denied ? "location.slash.fill" : "location.fill")
+                        .font(.system(size: 24, weight: .bold)).foregroundStyle(Theme.ink)
+                }
+                VStack(spacing: 4) {
+                    Text(denied ? "Location is off" : acquiringTitle)
+                        .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text(denied ? "Enable location to map your route — or start now, time still counts."
+                                : acquiringSubtitle)
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                if denied {
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    }
+                    .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                }
+            }
+            .padding(Theme.Space.xl)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.sheet))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sheet).stroke(Theme.hairline))
+            .padding(.horizontal, Theme.Space.xl)
+            Spacer()
+            OversizedButton(title: denied ? "Start without route" : "Start now",
+                            systemImage: "bolt.fill", kind: .outline) { proceedToCountdown() }
+                .padding(Theme.Space.md)
+        }
+        .onAppear { acquirePulse = true }
+    }
+
+    /// Reflects live signal quality while acquiring, so the user understands the wait.
+    private var acquiringTitle: String {
+        guard let vm, vm.lastAccuracyM != nil else {
+            return acquireTimedOut ? "Still searching…" : "Searching for GPS…"
+        }
+        return vm.gpsStrength > 0.66 ? "Strong GPS" : vm.gpsStrength > 0.33 ? "Getting GPS…" : "Weak signal"
+    }
+
+    private var acquiringSubtitle: String {
+        acquireTimedOut ? "You can start now — your route picks up once GPS locks."
+                        : "Finding your position for an accurate route."
     }
 
     private var countdownOverlay: some View {
@@ -215,7 +316,11 @@ struct CardioTrackingView: View {
         }
     }
 
-    private func beginCountdown() {
+    /// Run the 3-2-1 countdown, then arm the recording. Reached once we have a GPS lock (auto) or
+    /// the user taps "Start now" from the acquiring gate.
+    private func proceedToCountdown() {
+        guard phase == .acquiring else { return }   // ignore a late lock once we've already advanced
+        withAnimation(Motion.standard) { phase = .countdown }
         Task {
             for n in [3, 2, 1] {
                 withAnimation(Motion.lively) { countdown = n }
@@ -224,12 +329,15 @@ struct CardioTrackingView: View {
             }
             withAnimation(Motion.lively) { countdown = 0 }
             try? await Task.sleep(for: .seconds(0.5))
-            let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit)
-            await model.start()
+            await vm?.arm()
             Haptics.success()
-            vm = model
             withAnimation(Motion.standard) { phase = .tracking }
         }
+    }
+
+    private func cancelAndDismiss() {
+        vm?.cancelAcquiring()
+        onFinish(nil)
     }
 }
 

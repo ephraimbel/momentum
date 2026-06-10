@@ -22,6 +22,15 @@ final class CardioViewModel {
     private(set) var workoutId: UUID?
     private var pumpTask: Task<Void, Never>?
 
+    /// True once a fix lands within the lock accuracy band — the cue to leave the "acquiring" gate
+    /// and start the countdown (PRD §4.3; mirrors Strava's "GPS Signal Acquired").
+    private(set) var hasGPSLock = false
+    /// Until armed (after the countdown), incoming fixes only report signal quality — they do not
+    /// accumulate distance or extend the route, so a weak pre-start fix can't poison the trace.
+    private var armed = false
+    /// Research band for running/pace apps is ~30–50m; we lock at the tight end.
+    private static let lockAccuracyM = 30.0
+
     // Elapsed-time clock — ticks continuously from start, freezing while paused (manual or auto).
     // Independent of GPS-fix cadence so the timer always advances every second.
     private var pausedTotalS: TimeInterval = 0
@@ -36,21 +45,39 @@ final class CardioViewModel {
         self.engine = GPSTrackingEngine(type: type, sink: store)
     }
 
-    func start() async {
-        startedAt = Date()
+    /// Open the location stream and watch signal quality without recording yet. Fixes report
+    /// accuracy (driving the strength meter + `hasGPSLock`) but are not ingested until `arm()`.
+    func beginAcquiring() {
         location.requestAuthorization()
-        await engine.begin(now: startedAt)
-        workoutId = ActiveWorkoutMarker.pendingID
-        snapshot = await engine.snapshot()
         pumpTask = Task { [weak self] in
             guard let self else { return }
             for await fix in self.location.fixes() {
                 self.lastAccuracyM = fix.accuracyM
+                guard self.armed else {
+                    if fix.accuracyM > 0, fix.accuracyM <= Self.lockAccuracyM { self.hasGPSLock = true }
+                    continue
+                }
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
                 self.syncPauseClock()
             }
         }
+    }
+
+    /// Begin recording for real (called when the countdown hits GO). From here fixes accumulate
+    /// into the route + distance; the elapsed clock starts now.
+    func arm() async {
+        startedAt = Date()
+        await engine.begin(now: startedAt)
+        workoutId = ActiveWorkoutMarker.pendingID
+        snapshot = await engine.snapshot()
+        armed = true
+    }
+
+    /// Tear down the stream when the user backs out before arming (no workout was ever created).
+    func cancelAcquiring() {
+        pumpTask?.cancel()
+        location.stop()
     }
 
     func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock() }
