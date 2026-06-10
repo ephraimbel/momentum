@@ -79,28 +79,11 @@ struct RouteSuggestionView: View {
                         .overlay(Circle().stroke(Theme.hairline))
                 }
                 Spacer()
-                layersButton
+                MapLayersButton(style: $mapStyle)
             }
             .padding(Theme.Space.md)
             Spacer()
         }
-    }
-
-    /// Strava-style layer switcher — Map / Hybrid / Satellite.
-    private var layersButton: some View {
-        Menu {
-            Picker("Map style", selection: $mapStyle) {
-                ForEach(MapStyleOption.allCases) { style in
-                    Label(style.label, systemImage: style.systemImage).tag(style)
-                }
-            }
-        } label: {
-            Image(systemName: "square.3.layers.3d").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 38, height: 38)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().stroke(Theme.hairline))
-        }
-        .accessibilityLabel("Map style")
     }
 
     private var panel: some View {

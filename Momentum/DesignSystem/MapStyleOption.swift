@@ -39,3 +39,25 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     /// satellite imagery (a heavier white halo, lighter ink) than over the muted standard map.
     var isImagery: Bool { self != .standard }
 }
+
+/// Strava-style layers control — a floating glass button that switches the map base. Shared by every
+/// map screen so the affordance is identical everywhere.
+struct MapLayersButton: View {
+    @Binding var style: MapStyleOption
+
+    var body: some View {
+        Menu {
+            Picker("Map style", selection: $style) {
+                ForEach(MapStyleOption.allCases) { option in
+                    Label(option.label, systemImage: option.systemImage).tag(option)
+                }
+            }
+        } label: {
+            Image(systemName: "square.3.layers.3d").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 38, height: 38)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().stroke(Theme.hairline))
+        }
+        .accessibilityLabel("Map style")
+    }
+}
