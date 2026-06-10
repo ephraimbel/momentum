@@ -83,7 +83,7 @@ struct CardioSummaryContent: View {
             .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
         if coords.count > 1 {
             Map(interactionModes: []) {
-                MapPolyline(coordinates: coords)
+                MapPolyline(coordinates: RouteSmoothing.smooth(coords))
                     .stroke(Theme.route, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             }
             .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
