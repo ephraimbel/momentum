@@ -42,5 +42,28 @@ struct RouteDeviationTests {
         #expect(RouteDeviation.distanceToPolyline(base, []) == .infinity)
         let single = offset(base, north: 30, east: 0)
         #expect(abs(RouteDeviation.distanceToPolyline(single, [base]) - 30) < 1)
+        #expect(RouteDeviation.nearest(on: [], to: base) == nil)
+    }
+
+    @Test func nearestPointSitsOnTheLoop() throws {
+        let off = offset(base, north: 50, east: 50)
+        let n = try #require(RouteDeviation.nearest(on: eastLeg, to: off))
+        #expect(abs(n.distanceM - 50) < 1.5)
+        // The foot of the perpendicular is on the segment (~base latitude, ~50m east).
+        #expect(abs(n.point.lat - base.lat) < 1e-5)
+        #expect(n.point.distance(to: offset(base, north: 0, east: 50)) < 2)
+    }
+
+    @Test func bearingPointsTheRightWay() {
+        // Due north ⇒ ~0°, due east ⇒ ~90°, due west ⇒ ~270°.
+        #expect(angularGap(RouteDeviation.bearing(from: base, to: offset(base, north: 100, east: 0)), 0) < 1)
+        #expect(angularGap(RouteDeviation.bearing(from: base, to: offset(base, north: 0, east: 100)), 90) < 1)
+        #expect(angularGap(RouteDeviation.bearing(from: base, to: offset(base, north: 0, east: -100)), 270) < 1)
+    }
+
+    /// Smallest absolute difference between two compass bearings (handles the 0/360 wrap).
+    private func angularGap(_ a: Double, _ b: Double) -> Double {
+        let d = abs(a - b).truncatingRemainder(dividingBy: 360)
+        return min(d, 360 - d)
     }
 }
