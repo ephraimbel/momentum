@@ -125,12 +125,12 @@ final class CardioViewModel {
 
     /// The discipline's hero metric (PRD §4.3): run → pace, ride → speed, walk → distance.
     var heroValue: String {
-        switch type {
-        case .ride:
+        switch type.discipline {
+        case .cycling:
             let t = elapsed()
             let speed = t > 0 ? distanceM / t : 0
             return Formatters.speed(ms: speed, unit: distanceUnit)
-        case .walk, .hike:
+        case .walking:
             return Formatters.distance(meters: distanceM, unit: distanceUnit)
         default:
             return Formatters.pace(secPerKm: snapshot?.smoothedPaceSPerKm ?? 0, unit: distanceUnit)
@@ -138,9 +138,9 @@ final class CardioViewModel {
     }
 
     var heroLabel: String {
-        switch type {
-        case .ride: "Speed"
-        case .walk, .hike: "Distance"
+        switch type.discipline {
+        case .cycling: "Speed"
+        case .walking: "Distance"
         default: "Pace"
         }
     }

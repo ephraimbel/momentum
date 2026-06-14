@@ -46,21 +46,46 @@ struct CardioSummaryContent: View {
     /// Show the user's title/description header (off in the save editor, which has editable fields).
     var showsHeader: Bool = true
 
+    @Environment(\.modelContext) private var context
+    @State private var hits: [CardioAchievements.Hit] = []
+
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
     }
 
     var body: some View {
         if let gps = workout.gps {
+            // Reveal-first: lead with the mastery payoff (hero distance + any "you got better" win),
+            // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.xl) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
-                routeMap(gps).reveal(0)
-                headline(workout, gps).reveal(0.08)
-                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.18)
-                splitsSection(gps).reveal(0.28)
+                headline(workout, gps).reveal(0)
+                if !hits.isEmpty {
+                    achievementsSection.reveal(0.10)
+                    EarnedShareButton(workout: workout, distanceUnit: distanceUnit, title: "Share your run").reveal(0.16)
+                }
+                routeMap(gps).reveal(0.22)
+                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
+                splitsSection(gps).reveal(0.38)
+            }
+            .task {
+                hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
             }
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// One self-relative line that frames the run as progress — the top achievement, if any.
+    private var competenceText: String? {
+        hits.first.map { "\($0.label) · \($0.detail)" }
+    }
+
+    private var achievementsSection: some View {
+        VStack(spacing: Theme.Space.sm) {
+            ForEach(hits) { hit in
+                PRBadge(text: "\(hit.label) · \(hit.detail)", celebrate: true)
+            }
         }
     }
 
@@ -99,6 +124,7 @@ struct CardioSummaryContent: View {
             CountUpHero(target: distanceTarget,
                         format: { String(format: "%.2f", $0) },
                         label: isImperial ? "Miles" : "Kilometers")
+            if let competenceText { EarnedLine(text: competenceText) }
             HStack(spacing: Theme.Space.xl) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
                 stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")

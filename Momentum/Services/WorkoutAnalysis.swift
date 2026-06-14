@@ -40,7 +40,7 @@ struct WorkoutDigest: Codable, Sendable {
                             avgSpeedMS: g.avgSpeedMS, elevationGainM: g.elevationGainM, avgHR: g.avgHR,
                             splitSecondsPerUnit: g.splits.sorted { $0.index < $1.index }.map(\.durationS))
         } else { gps = nil }
-        if w.type == .strength, let s = w.strength {
+        if w.type.isStrengthStyle, let s = w.strength {
             var tops: [StrengthDigest.TopSet] = []
             for row in s.exercises {
                 let working = row.sets.filter { $0.isComplete && $0.type == .working }

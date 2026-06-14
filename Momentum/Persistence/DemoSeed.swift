@@ -63,9 +63,9 @@ enum DemoSeed {
         }
     }
 
-    /// ~24 samples tracing a rough loop near SF for a believable route.
+    /// ~24 samples tracing a rough loop near downtown Austin for a believable route.
     private static func loopSamples(start: Date) -> [LocationSample] {
-        let centerLat = 37.7694, centerLon = -122.4862, r = 0.004
+        let centerLat = 30.2672, centerLon = -97.7431, r = 0.004
         return (0..<24).map { i in
             let a = Double(i) / 24 * 2 * .pi
             let s = LocationSample()

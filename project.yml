@@ -43,6 +43,7 @@ targets:
         NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
         NSHealthShareUsageDescription: "momentum reads heart rate, body weight, and workout data to personalize your stats and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
+        NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
         # Athlete Model / AI read (ATHLETE-MODEL.md §7). Empty → deterministic-template path (ships
         # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
@@ -58,6 +59,8 @@ targets:
           - SpaceGrotesk-Regular.ttf
           - SpaceGrotesk-Medium.ttf
           - SpaceGrotesk-Bold.ttf
+    dependencies:
+      - target: MomentumWidgets      # embeds the Live Activity / widget extension into the app
     # ── Later-phase dependencies (NOT in the Phase 0 build) ──────────────
     # Add when their phase begins, then re-run `xcodegen generate`:
     #   Phase 2/4 — supabase-swift  (https://github.com/supabase/supabase-swift)
@@ -67,6 +70,26 @@ targets:
     #   - package: supabase-swift
     #   - package: RevenueCat
     #   - package: Superwall
+
+  # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
+  # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity
+  # requirement). Regenerate with `xcodegen generate` after adding widget files.
+  MomentumWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MomentumWidgets
+      - path: Momentum/Features/Strength/RestActivityAttributes.swift   # shared with the app target
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.widgets
+    info:
+      path: MomentumWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
   MomentumTests:
     type: bundle.unit-test
@@ -81,12 +104,41 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.tests
         GENERATE_INFOPLIST_FILE: YES
 
+  # XCUITest target — drives the real app through the live-run flow to confirm the Pause/Resume
+  # control responds over the MapKit map (regression guard for the OversizedButton hit-testing fix).
+  MomentumUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MomentumUITests
+    dependencies:
+      - target: Momentum
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   Momentum:
     build:
       targets:
         Momentum: all
+        MomentumWidgets: all
         MomentumTests: [test]
+        MomentumUITests: [test]
     test:
       targets:
         - MomentumTests
+        - MomentumUITests
+
+  # UI-tests only — runs the live-run Pause regression check without compiling the unit-test target.
+  MomentumUITests:
+    build:
+      targets:
+        Momentum: all
+        MomentumWidgets: all
+        MomentumUITests: [test]
+    test:
+      targets:
+        - MomentumUITests

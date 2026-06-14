@@ -28,6 +28,8 @@
 	<string>momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>momentum uses motion data to measure cadence and steps.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>SupabaseAnonKey</key>
 	<string></string>
 	<key>SupabaseURL</key>

@@ -1,10 +1,10 @@
 import Foundation
 
-/// The three tabs of the app shell (PRD §7.0): Today · Plan · Progress.
-/// (Progress hosts both trends and history via a segmented switch.)
+/// The tabs of the app shell (PRD §7.0): Today · Plan · Progress · Coach.
+/// (Progress hosts both trends and history via a segmented switch; Coach is the immersive AI chat.)
 /// Named `AppTab` to avoid colliding with SwiftUI's iOS 18 `Tab` view.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
-    case today, plan, progress
+    case today, plan, progress, coach
     var id: String { rawValue }
 
     var title: String {
@@ -12,6 +12,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .today: "Today"
         case .plan: "Plan"
         case .progress: "Progress"
+        case .coach: "Coach"
         }
     }
 
@@ -20,6 +21,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .today: "map"
         case .plan: "calendar"
         case .progress: "chart.line.uptrend.xyaxis"
+        case .coach: "sparkles"
         }
     }
 }

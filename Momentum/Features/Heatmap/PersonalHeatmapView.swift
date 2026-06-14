@@ -7,7 +7,8 @@ import MapKit
 /// more. No network, no other users — purely on-device SwiftData.
 struct PersonalHeatmapView: View {
     var distanceUnit: DistanceUnit = .auto
-    var onClose: () -> Void = {}
+    /// Nil when shown as a tab (no close affordance); set when presented as a sheet/cover.
+    var onClose: (() -> Void)? = nil
 
     @Query private var workouts: [Workout]
 
@@ -29,26 +30,16 @@ struct PersonalHeatmapView: View {
             if !cells.isEmpty { statsBar }
         }
         .background(Theme.background)
+        .navigationBarHidden(true)
         .task { await build() }
     }
 
-    /// Flatten accepted samples on the main actor (SwiftData models aren't Sendable), then bin off it.
     private func build() async {
-        let gps = workouts.compactMap(\.gps)
-        var coords: [GeoPoint] = []
-        coords.reserveCapacity(gps.reduce(0) { $0 + $1.samples.count })
-        var meters = 0.0
-        for detail in gps {
-            meters += detail.distanceM
-            for s in detail.samples where s.accepted { coords.append(GeoPoint(lat: s.lat, lon: s.lon)) }
-        }
-        let count = gps.count
-        let binned = await Task.detached { HeatmapBinning.bin(coords) }.value
-
-        cells = binned
-        region = Self.region(for: coords)
-        totalMeters = meters
-        activityCount = count
+        let r = await HeatmapSource.build(from: workouts)
+        cells = r.cells
+        region = r.region
+        totalMeters = r.totalMeters
+        activityCount = r.activityCount
         loaded = true
     }
 
@@ -57,11 +48,13 @@ struct PersonalHeatmapView: View {
     private var topBar: some View {
         VStack {
             HStack {
-                Button(action: onClose) {
-                    Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 38, height: 38)
-                        .background(.regularMaterial, in: Circle())
-                        .overlay(Circle().stroke(Theme.hairline))
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 38, height: 38)
+                            .background(.regularMaterial, in: Circle())
+                            .overlay(Circle().stroke(Theme.hairline))
+                    }
                 }
                 Spacer()
                 if !cells.isEmpty { MapLayersButton(style: $style) }
@@ -104,17 +97,5 @@ struct PersonalHeatmapView: View {
             }
         }
         .padding(Theme.Space.xl)
-    }
-
-    // MARK: Geometry
-
-    private static func region(for coords: [GeoPoint]) -> MKCoordinateRegion? {
-        guard !coords.isEmpty else { return nil }
-        let lats = coords.map(\.lat), lons = coords.map(\.lon)
-        let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
-        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
-        let span = MKCoordinateSpan(latitudeDelta: max(0.01, (maxLat - minLat) * 1.3),
-                                    longitudeDelta: max(0.01, (maxLon - minLon) * 1.3))
-        return MKCoordinateRegion(center: center, span: span)
     }
 }

@@ -35,7 +35,7 @@ struct ProfileStats {
                 counting.insert(StreakCalculator.localDay(w.startedAt, calendar: calendar))
             }
 
-            if w.type == .strength, let s = w.strength {
+            if w.type.isStrengthStyle, let s = w.strength {
                 volume += s.totalVolumeKg
                 for row in s.exercises {
                     guard let name = row.exercise?.name else { continue }

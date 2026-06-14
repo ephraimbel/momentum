@@ -24,11 +24,16 @@ struct PlanView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
                         header
-                        ForEach(days, id: \.self) { dayRow($0) }
+                        VStack(spacing: Theme.Space.md) {
+                            ForEach(Array(days.enumerated()), id: \.element) { i, day in
+                                dayRow(day).reveal(min(Double(i) * 0.04, 0.28))
+                            }
+                        }
                     }
                     .padding(Theme.Space.lg)
                     .padding(.bottom, Theme.Space.xxl)
                 }
+                .scrollIndicators(.hidden)
             }
         }
         .background(Theme.background)
@@ -51,26 +56,60 @@ struct PlanView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Plan").font(.display(32, weight: .black)).foregroundStyle(Theme.ink)
-                Text(weekLabel).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Plan").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
+                Spacer()
+                addButton
             }
-            Spacer()
-            HStack(spacing: Theme.Space.sm) {
-                navButton("plus") { presentAdd(for: Date()) }
-                navButton("chevron.left") { shiftWeek(-1) }
-                navButton("chevron.right") { shiftWeek(1) }
-            }
+            weekBar
         }
         .padding(.top, Theme.Space.sm)
+    }
+
+    /// Elegant week switcher — the range/“This week” + a live summary, flanked by chevrons.
+    private var weekBar: some View {
+        HStack(spacing: Theme.Space.sm) {
+            chevron("chevron.left") { shiftWeek(-1) }
+            VStack(spacing: 1) {
+                Text(weekTitle).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(weekSummary).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .contentTransition(.opacity)
+            chevron("chevron.right") { shiftWeek(1) }
+        }
+        .padding(.vertical, Theme.Space.sm)
+        .padding(.horizontal, Theme.Space.sm)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    private var addButton: some View {
+        Button { presentAdd(for: Date()) } label: {
+            Image(systemName: "plus").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.background)
+                .frame(width: 40, height: 40).background(Circle().fill(Theme.ink))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add session")
+    }
+
+    private func chevron(_ system: String, _ action: @escaping () -> Void) -> some View {
+        Button { Haptics.light(); action() } label: {
+            Image(systemName: system).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 40, height: 40).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func dayRow(_ day: Date) -> some View {
         let sessions = PlanCoaching.todaySessions(plan, on: day)
         let isToday = Calendar.current.isDateInToday(day)
         return HStack(alignment: .top, spacing: Theme.Space.md) {
-            dateBadge(day, isToday: isToday)
+            dateBadge(day, isToday: isToday, hasSessions: !sessions.isEmpty)
             VStack(spacing: Theme.Space.sm) {
                 if sessions.isEmpty {
                     restRow(day)
@@ -88,18 +127,20 @@ struct PlanView: View {
         }
     }
 
-    private func dateBadge(_ day: Date, isToday: Bool) -> some View {
+    private func dateBadge(_ day: Date, isToday: Bool, hasSessions: Bool) -> some View {
         VStack(spacing: 2) {
-            Text(day.formatted(.dateTime.weekday(.narrow)))
-                .font(.rounded(Theme.FontSize.caption, weight: .bold))
+            Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(0.5)
             Text(day.formatted(.dateTime.day()))
-                .font(.display(18, weight: .heavy)).monospacedDigit()
+                .font(.display(20, weight: .heavy)).monospacedDigit()
         }
-        .foregroundStyle(isToday ? Theme.background : Theme.ink)
-        .frame(width: 46, height: 56)
+        // Hierarchy: today fills ink; days with sessions read full-ink; rest days recede.
+        .foregroundStyle(isToday ? Theme.background : (hasSessions ? Theme.ink : Theme.inkTertiary))
+        .frame(width: 52, height: 62)
         .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(isToday ? Theme.ink : Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(isToday ? Theme.ink : Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(isToday ? Color.clear : Theme.hairline)
         }
     }
 
@@ -107,10 +148,10 @@ struct PlanView: View {
         let done = session.status == .completed
         return HStack(spacing: Theme.Space.md) {
             Image(systemName: disciplineIcon(session.discipline))
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Theme.ink)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Theme.background))
+                .frame(width: 40, height: 40)
+                .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(PlanCoaching.brief(for: session))
                     .font(.rounded(Theme.FontSize.body, weight: .semibold))
@@ -135,15 +176,21 @@ struct PlanView: View {
         .accessibilityLabel("\(PlanCoaching.brief(for: session)), \(session.status.rawValue)")
     }
 
+    /// A calm, low-emphasis rest day — slimmer than a session card so planned days stand out. No guilt.
     private func restRow(_ day: Date) -> some View {
         Button { presentAdd(for: day) } label: {
-            HStack {
-                Text("Rest").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            HStack(spacing: Theme.Space.sm) {
+                Text("Rest day").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 Spacer()
-                Image(systemName: "plus.circle").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                Image(systemName: "plus").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
-            .padding(Theme.Space.md)
+            .padding(.horizontal, Theme.Space.md)
+            .frame(height: 48)
             .frame(maxWidth: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface.opacity(0.55))
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline.opacity(0.7))
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -160,13 +207,22 @@ struct PlanView: View {
         .padding(Theme.Space.xl).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func navButton(_ system: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: system).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 38, height: 38)
-                .background { Circle().fill(Theme.surface); Circle().stroke(Theme.hairline) }
-        }
-        .buttonStyle(.plain)
+    private var weekSessions: [PlannedSession] {
+        days.flatMap { PlanCoaching.todaySessions(plan, on: $0) }
+    }
+
+    private var weekTitle: String {
+        let cur = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start
+        if let cur, Calendar.current.isDate(weekStart, inSameDayAs: cur) { return "This week" }
+        return weekLabel
+    }
+
+    private var weekSummary: String {
+        let sessions = weekSessions
+        guard !sessions.isEmpty else { return "Open week · tap + to plan" }
+        let done = sessions.filter { $0.status == .completed }.count
+        let unit = sessions.count == 1 ? "session" : "sessions"
+        return done > 0 ? "\(sessions.count) \(unit) · \(done) done" : "\(sessions.count) \(unit)"
     }
 
     private func statusIcon(_ status: SessionStatus) -> String {

@@ -24,7 +24,7 @@ final class OnboardingViewModel {
 
     var step: Step = .coldOpen
 
-    enum Step: Int, CaseIterable { case coldOpen, disciplines, goal, experience, days, equipment, session, why, calibration, building, reveal, primers }
+    enum Step: Int, CaseIterable { case coldOpen, disciplines, goal, experience, days, equipment, session, why, calibration, commitment, building, reveal, primers }
 
     var lifting: Bool { disciplines.contains(.strength) }
 
@@ -62,6 +62,55 @@ final class OnboardingViewModel {
         var seed = CalibrationSeed()
         if addRecentRun { seed.recentRun = (recentRunMeters, recentRunSeconds) }
         return seed
+    }
+
+    /// Personalized status lines for the "building your plan" beat — each reflects an answer back so
+    /// the analysis feels bespoke (research: the loader should mirror the user's own inputs).
+    func buildingLines() -> [String] {
+        var lines = ["Balancing your \(daysPerWeek)-day week"]
+        if disciplines.contains(.running) && disciplines.contains(.strength) {
+            lines.append("Spacing your runs and lifts")
+        } else if disciplines.contains(.strength) {
+            lines.append("Sequencing your strength work")
+        } else if disciplines.contains(.running) {
+            lines.append("Building your running base")
+        } else {
+            lines.append("Spacing your efforts")
+        }
+        switch goal {
+        case .buildMuscle:   lines.append("Tuning volume for muscle")
+        case .getStronger:   lines.append("Loading for strength")
+        case .loseFat:       lines.append("Shaping it for fat loss")
+        case .raceDistance:  lines.append("Pointing it at your distance")
+        case .endurance:     lines.append("Stretching your endurance")
+        default:             lines.append("Making it easy to keep")
+        }
+        lines.append(disciplines.contains(.strength) && !disciplines.contains(.running)
+                     ? "Setting your starting loads" : "Setting your starting paces")
+        lines.append("Finalizing your plan")
+        return lines
+    }
+
+    /// Short "tuned to you" reflections shown on the reveal — the inputs the plan was built around.
+    func reflections() -> [String] {
+        var chips = ["\(daysPerWeek) days / week"]
+        chips.append(goalLabel)
+        if disciplines.contains(.strength) { chips.append(equipmentLabel) }
+        chips.append("\(sessionMinutes) min")
+        return chips
+    }
+
+    private var goalLabel: String {
+        switch goal {
+        case .loseFat: "Fat loss"; case .buildMuscle: "Build muscle"; case .getStronger: "Get stronger"
+        case .raceDistance: "Race ready"; case .endurance: "Endurance"; default: "Consistency"
+        }
+    }
+
+    private var equipmentLabel: String {
+        switch equipment {
+        case .fullGym: "Full gym"; case .dumbbellsOnly: "Dumbbells"; case .homeMinimal: "Home"; case .bodyweight: "Bodyweight"
+        }
     }
 
     /// Projected outcome copy for the reveal (PRD §4.1).

@@ -142,7 +142,7 @@ final class AthleteModelService: AthleteModelServing {
     private static func topE1RMByLift(_ workouts: [Workout], now: Date, calendar: Calendar) -> [String: Double] {
         guard let cut = calendar.date(byAdding: .day, value: -56, to: now) else { return [:] }
         var best: [String: Double] = [:]
-        for w in workouts where w.type == .strength && w.startedAt >= cut {
+        for w in workouts where w.type.isStrengthStyle && w.startedAt >= cut {
             guard let s = w.strength else { continue }
             for row in s.exercises {
                 guard let name = row.exercise?.name else { continue }

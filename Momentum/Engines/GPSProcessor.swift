@@ -24,10 +24,10 @@ struct GPSProcessor {
 
         /// Discipline-specific auto-pause thresholds (§8.3).
         static func forType(_ type: WorkoutType) -> Config {
-            switch type {
-            case .ride:
+            switch type.discipline {
+            case .cycling:   // all bike variants
                 return Config(autoPauseSpeedMS: 1.0, autoPauseSecs: 5.0)
-            default: // run/walk/hike
+            default: // run/trail run/walk/hike
                 return Config(autoPauseSpeedMS: 0.5, autoPauseSecs: 4.0)
             }
         }

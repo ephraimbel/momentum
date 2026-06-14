@@ -26,11 +26,11 @@ struct CompletedWorkoutCard: View {
 
     @ViewBuilder
     private var banner: some View {
-        if workout.type == .strength {
+        if workout.type.isStrengthStyle || workout.type.isTimed {
             ZStack {
                 LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
                                startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: "dumbbell.fill")
+                Image(systemName: workout.type.systemImage)
                     .font(.system(size: 44, weight: .bold))
                     .foregroundStyle(Theme.ink.opacity(0.85))
             }
@@ -81,7 +81,7 @@ struct CompletedWorkoutCard: View {
     }
 
     private var statsText: String {
-        if workout.type == .strength, let s = workout.strength {
+        if workout.type.isStrengthStyle, let s = workout.strength {
             let vol = weightUnit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
             return "\(Int(vol)) \(weightUnit == .lb ? "lb" : "kg") · \(s.totalSets) sets · \(Formatters.duration(s: workout.durationS))"
         } else if let gps = workout.gps {

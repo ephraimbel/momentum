@@ -10,6 +10,7 @@ struct PlanRevealView: View {
 
     @State private var ringProgress = 0.0
     @State private var shownDays = 0.0
+    @State private var bloom = 0.0          // iridescent celebration bloom behind the goal ring
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var weekOne: [PlannedSession] {
@@ -21,15 +22,38 @@ struct PlanRevealView: View {
     }
 
     var body: some View {
-        VStack(spacing: Theme.Space.xl) {
-            hero
-            sessionList
-            OversizedButton(title: "This looks great") { onContinue() }
-                .reveal(rowDelay(weekOne.count) + 0.05)
+        // One scroll for the whole page — the first-week cards flow with everything else rather than
+        // scrolling in their own nested region.
+        ScrollView {
+            VStack(spacing: Theme.Space.lg) {
+                hero
+                reflectionChips.reveal(0.24)
+                projectionCard.reveal(0.3)
+                sessionList
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, Theme.Space.md)
+            .padding(.bottom, Theme.Space.sm)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, Theme.Space.md)
+        .scrollIndicators(.hidden)
+        // Pin the CTA so it's visible the moment the page opens; the plan scrolls above it.
+        .safeAreaInset(edge: .bottom) {
+            OversizedButton(title: "This looks great") { onContinue() }
+                .reveal(0.4)
+                .padding(.top, Theme.Space.sm)
+                .padding(.bottom, Theme.Space.sm)
+                .frame(maxWidth: .infinity)
+                .background(Theme.background)
+        }
         .onAppear(perform: animateIn)
+    }
+
+    /// One consistent section label for every block below the hero — left-aligned, same weight/tracking.
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.rounded(Theme.FontSize.label, weight: .bold))
+            .tracking(1.4)
+            .foregroundStyle(Theme.inkTertiary)
     }
 
     // MARK: Hero — iridescent goal ring + count-up + headline
@@ -37,6 +61,12 @@ struct PlanRevealView: View {
     private var hero: some View {
         VStack(spacing: Theme.Space.lg) {
             ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: Theme.iridescent, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 150, height: 150)
+                    .blur(radius: 30)
+                    .opacity(0.35 * bloom)
+                    .scaleEffect(0.8 + 0.2 * bloom)
                 ProgressRing(progress: ringProgress).frame(width: 132, height: 132)
                 VStack(spacing: -2) {
                     AnimatedCounter(value: shownDays) { "\(Int($0.rounded()))" }
@@ -64,24 +94,64 @@ struct PlanRevealView: View {
         }
     }
 
+    // MARK: Reflections — the inputs the plan was built around (research: reflect each answer back)
+
+    private var reflectionChips: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            sectionLabel("BUILT AROUND YOU")
+            ScrollView(.horizontal) {
+                HStack(spacing: Theme.Space.sm) {
+                    ForEach(vm.reflections(), id: \.self) { chip in
+                        Text(chip)
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.ink)
+                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
+                            .background(Capsule().fill(Theme.surface))
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Projection — the self-drawing trajectory (the welcome route, now pointed forward)
+
+    /// Cumulative planned training hours across 12 weeks — derived purely from the user's own
+    /// commitment (days × minutes). Real magnitudes, no outcome/medical claim; the curve only renders.
+    private var projectionValues: [Double] {
+        let weeklyHours = Double(vm.daysPerWeek * vm.sessionMinutes) / 60
+        return (1...12).map { weeklyHours * Double($0) }
+    }
+    private var projectedHours: Int {
+        Int((Double(vm.daysPerWeek * vm.sessionMinutes) / 60 * 12).rounded())
+    }
+
+    private var projectionCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            sectionLabel("YOUR NEXT 12 WEEKS")
+            ProjectionCurve(values: projectionValues,
+                            endpointLabel: "~\(projectedHours)h",
+                            weeksLabel: "12 weeks")
+                .frame(height: 100)
+                .padding(Theme.Space.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: First-week cascade
 
     private var sessionList: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("YOUR FIRST WEEK")
-                .font(.rounded(Theme.FontSize.label, weight: .bold))
-                .tracking(1.4)
-                .foregroundStyle(Theme.inkTertiary)
-                .reveal(0.28)
-            ScrollView {
-                VStack(spacing: Theme.Space.sm) {
-                    ForEach(Array(weekOne.enumerated()), id: \.element.persistentModelID) { index, session in
-                        sessionRow(session).reveal(rowDelay(index))
-                    }
+            sectionLabel("YOUR FIRST WEEK").reveal(0.28)
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(Array(weekOne.enumerated()), id: \.element.persistentModelID) { index, session in
+                    sessionRow(session).reveal(rowDelay(index))
                 }
-                .padding(.bottom, Theme.Space.xs)
             }
-            .scrollIndicators(.hidden)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -124,9 +194,11 @@ struct PlanRevealView: View {
         guard !reduceMotion else {
             ringProgress = 1
             shownDays = Double(vm.daysPerWeek)
+            bloom = 1
             return
         }
         withAnimation(.easeOut(duration: 1.1)) { ringProgress = 1 }
+        withAnimation(.easeOut(duration: 0.9).delay(0.15)) { bloom = 1 }
         withAnimation(.easeOut(duration: 1.0).delay(0.1)) { shownDays = Double(vm.daysPerWeek) }
         Haptics.celebration()   // the earned, sold moment
     }

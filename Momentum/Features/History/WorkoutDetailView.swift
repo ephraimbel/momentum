@@ -10,8 +10,10 @@ struct WorkoutDetailView: View {
     var body: some View {
         ScrollView {
             Group {
-                if workout.type == .strength {
+                if workout.type.isStrengthStyle {
                     StrengthSummaryContent(workout: workout, weightUnit: weightUnit)
+                } else if workout.type.isTimed {
+                    TimedSummaryContent(workout: workout)
                 } else {
                     CardioSummaryContent(workout: workout, distanceUnit: distanceUnit)
                 }

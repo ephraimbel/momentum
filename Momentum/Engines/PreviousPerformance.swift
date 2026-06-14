@@ -12,7 +12,7 @@ enum PreviousPerformance {
     static func lastSession(forExerciseId id: UUID, in context: ModelContext) -> [Int: PrevSet] {
         let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
         let strength = workouts
-            .filter { $0.type == .strength }
+            .filter { $0.type.isStrengthStyle }
             .sorted { $0.startedAt > $1.startedAt }
 
         for workout in strength {

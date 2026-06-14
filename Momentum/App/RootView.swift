@@ -28,13 +28,23 @@ struct RootView: View {
         TabView(selection: $selection) {
             ForEach(AppTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack {
-                        screen(for: tab)
-                    }
+                    tabContent(tab)
                 }
             }
         }
         .background(Theme.background)
+    }
+
+    @ViewBuilder
+    private func tabContent(_ tab: AppTab) -> some View {
+        switch tab {
+        case .coach:
+            // The Coach is its own immersive chat (own NavigationStack), with the tab bar hidden so it
+            // reads as a dedicated AI surface; its back arrow returns to the app.
+            CoachChatView { selection = .today }
+        default:
+            NavigationStack { screen(for: tab) }
+        }
     }
 
     @ViewBuilder
@@ -43,6 +53,7 @@ struct RootView: View {
         case .today: TodayView()
         case .plan: PlanView()
         case .progress: ProgressScreen()
+        case .coach: EmptyView()   // routed by tabContent
         }
     }
 }

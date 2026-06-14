@@ -142,8 +142,83 @@ enum PlanCoaching {
         case .hold, .start:
             return 0   // advisory only — nothing to change
         }
+        plan.lastAdaptedAt = date   // record any adaptation so auto-adapt can't stack on it (≤1/week)
         try? context.save()
         return future.count
+    }
+
+    /// The outcome of a pace recalibration, so the caller can narrate/notify it ("you're getting faster").
+    struct Recalibration: Sendable, Equatable {
+        let oldP5kSPerKm: Double
+        let newP5kSPerKm: Double
+        let sessionsUpdated: Int
+    }
+
+    /// Learn from a finished run (PRD §9, the adaptive half): if a genuine effort implies a faster 5k
+    /// than the plan currently assumes, lower the athlete's `p5kSPerKm` and re-derive **future**
+    /// running paces. Conservative on purpose:
+    ///  • only quality/hard efforts count (never recalibrate off an easy/long run, which is slow by design),
+    ///  • paces only ever get *faster* from a single run (a bad day never slows you down — no-shame),
+    ///  • a single run moves p5k at most ~3%, with a sane floor.
+    /// Returns the change if one was made (else `nil`). Deterministic + bounded; the AI only narrates it.
+    @discardableResult
+    static func recalibratePaces(from workout: Workout, plan: TrainingPlan?, today: Date = Date(),
+                                 in context: ModelContext, calendar: Calendar = .current) -> Recalibration? {
+        guard let plan, workout.type.discipline == .running, let gps = workout.gps else { return nil }
+        let dist = gps.distanceM, time = workout.durationS, current = plan.p5kSPerKm
+        // Need a meaningful distance to extrapolate a 5k from — Riegel off a 400 m rep is noise.
+        guard dist >= 2000, time > 0, current > 0 else { return nil }
+
+        // Fitness signal only: a planned quality session, a hard reported effort, or a pace sustained
+        // at roughly 5k effort or faster. An easy/long run (run deliberately slow) never qualifies.
+        let avgPaceSPerKm = time / (dist / 1000)
+        let isQualityPlanned = (workout.plannedSession?.runType).map { [.tempo, .intervals, .race].contains($0) } ?? false
+        let isHardEffort = (workout.perceivedEffort ?? 0) >= 7
+        let ranNearThreshold = avgPaceSPerKm <= current + 15
+        guard isQualityPlanned || isHardEffort || ranNearThreshold else { return nil }
+
+        // Treat the run as a 5k-equivalent (Riegel). Most efforts aren't maximal, so this *under*-states
+        // true fitness — beating the stored p5k is therefore a strong, conservative signal.
+        let equivalent = PlanEngine.riegelP5k(distanceM: dist, timeS: time)
+        guard equivalent < current else { return nil }       // only get faster from a single run
+        let bounded = max(equivalent, current * 0.97, 150)   // ≤3%/update; sane floor
+        guard current - bounded >= 0.5 else { return nil }   // ignore sub-second-per-km noise
+
+        plan.p5kSPerKm = bounded
+
+        // Re-derive paces on future, still-planned running sessions (today's history is never touched).
+        let todayStart = calendar.startOfDay(for: today)
+        var updated = 0
+        for s in plan.sessions
+            where s.status == .planned && s.completedWorkout == nil
+                  && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
+            s.targetPaceSPerKm = PlanEngine.pace(runType, p5k: bounded)
+            updated += 1
+        }
+        try? context.save()
+        return Recalibration(oldP5kSPerKm: current, newP5kSPerKm: bounded, sessionsUpdated: updated)
+    }
+
+    /// Automatically protect the athlete from overreaching (PRD §9.4) — the closed-loop half of
+    /// `apply`. Reads the ACWR recommendation from *completed* load and, **only when it says ease or
+    /// rest**, applies it to upcoming sessions. Deliberately never auto-*increases* load (raising
+    /// volume without consent is the unsafe direction — that stays a manual/coach-proposed action).
+    ///
+    /// Gated to **at most once per 7 days** via `plan.lastAdaptedAt`, which is the safeguard against
+    /// the compounding that `apply`'s doc warns about (the rec is from completed load, so re-applying
+    /// it back-to-back would spiral). Returns the rec it applied, or `nil` if nothing changed.
+    @discardableResult
+    static func autoAdapt(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
+                          in context: ModelContext, calendar: Calendar = .current) -> ProgressInsights.Recommendation? {
+        guard let plan else { return nil }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+
+        let rec = ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation
+        guard rec == .ease || rec == .rest else { return nil }   // protective directions only
+        guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
+        return rec   // `apply` already recorded `lastAdaptedAt` + saved
     }
 
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.

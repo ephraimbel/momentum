@@ -9,29 +9,63 @@ struct OnboardingFlow: View {
     var onComplete: () -> Void
 
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
     @State private var goingBack = false
     @State private var locator = LocationService()   // request location on the final primer
+    @State private var brandRevealed = false         // cold open plays the route map, then dissolves to brand
+    @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
+    @State private var affirmation: String?          // the gentle "got it" micro-reward toast
 
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
-            VStack(spacing: Theme.Space.lg) {
-                if isQuestion { header }
-                content
-                    .transition(.asymmetric(
-                        insertion: .move(edge: goingBack ? .leading : .trailing).combined(with: .opacity),
-                        removal: .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity)))
-                    .id(vm.step)
+            if vm.step == .building {
+                // The hero beat renders full-bleed (the map must escape the flow's padding).
+                BuildingPlanView(lines: vm.buildingLines())
+                    .task { await buildPlan() }
+                    .transition(.opacity)
+            } else if vm.step == .coldOpen {
+                coldOpen.transition(.opacity)   // full-bleed welcome map
+            } else if vm.step == .commitment {
+                commitmentStep.transition(.opacity)   // full-bleed hold-to-commit beat
+            } else {
+                VStack(spacing: Theme.Space.lg) {
+                    if isQuestion { header }
+                    content
+                        // The screen travels in the direction of motion (forward from the right, back
+                        // from the left), then each element cascades up — directionality + the
+                        // "assemble" entrance reads more premium than a flat crossfade.
+                        .transition(stepTransition)
+                        .id(vm.step)
+                }
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.top, Theme.Space.sm)
             }
-            .padding(.horizontal, Theme.Space.lg)
-            .padding(.top, Theme.Space.sm)
         }
         .safeAreaInset(edge: .bottom) {
             if isQuestion { continueBar }
         }
-        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: vm.step)
+        .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
+        .animation(Motion.travel, value: vm.step)
+    }
+
+    /// A whisper-quiet "got it" toast on the first pick of a screen — the research's positive-
+    /// reinforcement beat, kept monochrome and brief so it stays sleek, not chatty.
+    @ViewBuilder
+    private var affirmationToast: some View {
+        if let affirmation {
+            Text(affirmation)
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .padding(.horizontal, Theme.Space.md)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Theme.surface))
+                .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+                .transition(.opacity.combined(with: .offset(y: 10)))
+                .padding(.bottom, 92)
+        }
     }
 
     private var isQuestion: Bool {
@@ -50,10 +84,19 @@ struct OnboardingFlow: View {
                     .frame(width: 28, height: 28)
             }
             GeometryReader { geo in
+                let w = max(10, geo.size.width * vm.progress)
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.hairline)
-                    Capsule().fill(Theme.ink)
-                        .frame(width: max(8, geo.size.width * vm.progress))
+                    // Earned iridescence on a genuine progress surface — the same accent as the
+                    // welcome route, with a glowing leading cap that echoes the comet head.
+                    Capsule()
+                        .fill(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
+                        .frame(width: w)
+                        .shadow(color: Theme.iridescent[3].opacity(0.55), radius: 4)
+                        .overlay(alignment: .trailing) {
+                            Circle().fill(.white).frame(width: 6, height: 6)
+                                .shadow(color: Theme.iridescent[0].opacity(0.9), radius: 5)
+                        }
                 }
             }
             .frame(height: 6)
@@ -77,7 +120,7 @@ struct OnboardingFlow: View {
     @ViewBuilder
     private var content: some View {
         switch vm.step {
-        case .coldOpen: coldOpen
+        case .coldOpen: EmptyView()   // rendered full-bleed in `body`
         case .disciplines: disciplinesStep
         case .goal: goalStep
         case .experience: experienceStep
@@ -86,7 +129,8 @@ struct OnboardingFlow: View {
         case .session: sessionStep
         case .why: whyStep
         case .calibration: calibrationStep
-        case .building: BuildingPlanView().task { await buildPlan() }
+        case .commitment: EmptyView()   // rendered full-bleed in `body`
+        case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) { goNext() }
         case .primers: primersStep
         }
@@ -95,21 +139,40 @@ struct OnboardingFlow: View {
     // MARK: Cold open
 
     private var coldOpen: some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer()
-            IridescentOrb(size: 128)
-            VStack(spacing: Theme.Space.sm) {
-                Text("momentum")
-                    .font(.display(42, weight: .black))
-                    .foregroundStyle(Theme.ink)
-                Text("keep moving.")
-                    .font(.rounded(Theme.FontSize.headline, weight: .medium))
-                    .foregroundStyle(Theme.inkSecondary)
+        ZStack {
+            // Phase 1: a real run path draws itself across the map — a cinematic intro. It signals when
+            // the draw + arrival lands, so the handoff is synced rather than guessed at on a timer.
+            RouteDrawMap(showsStats: true) {
+                guard !brandRevealed else { return }
+                withAnimation(.easeInOut(duration: 0.75)) { brandRevealed = true }
             }
-            .reveal(0.15)
-            Spacer()
-            OversizedButton(title: "Get started") { goNext() }
-                .reveal(0.3)
+            .ignoresSafeArea()
+            // Rack-focus depth dissolve: the map pushes back + blurs out as the brand rises in.
+            .scaleEffect(brandRevealed && !reduceMotion ? 1.08 : 1)
+            .blur(radius: brandRevealed && !reduceMotion ? 10 : 0)
+            .opacity(brandRevealed ? 0 : 1)
+
+            // Phase 2: the clean brand canvas — orb + wordmark + Start.
+            if brandRevealed {
+                VStack(spacing: Theme.Space.lg) {
+                    Spacer()
+                    IridescentOrb(size: 124)
+                    VStack(spacing: Theme.Space.sm) {
+                        Text("momentum")
+                            .font(.display(42, weight: .black))
+                            .foregroundStyle(Theme.ink)
+                        Text("keep moving.")
+                            .font(.rounded(Theme.FontSize.headline, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                    .reveal(0.12)
+                    Spacer()
+                    OversizedButton(title: "Get started") { goNext() }
+                        .reveal(0.28)
+                }
+                .padding(.horizontal, Theme.Space.lg)
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
         }
     }
 
@@ -117,11 +180,12 @@ struct OnboardingFlow: View {
 
     private var disciplinesStep: some View {
         questionScaffold("What do you want to do?", subtitle: "Pick all that apply.") {
-            ForEach([Discipline.running, .cycling, .walking, .strength], id: \.self) { d in
+            ForEach(Array([Discipline.running, .cycling, .walking, .strength].enumerated()), id: \.element) { i, d in
                 SelectionCard(title: label(d), systemImage: icon(d),
                               isSelected: vm.disciplines.contains(d)) {
-                    if vm.disciplines.contains(d) { vm.disciplines.remove(d) } else { vm.disciplines.insert(d) }
+                    pick { if vm.disciplines.contains(d) { vm.disciplines.remove(d) } else { vm.disciplines.insert(d) } }
                 }
+                .reveal(cascade(i))
             }
         }
     }
@@ -132,24 +196,32 @@ struct OnboardingFlow: View {
             (.getStronger, "Get stronger", "dumbbell.fill"), (.raceDistance, "Run a distance", "figure.run"),
             (.endurance, "Improve endurance", "wind"), (.stayConsistent, "Stay consistent", "calendar")]
         return questionScaffold("What's your main goal?") {
-            ForEach(goals, id: \.0) { g in
-                SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) { vm.goal = g.0 }
+            ForEach(Array(goals.enumerated()), id: \.element.0) { i, g in
+                SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) { pick { vm.goal = g.0 } }
+                    .reveal(cascade(i))
             }
         }
     }
 
     private var experienceStep: some View {
         questionScaffold("How experienced are you?") {
-            ForEach([ExperienceLevel.new, .some, .experienced], id: \.self) { e in
+            ForEach(Array([ExperienceLevel.new, .some, .experienced].enumerated()), id: \.element) { i, e in
                 SelectionCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
-                              isSelected: vm.experience == e) { vm.experience = e }
+                              isSelected: vm.experience == e) { pick { vm.experience = e } }
+                    .reveal(cascade(i))
             }
         }
     }
 
     private var daysStep: some View {
-        questionScaffold("How many days a week?", subtitle: "We'll shape your week around this.") {
-            chipRow([2, 3, 4, 5, 6], selected: vm.daysPerWeek, suffix: { $0 == 6 ? "+" : "" }) { vm.daysPerWeek = $0 }
+        let opts: [(Int, String, String)] = [
+            (2, "2 days", "Light week"), (3, "3 days", "A steady base"),
+            (4, "4 days", "Consistent"), (5, "5 days", "High volume"), (6, "6+ days", "All in")]
+        return questionScaffold("How many days a week?", subtitle: "We'll shape your week around this.") {
+            ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
+                SelectionCard(title: o.1, subtitle: o.2, isSelected: vm.daysPerWeek == o.0) { pick { vm.daysPerWeek = o.0 } }
+                    .reveal(cascade(i))
+            }
         }
     }
 
@@ -158,23 +230,31 @@ struct OnboardingFlow: View {
             (.fullGym, "Full gym", "building.2"), (.dumbbellsOnly, "Dumbbells only", "dumbbell"),
             (.homeMinimal, "Home minimal", "house"), (.bodyweight, "Bodyweight", "figure.cooldown")]
         return questionScaffold("What equipment do you have?") {
-            ForEach(opts, id: \.0) { o in
-                SelectionCard(title: o.1, systemImage: o.2, isSelected: vm.equipment == o.0) { vm.equipment = o.0 }
+            ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
+                SelectionCard(title: o.1, systemImage: o.2, isSelected: vm.equipment == o.0) { pick { vm.equipment = o.0 } }
+                    .reveal(cascade(i))
             }
         }
     }
 
     private var sessionStep: some View {
-        questionScaffold("How long per session?") {
-            chipRow([30, 45, 60, 75], selected: vm.sessionMinutes, suffix: { $0 == 75 ? "+ min" : " min" }) { vm.sessionMinutes = $0 }
+        let opts: [(Int, String, String)] = [
+            (30, "30 min", "In and out"), (45, "45 min", "A balanced session"),
+            (60, "60 min", "A full workout"), (75, "75+ min", "Go long")]
+        return questionScaffold("How long per session?") {
+            ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
+                SelectionCard(title: o.1, subtitle: o.2, isSelected: vm.sessionMinutes == o.0) { pick { vm.sessionMinutes = o.0 } }
+                    .reveal(cascade(i))
+            }
         }
     }
 
     private var whyStep: some View {
         let reasons = ["clear head", "health", "look better", "compete", "me-time"]
         return questionScaffold("Why are you doing this?", subtitle: "It sets your coach's tone.") {
-            ForEach(reasons, id: \.self) { r in
-                SelectionCard(title: r.capitalized, isSelected: vm.reason == r) { vm.reason = r }
+            ForEach(Array(reasons.enumerated()), id: \.element) { i, r in
+                SelectionCard(title: r.capitalized, isSelected: vm.reason == r) { pick { vm.reason = r } }
+                    .reveal(cascade(i))
             }
         }
     }
@@ -195,7 +275,43 @@ struct OnboardingFlow: View {
             }
             .padding(Theme.Space.md)
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .reveal(cascade(0))
         }
+    }
+
+    // MARK: Commitment (the investment beat — hold the iridescent ring to commit)
+
+    private var commitmentStep: some View {
+        VStack(spacing: Theme.Space.xl) {
+            Spacer()
+            VStack(spacing: Theme.Space.sm) {
+                Text("Commit to keep moving")
+                    .font(.display(30, weight: .black))
+                    .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                Text("Press and hold. This is the part that makes it stick.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .reveal(0.1)
+            HoldToCommitRing(size: 224) {
+                // Let the checkmark land, then move on to building the plan.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(0.55))
+                    goNext()
+                }
+            }
+            .reveal(0.26)
+            Text("Hold to commit")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkTertiary)
+                .reveal(0.36)
+            Spacer()
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var primersStep: some View {
@@ -243,24 +359,33 @@ struct OnboardingFlow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func chipRow(_ values: [Int], selected: Int, suffix: @escaping (Int) -> String,
-                         action: @escaping (Int) -> Void) -> some View {
-        HStack(spacing: Theme.Space.sm) {
-            ForEach(values, id: \.self) { v in
-                Button { Haptics.selection(); action(v) } label: {
-                    Text("\(v)\(suffix(v))")
-                        .font(.rounded(Theme.FontSize.headline, weight: .bold))
-                        .monospacedDigit()
-                        .frame(maxWidth: .infinity).frame(height: 64)
-                        .background {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(selected == v ? Theme.ink : Theme.surface)
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                        }
-                        .foregroundStyle(selected == v ? Theme.background : Theme.ink)
-                }
-                .buttonStyle(.plain)
-            }
+    /// Staggered entrance delay for the i-th element on a screen — the assemble cascade.
+    private func cascade(_ i: Int) -> Double { 0.08 + Double(i) * 0.06 }
+
+    /// Apply a selection and, on the *first* pick of a screen, flash the affirmation micro-reward.
+    private func pick(_ apply: () -> Void) {
+        let firstTouch = !touchedSteps.contains(vm.step)
+        apply()
+        guard firstTouch else { return }
+        touchedSteps.insert(vm.step)
+        let lines = ["Got it.", "Nice pick.", "That shapes your plan.", "Noted."]
+        let line = lines[abs(vm.step.rawValue) % lines.count]
+        withAnimation(Motion.standard) { affirmation = line }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.4))
+            if affirmation == line { withAnimation(Motion.exit) { affirmation = nil } }
         }
+    }
+
+    /// Directional travel between steps: forward slides in from the right, back from the left.
+    /// Reduce Motion drops the offset to a plain crossfade.
+    private var stepTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let dx: CGFloat = 28
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: goingBack ? -dx : dx)),
+            removal: .opacity.combined(with: .offset(x: goingBack ? dx : -dx))
+        )
     }
 
     private func label(_ d: Discipline) -> String {
@@ -272,7 +397,8 @@ struct OnboardingFlow: View {
 
     private func buildPlan() async {
         if profile == nil { profile = vm.finish(in: context) }
-        try? await Task.sleep(for: .seconds(2.6))
+        // Long enough for the route to finish drawing and the head to pulse before the reveal.
+        try? await Task.sleep(for: .seconds(3.1))
         goNext()
     }
 }

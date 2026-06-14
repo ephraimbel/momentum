@@ -13,11 +13,18 @@ struct CoachChatView: View {
     @State private var vm: CoachChatViewModel?
     @FocusState private var inputFocused: Bool
 
+    /// Before the athlete has said anything, show a centered welcome rather than a lone greeting bubble.
+    private var isFresh: Bool { !messages.contains { $0.role == .user } }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 if let vm {
-                    transcript(vm)
+                    if isFresh {
+                        welcomeHero(vm)
+                    } else {
+                        transcript(vm)
+                    }
                     CoachDisclaimer(alignment: .center)
                         .padding(.horizontal, Theme.Space.md).padding(.bottom, 6)
                     inputBar(vm)
@@ -26,20 +33,67 @@ struct CoachChatView: View {
                 }
             }
             .background(Theme.background)
-            .navigationTitle("Coach")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .tabBar)   // immersive — the chat owns the screen
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { onClose() }.fontWeight(.semibold)
+                    Button { onClose() } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 18, weight: .semibold))
+                    }
+                    .accessibilityLabel("Back")
+                }
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: Theme.Space.xs) {
+                        IridescentOrb(size: 22, glow: false)
+                        Text("Coach").font(.rounded(Theme.FontSize.body, weight: .bold))
+                            .foregroundStyle(Theme.ink)
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { vm?.clear() } label: { Image(systemName: "arrow.counterclockwise") }
-                        .disabled(messages.count <= 1)
+                        .disabled(isFresh)
                         .accessibilityLabel("Clear conversation")
                 }
             }
         }
         .task { if vm == nil { vm = CoachChatViewModel(context: context) } }
+    }
+
+    /// A calm, premium landing the first time in — orb, a question, and starting prompts.
+    private func welcomeHero(_ vm: CoachChatViewModel) -> some View {
+        VStack(spacing: Theme.Space.lg) {
+            Spacer()
+            IridescentOrb(size: 88)
+            VStack(spacing: Theme.Space.sm) {
+                Text("How can I help?")
+                    .font(.display(28, weight: .black))
+                    .foregroundStyle(Theme.ink)
+                Text(messages.first?.text ?? "Ask me anything about your training.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, Theme.Space.lg)
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(vm.suggestions, id: \.self) { s in
+                    Button { vm.send(s) } label: {
+                        Text(s)
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                            .foregroundStyle(Theme.ink)
+                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+                            .background {
+                                Capsule().fill(IridescentMaterial()).opacity(0.22)
+                                Capsule().stroke(Theme.hairline)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Theme.Space.lg)
     }
 
     private func transcript(_ vm: CoachChatViewModel) -> some View {
@@ -143,7 +197,7 @@ struct CoachChatView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, Theme.Space.sm)
-        .background(.ultraThinMaterial)
+        .momentumGlass(in: Rectangle(), stroke: false)
     }
 }
 

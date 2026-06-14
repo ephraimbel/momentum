@@ -209,5 +209,5 @@ private struct PreviewDirections: DirectionsProviding {
 }
 
 #Preview {
-    RouteSuggestionView(start: GeoPoint(lat: 37.7686, lon: -122.4830), directions: PreviewDirections())
+    RouteSuggestionView(start: GeoPoint(lat: 30.2672, lon: -97.7431), directions: PreviewDirections())
 }

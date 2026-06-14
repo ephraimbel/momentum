@@ -9,6 +9,7 @@ final class TrainingPlan {
     var raceDate: Date?
     var p5kSPerKm: Double = 360       // calibrated running pace (if running)
     var createdAt: Date = Date()
+    var lastAdaptedAt: Date?          // last automatic load adaptation — gates auto-adapt to ≤1/week
     @Relationship(deleteRule: .cascade) var sessions: [PlannedSession] = []
 
     init() {}

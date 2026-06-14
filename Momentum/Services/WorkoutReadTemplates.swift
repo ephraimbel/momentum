@@ -15,11 +15,26 @@ enum WorkoutReadTemplates {
 
     static func read(for workout: Workout, planned: Bool, weightUnit: WeightUnit = .default(),
                      distanceUnit: DistanceUnit = .auto) -> WorkoutRead {
-        let read = workout.type == .strength
-            ? strength(workout, weightUnit: weightUnit, planned: planned)
-            : cardio(workout, distanceUnit: distanceUnit, planned: planned)
+        let read: WorkoutRead
+        if workout.type.isStrengthStyle {
+            read = strength(workout, weightUnit: weightUnit, planned: planned)
+        } else if workout.type.isTimed {
+            read = timed(workout, planned: planned)
+        } else {
+            read = cardio(workout, distanceUnit: distanceUnit, planned: planned)
+        }
         return WorkoutRead(narrative: sanitize(read.narrative), insights: read.insights,
                            planAdjustment: read.planAdjustment)
+    }
+
+    // MARK: Timed
+
+    private static func timed(_ workout: Workout, planned: Bool) -> WorkoutRead {
+        let mins = Int((workout.durationS / 60).rounded())
+        let sport = workout.type.title
+        var narrative = mins > 0 ? "\(sport), \(mins) min." : "\(sport) logged."
+        narrative += planned ? " That's today's session ✓." : " Nice work, saved."
+        return WorkoutRead(narrative: narrative, insights: [], planAdjustment: nil)
     }
 
     // MARK: Strength
@@ -41,9 +56,11 @@ enum WorkoutReadTemplates {
             }
         }
 
-        var narrative = "Strong work. \(Int(volume)) \(unit) across \(session.totalSets) sets."
+        // Lead with the concrete fact (the data-anchored line), then the read, then the plan tie-in —
+        // a specific opener earns trust where generic praise ("Strong work.") reads as filler (research).
+        var narrative = "\(Int(volume)) \(unit) across \(session.totalSets) sets."
         if bestE1RM > 0 {
-            narrative += " \(bestName) topped \(Formatters.weight(kg: bestW, unit: weightUnit)) × \(bestReps)."
+            narrative += " \(bestName) topped \(Formatters.weight(kg: bestW, unit: weightUnit)) × \(bestReps), a strong top end."
         }
         narrative += planned ? " Counts toward today's plan ✓, right on track." : " Logged and saved."
 

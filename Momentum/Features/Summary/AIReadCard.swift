@@ -41,6 +41,17 @@ struct AIReadCard: View {
                     .font(.rounded(Theme.FontSize.body, weight: .regular))
                     .foregroundStyle(Theme.ink)
                     .opacity(appeared ? 1 : 0)
+                // The "why": the read's effect on the plan, when the coach adjusted it. Shows the
+                // reasoning rather than just the verdict — the trust driver (research).
+                if let why = read.planAdjustment, !why.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .bold))
+                        Text(why).font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.inkSecondary)
+                    .opacity(appeared ? 1 : 0)
+                }
+                CoachDisclaimer().opacity(appeared ? 1 : 0)
             } else {
                 // Brief skeleton shimmer while the read resolves.
                 RoundedRectangle(cornerRadius: 6).fill(Theme.hairline).frame(height: 16)

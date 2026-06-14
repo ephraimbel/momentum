@@ -17,7 +17,7 @@ enum StrengthPRs {
 
         // Historical bests per exercise id from strictly-earlier strength workouts.
         let all = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-        let prior = all.filter { $0.type == .strength && $0.startedAt < workout.startedAt }
+        let prior = all.filter { $0.type.isStrengthStyle && $0.startedAt < workout.startedAt }
         var bestE1RM: [UUID: Double] = [:]
         var bestWeight: [UUID: Double] = [:]
         for w in prior {

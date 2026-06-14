@@ -129,7 +129,7 @@ final class HeatmapOverlayRenderer: MKOverlayRenderer {
 #Preview {
     // Synthetic cluster so the canvas shows the renderer without a data store — a dense core with a
     // few radiating arms, like a real "where I run" map.
-    let base = (lat: 37.7686, lon: -122.4830)
+    let base = (lat: 30.2672, lon: -97.7431)
     var cells: [HeatCell] = []
     for ring in 0..<14 {
         let count = max(1, 14 - ring)                  // denser toward the centre

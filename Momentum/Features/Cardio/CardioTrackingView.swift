@@ -12,6 +12,8 @@ struct CardioTrackingView: View {
     let goalMeters: Double?
     let container: ModelContainer
     var distanceUnit: DistanceUnit = .auto
+    /// An optional suggested loop to follow — drawn as a faint dashed guide beneath the live trace.
+    var guideRoute: [GeoPoint] = []
     var onFinish: (UUID?) -> Void
 
     enum Phase { case acquiring, countdown, tracking }
@@ -25,8 +27,17 @@ struct CardioTrackingView: View {
     @State private var goalReached = false
     @State private var acquirePulse = false
     @State private var acquireTimedOut = false
+    @State private var mapStyle: MapStyleOption = .standard
+    @State private var offRoute = false        // drifted off the guide loop (hysteresis-gated)
+    @State private var deviationM = 0.0
+    @State private var rejoinBearing = 0.0     // compass bearing to the nearest loop point (north-up)
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Off-route hysteresis: flag once past `offRouteM`, clear only back under `onRouteM` — so a fix
+    /// hovering near the edge doesn't flicker the cue.
+    private static let offRouteM = 35.0
+    private static let onRouteM = 20.0
 
     /// Tight street-level framing (~400m across) for running.
     private static let runSpan = MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
@@ -70,6 +81,8 @@ struct CardioTrackingView: View {
         .onChange(of: vm?.hasGPSLock ?? false) { _, locked in
             if locked, phase == .acquiring { proceedToCountdown() }
         }
+        // Re-evaluate the off-route cue each time the trace extends.
+        .onChange(of: routeCoords.count) { updateOffRoute() }
         // Never imply we're still searching forever: after a beat, soften the copy to nudge "Start now".
         .task {
             try? await Task.sleep(for: .seconds(12))
@@ -85,21 +98,27 @@ struct CardioTrackingView: View {
     }
 
     private var mapLayer: some View {
-        Map(position: $camera) {
+        // North-up (no rotation gesture) so the rejoin arrow's compass bearing reads as screen rotation.
+        Map(position: $camera, interactionModes: [.pan, .zoom]) {
             UserAnnotation()
+            // The suggested loop to follow, drawn first so the live trace sits on top of it.
+            if guideRoute.count > 1 {
+                MapPolyline(coordinates: guideRoute.map(\.clCoordinate))
+                    .stroke(guideColor, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round, dash: [2, 9]))
+            }
             if smoothedRoute.count > 1 {
-                // Earned-iridescence live route (PRD §6): a soft white halo makes the gradient read
-                // as glowing on the light map. The gradient is static — safe under Reduce Motion.
+                // The light-purple trace (the onboarding accent) over a soft white halo so it glows
+                // on the light map.
                 MapPolyline(coordinates: smoothedRoute)
                     .stroke(.white.opacity(0.55), style: StrokeStyle(lineWidth: 11, lineCap: .round, lineJoin: .round))
                 MapPolyline(coordinates: smoothedRoute)
-                    .stroke(routeGradient, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
             }
             if let last = routeCoords.last {
                 Annotation("", coordinate: last) { BreathingDot() }
             }
         }
-        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false))
+        .mapStyle(mapStyle.mapStyle)
         .ignoresSafeArea()
         // MapKit follows the user natively in `.userLocation` mode — smooth and jitter-free. We no
         // longer re-issue a region animation per fix (overlapping animations fought each other and
@@ -111,18 +130,15 @@ struct CardioTrackingView: View {
     /// The live trace, corner-rounded so the sparse (≥2m) accepted points read as a fluid GPS track.
     private var smoothedRoute: [CLLocationCoordinate2D] { RouteSmoothing.smooth(routeCoords) }
 
-    /// Oil-slick gradient for the live route — the earned-progress accent (PRD §6, §18).
-    private var routeGradient: LinearGradient {
-        LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing)
-    }
+    /// The guide line reads as a quiet dashed path — lighter over satellite imagery for contrast.
+    private var guideColor: Color { mapStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
 
     private var recenterButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.4)) { camera = .userLocation(fallback: .automatic) }
         } label: {
             Image(systemName: "location.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 40, height: 40).background(.regularMaterial, in: Circle())
-                .overlay(Circle().stroke(Theme.hairline))
+                .frame(width: 40, height: 40).momentumGlass(in: Circle())
         }
         .padding(.trailing, Theme.Space.md)
         .padding(.bottom, 220) // clear the stats panel
@@ -134,26 +150,71 @@ struct CardioTrackingView: View {
             HStack {
                 Button { phase == .tracking ? (confirmStop = true) : cancelAndDismiss() } label: {
                     Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 38, height: 38).background(.regularMaterial, in: Circle())
+                        .frame(width: 38, height: 38).momentumGlass(in: Circle())
                 }
                 Spacer()
+                MapLayersButton(style: $mapStyle)
                 if phase == .tracking, let vm {
                     HStack(spacing: 4) {
                         Image(systemName: "location.fill")
                         Text(vm.gpsStrength > 0.66 ? "Strong" : vm.gpsStrength > 0.33 ? "OK" : "Weak")
                     }
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .padding(.horizontal, 10).padding(.vertical, 6).background(.regularMaterial, in: Capsule())
+                    .padding(.horizontal, 10).padding(.vertical, Theme.Space.chipV).momentumGlass()
                 }
             }
             .padding(Theme.Space.md)
             if phase == .tracking, let vm, vm.locationDenied {
                 deniedBanner.padding(.horizontal, Theme.Space.md)
                     .transition(.move(edge: .top).combined(with: .opacity))
+            } else if phase == .tracking, offRoute {
+                offRouteBanner.padding(.horizontal, Theme.Space.md)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
             Spacer()
         }
         .animation(Motion.standard, value: vm?.locationDenied)
+        .animation(Motion.standard, value: offRoute)
+    }
+
+    /// No-shame nudge when the athlete drifts off the suggested loop — neutral, never a red "wrong."
+    private var offRouteBanner: some View {
+        HStack(spacing: Theme.Space.sm) {
+            // Points toward the nearest loop point. The live map is north-up, so the compass bearing
+            // is also the on-screen rotation.
+            Image(systemName: "arrow.up").font(.system(size: 17, weight: .heavy)).foregroundStyle(Theme.ink)
+                .rotationEffect(.degrees(rejoinBearing))
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: rejoinBearing)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Off the loop").font(.rounded(Theme.FontSize.caption, weight: .bold))
+                Text("\(Int(deviationM)) m — head this way to rejoin")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(Theme.Space.md)
+        .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+    }
+
+    /// Distance + direction from the current position to the nearest point on the guide loop, with
+    /// hysteresis so the cue doesn't flicker.
+    private func updateOffRoute() {
+        guard phase == .tracking, guideRoute.count > 1, let here = routeCoords.last else {
+            if offRoute { offRoute = false }
+            return
+        }
+        let p = GeoPoint(lat: here.latitude, lon: here.longitude)
+        guard let nearest = RouteDeviation.nearest(on: guideRoute, to: p) else { return }
+        deviationM = nearest.distanceM
+        rejoinBearing = RouteDeviation.bearing(from: p, to: nearest.point)
+        if !offRoute, deviationM > Self.offRouteM {
+            offRoute = true
+            Haptics.light()
+        } else if offRoute, deviationM < Self.onRouteM {
+            offRoute = false
+        }
     }
 
     /// Shown mid-recording when location is off — the time still counts, but no route is captured.
@@ -173,8 +234,7 @@ struct CardioTrackingView: View {
         }
         .foregroundStyle(Theme.ink)
         .padding(Theme.Space.md)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// Pre-start gate: hold on the user's position while GPS locks, so the trace begins clean rather
@@ -209,8 +269,7 @@ struct CardioTrackingView: View {
                 }
             }
             .padding(Theme.Space.xl)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.sheet))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sheet).stroke(Theme.hairline))
+            .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
             .padding(.horizontal, Theme.Space.xl)
             Spacer()
             OversizedButton(title: denied ? "Start without route" : "Start now",
@@ -260,7 +319,7 @@ struct CardioTrackingView: View {
                 if let goalMeters { goalBar(distance: vm.distanceM, goal: goalMeters) }
             }
             .padding(.vertical, Theme.Space.md).frame(maxWidth: .infinity)
-            .background(panelBackground)
+            .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
 
             HStack(spacing: Theme.Space.md) {
                 OversizedButton(title: vm.isPaused ? "Resume" : "Pause",
@@ -291,7 +350,7 @@ struct CardioTrackingView: View {
                 }
             }
             .frame(height: 6)
-            Text("\(distanceNumber(forMeters: distance)) / \(goalNum) \(unitLabel)")
+            Text("\(distanceNumber(forMeters: distance)) / \(goalNum) \(unitLabel)\(guideRoute.count > 1 ? " · your loop" : "")")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
         }
         .padding(.horizontal, Theme.Space.lg)
@@ -307,13 +366,6 @@ struct CardioTrackingView: View {
 
     private func distanceNumber(forMeters m: Double) -> String {
         Formatters.distance(meters: m, unit: distanceUnit).components(separatedBy: " ").first ?? "0"
-    }
-
-    private var panelBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.regularMaterial)
-            RoundedRectangle(cornerRadius: Theme.Radius.sheet).stroke(Theme.hairline)
-        }
     }
 
     /// Run the 3-2-1 countdown, then arm the recording. Reached once we have a GPS lock (auto) or

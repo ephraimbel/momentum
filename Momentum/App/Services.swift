@@ -56,7 +56,7 @@ final class Services {
             ai: AIService(),
             sync: StubSyncService(),
             paywall: StubPaywallService(),
-            notifications: StubNotificationService(),
+            notifications: NotificationService(),
             athleteModel: AthleteModelService()
         )
     }
@@ -98,7 +98,15 @@ protocol PaywallServing: AnyObject {
     /// Single source of truth for Pro gating (PRD §10). Stubbed true-for-dev in Phase 0.
     func isEntitled(to feature: Feature) -> Bool
 }
-protocol NotificationServing: AnyObject {}
+@MainActor
+protocol NotificationServing: AnyObject {
+    /// Ask for local-notification permission (once; no-op if already determined).
+    func requestAuthorization()
+    /// Resync next-workout reminders to the plan's upcoming sessions (each carries its prescription).
+    func schedulePlannedReminders(_ plan: TrainingPlan?)
+    /// An immediate, encouraging nudge when the coach adapts the plan.
+    func notifyPlanUpdated(title: String, body: String)
+}
 
 @MainActor
 protocol AthleteModelServing: AnyObject {
@@ -147,7 +155,12 @@ final class StubMotionService: MotionServing {
 final class StubHealthService: HealthServing { var isAuthorized = false }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {}
-final class StubNotificationService: NotificationServing {}
+@MainActor
+final class StubNotificationService: NotificationServing {
+    func requestAuthorization() {}
+    func schedulePlannedReminders(_ plan: TrainingPlan?) {}
+    func notifyPlanUpdated(title: String, body: String) {}
+}
 /// No-op Athlete Model service for previews/tests that don't exercise learning.
 final class StubAthleteModelService: AthleteModelServing {
     func ingest(profile: UserProfile, in context: ModelContext, now: Date) {}

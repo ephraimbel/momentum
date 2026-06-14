@@ -109,7 +109,7 @@ struct AthleteModelEngine {
         // Per-lift e1RM trend over 8 weeks.
         f.e1rmTrendByExercise = e1rmTrends(inWindow(sorted, from: -56, to: 0, now: now, calendar: calendar))
         let strengthSessions56 = inWindow(sorted, from: -56, to: 0, now: now, calendar: calendar)
-            .filter { $0.type == .strength }.count
+            .filter { $0.type.isStrengthStyle }.count
         f.signalSampleCounts[Signal.strengthProgress.rawValue] = strengthSessions56
 
         // Weekly strength volume: last 28d vs prior 28d.
@@ -184,7 +184,7 @@ struct AthleteModelEngine {
     /// Per-exercise % change in best e1RM, oldest→newest half-split, over the given workouts.
     private static func e1rmTrends(_ ws: [Workout]) -> [String: Double] {
         var series: [String: [(date: Date, e1rm: Double)]] = [:]
-        for w in ws where w.type == .strength {
+        for w in ws where w.type.isStrengthStyle {
             guard let s = w.strength else { continue }
             for row in s.exercises {
                 guard let name = row.exercise?.name else { continue }
@@ -220,7 +220,16 @@ struct AthleteModelEngine {
     }
 
     private static func defaultIntensity(_ type: WorkoutType) -> Int {
-        switch type { case .run: 7; case .ride: 6; case .hike: 6; case .strength: 6; case .walk: 4 }
+        switch type {
+        case .run, .trailRun: 7
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: 6
+        case .hike: 6
+        case .walk: 4
+        case .strength, .crossfit, .hiit: 6
+        case .tennis, .soccer, .basketball: 6
+        case .golf, .yoga, .pilates: 3
+        case .other: 5
+        }
     }
 
     /// **v1 heuristic** (gated to low confidence): the lowest ACWR preceding a "strain event" —
@@ -273,7 +282,7 @@ struct AthleteModelEngine {
         var bestE1RM: [String: Double] = [:]
         var longestRun = 0.0
         for w in sorted {
-            if w.type == .strength, let s = w.strength {
+            if w.type.isStrengthStyle, let s = w.strength {
                 for row in s.exercises {
                     guard let name = row.exercise?.name else { continue }
                     let working = row.sets.filter { $0.isComplete && $0.type == .working }

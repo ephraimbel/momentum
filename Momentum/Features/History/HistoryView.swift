@@ -25,6 +25,7 @@ struct HistoryView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
+                        HeatmapHistoryCard(workouts: allWorkouts, distanceUnit: distanceUnit)
                         ForEach(weeks, id: \.start) { week in
                             VStack(alignment: .leading, spacing: Theme.Space.md) {
                                 Text(weekLabel(week.start))
