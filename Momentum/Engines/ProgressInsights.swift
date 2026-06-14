@@ -64,13 +64,15 @@ struct ProgressInsights {
             }
         }
 
-        // Weekly series (last 8 weeks).
-        let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
+        // Weekly series — eight rolling 7-day windows ending at `now`, oldest → newest. Rolling (not
+        // calendar) windows keep the most-recent bar aligned with the ACWR acute window, so a recent
+        // workout always shows up in the latest bar. A fixed calendar "this week" can be near-empty
+        // early in the week (e.g. a Sunday) and disagree with the acute load the headline reports.
         var series: [WeekPoint] = []
         for i in stride(from: 7, through: 0, by: -1) {
-            guard let start = calendar.date(byAdding: .weekOfYear, value: -i, to: thisWeekStart),
-                  let end = calendar.date(byAdding: .weekOfYear, value: 1, to: start) else { continue }
-            let inWeek = workouts.filter { $0.startedAt >= start && $0.startedAt < end }
+            guard let end = calendar.date(byAdding: .day, value: -7 * i, to: now),
+                  let start = calendar.date(byAdding: .day, value: -7, to: end) else { continue }
+            let inWeek = workouts.filter { $0.startedAt > start && $0.startedAt <= end }
             let wkLoad = inWeek.reduce(0) { $0 + load($1) }
             let wkDist = inWeek.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
             series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist))
@@ -91,6 +93,15 @@ struct ProgressInsights {
     }
 
     private static func defaultIntensity(_ type: WorkoutType) -> Int {
-        switch type { case .run: 7; case .ride: 6; case .hike: 6; case .strength: 6; case .walk: 4 }
+        switch type {
+        case .run, .trailRun: 7
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: 6
+        case .hike: 6
+        case .walk: 4
+        case .strength, .crossfit, .hiit: 6
+        case .tennis, .soccer, .basketball: 6
+        case .golf, .yoga, .pilates: 3
+        case .other: 5
+        }
     }
 }

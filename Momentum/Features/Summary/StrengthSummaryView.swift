@@ -52,13 +52,18 @@ struct StrengthSummaryContent: View {
 
     var body: some View {
         if let session = workout.strength {
+            // Reveal-first: lead with the mastery payoff (hero + competence line), promote PRs ABOVE
+            // the AI read, then the supporting detail. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.xl) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, session).reveal(0)
-                AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.12)
-                if !prs.isEmpty { prSection.reveal(0.22) }
-                muscleSection(session).reveal(0.30)
-                exercisesSection(session).reveal(0.38)
+                if !prs.isEmpty {
+                    prSection.reveal(0.12)
+                    EarnedShareButton(workout: workout, weightUnit: weightUnit, title: "Share your PR").reveal(0.18)
+                }
+                AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.24)
+                muscleSection(session).reveal(0.32)
+                exercisesSection(session).reveal(0.40)
             }
             .task {
                 prs = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context)
@@ -68,12 +73,20 @@ struct StrengthSummaryContent: View {
         }
     }
 
+    /// One self-relative line that frames the session as progress — drawn from this workout's PRs.
+    private var competenceText: String? {
+        guard !prs.isEmpty else { return nil }
+        if prs.count == 1 { return "\(prs[0].exerciseName) \(prs[0].label) · \(prs[0].detail)" }
+        return "\(prs.count) personal records today"
+    }
+
     private func headline(_ workout: Workout, _ session: StrengthSession) -> some View {
         let volume = weightUnit == .lb ? session.totalVolumeKg * Formatters.lbPerKg : session.totalVolumeKg
         return VStack(spacing: Theme.Space.lg) {
             CountUpHero(target: volume,
                         format: { "\(Int($0.rounded()))" },
                         label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))")
+            if let competenceText { EarnedLine(text: competenceText) }
             HStack(spacing: Theme.Space.xl) {
                 stat("\(session.totalSets)", "Sets")
                 stat(Formatters.duration(s: workout.durationS), "Duration")
@@ -120,11 +133,15 @@ struct StrengthSummaryContent: View {
              secondary: (row.exercise?.secondaryMuscles ?? []).compactMap(MuscleGroup.init(rawValue:)),
              sets: row.sets.filter { $0.isComplete && $0.type == .working }.count)
         }
-        let byMuscle = StrengthMath.weeklySetsByMuscle(entries)
+        let activation = StrengthMath.weeklySetsByMuscle(entries)
+        let byMuscle = activation
             .filter { $0.value > 0 }
             .sorted { $0.value > $1.value }
-        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            sectionTitle("Working sets by muscle")
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            sectionTitle("Muscles worked")
+            MuscleMapView(activation: activation)
+                .frame(height: 240)
+                .frame(maxWidth: .infinity)
             ForEach(byMuscle, id: \.key) { muscle, sets in
                 HStack {
                     Text(muscle.rawValue.capitalized).foregroundStyle(Theme.ink)

@@ -11,7 +11,10 @@ struct TodayView: View {
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
 
-    @State private var activity: WorkoutType = .run
+    // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
+    // strength-logging UI test can drive the set logger deterministically (no picker navigation).
+    @State private var activity: WorkoutType =
+        ProcessInfo.processInfo.arguments.contains("--ui-test-strength") ? .strength : .run
     @State private var goalKind: GoalKind = .open
     @State private var goalValue = 3.0
     @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
@@ -20,7 +23,9 @@ struct TodayView: View {
     @State private var locator = LocationService()
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
-    @State private var showCoach = false
+    @State private var mapStyle: MapStyleOption = .standard
+    @State private var showSuggest = false
+    @State private var showSportPicker = false
 
     enum GoalKind { case open, distance }
 
@@ -29,7 +34,7 @@ struct TodayView: View {
     private var pendingToday: PlannedSession? {
         PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed }
     }
-    private var isCardio: Bool { activity != .strength }
+    private var isCardio: Bool { activity.isGPS }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var goalMeters: Double? {
         goalKind == .distance ? goalValue * (distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000) : nil
@@ -46,13 +51,26 @@ struct TodayView: View {
         .navigationBarHidden(true)
         .onAppear {
             PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
-            frameMapIfNeeded()
+            // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
+            // notification permission on first run.
+            services.notifications.schedulePlannedReminders(plan)
+            // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
+            // usually settled this); requesting also pulls a one-shot fix to center the map on them.
+            locator.requestAuthorization()
+        }
+        // Center on the athlete the moment a fix lands (the blue dot is theirs).
+        .onChange(of: locator.lastLocation?.latitude) {
+            if let loc = locator.lastLocation {
+                withAnimation(Motion.standard) { camera = .region(region(around: loc)) }
+            }
         }
         .fullScreenCover(item: $launch) { liveScreen($0) }
         .fullScreenCover(item: $summary) { presented in
             // Strava-style: name + describe the workout, Save → celebration → back to Today.
-            if presented.type == .strength {
+            if presented.type.isStrengthStyle {
                 StrengthSaveView(workoutId: presented.id) { summary = nil }
+            } else if presented.type.isTimed {
+                TimedSaveView(workoutId: presented.id) { summary = nil }
             } else {
                 CardioSaveView(workoutId: presented.id) { summary = nil }
             }
@@ -62,8 +80,23 @@ struct TodayView: View {
         }) { session in
             planConfirmSheet(session)
         }
-        .fullScreenCover(isPresented: $showCoach) {
-            CoachChatView { showCoach = false }
+        .sheet(isPresented: $showSportPicker) {
+            SportPicker(selection: $activity) { showSportPicker = false }
+        }
+        // Suggest a distance-targeted loop from the athlete's current spot.
+        .sheet(isPresented: $showSuggest) {
+            if let loc = locator.lastLocation {
+                RouteSuggestionView(
+                    start: GeoPoint(lat: loc.latitude, lon: loc.longitude),
+                    targetM: goalMeters ?? 5000,
+                    distanceUnit: distanceUnit,
+                    onUse: { loop in
+                        showSuggest = false
+                        locator.requestAuthorization()
+                        launch = .cardio(type: activity, goalMeters: loop.distanceM, planned: nil, guideRoute: loop.polyline)
+                    },
+                    onClose: { showSuggest = false })
+            }
         }
     }
 
@@ -131,7 +164,7 @@ struct TodayView: View {
 
     private var mapLayer: some View {
         Map(position: $camera) { UserAnnotation() }
-            .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false))
+            .mapStyle(mapStyle.mapStyle)
             .ignoresSafeArea()
     }
 
@@ -142,9 +175,17 @@ struct TodayView: View {
             Theme.background.ignoresSafeArea()
             VStack(spacing: Theme.Space.lg) {
                 Spacer()
-                IridescentOrb(size: 132)
-                lastStrengthReadout
-                Spacer(); Spacer()   // bias the orb to the upper-middle, clear of the bottom panel
+                if activity.isStrengthStyle {
+                    // The lifting identity: a body map glowing with the muscles from your last session
+                    // (a quiet empty silhouette before your first lift), then the readout below.
+                    MuscleMapView(activation: lastStrengthActivation)
+                        .frame(height: 300)
+                        .frame(maxWidth: .infinity)
+                    lastStrengthReadout
+                } else {
+                    IridescentOrb(size: 132)   // timed sports (yoga, etc.) keep the brand orb
+                }
+                Spacer(); Spacer()   // bias the figure to the upper-middle, clear of the bottom panel
             }
             .padding(.horizontal, Theme.Space.xl)
         }
@@ -199,7 +240,14 @@ struct TodayView: View {
     }
 
     private var lastStrength: Workout? {
-        workouts.filter { $0.type == .strength }.max(by: { $0.startedAt < $1.startedAt })
+        workouts.filter { $0.type.isStrengthStyle }.max(by: { $0.startedAt < $1.startedAt })
+    }
+
+    /// Muscles worked in the most recent strength session — drives the strength-home body map.
+    /// Empty (a faint silhouette) before the athlete's first lift.
+    private var lastStrengthActivation: [MuscleGroup: Double] {
+        guard let session = lastStrength?.strength else { return [:] }
+        return MuscleActivation.from(session: session)
     }
 
     private func relativeDay(_ date: Date) -> String {
@@ -217,10 +265,6 @@ struct TodayView: View {
             HStack(spacing: Theme.Space.sm) {
                 activitySelector
                 Spacer()
-                // The one cross-discipline load read — same `ProgressInsights` the Progress tab speaks,
-                // so runs and lifts roll into a single status the home surfaces too.
-                if insights.acwr > 0 { TrainingLoadChip(status: insights.status) }
-                coachButton
                 StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
             }
             .padding(Theme.Space.md)
@@ -228,29 +272,9 @@ struct TodayView: View {
         }
     }
 
-    private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
-
-    /// Opens the AI coach chat.
-    private var coachButton: some View {
-        Button { Haptics.light(); showCoach = true } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                .padding(10)
-                .background {
-                    Circle().fill(.regularMaterial)
-                    Circle().fill(IridescentMaterial()).opacity(0.22)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Coach")
-    }
 
     private var activitySelector: some View {
-        Menu {
-            ForEach([WorkoutType.run, .walk, .ride, .hike, .strength]) { a in
-                Button { Haptics.selection(); activity = a } label: { Label(a.title, systemImage: a.systemImage) }
-            }
-        } label: {
+        Button { Haptics.light(); showSportPicker = true } label: {
             HStack(spacing: Theme.Space.sm) {
                 Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
                 Text(activity.title).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
@@ -258,65 +282,81 @@ struct TodayView: View {
             }
             .fixedSize()
             .foregroundStyle(Theme.ink)
-            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-            .background(.regularMaterial, in: Capsule())
+            .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.pillV)
+            .momentumGlass()
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Bottom panel
 
     private var bottomPanel: some View {
-        VStack(spacing: Theme.Space.md) {
-            learningTeaser
-            if let session = pendingToday { plannedBanner(session) }
-            VStack(spacing: Theme.Space.lg) {
-                if isCardio { goalSection }
-                OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+        VStack(spacing: Theme.Space.sm) {
+            if isCardio {
+                HStack(spacing: Theme.Space.sm) { Spacer(); MapLayersButton(style: $mapStyle); recenterButton }
             }
-            .padding(Theme.Space.lg)
-            .background(panelBackground)
+            if let session = pendingToday { plannedBanner(session) }
+            startCard
         }
         .padding(Theme.Space.md)
     }
 
-    private var startTitle: String { isCardio ? "Start \(activity.title.lowercased())" : "Start workout" }
+    /// One clean card: an optional goal, then the single primary action. Distance is opt-in, so the
+    /// default state is just "Start" — calm and obvious.
+    private var startCard: some View {
+        VStack(spacing: Theme.Space.md) {
+            if isCardio { goalControl }
+            OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+            if isCardio, activity.discipline != .cycling, locator.lastLocation != nil { suggestLoopButton }
+        }
+        .padding(Theme.Space.lg)
+        .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+    }
+
+    /// Secondary action: get a distance-targeted loop to run from here (MapKit-native).
+    private var suggestLoopButton: some View {
+        Button { Haptics.light(); showSuggest = true } label: {
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: "arrow.triangle.capsulepath")
+                Text("Suggest a loop")
+            }
+            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            .frame(maxWidth: .infinity).frame(height: 46)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+    }
+
+
+    private func region(around c: CLLocationCoordinate2D) -> MKCoordinateRegion {
+        MKCoordinateRegion(center: c, span: MKCoordinateSpan(latitudeDelta: 0.014, longitudeDelta: 0.014))
+    }
+
+    private var recenterButton: some View {
+        Button {
+            Haptics.light()
+            locator.refreshLocation()
+            withAnimation(Motion.standard) {
+                if let loc = locator.lastLocation { camera = .region(region(around: loc)) }
+                else { camera = .userLocation(fallback: .automatic) }
+            }
+        } label: {
+            Image(systemName: "location.fill")
+                .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44)
+                .momentumGlass(in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Recenter on my location")
+    }
+
+    private var startTitle: String {
+        activity.isStrengthStyle ? "Start workout" : "Start \(activity.title.lowercased())"
+    }
 
     /// A slim, proactive line of what Momentum has learned (ATHLETE-MODEL.md §8 — Today teaser).
     /// Reads the already-persisted `AthleteModel` — no recompute on the map-heavy Today screen.
     @ViewBuilder
-    private var learningTeaser: some View {
-        if let line = topLearnedLine {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.ink)
-                Text(line).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
-            }
-            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.regularMaterial)
-                RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(IridescentMaterial()).opacity(0.18)
-                RoundedRectangle(cornerRadius: Theme.Radius.sheet).stroke(Theme.hairline)
-            }
-        }
-    }
-
-    private var topLearnedLine: String? {
-        guard let m = profiles.first?.athlete else {
-            return profiles.first.map { AthleteModelService.identitySeed($0) }
-        }
-        let paceCount = m.signalSampleCounts[AthleteModelEngine.Signal.paceAtEffort.rawValue] ?? 0
-        if m.paceAtEffortTrendPct <= -2, AthleteModelEngine.confidence(.paceAtEffort, count: paceCount) != .emerging {
-            return "You're getting fitter — easy pace down \(Int(abs(m.paceAtEffortTrendPct).rounded()))%"
-        }
-        if let top = m.e1rmTrendByExercise.filter({ $0.value >= 2 }).max(by: { $0.value < $1.value }) {
-            return "\(top.key) e1RM up \(Int(top.value.rounded()))% lately"
-        }
-        if let id = m.notes.first(where: { $0.isActive && $0.category == MemoryCategory.identity.rawValue })?.text {
-            return id
-        }
-        return profiles.first.map { AthleteModelService.identitySeed($0) }
-    }
-
     private func plannedBanner(_ session: PlannedSession) -> some View {
         Button { Haptics.light(); confirmingPlan = session } label: {
             HStack(spacing: Theme.Space.md) {
@@ -331,32 +371,47 @@ struct TodayView: View {
                 Image(systemName: "play.circle.fill").font(.system(size: 26)).foregroundStyle(Theme.ink)
             }
             .padding(Theme.Space.md)
-            .background(panelBackground)
+            .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
         }
         .buttonStyle(.plain)
     }
 
-    private var goalSection: some View {
+    private var goalControl: some View {
         VStack(spacing: Theme.Space.md) {
-            HStack {
-                Text("Goal").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                Spacer()
-                Picker("", selection: $goalKind) {
-                    Text("Open").tag(GoalKind.open); Text("Distance").tag(GoalKind.distance)
-                }.pickerStyle(.segmented).frame(width: 170)
+            HStack(spacing: Theme.Space.sm) {
+                goalToggle(.open, "Open")
+                goalToggle(.distance, "Distance")
             }
             if goalKind == .distance {
                 HStack(spacing: Theme.Space.lg) {
                     stepperButton("minus") { goalValue = max(0.5, goalValue - 0.5) }
-                    VStack(spacing: 0) {
+                    VStack(spacing: -2) {
                         Text(goalValue.formatted(.number.precision(.fractionLength(goalValue == goalValue.rounded() ? 0 : 1))))
-                            .font(.display(32, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                            .font(.display(34, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                            .contentTransition(.numericText())
                         Text(unitLabel.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                    }.frame(minWidth: 84)
+                    }.frame(minWidth: 90)
                     stepperButton("plus") { goalValue += 0.5 }
                 }
+                .animation(.snappy(duration: 0.2), value: goalValue)
             }
         }
+    }
+
+    private func goalToggle(_ kind: GoalKind, _ title: String) -> some View {
+        let on = goalKind == kind
+        return Button { Haptics.selection(); goalKind = kind } label: {
+            Text(title)
+                .font(.rounded(Theme.FontSize.body, weight: .bold))
+                .frame(maxWidth: .infinity).frame(height: 46)
+                .foregroundStyle(on ? Theme.background : Theme.ink)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Color.clear)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline, lineWidth: 1.5)
+                }
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
     }
 
     private func stepperButton(_ system: String, _ action: @escaping () -> Void) -> some View {
@@ -366,60 +421,40 @@ struct TodayView: View {
         }.buttonStyle(.plain)
     }
 
-    private var panelBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.regularMaterial)
-            RoundedRectangle(cornerRadius: Theme.Radius.sheet).stroke(Theme.hairline)
-        }
-    }
-
     // MARK: Launch
 
-    /// Without a live fix (no permission yet, or still acquiring), `.userLocation` frames the whole
-    /// continent. If the user has a prior route, fall back to its neighborhood instead — and still
-    /// snap to their live location once a fix arrives.
-    private func frameMapIfNeeded() {
-        guard let c = lastKnownCoordinate else { return }
-        camera = .userLocation(fallback: .region(MKCoordinateRegion(
-            center: c, span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03))))
-    }
-
-    private var lastKnownCoordinate: CLLocationCoordinate2D? {
-        workouts
-            .sorted { $0.startedAt > $1.startedAt }
-            .lazy
-            .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
-            .first
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-    }
-
     private func startFree() {
-        if activity == .strength { launch = .strength(planned: nil) }
+        if activity.isStrengthStyle { launch = .strength(type: activity, planned: nil) }
+        else if activity.isTimed { launch = .timed(type: activity) }
         else {
             locator.requestAuthorization()   // ask for GPS exactly when they Start — never up front
-            launch = .cardio(type: activity, goalMeters: goalMeters, planned: nil)
+            launch = .cardio(type: activity, goalMeters: goalMeters, planned: nil, guideRoute: [])
         }
     }
 
     private func startPlanned(_ session: PlannedSession) {
         let t = workoutType(for: session.discipline)
-        if t == .strength { launch = .strength(planned: session) }
+        if t.isStrengthStyle { launch = .strength(type: t, planned: session) }
         else {
             locator.requestAuthorization()
-            launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session)
+            launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
         }
     }
 
     @ViewBuilder
     private func liveScreen(_ launch: TodayLaunch) -> some View {
         switch launch {
-        case let .cardio(type, goal, planned):
-            CardioTrackingView(type: type, goalMeters: goal, container: context.container) { id in
+        case let .cardio(type, goal, planned, guide):
+            CardioTrackingView(type: type, goalMeters: goal, container: context.container, guideRoute: guide) { id in
                 finish(id, type: type, planned: planned)
             }
-        case let .strength(planned):
-            StrengthLiveView(container: context.container, plannedSession: planned) { id in
-                finish(id, type: .strength, planned: planned)
+        case let .strength(type, planned):
+            StrengthLiveView(container: context.container, type: type, plannedSession: planned) { id in
+                finish(id, type: type, planned: planned)
+            }
+        case let .timed(type):
+            TimedTrackingView(type: type, container: context.container) { id in
+                finish(id, type: type, planned: nil)
             }
         }
     }
@@ -427,14 +462,37 @@ struct TodayView: View {
     private func finish(_ id: UUID?, type: WorkoutType, planned: PlannedSession?) {
         launch = nil
         guard let id else { return }
+        var didNudge = false
         if let workout = fetchWorkout(id) {
             if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
             else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
+            // Adaptive coaching: a strong run re-calibrates future paces (deterministic + bounded),
+            // and the coach tells you about it.
+            if workout.type.discipline == .running,
+               let rec = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context),
+               rec.sessionsUpdated > 0 {
+                let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
+                services.notifications.notifyPlanUpdated(
+                    title: "Your paces just got faster",
+                    body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: distanceUnit)).")
+                didNudge = true
+            }
         }
         // Let the Athlete Model learn from this session (local, never blocks the summary).
         if let profile = profiles.first {
             services.athleteModel.ingest(profile: profile, in: context)
         }
+        // Auto-protect from overreaching (ACWR-driven, ≤1×/week, never auto-increases load).
+        let recent = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
+        if let rec = PlanCoaching.autoAdapt(plan, workouts: recent, in: context), !didNudge {
+            services.notifications.notifyPlanUpdated(
+                title: rec == .rest ? "Recovery banked" : "Eased your upcoming sessions",
+                body: rec == .rest
+                    ? "Your load's been climbing — I pulled the next sessions back so it lands. No streak lost."
+                    : "Your load's been climbing — I eased the next sessions ~15%. Still on track.")
+        }
+        // Refresh next-workout reminders so they reflect the completed/credited/recalibrated/eased plan.
+        services.notifications.schedulePlannedReminders(plan)
         summary = PresentedWorkout(id: id, type: type)
     }
 
@@ -454,12 +512,14 @@ struct TodayView: View {
 // MARK: - Launch + presentation wrappers
 
 enum TodayLaunch: Identifiable {
-    case cardio(type: WorkoutType, goalMeters: Double?, planned: PlannedSession?)
-    case strength(planned: PlannedSession?)
+    case cardio(type: WorkoutType, goalMeters: Double?, planned: PlannedSession?, guideRoute: [GeoPoint])
+    case strength(type: WorkoutType, planned: PlannedSession?)
+    case timed(type: WorkoutType)
     var id: String {
         switch self {
-        case let .cardio(t, _, p): "c-\(t.rawValue)-\(p?.id.uuidString ?? "free")"
-        case let .strength(p): "s-\(p?.id.uuidString ?? "free")"
+        case let .cardio(t, _, p, _): "c-\(t.rawValue)-\(p?.id.uuidString ?? "free")"
+        case let .strength(t, p): "s-\(t.rawValue)-\(p?.id.uuidString ?? "free")"
+        case let .timed(t): "t-\(t.rawValue)"
         }
     }
 }
@@ -479,7 +539,7 @@ struct TrainingLoadChip: View {
         .fixedSize()
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
-        .background(Capsule().fill(.regularMaterial))
+        .momentumGlass()
         .accessibilityLabel("Training status")
         .accessibilityValue(status.rawValue)
     }
@@ -495,10 +555,7 @@ struct StreakChip: View {
         }
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
-        .background {
-            Capsule().fill(.regularMaterial)
-            if days > 0 { Capsule().fill(IridescentMaterial()).opacity(0.22) }
-        }
+        .momentumGlass(iridescent: days > 0 ? .chip : nil)
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
     }

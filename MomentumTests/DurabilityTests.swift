@@ -65,11 +65,11 @@ struct DurabilityTests {
 
         let store = StrengthWorkoutStore(modelContainer: container)
         let start = Date(timeIntervalSinceReferenceDate: 0)
-        await store.beginWorkout(startedAt: start)
+        await store.beginWorkout(type: .strength, startedAt: start)
         let rowId = UUID()
         await store.persistExercise(rowId: rowId, catalogExerciseId: exId, order: 0, supersetGroup: nil)
-        await store.persistSetComplete(rowId: rowId, setIndex: 0, weightKg: 60, reps: 8, rpe: 8, type: .working)
-        await store.persistSetComplete(rowId: rowId, setIndex: 1, weightKg: 60, reps: 8, rpe: 8.5, type: .working)
+        await store.persistSetComplete(rowId: rowId, setId: UUID(), setIndex: 0, weightKg: 60, reps: 8, rpe: 8, type: .working)
+        await store.persistSetComplete(rowId: rowId, setId: UUID(), setIndex: 1, weightKg: 60, reps: 8, rpe: 8.5, type: .working)
 
         let pending = WorkoutRecovery.pendingWorkout(in: container.mainContext)
         #expect(pending?.strength?.exercises.count == 1)

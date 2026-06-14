@@ -40,7 +40,17 @@ struct ProgressInsightsTests {
     @Test func eightWeekSeriesIsProduced() {
         let i = ProgressInsights(workouts: [run(daysAgo: 2, minutes: 40)])
         #expect(i.weeks.count == 8)
-        #expect(i.weeks.last!.load > 0)   // current week has the workout
+        #expect(i.weeks.last!.load > 0)   // recent workout lands in the latest (rolling 7-day) bar
+    }
+
+    /// The latest bar is a rolling 7-day window ending now, so a recent workout always shows there —
+    /// regardless of weekday (the old calendar-week bucket left it empty early in the week).
+    @Test func latestBarIsRollingSevenDays() {
+        #expect(ProgressInsights(workouts: [run(daysAgo: 6, minutes: 30)]).weeks.last!.load > 0)
+
+        let older = ProgressInsights(workouts: [run(daysAgo: 8, minutes: 30)])
+        #expect(older.weeks.last!.load == 0)                          // outside the last 7 days…
+        #expect(older.weeks.dropLast().contains { $0.load > 0 })      // …but still in an earlier bar
     }
 
     // MARK: applying a recommendation to the plan

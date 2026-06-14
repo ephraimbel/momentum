@@ -29,9 +29,10 @@ struct ProgressScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            header
             segmentControl
                 .padding(.horizontal, Theme.Space.lg)
-                .padding(.top, Theme.Space.sm)
+                .padding(.top, Theme.Space.md)
                 .padding(.bottom, Theme.Space.md)
             switch segment {
             case .trends: trends
@@ -41,6 +42,16 @@ struct ProgressScreen: View {
         }
         .background(Theme.background)
         .navigationBarHidden(true)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
+            Spacer()
+            StreakChip(days: stats.currentStreak)
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.sm)
     }
 
     private var segmentControl: some View {
@@ -63,13 +74,14 @@ struct ProgressScreen: View {
     private var trends: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                statusHero(insights)
-                coachCard(insights)
-                loadChart(insights)
-                distanceChart(insights)
-                heatmap(stats)
-                if !stats.strengthPRs.isEmpty { prShelf(stats) }
-                totals(stats)
+                statusHero(insights).reveal(0)
+                coachCard(insights).reveal(0.06)
+                loadChart(insights).reveal(0.12)
+                distanceChart(insights).reveal(0.18)
+                heatmap(stats).reveal(0.24)
+                if !weeklyMuscleActivation.isEmpty { muscleWeek.reveal(0.28) }
+                if !stats.strengthPRs.isEmpty { prShelf(stats).reveal(0.32) }
+                totals(stats).reveal(0.36)
             }
             .padding(Theme.Space.lg)
             .padding(.bottom, Theme.Space.xxl)
@@ -241,6 +253,35 @@ struct ProgressScreen: View {
         .background(card)
     }
 
+    // MARK: Weekly muscle coverage
+
+    /// Trailing-7-day working-sets-by-muscle (PRD §22) across strength sessions.
+    private var weeklyMuscleActivation: [MuscleGroup: Double] {
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        let recent = workouts.filter { $0.type.isStrengthStyle && $0.startedAt >= cutoff }
+        return MuscleActivation.from(workouts: recent)
+    }
+
+    /// A body map of where the week's volume landed, plus the most- and least-worked callouts so
+    /// neglected muscles surface (the coaching value of seeing balance over time).
+    private var muscleWeek: some View {
+        let activation = weeklyMuscleActivation
+        let ranked = activation.filter { $0.value > 0 }.sorted { $0.value > $1.value }
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            sectionTitle("This week's muscles")
+            MuscleMapView(activation: activation)
+                .frame(height: 260)
+                .frame(maxWidth: .infinity)
+            if let top = ranked.first {
+                Text("Most worked: \(top.key.displayName).")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.lg)
+        .background(card)
+    }
+
     private func prShelf(_ stats: ProfileStats) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             sectionTitle("Personal records")
@@ -302,12 +343,14 @@ struct ProgressScreen: View {
         let items = learnedItems(facts, model)
         return ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                identityHero(model, facts)
+                identityHero(model, facts).reveal(0)
                 let nudges = AthleteNudges.generate(facts)
-                if !nudges.isEmpty { weeklyDigest(nudges) }
-                if confidentCount(facts) < 3 { learningState(facts) }
-                ForEach(items) { learnedCard($0) }
-                if let model, model.snapshots.count >= 2 { trajectory(model) }
+                if !nudges.isEmpty { weeklyDigest(nudges).reveal(0.08) }
+                if confidentCount(facts) < 3 { learningState(facts).reveal(0.12) }
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                    learnedCard(item).reveal(0.14 + Double(i) * 0.05)
+                }
+                if let model, model.snapshots.count >= 2 { trajectory(model).reveal(0.2) }
             }
             .padding(Theme.Space.lg)
             .padding(.bottom, Theme.Space.xxl)

@@ -12,12 +12,16 @@ final class StrengthViewModel {
     private let engine: StrengthSessionEngine
     private let context: ModelContext
     let weightUnit: WeightUnit
+    let type: WorkoutType   // weight training / crossfit / HIIT — tags the saved workout
 
     /// Display snapshot of the live session.
     private(set) var exercises: [StrengthSessionEngine.LiveExercise] = []
     /// Editable input per set id.
     var drafts: [UUID: Draft] = [:]
     private var previousByRow: [UUID: [Int: PreviousPerformance.PrevSet]] = [:]
+    private var plannedRepRange: [UUID: (low: Int, high: Int)] = [:]   // enables double-progression prefill
+    /// Muscle targeting per catalog exercise, captured at add-time — drives the live muscle map.
+    private var musclesByExercise: [UUID: (primary: [MuscleGroup], secondary: [MuscleGroup])] = [:]
 
     private(set) var workoutId: UUID?
     let startedAt = Date()
@@ -27,16 +31,17 @@ final class StrengthViewModel {
     private(set) var restTotal: TimeInterval = 0
     private let restActivity = RestActivityController()   // lock-screen / Dynamic Island mirror
 
-    init(container: ModelContainer, weightUnit: WeightUnit = .default()) {
+    init(container: ModelContainer, type: WorkoutType = .strength, weightUnit: WeightUnit = .default()) {
         self.context = ModelContext(container)
         self.engine = StrengthSessionEngine(sink: StrengthWorkoutStore(modelContainer: container))
         self.weightUnit = weightUnit
+        self.type = type
     }
 
     // MARK: Lifecycle
 
     func start() async {
-        await engine.begin(now: startedAt)
+        await engine.begin(type: type, now: startedAt)
         workoutId = ActiveWorkoutMarker.pendingID
         await refresh()
     }
@@ -59,10 +64,13 @@ final class StrengthViewModel {
 
     // MARK: Mutations
 
-    func addExercise(_ exercise: Exercise) async {
+    func addExercise(_ exercise: Exercise, repRange: (low: Int, high: Int)? = nil) async {
         let rowId = await engine.addExercise(exerciseId: exercise.id, name: exercise.name,
                                              category: exercise.category, defaultRestS: exercise.defaultRestS)
+        musclesByExercise[exercise.id] = (exercise.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
+                                          exercise.secondaryMuscles.compactMap(MuscleGroup.init(rawValue:)))
         previousByRow[rowId] = PreviousPerformance.lastSession(forExerciseId: exercise.id, in: context)
+        if let repRange { plannedRepRange[rowId] = repRange }   // planned ⇒ enable double-progression
         await addSetInternal(rowId: rowId)
         await refresh()
     }
@@ -77,7 +85,7 @@ final class StrengthViewModel {
     func loadPlanned(_ session: PlannedSession) async {
         for pe in session.strengthTargets.sorted(by: { $0.order < $1.order }) {
             guard let exercise = pe.exercise else { continue }
-            await addExercise(exercise)
+            await addExercise(exercise, repRange: (pe.targetRepLow, pe.targetRepHigh))
             guard let rowId = exercises.last?.id else { continue }
             for _ in 1..<max(1, pe.targetSets) { await addSet(rowId: rowId) }
             if let row = exercises.first(where: { $0.id == rowId }) {
@@ -94,8 +102,15 @@ final class StrengthViewModel {
         let nextIndex = ex.sets.count
 
         var target = StrengthSessionEngine.SetTarget()
-        if let prev = previousByRow[rowId]?[nextIndex] {
-            target = .init(weightKg: prev.weightKg, reps: prev.reps)
+        if let prevRow = previousByRow[rowId], !prevRow.isEmpty {
+            let prevTargets = prevRow.mapValues { StrengthSessionEngine.SetTarget(weightKg: $0.weightKg, reps: $0.reps) }
+            if let range = plannedRepRange[rowId] {
+                // Planned set: double-progress off last session (bump load once the range was topped out).
+                target = StrengthSessionEngine.progressedTarget(previousSets: prevTargets, index: nextIndex,
+                                                                repLow: range.low, repHigh: range.high)
+            } else {
+                target = prevTargets[nextIndex] ?? StrengthSessionEngine.SetTarget()
+            }
         } else if let last = ex.sets.last(where: { $0.isComplete }) {
             target = .init(weightKg: last.weightKg, reps: last.reps)
         }
@@ -123,6 +138,14 @@ final class StrengthViewModel {
            let set = ex.sets.first(where: { $0.id == setId }) {
             startRest(seconds: set.restS, exerciseName: ex.name)
         }
+        await refresh()
+    }
+
+    /// Un-log a completed set (the user tapped its ✓ again). Clears the rest timer it started.
+    func uncompleteSet(rowId: UUID, setId: UUID) async {
+        await engine.uncompleteSet(exerciseId: rowId, setId: setId)
+        skipRest()
+        Haptics.light()
         await refresh()
     }
 
@@ -173,6 +196,24 @@ final class StrengthViewModel {
 
     var completedSetCount: Int {
         exercises.reduce(0) { $0 + $1.sets.filter(\.isComplete).count }
+    }
+
+    /// Live muscle activation for the body map (PRD §22 weighting). Completed working sets drive the
+    /// real intensity; any added-but-unlogged exercise still gets a faint floor on its primary
+    /// muscles, so the figure lights up the moment you pick an exercise and brightens as you log.
+    var muscleActivation: [MuscleGroup: Double] {
+        let entries = exercises.map { ex -> (primary: [MuscleGroup], secondary: [MuscleGroup], sets: Int) in
+            let m = musclesByExercise[ex.exerciseId] ?? ([], [])
+            let sets = ex.sets.filter { $0.isComplete && $0.type == .working }.count
+            return (m.primary, m.secondary, sets)
+        }
+        var totals = StrengthMath.weeklySetsByMuscle(entries)
+        for ex in exercises {
+            for muscle in musclesByExercise[ex.exerciseId]?.primary ?? [] {
+                totals[muscle] = max(totals[muscle] ?? 0, 0.6)
+            }
+        }
+        return totals
     }
 
     /// Live volume in the user's display unit.

@@ -5,6 +5,7 @@ import SwiftData
 /// Owns a `StrengthViewModel`; presents the library to add exercises and a summary on finish.
 struct StrengthLiveView: View {
     let container: ModelContainer
+    var type: WorkoutType = .strength
     var plannedSession: PlannedSession? = nil
     var onFinish: (UUID?) -> Void
 
@@ -30,7 +31,7 @@ struct StrengthLiveView: View {
         .animation(Motion.standard, value: vm?.restEndsAt)
         .task {
             guard vm == nil else { return }
-            let model = StrengthViewModel(container: container)
+            let model = StrengthViewModel(container: container, type: type)
             await model.start()
             if let plannedSession { await model.loadPlanned(plannedSession) }
             vm = model
@@ -52,6 +53,11 @@ struct StrengthLiveView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: Theme.Space.lg) {
+                        MuscleMapView(activation: vm.muscleActivation)
+                            .frame(height: 150)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, Theme.Space.xs)
+                            .animation(Motion.standard, value: vm.completedSetCount)
                         ForEach(vm.exercises) { exercise in
                             ExerciseSection(vm: vm, exercise: exercise)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -127,7 +133,9 @@ struct StrengthLiveView: View {
     private func emptyState(_ vm: StrengthViewModel) -> some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            Image(systemName: "dumbbell.fill").font(.system(size: 40)).foregroundStyle(Theme.inkTertiary)
+            MuscleMapView(activation: [:])
+                .frame(height: 220)
+                .frame(maxWidth: .infinity)
             Text("Add your first exercise")
                 .font(.rounded(Theme.FontSize.body, weight: .semibold))
                 .foregroundStyle(Theme.inkSecondary)
@@ -151,7 +159,7 @@ struct StrengthLiveView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.bottom, Theme.Space.sm)
-        .background(.ultraThinMaterial)
+        .momentumGlass(in: Rectangle(), stroke: false)
     }
 }
 
@@ -215,7 +223,7 @@ private struct RestBar: View {
             .font(.system(size: 22))
             .foregroundStyle(Theme.ink)
             .padding(Theme.Space.lg)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.sheet))
+            .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
             .overlay(alignment: .topTrailing) {
                 Button { vm.skipRest() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkTertiary)

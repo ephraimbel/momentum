@@ -53,7 +53,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
               let workoutID, let workout = self[workoutID, as: Workout.self] else { return }
         detail.distanceM = distanceM
         detail.elevationGainM = elevationGainM
-        if type == .ride {
+        if type.discipline == .cycling {   // all bike variants report speed, not pace
             detail.avgSpeedMS = durationS > 0 ? distanceM / durationS : 0
         } else {
             detail.avgPaceSPerKm = smoothedPaceSPerKm
@@ -80,10 +80,11 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
     private var workoutID: PersistentIdentifier?
     private var sessionID: PersistentIdentifier?
     private var rowIDs: [UUID: PersistentIdentifier] = [:]
+    private var setIDs: [UUID: PersistentIdentifier] = [:]   // live setId → persisted SetEntry
 
-    func beginWorkout(startedAt: Date) {
+    func beginWorkout(type: WorkoutType, startedAt: Date) {
         let workout = Workout()
-        workout.type = .strength
+        workout.type = type
         workout.startedAt = startedAt
         let session = StrengthSession()
         workout.strength = session
@@ -105,19 +106,34 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         rowIDs[rowId] = row.persistentModelID
     }
 
-    func persistSetComplete(rowId: UUID, setIndex: Int,
+    func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) {
         guard let rowPID = rowIDs[rowId], let row = self[rowPID, as: WorkoutExercise.self] else { return }
-        let set = SetEntry()
+        // Upsert by live setId so re-logging the same set (after an uncheck) updates its row rather
+        // than creating a duplicate.
+        let set: SetEntry
+        if let pid = setIDs[setId], let existing = self[pid, as: SetEntry.self] {
+            set = existing
+        } else {
+            set = SetEntry()
+            set.restS = row.exercise?.defaultRestS ?? 120
+            row.sets.append(set)
+        }
         set.index = setIndex
         set.weightKg = weightKg
         set.reps = reps
         set.rpe = rpe
         set.type = type
         set.isComplete = true
-        set.restS = row.exercise?.defaultRestS ?? 120
-        row.sets.append(set)
         try? modelContext.save()
+        setIDs[setId] = set.persistentModelID
+    }
+
+    func persistSetIncomplete(setId: UUID) {
+        guard let pid = setIDs[setId], let set = self[pid, as: SetEntry.self] else { return }
+        modelContext.delete(set)
+        try? modelContext.save()
+        setIDs[setId] = nil
     }
 
     func scheduleRest(seconds: Double, exerciseName: String) {

@@ -5,12 +5,16 @@ import Foundation
 /// the rest-timer local notification so it fires when backgrounded, §22/§24).
 protocol StrengthWorkoutSink: Sendable {
     /// Create the durable `Workout` + `StrengthSession` and mark it the active (recoverable) workout.
-    func beginWorkout(startedAt: Date) async
+    /// `type` is the gym sport (weight training / crossfit / HIIT) so the saved workout is tagged right.
+    func beginWorkout(type: WorkoutType, startedAt: Date) async
     /// Create the durable `WorkoutExercise` row for a live exercise (keyed by `rowId`).
     func persistExercise(rowId: UUID, catalogExerciseId: UUID, order: Int, supersetGroup: Int?) async
-    /// Persist a completed set immediately (the durability guarantee), attached to its row.
-    func persistSetComplete(rowId: UUID, setIndex: Int,
+    /// Persist a completed set immediately (the durability guarantee), attached to its row. Keyed by
+    /// the live `setId` so re-logging the same set updates its row instead of creating a duplicate.
+    func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async
+    /// Un-log a set the user unchecked: remove its persisted row so it no longer counts.
+    func persistSetIncomplete(setId: UUID) async
     /// Schedule the rest-timer local notification so it fires when backgrounded.
     func scheduleRest(seconds: Double, exerciseName: String) async
     /// Finalize aggregates and clear the active-workout marker.
@@ -20,10 +24,11 @@ protocol StrengthWorkoutSink: Sendable {
 }
 
 struct NoopStrengthWorkoutSink: StrengthWorkoutSink {
-    func beginWorkout(startedAt: Date) async {}
+    func beginWorkout(type: WorkoutType, startedAt: Date) async {}
     func persistExercise(rowId: UUID, catalogExerciseId: UUID, order: Int, supersetGroup: Int?) async {}
-    func persistSetComplete(rowId: UUID, setIndex: Int,
+    func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async {}
+    func persistSetIncomplete(setId: UUID) async {}
     func scheduleRest(seconds: Double, exerciseName: String) async {}
     func finishWorkout(totalVolumeKg: Double, totalSets: Int, durationS: TimeInterval) async {}
     func discardWorkout() async {}
@@ -76,6 +81,21 @@ actor StrengthSessionEngine {
         return SetTarget(weightKg: nil, reps: nil)
     }
 
+    /// Double progression (PRD §9.2, the adaptive half): when *every* completed set last session
+    /// reached the top of the planned rep range, the exercise has earned a load bump — suggest the
+    /// next weight up and reset reps to the bottom of the range. Otherwise repeat last session's
+    /// numbers. Bounded by `stepKg` (the smallest meaningful jump), so it can never run away.
+    /// Pure; used for the prefill of *planned* strength sets.
+    static func progressedTarget(previousSets: [Int: SetTarget], index: Int,
+                                 repLow: Int, repHigh: Int, stepKg: Double = 2.5) -> SetTarget {
+        let base = previousSets[index] ?? previousSets.sorted { $0.key < $1.key }.first?.value ?? SetTarget()
+        let completed = previousSets.values.filter { $0.weightKg != nil && $0.reps != nil }
+        guard !completed.isEmpty, repHigh > 0,
+              completed.allSatisfy({ ($0.reps ?? 0) >= repHigh }) else { return base }
+        let topWeight = completed.compactMap(\.weightKg).max() ?? base.weightKg ?? 0
+        return SetTarget(weightKg: topWeight + stepKg, reps: repLow)
+    }
+
     /// Default rest by category (§22): compound 150s, isolation 75s, otherwise 120s.
     /// A per-exercise override (or live user adjustment) wins.
     static func defaultRest(category: ExerciseCategory, override: Double? = nil) -> Double {
@@ -103,10 +123,10 @@ actor StrengthSessionEngine {
 
     // MARK: Live session orchestration
 
-    func begin(now: Date = Date()) async {
+    func begin(type: WorkoutType = .strength, now: Date = Date()) async {
         guard startedAt == nil else { return }
         startedAt = now
-        await sink.beginWorkout(startedAt: now)
+        await sink.beginWorkout(type: type, startedAt: now)
     }
 
     @discardableResult
@@ -145,9 +165,18 @@ actor StrengthSessionEngine {
         exercises[ei].sets[si].isComplete = true
 
         let set = exercises[ei].sets[si]
-        await sink.persistSetComplete(rowId: exercises[ei].id, setIndex: set.index,
+        await sink.persistSetComplete(rowId: exercises[ei].id, setId: set.id, setIndex: set.index,
                                       weightKg: weightKg, reps: reps, rpe: rpe, type: set.type)
         await sink.scheduleRest(seconds: set.restS, exerciseName: exercises[ei].name)
+    }
+
+    /// Un-log a set the user unchecked: clear its completed flag in-memory and drop its durable row
+    /// so it stops counting toward volume/muscles. Re-logging it persists a fresh row.
+    func uncompleteSet(exerciseId: UUID, setId: UUID) async {
+        guard let ei = exercises.firstIndex(where: { $0.id == exerciseId }),
+              let si = exercises[ei].sets.firstIndex(where: { $0.id == setId }) else { return }
+        exercises[ei].sets[si].isComplete = false
+        await sink.persistSetIncomplete(setId: setId)
     }
 
     /// Finalize: roll up volume/sets and clear the recovery marker.
