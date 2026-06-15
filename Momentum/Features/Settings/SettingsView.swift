@@ -4,12 +4,15 @@ import SwiftUI
 /// renewal terms, cancel in ≤2 taps, restore). Units / equipment / privacy / export land later.
 struct SettingsView: View {
     @Environment(PaywallController.self) private var paywall
+    @Environment(Services.self) private var services
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var context
     @State private var restoring = false
     @State private var exportFile: JSONExportFile?
     @State private var showExporter = false
     @State private var confirmDelete = false
+    @State private var healthConnected = false
+    @State private var connectingHealth = false
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
     private let manageURL = URL(string: "https://apps.apple.com/account/subscriptions")!
@@ -18,6 +21,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 section("SUBSCRIPTION") { paywall.isPro ? AnyView(proCard) : AnyView(freeCard) }
+                section("APPLE HEALTH") { AnyView(healthCard) }
                 section("DATA & PRIVACY") { AnyView(dataCard) }
                 section("ABOUT") { AnyView(aboutCard) }
             }
@@ -27,6 +31,7 @@ struct SettingsView: View {
         .background(Theme.background)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
+        .onAppear { healthConnected = services.health.isAuthorized }
         .fileExporter(isPresented: $showExporter, document: exportFile,
                       contentType: .json, defaultFilename: "momentum-data") { _ in }
         .confirmationDialog("Delete all data?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -37,6 +42,38 @@ struct SettingsView: View {
         } message: {
             Text("This permanently removes your profile, plan, and every workout from this device. This can’t be undone.")
         }
+    }
+
+    // MARK: Apple Health
+
+    private var healthCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            if healthConnected {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: "heart.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(.pink).frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connected").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Text("New workouts are saved to Apple Health.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+            } else {
+                Text("Save your runs, rides, and lifts to Apple Health.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                OversizedButton(title: "Connect Apple Health", systemImage: "heart.fill", isEnabled: !connectingHealth) {
+                    Task {
+                        connectingHealth = true
+                        _ = await services.health.requestAuthorization()
+                        healthConnected = services.health.isAuthorized
+                        connectingHealth = false
+                    }
+                }
+            }
+        }
+        .padding(Theme.Space.lg)
+        .background(card)
     }
 
     // MARK: Data & privacy
@@ -172,4 +209,5 @@ struct SettingsView: View {
 #Preview {
     NavigationStack { SettingsView() }
         .environment(PaywallController(isPro: false))
+        .environment(Services.live())
 }

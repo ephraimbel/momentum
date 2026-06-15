@@ -53,7 +53,7 @@ final class Services {
         Services(
             location: LocationService(),
             motion: MotionService(),
-            health: StubHealthService(),
+            health: HealthService(),
             plan: StubPlanEngine(),
             ai: AIService(),
             sync: StubSyncService(),
@@ -85,7 +85,14 @@ protocol MotionServing: AnyObject {
     var elevationGainM: Double { get }
 }
 
-protocol HealthServing: AnyObject { var isAuthorized: Bool { get } }
+@MainActor
+protocol HealthServing: AnyObject {
+    var isAuthorized: Bool { get }
+    /// Request Health read/write permission (opt-in). Returns whether workout-sharing is granted.
+    func requestAuthorization() async -> Bool
+    /// Save a completed workout to Apple Health (best-effort, de-duplicated, never blocks).
+    func save(_ workout: Workout) async
+}
 protocol PlanEngineServing: AnyObject {}
 protocol SyncServing: AnyObject {}
 
@@ -191,7 +198,11 @@ final class StubMotionService: MotionServing {
     func start() {}
     func stop() {}
 }
-final class StubHealthService: HealthServing { var isAuthorized = false }
+final class StubHealthService: HealthServing {
+    var isAuthorized = false
+    func requestAuthorization() async -> Bool { false }
+    func save(_ workout: Workout) async {}
+}
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {}
 @MainActor

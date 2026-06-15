@@ -11,6 +11,7 @@ struct StrengthSaveView: View {
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     // Read the just-finished workout from a FRESH context. The live session was persisted by a
     // background @ModelActor; the app's main context can still hold a stale copy (Today's @Query
     // cached the workout mid-session with no/partial sets, and SwiftData doesn't merge cross-context
@@ -89,6 +90,7 @@ struct StrengthSaveView: View {
         // Commit through the reader's own context (where `workout` lives) so the write persists.
         reader?.commit(title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                        note: desc.trimmingCharacters(in: .whitespacesAndNewlines))
+        if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
         Haptics.success()
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
     }

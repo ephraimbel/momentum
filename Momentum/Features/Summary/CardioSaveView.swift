@@ -11,6 +11,7 @@ struct CardioSaveView: View {
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @Query private var workouts: [Workout]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
@@ -163,6 +164,8 @@ struct CardioSaveView: View {
             workout.type = sportType
             workout.perceivedEffort = effort
             try? context.save()
+            let saved = workout
+            Task { await services.health.save(saved) }   // mirror to Apple Health (no-op unless connected)
         }
         Haptics.success()
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
