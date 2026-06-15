@@ -5,7 +5,11 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(\.openURL) private var openURL
+    @Environment(\.modelContext) private var context
     @State private var restoring = false
+    @State private var exportFile: JSONExportFile?
+    @State private var showExporter = false
+    @State private var confirmDelete = false
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
     private let manageURL = URL(string: "https://apps.apple.com/account/subscriptions")!
@@ -14,6 +18,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 section("SUBSCRIPTION") { paywall.isPro ? AnyView(proCard) : AnyView(freeCard) }
+                section("DATA & PRIVACY") { AnyView(dataCard) }
                 section("ABOUT") { AnyView(aboutCard) }
             }
             .padding(Theme.Space.lg)
@@ -22,6 +27,41 @@ struct SettingsView: View {
         .background(Theme.background)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
+        .fileExporter(isPresented: $showExporter, document: exportFile,
+                      contentType: .json, defaultFilename: "momentum-data") { _ in }
+        .confirmationDialog("Delete all data?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete everything", role: .destructive) {
+                DataManager.deleteAllUserData(in: context)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes your profile, plan, and every workout from this device. This can’t be undone.")
+        }
+    }
+
+    // MARK: Data & privacy
+
+    private var dataCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            actionRow("Export my data", icon: "square.and.arrow.up") {
+                exportFile = JSONExportFile(data: DataManager.exportJSON(in: context))
+                showExporter = true
+            }
+            Divider().overlay(Theme.hairline)
+            Button(role: .destructive) { confirmDelete = true } label: {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: "trash").font(.system(size: 15, weight: .semibold)).foregroundStyle(.red).frame(width: 24)
+                    Text("Delete all data").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(.red)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.vertical, Theme.Space.xs)
+        .background(card)
     }
 
     // MARK: Subscription

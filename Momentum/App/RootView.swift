@@ -28,6 +28,8 @@ struct RootView: View {
             PaywallView(feature: feature)
         }
         .onAppear { if profiles.isEmpty { showOnboarding = true } }
+        // Returning to onboarding after a data wipe (Settings → Delete all data).
+        .onChange(of: profiles.isEmpty) { _, empty in if empty { showOnboarding = true } }
     }
 
     private var tabs: some View {
