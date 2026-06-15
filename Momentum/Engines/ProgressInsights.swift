@@ -19,6 +19,7 @@ struct ProgressInsights {
         let weekStart: Date
         let load: Double
         let distanceM: Double
+        let avgPaceSPerKm: Double   // distance-weighted, running only; 0 = no runs that week
     }
 
     let acute: Double
@@ -29,6 +30,7 @@ struct ProgressInsights {
     let weeks: [WeekPoint]            // last 8 weeks, oldest → newest
     let loadTrendPct: Double          // this week vs prior 3-week average
     let distanceTrendPct: Double
+    let paceTrendPct: Double          // running pace: negative = faster (improving)
     let hasData: Bool
 
     init(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current) {
@@ -75,7 +77,12 @@ struct ProgressInsights {
             let inWeek = workouts.filter { $0.startedAt > start && $0.startedAt <= end }
             let wkLoad = inWeek.reduce(0) { $0 + load($1) }
             let wkDist = inWeek.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
-            series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist))
+            // Distance-weighted average running pace for the week (running only).
+            let runs = inWeek.filter { $0.type.discipline == .running }
+            let runDist = runs.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+            let runDur = runs.reduce(0) { $0 + $1.durationS }
+            let wkPace = runDist > 0 ? runDur / (runDist / 1000) : 0
+            series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist, avgPaceSPerKm: wkPace))
         }
         weeks = series
 
@@ -90,6 +97,18 @@ struct ProgressInsights {
         }
         loadTrendPct = trend { $0.load }
         distanceTrendPct = trend { $0.distanceM }
+
+        // Pace trend over weeks that actually had runs (zero-run weeks would skew it). Latest paced
+        // week vs the average of the prior (≤3) paced weeks; negative ⇒ faster.
+        let paced = series.filter { $0.avgPaceSPerKm > 0 }
+        if paced.count >= 2 {
+            let current = paced.last!.avgPaceSPerKm
+            let prior = paced.dropLast().suffix(3).map(\.avgPaceSPerKm)
+            let avg = prior.reduce(0, +) / Double(prior.count)
+            paceTrendPct = avg > 0 ? (current - avg) / avg * 100 : 0
+        } else {
+            paceTrendPct = 0
+        }
     }
 
     private static func defaultIntensity(_ type: WorkoutType) -> Int {

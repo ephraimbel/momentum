@@ -37,6 +37,28 @@ struct ProgressInsightsTests {
         #expect(i.recommendation == .hold)
     }
 
+    @Test func weeklyPaceIsDistanceWeightedAndRunningOnly() {
+        func pacedRun(daysAgo: Int, distanceM: Double, durationS: Double) -> Workout {
+            let w = Workout(); w.type = .run
+            w.startedAt = Date().addingTimeInterval(-Double(daysAgo) * 86_400)
+            w.durationS = durationS
+            let g = GPSDetail(); g.distanceM = distanceM; w.gps = g
+            return w
+        }
+        let strength = Workout()                       // must NOT affect running pace
+        strength.type = .strength
+        strength.startedAt = Date().addingTimeInterval(-86_400); strength.durationS = 3600
+
+        // This week: 5 km in 1500 s (300/km) + 5 km in 1700 s (340/km).
+        // Distance-weighted = (1500+1700) / 10 km = 320 s/km.
+        let i = ProgressInsights(workouts: [
+            pacedRun(daysAgo: 1, distanceM: 5000, durationS: 1500),
+            pacedRun(daysAgo: 2, distanceM: 5000, durationS: 1700),
+            strength,
+        ])
+        #expect(abs(i.weeks.last!.avgPaceSPerKm - 320) < 0.5)
+    }
+
     @Test func eightWeekSeriesIsProduced() {
         let i = ProgressInsights(workouts: [run(daysAgo: 2, minutes: 40)])
         #expect(i.weeks.count == 8)

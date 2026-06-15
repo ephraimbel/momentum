@@ -86,6 +86,7 @@ struct ProgressScreen: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     loadChart(insights)
                     distanceChart(insights)
+                    if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                     if !weeklyMuscleActivation.isEmpty { muscleWeek }
                     if !stats.strengthPRs.isEmpty { prShelf(stats) }
                 }
@@ -192,6 +193,38 @@ struct ProgressScreen: View {
     private func trendSuffix(_ pct: Double) -> String {
         guard abs(pct) >= 1 else { return "" }
         return " · \(pct >= 0 ? "↑" : "↓")\(Int(abs(pct).rounded()))%"
+    }
+
+    /// Pace improves when seconds-per-km drops, so a negative trend reads as "faster".
+    private func paceTrendSuffix(_ pct: Double) -> String {
+        guard abs(pct) >= 1 else { return "" }
+        return pct < 0 ? " · \(Int(abs(pct).rounded()))% faster" : " · \(Int(pct.rounded()))% slower"
+    }
+
+    /// Weekly average running pace (PRD §10 pace trends) — lower is faster; weeks without runs are
+    /// dropped so a rest week doesn't read as a cliff.
+    private func paceChart(_ insights: ProgressInsights) -> some View {
+        let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
+        let paced = insights.weeks.filter { $0.avgPaceSPerKm > 0 }
+        let slowest = paced.map(\.avgPaceSPerKm).max() ?? 0
+        let fastest = paced.map(\.avgPaceSPerKm).min() ?? 1
+        return chartSection("Weekly pace", subtitle: "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))") {
+            Chart(paced) { wk in
+                LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                         y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
+                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .interpolationMethod(.catmullRom)
+                PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                          y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
+                    .foregroundStyle(Theme.ink).symbolSize(26)
+                    .annotation(position: .top, spacing: 2) {
+                        if animateCharts { barLabel(Formatters.pace(secPerKm: wk.avgPaceSPerKm, unit: distanceUnit)) }
+                    }
+            }
+            .chartXAxis(.hidden).chartYAxis(.hidden)
+            .chartYScale(domain: (fastest * 0.96)...(slowest * 1.06))
+            .frame(height: 120)
+        }
     }
 
     /// Compact value label over a bar/point — "1.2k" for big loads, "23" / "4.5" for distances.
