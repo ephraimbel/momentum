@@ -82,7 +82,7 @@ struct CardioTrackingView: View {
         }
         .task {
             if vm == nil {
-                let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit)
+                let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit, goalMeters: goalMeters)
                 model.beginAcquiring()
                 vm = model
             }

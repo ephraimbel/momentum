@@ -10,12 +10,15 @@ import Observation
 final class CardioViewModel {
     let type: WorkoutType
     let distanceUnit: DistanceUnit
+    /// Optional distance goal (m) — drives the Live Activity goal ring.
+    let goalMeters: Double?
     /// When recording actually began (set in `start()`, i.e. right after the countdown).
     private(set) var startedAt = Date()
 
     private let engine: GPSTrackingEngine
     private let store: GPSWorkoutStore
     private let location: LocationService
+    private let liveActivity = CardioActivityController()
 
     private(set) var snapshot: GPSTrackingEngine.LiveSnapshot?
     private(set) var lastAccuracyM: Double?
@@ -36,9 +39,10 @@ final class CardioViewModel {
     private var pausedTotalS: TimeInterval = 0
     private var pauseStartedAt: Date?
 
-    init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto) {
+    init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto, goalMeters: Double? = nil) {
         self.type = type
         self.distanceUnit = distanceUnit
+        self.goalMeters = goalMeters
         self.location = LocationService()
         let store = GPSWorkoutStore(modelContainer: container)
         self.store = store
@@ -60,6 +64,7 @@ final class CardioViewModel {
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
                 self.syncPauseClock()
+                self.liveActivity.update(self.liveState())
             }
         }
     }
@@ -72,16 +77,19 @@ final class CardioViewModel {
         workoutId = ActiveWorkoutMarker.pendingID
         snapshot = await engine.snapshot()
         armed = true
+        // Light up the lock screen / Dynamic Island for the live run (PRD §23).
+        liveActivity.start(title: type.title, symbol: type.systemImage, state: liveState())
     }
 
     /// Tear down the stream when the user backs out before arming (no workout was ever created).
     func cancelAcquiring() {
         pumpTask?.cancel()
         location.stop()
+        liveActivity.end()
     }
 
-    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock() }
-    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock() }
+    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()) }
+    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()) }
 
     /// Elapsed (moving) time since start, frozen while paused — ticks every second regardless of
     /// GPS fixes. This is the timer shown on the live screen and saved as the workout duration.
@@ -103,6 +111,7 @@ final class CardioViewModel {
     func finish() async -> UUID? {
         pumpTask?.cancel()
         location.stop()
+        liveActivity.end()
         await engine.finish(durationOverrideS: elapsed())
         // Render the Strava-style route snapshot from accepted coordinates (PRD §8.5).
         let coords = coordinates
@@ -157,5 +166,33 @@ final class CardioViewModel {
     var gpsStrength: Double {
         guard let acc = lastAccuracyM, acc > 0 else { return 0 }
         return max(0, min(1, (40 - acc) / 30))
+    }
+
+    // MARK: Live Activity
+
+    /// Pace/speed for the secondary readout — speed for rides, pace otherwise (distance has its own
+    /// slot, so we never duplicate it the way `heroValue` would for walks).
+    private var paceOrSpeed: (value: String, label: String) {
+        switch type.discipline {
+        case .cycling:
+            let t = elapsed()
+            return (Formatters.speed(ms: t > 0 ? distanceM / t : 0, unit: distanceUnit), "Speed")
+        default:
+            return (Formatters.pace(secPerKm: snapshot?.smoothedPaceSPerKm ?? 0, unit: distanceUnit), "Pace")
+        }
+    }
+
+    /// Snapshot the current numbers into the Live Activity content state.
+    private func liveState() -> CardioActivityAttributes.ContentState {
+        let e = elapsed()
+        let pace = paceOrSpeed
+        return .init(
+            timerStart: Date().addingTimeInterval(-e),
+            paused: isPaused,
+            elapsedText: Formatters.duration(s: e),
+            distanceText: secondaryDistance,
+            paceText: pace.value,
+            paceLabel: pace.label,
+            goalFraction: goalMeters.map { $0 > 0 ? max(0, min(1, distanceM / $0)) : 0 })
     }
 }

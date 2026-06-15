@@ -92,6 +92,7 @@ targets:
     sources:
       - path: MomentumWidgets
       - path: Momentum/Features/Strength/RestActivityAttributes.swift   # shared with the app target
+      - path: Momentum/Features/Cardio/CardioActivityAttributes.swift   # shared with the app target
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.widgets
