@@ -24,6 +24,7 @@ final class Services {
     let notifications: any NotificationServing
     let athleteModel: any AthleteModelServing
     let analytics: any AnalyticsServing
+    let voiceCoach: any VoiceCoachServing
 
     init(
         location: any LocationServing,
@@ -35,7 +36,8 @@ final class Services {
         paywall: any PaywallServing,
         notifications: any NotificationServing,
         athleteModel: any AthleteModelServing,
-        analytics: any AnalyticsServing = StubAnalyticsService()
+        analytics: any AnalyticsServing = StubAnalyticsService(),
+        voiceCoach: any VoiceCoachServing = StubVoiceCoachService()
     ) {
         self.location = location
         self.motion = motion
@@ -47,6 +49,7 @@ final class Services {
         self.notifications = notifications
         self.athleteModel = athleteModel
         self.analytics = analytics
+        self.voiceCoach = voiceCoach
     }
 
     /// The default wiring used by the running app. The real app injects the live `PaywallController`
@@ -63,7 +66,8 @@ final class Services {
             paywall: paywall,
             notifications: NotificationService(),
             athleteModel: AthleteModelService(),
-            analytics: AnalyticsService()
+            analytics: AnalyticsService(),
+            voiceCoach: VoiceCoachService()
         )
     }
 }
@@ -150,6 +154,16 @@ extension AthleteModelServing {
     func ingest(profile: UserProfile, in context: ModelContext) {
         ingest(profile: profile, in: context, now: Date())
     }
+}
+
+@MainActor
+protocol VoiceCoachServing: AnyObject {
+    /// User/Pro toggle. When false, `announce` is a no-op.
+    var isEnabled: Bool { get set }
+    /// Speak a short coaching cue (ducks other audio). Cue text comes from `CoachingCueBuilder`.
+    func announce(_ text: String)
+    /// Stop any in-flight speech and release the audio session.
+    func stop()
 }
 
 // MARK: - Pro gating
@@ -241,4 +255,11 @@ final class StubAthleteModelService: AthleteModelServing {
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {
     func isEntitled(to feature: Feature) -> Bool { true }
+}
+/// No-op voice coach for previews/tests.
+@MainActor
+final class StubVoiceCoachService: VoiceCoachServing {
+    var isEnabled = false
+    func announce(_ text: String) {}
+    func stop() {}
 }

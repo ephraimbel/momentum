@@ -83,7 +83,10 @@ struct CardioTrackingView: View {
         }
         .task {
             if vm == nil {
-                let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit, goalMeters: goalMeters)
+                // Voice coach is Pro (PRD §10) — pass it only when entitled, else nil (silent).
+                let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
+                let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit,
+                                            goalMeters: goalMeters, voice: voice)
                 model.beginAcquiring()
                 vm = model
             }

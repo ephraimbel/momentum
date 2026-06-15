@@ -39,10 +39,20 @@ final class CardioViewModel {
     private var pausedTotalS: TimeInterval = 0
     private var pauseStartedAt: Date?
 
-    init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto, goalMeters: Double? = nil) {
+    // Voice coach (PRD §4.10, Pro). nil when not entitled/disabled, so the loop never depends on it.
+    private let voice: (any VoiceCoachServing)?
+    private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
+    private var lastUnitCount = 0
+    private var lastBoundaryElapsedS: TimeInterval = 0
+    private var lastAnnouncedPaused = false
+    private var goalAnnounced = false
+
+    init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
+         goalMeters: Double? = nil, voice: (any VoiceCoachServing)? = nil) {
         self.type = type
         self.distanceUnit = distanceUnit
         self.goalMeters = goalMeters
+        self.voice = voice
         self.location = LocationService()
         let store = GPSWorkoutStore(modelContainer: container)
         self.store = store
@@ -65,8 +75,36 @@ final class CardioViewModel {
                 self.snapshot = await self.engine.snapshot()
                 self.syncPauseClock()
                 self.liveActivity.update(self.liveState())
+                self.announceMilestonesIfNeeded()
+                self.announcePauseIfChanged()
             }
         }
+    }
+
+    /// Speak each completed km/mi with its split pace, and the goal once (voice coach).
+    private func announceMilestonesIfNeeded() {
+        guard voice != nil else { return }
+        let count = Int(distanceM / unitMeters)
+        if count > lastUnitCount {
+            lastUnitCount = count
+            let now = elapsed()
+            let splitS = now - lastBoundaryElapsedS
+            lastBoundaryElapsedS = now
+            voice?.announce(CoachingCueBuilder.milestone(unitCount: count, splitSecPerUnit: splitS, unit: distanceUnit))
+        }
+        if let goal = goalMeters, goal > 0, !goalAnnounced, distanceM >= goal {
+            goalAnnounced = true
+            voice?.announce(CoachingCueBuilder.goalReached())
+        }
+    }
+
+    /// Speak paused/resumed on any transition (manual or GPS auto-pause), deduped.
+    private func announcePauseIfChanged() {
+        guard voice != nil else { return }
+        let p = isPaused
+        guard p != lastAnnouncedPaused else { return }
+        lastAnnouncedPaused = p
+        voice?.announce(p ? CoachingCueBuilder.paused() : CoachingCueBuilder.resumed())
     }
 
     /// Begin recording for real (called when the countdown hits GO). From here fixes accumulate
@@ -88,8 +126,8 @@ final class CardioViewModel {
         liveActivity.end()
     }
 
-    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()) }
-    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()) }
+    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
+    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
 
     /// Elapsed (moving) time since start, frozen while paused — ticks every second regardless of
     /// GPS fixes. This is the timer shown on the live screen and saved as the workout duration.
@@ -112,6 +150,7 @@ final class CardioViewModel {
         pumpTask?.cancel()
         location.stop()
         liveActivity.end()
+        voice?.stop()
         await engine.finish(durationOverrideS: elapsed())
         // Render the Strava-style route snapshot from accepted coordinates (PRD §8.5).
         let coords = coordinates

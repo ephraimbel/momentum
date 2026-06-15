@@ -241,6 +241,9 @@ private struct RestBar: View {
             if (vm.restRemaining(at: date) ?? 0) <= 0 && !didPulse {
                 Haptics.medium()
                 services.analytics.log(.restTimerComplete)
+                if services.paywall.isEntitled(to: .voiceCoach) {
+                    services.voiceCoach.announce(CoachingCueBuilder.restComplete())
+                }
                 didPulse = true
             }
         }
