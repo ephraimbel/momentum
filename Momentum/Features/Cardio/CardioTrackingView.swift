@@ -389,6 +389,11 @@ struct CardioTrackingView: View {
         }
         .padding(.horizontal, Theme.Space.lg)
         .onChange(of: progress) { if progress >= 1 && !goalReached { goalReached = true; Haptics.celebration() } }
+        // The capsule fill is the visual progress; VoiceOver gets the percent + numbers so the
+        // iridescent "reached" state is never the sole signal (PRD §13.4).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(goalReached ? "Goal reached" : "Goal progress")
+        .accessibilityValue("\(distanceNumber(forMeters: distance)) of \(goalNum) \(unitLabel), \(Int((progress * 100).rounded())) percent")
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

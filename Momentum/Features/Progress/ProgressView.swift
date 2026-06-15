@@ -303,6 +303,10 @@ struct ProgressScreen: View {
     private func heatmap(_ stats: ProfileStats) -> some View {
         let today = StreakCalculator.localDay(Date())
         let weeks = 16
+        let windowDays = weeks * 7
+        // Active days within the displayed window — drives a single VoiceOver summary instead of
+        // 112 unreadable color-only cells (PRD §13.4: iridescence is never the sole carrier).
+        let activeDays = (0..<windowDays).filter { stats.countingDays.contains(today - $0) }.count
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             sectionTitle("Consistency")
             HStack(spacing: 3) {
@@ -318,6 +322,9 @@ struct ProgressScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Consistency")
+            .accessibilityValue("\(activeDays) of \(windowDays) days active in the last \(weeks) weeks")
         }
         .padding(Theme.Space.lg)
         .background(card)
@@ -547,6 +554,10 @@ struct ProgressScreen: View {
                     .frame(width: 5, height: 5)
             }
         }
+        // The filled-pip count maps to a confidence level; name it so the meaning isn't color-only.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Confidence")
+        .accessibilityValue("\(c.rawValue.capitalized), \(filled) of 3")
     }
 
     private func trajectory(_ model: AthleteModel) -> some View {
