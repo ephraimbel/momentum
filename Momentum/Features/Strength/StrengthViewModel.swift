@@ -29,6 +29,7 @@ final class StrengthViewModel {
     // Rest timer (visible ring; the notification is the store/NotificationService's job).
     private(set) var restEndsAt: Date?
     private(set) var restTotal: TimeInterval = 0
+    private var restExerciseName = "Rest"
     private let restActivity = RestActivityController()   // lock-screen / Dynamic Island mirror
 
     init(container: ModelContainer, type: WorkoutType = .strength, weightUnit: WeightUnit = .default()) {
@@ -48,6 +49,7 @@ final class StrengthViewModel {
 
     func finish() async -> UUID? {
         restActivity.end()
+        NotificationService.cancelRestTimer()
         await engine.finish()
         return workoutId
     }
@@ -55,6 +57,7 @@ final class StrengthViewModel {
     /// User chose to throw the session away: delete the durable workout and clear the marker.
     func discard() async {
         restActivity.end()
+        NotificationService.cancelRestTimer()
         await engine.discard()
         workoutId = nil
     }
@@ -158,14 +161,17 @@ final class StrengthViewModel {
     func startRest(seconds: TimeInterval, exerciseName: String = "Rest") {
         let now = Date()
         restTotal = seconds
-        restEndsAt = now.addingTimeInterval(seconds)
-        restActivity.start(exerciseName: exerciseName, startedAt: now,
-                           endsAt: now.addingTimeInterval(seconds), setsDone: completedSetCount)
+        restExerciseName = exerciseName
+        let endsAt = now.addingTimeInterval(seconds)
+        restEndsAt = endsAt
+        restActivity.start(exerciseName: exerciseName, startedAt: now, endsAt: endsAt, setsDone: completedSetCount)
+        NotificationService.scheduleRestTimer(endsAt: endsAt, exerciseName: exerciseName)   // fires backgrounded
     }
 
     func skipRest() {
         restEndsAt = nil
         restActivity.end()
+        NotificationService.cancelRestTimer()
     }
 
     func adjustRest(by delta: TimeInterval) {
@@ -174,6 +180,7 @@ final class StrengthViewModel {
         restEndsAt = newEnd
         restTotal = max(1, restTotal + delta)
         restActivity.update(startedAt: newEnd.addingTimeInterval(-restTotal), endsAt: newEnd, setsDone: completedSetCount)
+        NotificationService.scheduleRestTimer(endsAt: newEnd, exerciseName: restExerciseName)
     }
 
     func restRemaining(at now: Date) -> TimeInterval? {

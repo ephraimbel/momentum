@@ -54,6 +54,15 @@ struct TodayView: View {
             // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
             // notification permission on first run.
             services.notifications.schedulePlannedReminders(plan)
+            // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
+            // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
+            services.notifications.scheduleWeeklyCheckIn()
+            let stats = ProfileStats(workouts: workouts)
+            let plannedToday = !PlanCoaching.todaySessions(plan, on: Date()).isEmpty
+            let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
+            services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
+                                                       isPlannedDayToday: plannedToday,
+                                                       hasWorkedOutToday: workedOutToday)
             // Lock the map onto the athlete. `.userLocation` centers on them once a fix lands; until
             // then fall back to their last route's neighborhood (never the whole-world `.automatic`).
             let fallback: MapCameraPosition = lastKnownCoordinate

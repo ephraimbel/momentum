@@ -117,6 +117,10 @@ protocol NotificationServing: AnyObject {
     func schedulePlannedReminders(_ plan: TrainingPlan?)
     /// An immediate, encouraging nudge when the coach adapts the plan.
     func notifyPlanUpdated(title: String, body: String)
+    /// The repeating Sunday week-in-review nudge (PRD §24).
+    func scheduleWeeklyCheckIn()
+    /// A gentle, ≤1/day streak-protection nudge when a real streak is at risk on a planned day (§24).
+    func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool)
 }
 
 @MainActor
@@ -213,6 +217,8 @@ final class StubNotificationService: NotificationServing {
     func requestAuthorization() {}
     func schedulePlannedReminders(_ plan: TrainingPlan?) {}
     func notifyPlanUpdated(title: String, body: String) {}
+    func scheduleWeeklyCheckIn() {}
+    func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool) {}
 }
 /// No-op Athlete Model service for previews/tests that don't exercise learning.
 final class StubAthleteModelService: AthleteModelServing {

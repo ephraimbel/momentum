@@ -62,6 +62,64 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
                                          content: content, trigger: trigger))
     }
 
+    // MARK: Rest-timer completion (PRD §24) — static so it schedules to the shared notification
+    // center without a second delegate; called by the strength session as rest starts/changes/ends.
+
+    static let restID = "momentum.rest"
+
+    static func scheduleRestTimer(endsAt: Date, exerciseName: String, now: Date = Date()) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [restID])
+        let interval = endsAt.timeIntervalSince(now)
+        guard interval > 0.5 else { return }   // already over — nothing to fire
+        let content = UNMutableNotificationContent()
+        content.title = "Rest's up"
+        content.body = exerciseName.isEmpty || exerciseName == "Rest"
+            ? "Time for your next set." : "Time for your next \(exerciseName) set."
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+        center.add(UNNotificationRequest(identifier: restID, content: content, trigger: trigger))
+    }
+
+    static func cancelRestTimer() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [restID])
+        center.removeDeliveredNotifications(withIdentifiers: [restID])
+    }
+
+    // MARK: Sunday check-in (PRD §24) — a weekly recap nudge; the Progress tab is the recap.
+
+    func scheduleWeeklyCheckIn() {
+        requestAuthorization()
+        let content = UNMutableNotificationContent()
+        content.title = "Your week in review"
+        content.body = "See how this week stacked up — and what's next."
+        content.sound = .default
+        var comps = DateComponents(); comps.weekday = 1; comps.hour = 18   // Sunday 18:00 local
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+        // Stable id ⇒ rescheduling on each launch just refreshes the single repeating request.
+        center.add(UNNotificationRequest(identifier: "momentum.weekly", content: content, trigger: trigger))
+    }
+
+    // MARK: Streak nudge (PRD §24) — gentle, never guilt; only a real streak at risk on a planned
+    // day, at most one (the single dated request) per day.
+
+    func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool) {
+        center.removePendingNotificationRequests(withIdentifiers: ["momentum.streak"])
+        guard StreakNudge.shouldNudge(streak: streak, isPlannedDay: isPlannedDayToday, hasWorkedOutToday: hasWorkedOutToday)
+        else { return }
+        let now = Date()
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: now)
+        comps.hour = 18; comps.minute = 30
+        guard let fire = Calendar.current.date(from: comps), fire > now else { return }   // evening still ahead
+        let content = UNMutableNotificationContent()
+        content.title = "Keep it rolling"
+        content.body = "A quick session keeps your \(streak)-day streak alive — no pressure if today's a rest."
+        content.sound = .default
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+        center.add(UNNotificationRequest(identifier: "momentum.streak", content: content, trigger: trigger))
+    }
+
     /// Show banners while foregrounded, so the "plan updated" nudge is actually seen.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification,
@@ -105,5 +163,14 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         case .walking: "Walk day"
         case .strength: "Lift day"
         }
+    }
+}
+
+/// The streak-nudge decision (PRD §24), pure so it's unit-testable: nudge only when there's a real
+/// streak (≥3) at risk — a planned day not yet trained. Never guilt; the caller schedules at most one
+/// dated request per day.
+enum StreakNudge {
+    static func shouldNudge(streak: Int, isPlannedDay: Bool, hasWorkedOutToday: Bool) -> Bool {
+        streak >= 3 && isPlannedDay && !hasWorkedOutToday
     }
 }
