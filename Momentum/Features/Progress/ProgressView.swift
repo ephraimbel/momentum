@@ -26,6 +26,7 @@ struct ProgressScreen: View {
     private var distanceUnit: DistanceUnit { .auto }
     private var stats: ProfileStats { ProfileStats(workouts: workouts) }
     private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
+    private var recovery: RecoveryModel { RecoveryModel(workouts: workouts) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -84,6 +85,7 @@ struct ProgressScreen: View {
                 // Advanced analytics — Pro (PRD §10): training load, pace/distance trends, weekly
                 // sets-per-muscle, e1RM PRs. Free keeps the status read, consistency heatmap & totals.
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    recoveryCard(recovery)
                     loadChart(insights)
                     distanceChart(insights)
                     if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
@@ -134,6 +136,57 @@ struct ProgressScreen: View {
     private func gaugeCaption(_ insights: ProgressInsights) -> String {
         guard insights.acwr > 0 else { return "Build a couple of weeks and your load balance shows here." }
         return "Load balance \(String(format: "%.2f", insights.acwr)) · sweet spot is 0.8–1.3"
+    }
+
+    // MARK: Recovery / readiness (PRD §4.8)
+
+    @ViewBuilder
+    private func recoveryCard(_ r: RecoveryModel) -> some View {
+        if r.hasData {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                Text("RECOVERY").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                HStack(spacing: Theme.Space.lg) {
+                    readinessRing(score: r.score)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(r.readiness.rawValue).font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
+                        Text(r.guidance).font(.rounded(Theme.FontSize.caption, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider().overlay(Theme.hairline)
+                HStack(spacing: Theme.Space.lg) {
+                    recoveryMetric(String(format: "%.1f", r.monotony), "Monotony")
+                    recoveryMetric("\(Int(r.weeklyLoad))", "Weekly load")
+                    recoveryMetric("\(r.restDays)", "Rest days")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.lg)
+            .background(card)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Recovery, \(r.readiness.rawValue)")
+            .accessibilityValue("Readiness \(r.score) of 100. \(r.guidance)")
+        }
+    }
+
+    private func readinessRing(score: Int) -> some View {
+        ZStack {
+            Circle().stroke(Theme.hairline, lineWidth: 8)
+            Circle().trim(from: 0, to: max(0.01, Double(score) / 100))
+                .stroke(IridescentMaterial(), style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text("\(score)").font(.display(22, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+        }
+        .frame(width: 72, height: 72)
+    }
+
+    private func recoveryMetric(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value).font(.rounded(Theme.FontSize.headline, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: AI coach card

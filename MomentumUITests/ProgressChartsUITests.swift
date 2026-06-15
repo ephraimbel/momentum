@@ -65,4 +65,38 @@ final class ProgressChartsUITests: XCTestCase {
         }
         XCTAssertTrue(found, "Heatmap VoiceOver summary element not exposed.")
     }
+
+    /// The recovery/readiness card (PRD §4.8) renders in the Pro analytics block with a readiness
+    /// band + score exposed to VoiceOver. --seed-demo grants Pro and enough history for `hasData`.
+    func testRecoveryCardRenders() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-route"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+        app.tap()
+
+        let progressTab = app.tabBars.buttons["Progress"]
+        XCTAssertTrue(progressTab.waitForExistence(timeout: 15), "Progress tab not found.")
+        progressTab.tap()
+
+        // The card's accessibility label is "Recovery, <band>" with a "Readiness N of 100" value.
+        let card = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH 'Recovery'")).firstMatch
+        var found = card.waitForExistence(timeout: 3)
+        var attempts = 0
+        while !found && attempts < 6 {
+            app.swipeUp()
+            found = card.exists
+            attempts += 1
+        }
+        XCTAssertTrue(found, "Recovery readiness card not exposed.")
+        let value = card.value as? String ?? ""
+        XCTAssertTrue(value.contains("Readiness"), "Recovery card missing its readiness value (got: \(value)).")
+    }
 }

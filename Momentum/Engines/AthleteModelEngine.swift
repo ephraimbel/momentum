@@ -210,27 +210,6 @@ struct AthleteModelEngine {
         ws.reduce(0) { $0 + ($1.strength?.totalVolumeKg ?? 0) }
     }
 
-    /// Local copy of the ACWR load formula (kept private in `ProgressInsights`) for tertile splits.
-    private static func load(_ w: Workout) -> Double {
-        let minutes = w.durationS / 60
-        let intensity = Double(w.perceivedEffort ?? defaultIntensity(w.type))
-        if minutes > 0 { return minutes * intensity }
-        if let d = w.gps?.distanceM, d > 0 { return (d / 1000) * 6 }
-        return 0
-    }
-
-    private static func defaultIntensity(_ type: WorkoutType) -> Int {
-        switch type {
-        case .run, .trailRun: 7
-        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: 6
-        case .hike: 6
-        case .walk: 4
-        case .strength, .crossfit, .hiit: 6
-        case .tennis, .soccer, .basketball: 6
-        case .golf, .yoga, .pilates: 3
-        case .other: 5
-        }
-    }
 
     /// **v1 heuristic** (gated to low confidence): the lowest ACWR preceding a "strain event" —
     /// a missed session or an easy run that felt hard (RPE ≥ 7). Clamped to a sane band; defaults
@@ -259,11 +238,11 @@ struct AthleteModelEngine {
         let easyPaces = sorted.filter { isEasyRun($0) }.compactMap { $0.gps?.avgPaceSPerKm }.filter { $0 > 0 }
         guard !easyPaces.isEmpty else { return 1 }
         let baseline = median(easyPaces)
-        let loads = sorted.map { load($0) }.filter { $0 > 0 }.sorted()
+        let loads = sorted.map { TrainingLoad.session($0) }.filter { $0 > 0 }.sorted()
         guard loads.count >= 3 else { return 1 }
         let tertile = loads[Int(Double(loads.count) * 2 / 3)]
         var gaps: [Double] = []
-        for (i, w) in sorted.enumerated() where load(w) >= tertile {
+        for (i, w) in sorted.enumerated() where TrainingLoad.session(w) >= tertile {
             for next in sorted[(i + 1)...] where isEasyRun(next) {
                 guard let p = next.gps?.avgPaceSPerKm, p > 0 else { continue }
                 let days = (next.startedAt.timeIntervalSince(w.startedAt)) / 86_400

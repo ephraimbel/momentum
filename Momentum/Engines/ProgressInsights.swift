@@ -34,14 +34,7 @@ struct ProgressInsights {
     let hasData: Bool
 
     init(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current) {
-        func load(_ w: Workout) -> Double {
-            let minutes = w.durationS / 60
-            let intensity = Double(w.perceivedEffort ?? Self.defaultIntensity(w.type))
-            if minutes > 0 { return minutes * intensity }
-            // Fallback when duration is missing: rough distance-based load for cardio.
-            if let d = w.gps?.distanceM, d > 0 { return (d / 1000) * 6 }
-            return 0
-        }
+        let load = TrainingLoad.session   // canonical session-RPE load (PRD §4.8)
 
         let acuteCut = calendar.date(byAdding: .day, value: -7, to: now)!
         let chronicCut = calendar.date(byAdding: .day, value: -28, to: now)!
@@ -108,19 +101,6 @@ struct ProgressInsights {
             paceTrendPct = avg > 0 ? (current - avg) / avg * 100 : 0
         } else {
             paceTrendPct = 0
-        }
-    }
-
-    private static func defaultIntensity(_ type: WorkoutType) -> Int {
-        switch type {
-        case .run, .trailRun: 7
-        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: 6
-        case .hike: 6
-        case .walk: 4
-        case .strength, .crossfit, .hiit: 6
-        case .tennis, .soccer, .basketball: 6
-        case .golf, .yoga, .pilates: 3
-        case .other: 5
         }
     }
 }
