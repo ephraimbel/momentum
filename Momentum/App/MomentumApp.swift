@@ -7,6 +7,7 @@ import SwiftData
 struct MomentumApp: App {
     @State private var services: Services
     @State private var paywall: PaywallController
+    @State private var auth: AuthController
 
     init() {
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
@@ -15,6 +16,9 @@ struct MomentumApp: App {
         controller.configure()   // RevenueCat/Superwall when linked; no-op local seam otherwise
         _paywall = State(initialValue: controller)
         _services = State(initialValue: Services.live(paywall: controller))
+        let authController = AuthController()
+        authController.refresh()   // sign out if the Apple credential was revoked
+        _auth = State(initialValue: authController)
     }
 
     var body: some Scene {
@@ -22,6 +26,7 @@ struct MomentumApp: App {
             RootView()
                 .environment(services)
                 .environment(paywall)
+                .environment(auth)
                 .tint(Theme.ink)
                 .preferredColorScheme(.light) // light/white is the hero aesthetic
         }

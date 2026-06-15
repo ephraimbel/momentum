@@ -6,30 +6,36 @@ import SwiftData
 struct RootView: View {
     @Query private var profiles: [UserProfile]
     @Environment(PaywallController.self) private var paywall
+    @Environment(AuthController.self) private var auth
     @State private var selection: AppTab = .today
     @State private var showOnboarding = false
 
     var body: some View {
         @Bindable var paywall = paywall
-        ZStack {
-            // Until onboarding is done, show a clean canvas — don't build the Today map yet, so it
-            // can't trigger a location prompt "up front" behind the cover (PRD §4.1, §11 privacy).
-            if showOnboarding {
-                Theme.background.ignoresSafeArea()
+        Group {
+            if !auth.isSignedIn {
+                // Login gate (PRD §8.11): Sign in with Apple before anything else.
+                SignInView()
             } else {
-                tabs
+                ZStack {
+                    // Until onboarding is done, show a clean canvas — don't build the Today map yet,
+                    // so it can't trigger a location prompt "up front" (PRD §4.1, §11 privacy).
+                    if showOnboarding { Theme.background.ignoresSafeArea() } else { tabs }
+                }
+                .fullScreenCover(isPresented: $showOnboarding) {
+                    OnboardingFlow { showOnboarding = false }
+                }
+                // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
+                .sheet(item: $paywall.presentedFeature) { feature in
+                    PaywallView(feature: feature)
+                }
             }
         }
-        .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingFlow { showOnboarding = false }
-        }
-        // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
-        .sheet(item: $paywall.presentedFeature) { feature in
-            PaywallView(feature: feature)
-        }
-        .onAppear { if profiles.isEmpty { showOnboarding = true } }
+        .onAppear { if auth.isSignedIn && profiles.isEmpty { showOnboarding = true } }
+        // Just signed in (new athlete) → straight into onboarding.
+        .onChange(of: auth.isSignedIn) { _, signedIn in if signedIn && profiles.isEmpty { showOnboarding = true } }
         // Returning to onboarding after a data wipe (Settings → Delete all data).
-        .onChange(of: profiles.isEmpty) { _, empty in if empty { showOnboarding = true } }
+        .onChange(of: profiles.isEmpty) { _, empty in if empty && auth.isSignedIn { showOnboarding = true } }
     }
 
     private var tabs: some View {
@@ -70,4 +76,5 @@ struct RootView: View {
     RootView()
         .environment(Services.live())
         .environment(PaywallController(isPro: false))
+        .environment(AuthController(userID: "preview"))
 }

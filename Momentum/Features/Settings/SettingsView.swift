@@ -6,6 +6,7 @@ import SwiftData
 struct SettingsView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
+    @Environment(AuthController.self) private var auth
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
@@ -25,6 +26,7 @@ struct SettingsView: View {
                 section("SUBSCRIPTION") { paywall.isPro ? AnyView(proCard) : AnyView(freeCard) }
                 section("APPLE HEALTH") { AnyView(healthCard) }
                 section("DATA & PRIVACY") { AnyView(dataCard) }
+                section("ACCOUNT") { AnyView(accountCard) }
                 section("ABOUT") { AnyView(aboutCard) }
             }
             .padding(Theme.Space.lg)
@@ -81,6 +83,37 @@ struct SettingsView: View {
             }
         }
         .padding(Theme.Space.lg)
+        .background(card)
+    }
+
+    // MARK: Account
+
+    private var accountCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "applelogo").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(auth.displayName ?? "Signed in with Apple")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("Sign in with Apple").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 10)
+            Divider().overlay(Theme.hairline)
+            Button { auth.signOut() } label: {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: "rectangle.portrait.and.arrow.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
+                    Text("Sign out").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.vertical, Theme.Space.xs)
         .background(card)
     }
 
@@ -218,4 +251,5 @@ struct SettingsView: View {
     NavigationStack { SettingsView() }
         .environment(PaywallController(isPro: false))
         .environment(Services.live())
+        .environment(AuthController(userID: "preview"))
 }
