@@ -17,6 +17,7 @@ struct OnboardingFlow: View {
     @State private var brandRevealed = false         // cold open plays the route map, then dissolves to brand
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
+    @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
 
     var body: some View {
         ZStack {
@@ -49,6 +50,11 @@ struct OnboardingFlow: View {
         }
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
+        // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
+        // continues to the primers and into the app on the free tier.
+        .fullScreenCover(isPresented: $showPaywall, onDismiss: { goNext() }) {
+            PaywallView(feature: .fullPlan)
+        }
     }
 
     /// A whisper-quiet "got it" toast on the first pick of a screen — the research's positive-
@@ -131,7 +137,7 @@ struct OnboardingFlow: View {
         case .calibration: calibrationStep
         case .commitment: EmptyView()   // rendered full-bleed in `body`
         case .building: EmptyView()   // rendered full-bleed in `body`
-        case .reveal: PlanRevealView(vm: vm, profile: profile) { goNext() }
+        case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
         case .primers: primersStep
         }
     }

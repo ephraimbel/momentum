@@ -45,10 +45,15 @@ struct ProgressScreen: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
             Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
             StreakChip(days: stats.currentStreak)
+            NavigationLink { SettingsView() } label: {
+                Image(systemName: "gearshape.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 32, height: 32)
+            }
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.sm)
