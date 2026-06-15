@@ -8,6 +8,7 @@ import SwiftData
 /// are the engine's (`PlanCoaching.apply`); the AI only narrates elsewhere.
 struct PlanProposalCard: View {
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
 
@@ -105,6 +106,7 @@ struct PlanProposalCard: View {
 
     private func apply(_ p: PlanCoaching.Proposal) {
         let changed = PlanCoaching.apply(p.rec, to: plan, in: context)
+        if changed > 0 { services.analytics.log(.planSessionAdapted) }
         Haptics.success()
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { outcome = max(0, changed) }
     }

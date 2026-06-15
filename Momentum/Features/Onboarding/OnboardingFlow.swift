@@ -10,6 +10,7 @@ struct OnboardingFlow: View {
 
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(Services.self) private var services
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
     @State private var goingBack = false
@@ -50,6 +51,7 @@ struct OnboardingFlow: View {
         }
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
+        .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
         .fullScreenCover(isPresented: $showPaywall, onDismiss: { goNext() }) {
@@ -403,6 +405,7 @@ struct OnboardingFlow: View {
 
     private func buildPlan() async {
         if profile == nil { profile = vm.finish(in: context) }
+        services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
         // Long enough for the route to finish drawing and the head to pulse before the reveal.
         try? await Task.sleep(for: .seconds(3.1))
         goNext()

@@ -7,6 +7,7 @@ struct SetRowView: View {
     let rowId: UUID
     let set: StrengthSessionEngine.LiveSet
 
+    @Environment(Services.self) private var services
     @FocusState private var focused: Field?
     private enum Field { case weight, reps, rpe }
 
@@ -62,7 +63,12 @@ struct SetRowView: View {
             // Toggle: tap to log, tap again to un-log (correct a mis-tap mid-workout).
             Task {
                 if set.isComplete { await vm.uncompleteSet(rowId: rowId, setId: set.id) }
-                else { await vm.completeSet(rowId: rowId, setId: set.id) }
+                else {
+                    // Log-a-set latency is a §13.1 quality bar (< 3s) — measure the persist round trip.
+                    let started = Date()
+                    await vm.completeSet(rowId: rowId, setId: set.id)
+                    services.analytics.log(.setLogged(latencyMs: Int(Date().timeIntervalSince(started) * 1000)))
+                }
             }
         } label: {
             Image(systemName: set.isComplete ? "checkmark.circle.fill" : "checkmark.circle")

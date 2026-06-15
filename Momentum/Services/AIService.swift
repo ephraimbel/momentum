@@ -151,6 +151,16 @@ final class AIService: AIServing {
 
     // MARK: - Configuration (absent in the default build → template path)
 
+    /// Whether the server read path is configured at all (vs. the always-present deterministic
+    /// fallback) — used by analytics to report the AI fallback rate (PRD §13.5).
+    static var isServerConfigured: Bool {
+        guard let base = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String,
+              !base.isEmpty,
+              let key = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String,
+              !key.isEmpty else { return false }
+        return true
+    }
+
     private var endpoint: URL? {
         guard let base = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String,
               !base.isEmpty, let url = URL(string: base) else { return nil }

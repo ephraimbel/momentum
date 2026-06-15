@@ -8,6 +8,7 @@ struct PaywallView: View {
     var feature: Feature = .aiCoach
 
     @Environment(PaywallController.self) private var paywall
+    @Environment(Services.self) private var services
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -42,6 +43,7 @@ struct PaywallView: View {
         .background(Theme.background.ignoresSafeArea())
         .overlay(alignment: .topTrailing) { closeButton }
         .interactiveDismissDisabled(working)
+        .onAppear { services.analytics.log(.paywallView(placement: feature.placement)) }
     }
 
     // MARK: Hero
@@ -131,8 +133,9 @@ struct PaywallView: View {
             OversizedButton(title: ctaTitle, systemImage: working ? nil : "sparkles", isEnabled: !working) {
                 Task {
                     working = true
-                    _ = await paywall.purchase(product)
+                    let ok = await paywall.purchase(product)
                     working = false
+                    if ok { services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly")) }
                     if paywall.isPro { dismiss() }
                 }
             }

@@ -11,6 +11,10 @@ struct StrengthSummaryView: View {
     @Query private var workouts: [Workout]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
+    @Environment(Services.self) private var services
+    @Environment(\.modelContext) private var context
+    @State private var logged = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -22,6 +26,15 @@ struct StrengthSummaryView: View {
                 }
             }
             .background(Theme.background)
+            .onAppear {
+                // Fire once on the post-workout screen (not in history, which uses Content directly).
+                guard !logged, let workout else { return }
+                logged = true
+                services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
+                if !StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context).isEmpty {
+                    services.analytics.log(.prHit(type: workout.type.rawValue))
+                }
+            }
             .navigationTitle("Summary")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

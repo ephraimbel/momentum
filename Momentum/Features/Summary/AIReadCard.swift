@@ -23,9 +23,14 @@ struct AIReadCard: View {
         }
         .task {
             guard paywall.isEntitled(to: .aiRead) else { return }   // don't spend an AI call when locked
+            let started = Date()
             read = await services.ai.workoutRead(
                 for: workout, planned: workout.plannedSession != nil,
                 weightUnit: weightUnit, distanceUnit: distanceUnit)
+            // AI latency + fallback rate (PRD §13.5) + the north-star "viewed the AI read" milestone.
+            services.analytics.log(.aiReadViewed(
+                latencyMs: Int(Date().timeIntervalSince(started) * 1000),
+                fallback: !AIService.isServerConfigured))
             withAnimation(Motion.standard) { appeared = true }
         }
     }

@@ -10,6 +10,7 @@ struct StrengthLiveView: View {
     var onFinish: (UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(Services.self) private var services
     @State private var vm: StrengthViewModel?
     @State private var showingLibrary = false
     @State private var showingPlates = false
@@ -33,6 +34,7 @@ struct StrengthLiveView: View {
             guard vm == nil else { return }
             let model = StrengthViewModel(container: container, type: type)
             await model.start()
+            services.analytics.log(.workoutStarted(type: type.rawValue))
             if let plannedSession { await model.loadPlanned(plannedSession) }
             vm = model
             // Free start with nothing loaded → open the library straight away so the user picks
@@ -195,6 +197,7 @@ private struct ExerciseSection: View {
 /// Floating rest-timer ring (PRD §4.4) — depletes with an iridescent edge; medium haptic at zero.
 private struct RestBar: View {
     let vm: StrengthViewModel
+    @Environment(Services.self) private var services
     @State private var now = Date()
     @State private var didPulse = false
     private let tick = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
@@ -237,6 +240,7 @@ private struct RestBar: View {
             now = date
             if (vm.restRemaining(at: date) ?? 0) <= 0 && !didPulse {
                 Haptics.medium()
+                services.analytics.log(.restTimerComplete)
                 didPulse = true
             }
         }

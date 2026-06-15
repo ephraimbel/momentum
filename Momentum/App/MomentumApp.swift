@@ -19,6 +19,7 @@ struct MomentumApp: App {
         let authController = AuthController()
         authController.refresh()   // sign out if the Apple credential was revoked
         _auth = State(initialValue: authController)
+        MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
     }
 
     var body: some Scene {

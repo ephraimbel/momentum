@@ -23,6 +23,7 @@ final class Services {
     let paywall: any PaywallServing
     let notifications: any NotificationServing
     let athleteModel: any AthleteModelServing
+    let analytics: any AnalyticsServing
 
     init(
         location: any LocationServing,
@@ -33,7 +34,8 @@ final class Services {
         sync: any SyncServing,
         paywall: any PaywallServing,
         notifications: any NotificationServing,
-        athleteModel: any AthleteModelServing
+        athleteModel: any AthleteModelServing,
+        analytics: any AnalyticsServing = StubAnalyticsService()
     ) {
         self.location = location
         self.motion = motion
@@ -44,6 +46,7 @@ final class Services {
         self.paywall = paywall
         self.notifications = notifications
         self.athleteModel = athleteModel
+        self.analytics = analytics
     }
 
     /// The default wiring used by the running app. The real app injects the live `PaywallController`
@@ -59,7 +62,8 @@ final class Services {
             sync: SyncService(),
             paywall: paywall,
             notifications: NotificationService(),
-            athleteModel: AthleteModelService()
+            athleteModel: AthleteModelService(),
+            analytics: AnalyticsService()
         )
     }
 }

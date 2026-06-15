@@ -36,6 +36,7 @@ struct CardioTrackingView: View {
     @State private var followsUser = true
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(Services.self) private var services
 
     /// Off-route hysteresis: flag once past `offRouteM`, clear only back under `onRouteM` — so a fix
     /// hovering near the edge doesn't flicker the cue.
@@ -405,6 +406,7 @@ struct CardioTrackingView: View {
     /// the user taps "Start now" from the acquiring gate.
     private func proceedToCountdown() {
         guard phase == .acquiring else { return }   // ignore a late lock once we've already advanced
+        services.analytics.log(.workoutStarted(type: type.rawValue))
         withAnimation(Motion.standard) { phase = .countdown }
         Task {
             for n in [3, 2, 1] {
