@@ -27,6 +27,9 @@ struct TimedSummaryContent: View {
             if let effort = workout.perceivedEffort {
                 detailRow("Effort", "\(effort) / 10")
             }
+            if let kcal = workout.calories, kcal > 0 {
+                detailRow("Calories", "\(Int(kcal))")
+            }
             if !workout.note.isEmpty {
                 Text(workout.note)
                     .font(.rounded(Theme.FontSize.body, weight: .medium))

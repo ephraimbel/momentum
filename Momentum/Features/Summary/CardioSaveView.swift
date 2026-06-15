@@ -13,6 +13,7 @@ struct CardioSaveView: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
     @Query private var workouts: [Workout]
+    @Query private var profiles: [UserProfile]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     @State private var title = ""
@@ -163,6 +164,7 @@ struct CardioSaveView: View {
             workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             workout.type = sportType
             workout.perceivedEffort = effort
+            workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
             try? context.save()
             let saved = workout
             Task { await services.health.save(saved) }   // mirror to Apple Health (no-op unless connected)

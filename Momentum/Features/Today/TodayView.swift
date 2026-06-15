@@ -481,6 +481,10 @@ struct TodayView: View {
         guard let id else { return }
         var didNudge = false
         if let workout = fetchWorkout(id) {
+            // Deterministic active-energy estimate (body-mass aware) — drives the calorie stat and the
+            // Apple Health energy sample. Recomputed on save if the sport type is corrected.
+            workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
+            try? context.save()   // persist now so the fresh-context strength summary reader sees it
             if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
             else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
             // Adaptive coaching: a strong run re-calibrates future paces (deterministic + bounded),

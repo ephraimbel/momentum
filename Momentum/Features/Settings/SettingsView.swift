@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 /// Settings — currently the **subscription / billing** surface (PRD §10 honesty bar: status, plain
 /// renewal terms, cancel in ≤2 taps, restore). Units / equipment / privacy / export land later.
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @Environment(Services.self) private var services
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var context
+    @Query private var profiles: [UserProfile]
     @State private var restoring = false
     @State private var exportFile: JSONExportFile?
     @State private var showExporter = false
@@ -67,6 +69,12 @@ struct SettingsView: View {
                         connectingHealth = true
                         _ = await services.health.requestAuthorization()
                         healthConnected = services.health.isAuthorized
+                        if healthConnected, let profile = profiles.first {
+                            let metrics = await services.health.importedBodyMetrics()
+                            if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
+                            if let rhr = metrics.restingHR { profile.restingHR = rhr }
+                            try? context.save()
+                        }
                         connectingHealth = false
                     }
                 }

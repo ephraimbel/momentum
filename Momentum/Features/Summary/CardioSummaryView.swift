@@ -126,10 +126,11 @@ struct CardioSummaryContent: View {
                         format: { String(format: "%.2f", $0) },
                         label: isImperial ? "Miles" : "Kilometers")
             if let competenceText { EarnedLine(text: competenceText) }
-            HStack(spacing: Theme.Space.xl) {
+            HStack(spacing: Theme.Space.lg) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
                 stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")
                 stat("\(Int(gps.elevationGainM)) m", "Elevation")
+                if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
         }
         .padding(.vertical, Theme.Space.md)

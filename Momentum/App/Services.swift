@@ -92,6 +92,8 @@ protocol HealthServing: AnyObject {
     func requestAuthorization() async -> Bool
     /// Save a completed workout to Apple Health (best-effort, de-duplicated, never blocks).
     func save(_ workout: Workout) async
+    /// Read the athlete's latest body mass + resting HR (for personalizing estimates). nils if N/A.
+    func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
 }
 protocol PlanEngineServing: AnyObject {}
 protocol SyncServing: AnyObject {}
@@ -202,6 +204,7 @@ final class StubHealthService: HealthServing {
     var isAuthorized = false
     func requestAuthorization() async -> Bool { false }
     func save(_ workout: Workout) async {}
+    func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) { (nil, nil) }
 }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {}

@@ -74,6 +74,26 @@ final class HealthService: HealthServing {
         }
     }
 
+    /// Read the athlete's most recent body mass + resting HR from Health, to personalize estimates
+    /// (calories) and recovery signals (PRD §8.6). Returns `nil`s when unavailable/unauthorized.
+    func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) {
+        guard HKHealthStore.isHealthDataAvailable() else { return (nil, nil) }
+        async let mass = latest(.bodyMass, unit: .gramUnit(with: .kilo))
+        async let rhr = latest(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()))
+        return (await mass, (await rhr).map { Int($0.rounded()) })
+    }
+
+    private func latest(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
+        await withCheckedContinuation { continuation in
+            let sort = [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
+            let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: nil,
+                                      limit: 1, sortDescriptors: sort) { _, samples, _ in
+                continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
+    }
+
     /// Pure mapping (testable): our discipline-rich `WorkoutType` → the nearest HealthKit activity.
     static func activityType(for type: WorkoutType) -> HKWorkoutActivityType {
         switch type {

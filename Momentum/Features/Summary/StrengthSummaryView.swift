@@ -88,10 +88,11 @@ struct StrengthSummaryContent: View {
                         format: { "\(Int($0.rounded()))" },
                         label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))")
             if let competenceText { EarnedLine(text: competenceText) }
-            HStack(spacing: Theme.Space.xl) {
+            HStack(spacing: Theme.Space.lg) {
                 stat("\(session.totalSets)", "Sets")
                 stat(Formatters.duration(s: workout.durationS), "Duration")
                 stat("\(session.exercises.count)", "Exercises")
+                if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
         }
         .frame(maxWidth: .infinity)
