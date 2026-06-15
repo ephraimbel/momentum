@@ -12,17 +12,20 @@ enum WorkoutType: String, Codable, Sendable, CaseIterable {
     // Timed (stopwatch — no GPS, no sets)
     case tennis, soccer, basketball, golf
     case yoga, pilates
+    // Water & endurance machines (timed capture — pool/erg, no GPS)
+    case swimming, rowing
     case other
 }
 
 /// Groups for the "Choose a Sport" picker (Strava-style).
 enum SportCategory: String, CaseIterable, Identifiable {
-    case foot, cycle, gym, sport, mind, other
+    case foot, cycle, water, gym, sport, mind, other
     var id: String { rawValue }
     var title: String {
         switch self {
         case .foot: "Foot Sports"
         case .cycle: "Cycle Sports"
+        case .water: "Water Sports"
         case .gym: "Gym & Strength"
         case .sport: "Sports"
         case .mind: "Mind & Body"
@@ -79,6 +82,8 @@ extension WorkoutType: Identifiable {
         case .golf: "Golf"
         case .yoga: "Yoga"
         case .pilates: "Pilates"
+        case .swimming: "Swim"
+        case .rowing: "Rowing"
         case .other: "Workout"
         }
     }
@@ -98,6 +103,8 @@ extension WorkoutType: Identifiable {
         case .golf: "figure.golf"
         case .yoga: "figure.yoga"
         case .pilates: "figure.pilates"
+        case .swimming: "figure.pool.swim"
+        case .rowing: "figure.rower"
         case .other: "figure.mixed.cardio"
         }
     }
@@ -112,7 +119,7 @@ extension WorkoutType: Identifiable {
     /// Timed sports capture via a simple stopwatch — no GPS route, no logged sets.
     var isTimed: Bool {
         switch self {
-        case .tennis, .soccer, .basketball, .golf, .yoga, .pilates, .other: true
+        case .tennis, .soccer, .basketball, .golf, .yoga, .pilates, .swimming, .rowing, .other: true
         default: false
         }
     }
@@ -130,6 +137,7 @@ extension WorkoutType: Identifiable {
         case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: .cycling
         case .strength, .crossfit, .hiit: .strength
         case .tennis, .soccer, .basketball: .running
+        case .swimming, .rowing: .running   // endurance cardio — inert bucket (timed, never planned)
         case .golf, .yoga, .pilates, .other: .strength
         }
     }
@@ -142,6 +150,7 @@ extension WorkoutType: Identifiable {
         case .strength, .crossfit, .hiit: .gym
         case .tennis, .soccer, .basketball, .golf: .sport
         case .yoga, .pilates: .mind
+        case .swimming, .rowing: .water
         case .other: .other
         }
     }

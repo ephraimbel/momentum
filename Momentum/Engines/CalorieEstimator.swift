@@ -41,6 +41,8 @@ enum CalorieEstimator {
         case .golf:                4.8
         case .yoga:                2.5
         case .pilates:             3.0
+        case .swimming:            8.0   // moderate–vigorous freestyle
+        case .rowing:              7.0   // moderate erg effort
         default:                   4.0
         }
     }

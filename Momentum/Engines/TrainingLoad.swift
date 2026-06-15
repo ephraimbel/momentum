@@ -22,6 +22,7 @@ enum TrainingLoad {
         case .walk: 4
         case .strength, .crossfit, .hiit: 6
         case .tennis, .soccer, .basketball: 6
+        case .swimming, .rowing: 7   // vigorous full-body endurance
         case .golf, .yoga, .pilates: 3
         case .other: 5
         }

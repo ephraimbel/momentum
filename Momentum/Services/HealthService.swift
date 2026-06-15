@@ -110,6 +110,8 @@ final class HealthService: HealthServing {
         case .golf: .golf
         case .yoga: .yoga
         case .pilates: .pilates
+        case .swimming: .swimming
+        case .rowing: .rowing
         case .other: .other
         }
     }
