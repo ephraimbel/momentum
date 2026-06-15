@@ -5,10 +5,12 @@ import SwiftData
 /// Onboarding presents as a gated `fullScreenCover` over this on first launch.
 struct RootView: View {
     @Query private var profiles: [UserProfile]
+    @Environment(PaywallController.self) private var paywall
     @State private var selection: AppTab = .today
     @State private var showOnboarding = false
 
     var body: some View {
+        @Bindable var paywall = paywall
         ZStack {
             // Until onboarding is done, show a clean canvas — don't build the Today map yet, so it
             // can't trigger a location prompt "up front" behind the cover (PRD §4.1, §11 privacy).
@@ -20,6 +22,10 @@ struct RootView: View {
         }
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingFlow { showOnboarding = false }
+        }
+        // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
+        .sheet(item: $paywall.presentedFeature) { feature in
+            PaywallView(feature: feature)
         }
         .onAppear { if profiles.isEmpty { showOnboarding = true } }
     }
@@ -61,4 +67,5 @@ struct RootView: View {
 #Preview {
     RootView()
         .environment(Services.live())
+        .environment(PaywallController(isPro: false))
 }

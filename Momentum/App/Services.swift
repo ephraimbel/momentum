@@ -46,8 +46,10 @@ final class Services {
         self.athleteModel = athleteModel
     }
 
-    /// The default wiring used by the running app.
-    static func live() -> Services {
+    /// The default wiring used by the running app. The real app injects the live `PaywallController`
+    /// (so `services.paywall` and `@Environment(PaywallController.self)` are the same instance);
+    /// previews/tests fall back to the unlock-all stub so feature surfaces stay visible.
+    static func live(paywall: any PaywallServing = StubPaywallService()) -> Services {
         Services(
             location: LocationService(),
             motion: MotionService(),
@@ -55,7 +57,7 @@ final class Services {
             plan: StubPlanEngine(),
             ai: AIService(),
             sync: StubSyncService(),
-            paywall: StubPaywallService(),
+            paywall: paywall,
             notifications: NotificationService(),
             athleteModel: AthleteModelService()
         )
@@ -130,10 +132,47 @@ extension AthleteModelServing {
 
 // MARK: - Pro gating
 
-/// The single `Feature` enum that is the source of truth for gating (PRD §10/§13.10).
-enum Feature: String, CaseIterable, Sendable {
+/// The single `Feature` enum that is the source of truth for gating (PRD §10/§13.10). Everything
+/// listed here is a **Pro** capability; "free" is everything else (track all disciplines, basic
+/// summaries, manual logging + full library, limited history, the week-1 plan glimpse, basic share).
+enum Feature: String, CaseIterable, Sendable, Identifiable {
     case aiCoach, fullPlan, programs, aiRead, advancedAnalytics, fullHistory
     case allTemplates, allShareTemplates, cadenceMetronome, voiceCoach, watchPremium
+
+    var id: String { rawValue }
+
+    /// All current features require Pro (the enum only lists paid capabilities). Kept explicit so a
+    /// future free-tier feature can opt out without touching every call site.
+    var requiresPro: Bool { true }
+
+    /// The Superwall placement to fire when this locked feature is reached (PRD §10). A later slice
+    /// registers these with the SDK for A/B-tested paywalls; the value is the source of truth now.
+    var placement: String {
+        switch self {
+        case .aiRead: "ai_read"
+        case .advancedAnalytics: "analytics_locked"
+        case .fullHistory: "history_locked"
+        case .aiCoach, .fullPlan, .programs, .allTemplates,
+             .allShareTemplates, .cadenceMetronome, .voiceCoach, .watchPremium: "full_plan"
+        }
+    }
+
+    /// Short, human name for the locked surface — used in the paywall's contextual headline.
+    var displayName: String {
+        switch self {
+        case .aiCoach: "the AI coach"
+        case .fullPlan: "your full plan"
+        case .programs: "programs"
+        case .aiRead: "AI reads"
+        case .advancedAnalytics: "advanced analytics"
+        case .fullHistory: "your full history"
+        case .allTemplates: "all templates"
+        case .allShareTemplates: "every share style"
+        case .cadenceMetronome: "the cadence metronome"
+        case .voiceCoach: "the voice coach"
+        case .watchPremium: "Watch premium"
+        }
+    }
 }
 
 // MARK: - Phase 0 stubs

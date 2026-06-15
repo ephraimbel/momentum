@@ -9,21 +9,51 @@ struct AIReadCard: View {
     var distanceUnit: DistanceUnit = .auto
 
     @Environment(Services.self) private var services
+    @Environment(PaywallController.self) private var paywall
     @State private var read: WorkoutRead?
     @State private var appeared = false
 
     var body: some View {
         Group {
-            if services.paywall.isEntitled(to: .aiRead) {
+            if paywall.isEntitled(to: .aiRead) {
                 card
+            } else {
+                lockedTeaser
             }
         }
         .task {
+            guard paywall.isEntitled(to: .aiRead) else { return }   // don't spend an AI call when locked
             read = await services.ai.workoutRead(
                 for: workout, planned: workout.plannedSession != nil,
                 weightUnit: weightUnit, distanceUnit: distanceUnit)
             withAnimation(Motion.standard) { appeared = true }
         }
+    }
+
+    /// The free-tier glimpse: shows the coach exists, taps through to the paywall (PRD §10 — gate the
+    /// AI block, never the workout). Fires the `ai_read` placement context.
+    private var lockedTeaser: some View {
+        Button { paywall.present(for: .aiRead) } label: {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "sparkles").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Coach read").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("A short, personal note on this workout — with Pro.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "lock.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.lg)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(IridescentMaterial(), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Unlock the AI coach read with Pro")
     }
 
     @ViewBuilder
