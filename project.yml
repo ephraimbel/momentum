@@ -74,6 +74,8 @@ targets:
           - SpaceGrotesk-Bold.ttf
     dependencies:
       - target: MomentumWidgets      # embeds the Live Activity / widget extension into the app
+      - target: MomentumWatch        # embeds the watchOS app into the phone app (PRD §8.10)
+        embed: true
     # ── Phase 3 billing (RevenueCat + Superwall) ─────────────────────────
     # The integration code is already written behind `#if canImport(...)` (PaywallController);
     # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
@@ -102,6 +104,30 @@ targets:
         CFBundleDisplayName: momentum
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # watchOS app (PRD §8.10 / §4.10) — on-wrist GPS cardio + strength logging. Shares only
+  # platform-agnostic logic from the phone (enums, formatters, pure math); its views are watch-native.
+  # Regenerate with `xcodegen generate` after adding watch files.
+  MomentumWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: MomentumWatch
+      - path: Momentum/Models/Enums.swift          # shared: WorkoutType / Discipline
+      - path: Momentum/Utilities/Formatters.swift   # shared: SI → display formatting
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.watchkitapp
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    info:
+      path: MomentumWatch/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.momentum.app
 
   MomentumTests:
     type: bundle.unit-test
@@ -137,6 +163,7 @@ schemes:
       targets:
         Momentum: all
         MomentumWidgets: all
+        MomentumWatch: all
         MomentumTests: [test]
         MomentumUITests: [test]
     test:
