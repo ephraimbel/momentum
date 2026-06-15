@@ -14,33 +14,13 @@ import SwiftUI
 /// SF Rounded. Pair with `.monospacedDigit()` on any live/logged numeral, per §18.)
 extension Font {
     /// Big, characterful display — wordmark, hero numbers, screen titles. → Space Grotesk.
-    /// Scales with Dynamic Type (PRD §13.4), anchored to the nearest text style so proportions hold.
-    /// At the default size it renders exactly at `size` (no change for default users); the app caps
-    /// the overall scale at `.xxLarge` (see `MomentumApp`) so fixed layouts never break.
     static func display(_ size: CGFloat, weight: Font.Weight = .heavy) -> Font {
-        .custom(BrandFont.spaceGrotesk(for: weight), size: size, relativeTo: brandTextStyle(for: size))
+        .custom(BrandFont.spaceGrotesk(for: weight), size: size)
     }
 
-    /// Clean UI text — buttons, card titles, labels, body. → Inter. Scales with Dynamic Type.
+    /// Clean UI text — buttons, card titles, labels, body. → Inter.
     static func rounded(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        .custom(BrandFont.inter(for: weight), size: size, relativeTo: brandTextStyle(for: size))
-    }
-}
-
-/// The system text style whose base (Large) size is nearest `size` — the Dynamic Type anchor so a
-/// custom face scales by the same ratio the OS would scale that style.
-private func brandTextStyle(for size: CGFloat) -> Font.TextStyle {
-    switch size {
-    case 30...:      .largeTitle    // 34 — hero numbers + big titles
-    case 24..<30:    .title         // 28
-    case 21..<24:    .title2        // 22
-    case 19..<21:    .title3        // 20
-    case 16.5..<19:  .body          // 17
-    case 15..<16.5:  .callout       // 16
-    case 13.5..<15:  .subheadline   // 15
-    case 12..<13.5:  .footnote      // 13
-    case 11..<12:    .caption       // 12
-    default:         .caption2      // 11
+        .custom(BrandFont.inter(for: weight), size: size)
     }
 }
 

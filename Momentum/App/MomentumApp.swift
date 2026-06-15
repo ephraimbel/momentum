@@ -24,9 +24,6 @@ struct MomentumApp: App {
                 .environment(paywall)
                 .tint(Theme.ink)
                 .preferredColorScheme(.light) // light/white is the hero aesthetic
-                // Dynamic Type, capped (PRD §13.4): text scales for larger-text users, but never past
-                // `.xxLarge` — beyond that the fixed-height live/strength layouts would break.
-                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
         }
         .modelContainer(PersistenceController.shared.container)
     }
