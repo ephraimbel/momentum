@@ -119,6 +119,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.watchkitapp
+        CODE_SIGN_ENTITLEMENTS: MomentumWatch/MomentumWatch.entitlements
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
@@ -128,6 +129,10 @@ targets:
         CFBundleDisplayName: momentum
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.momentum.app
+        WKBackgroundModes:
+          - workout-processing
+        NSHealthShareUsageDescription: "momentum reads heart rate, distance, and energy during your workout to show live stats."
+        NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
 
   MomentumTests:
     type: bundle.unit-test

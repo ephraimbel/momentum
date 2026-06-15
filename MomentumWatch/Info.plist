@@ -20,8 +20,16 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>momentum reads heart rate, distance, and energy during your workout to show live stats.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>momentum saves your completed workouts to Apple Health.</string>
 	<key>WKApplication</key>
 	<true/>
+	<key>WKBackgroundModes</key>
+	<array>
+		<string>workout-processing</string>
+	</array>
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>com.momentum.app</string>
 </dict>

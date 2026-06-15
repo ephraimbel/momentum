@@ -25,7 +25,7 @@ struct WatchRootView: View {
             .navigationTitle("momentum")
             .navigationDestination(for: WatchDestination.self) { dest in
                 switch dest {
-                case .cardio(let type): WatchCardioPlaceholder(type: type)
+                case .cardio(let type): WatchCardioView(type: type)
                 case .strength: WatchStrengthPlaceholder()
                 }
             }
@@ -55,20 +55,7 @@ enum WatchDestination: Hashable {
     case strength
 }
 
-// MARK: - Slice 1 placeholders (replaced by real session screens in Slices 2–3)
-
-struct WatchCardioPlaceholder: View {
-    let type: WorkoutType
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: type.systemImage).font(.title2).foregroundStyle(WatchTheme.accent)
-            Text(type.title).font(.headline)
-            Text("On-wrist tracking — coming next").font(.caption2).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .navigationTitle(type.title)
-    }
-}
+// MARK: - Slice 3 placeholder (replaced by on-wrist strength logging next)
 
 struct WatchStrengthPlaceholder: View {
     var body: some View {
