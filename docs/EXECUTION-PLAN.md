@@ -179,6 +179,8 @@ Apple Watch (cardio GPS via `HKWorkoutSession` + on-wrist strength logging) → 
 - ⏳ **Slice 4 — WatchConnectivity (paused):** two-way phone↔watch sync (send finished watch workouts → phone SwiftData/HealthKit/sync; receive planned targets). Deferred — `WCSession` needs a **paired phone+watch device** to verify the round-trip (not reliably testable on standalone sims). *Note: finished cardio already reaches the phone via HealthKit; strength is watch-only until Slice 4.*
 - ⏳ **Device-only across all slices:** real HR/distance sensor capture, the success/rest haptics, and interactive taps need a physical Apple Watch.
 
+**Voice coach status — 2026-06-15 (landed; Pro):** spoken cues during workouts (PRD §4.10). `CoachingCueBuilder` (pure, unit-tested) authors the text — milestone + split pace, rest complete, paused/resumed, goal reached (no medical claims). `VoiceCoachService` (AVSpeechSynthesizer) ducks music and reads them, gated behind `Feature.voiceCoach`; passed into the cardio loop + strength rest timer only when entitled. Verified: 171 unit + 4 UI green; runtime-confirmed the cue pipeline dispatches in-sim (`cue=Paused.` in the log). AVSpeech audio itself is device/speaker-only. **Next in the Phase 5 sequence:** richer recovery/training-load → more disciplines (row/HIIT/yoga/swim) → social-lite (last).
+
 ---
 
 ## Cross-cutting (every phase)
