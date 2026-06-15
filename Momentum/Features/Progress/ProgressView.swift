@@ -183,15 +183,31 @@ struct ProgressScreen: View {
         return " · \(pct >= 0 ? "↑" : "↓")\(Int(abs(pct).rounded()))%"
     }
 
+    /// Compact value label over a bar/point — "1.2k" for big loads, "23" / "4.5" for distances.
+    private func valueLabel(_ v: Double) -> String {
+        if v >= 1000 { return String(format: "%.1fk", v / 1000) }
+        if v >= 10 || v == v.rounded() { return "\(Int(v.rounded()))" }
+        return String(format: "%.1f", v)
+    }
+
+    private func barLabel(_ text: String) -> some View {
+        Text(text).font(.rounded(10, weight: .bold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+    }
+
     private func loadChart(_ insights: ProgressInsights) -> some View {
-        chartSection("Weekly training load", subtitle: "Last 8 weeks\(trendSuffix(insights.loadTrendPct))") {
+        let maxLoad = insights.weeks.map(\.load).max() ?? 0
+        return chartSection("Weekly training load", subtitle: "Last 8 weeks\(trendSuffix(insights.loadTrendPct))") {
             Chart(insights.weeks) { wk in
                 BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                         y: .value("Load", animateCharts ? wk.load : 0))
                     .foregroundStyle(IridescentMaterial())
                     .cornerRadius(5)
+                    .annotation(position: .top, spacing: 3) {
+                        if animateCharts, wk.load > 0 { barLabel(valueLabel(wk.load)) }
+                    }
             }
             .chartXAxis(.hidden).chartYAxis(.hidden)
+            .chartYScale(domain: 0...max(1, maxLoad * 1.22))   // headroom so labels don't clip
             .frame(height: 150)
         }
     }
@@ -199,6 +215,7 @@ struct ProgressScreen: View {
     private func distanceChart(_ insights: ProgressInsights) -> some View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
+        let maxDist = insights.weeks.map { disp($0.distanceM) }.max() ?? 0
         return chartSection("Weekly distance", subtitle: "In \(unit)\(trendSuffix(insights.distanceTrendPct))") {
             Chart(insights.weeks) { wk in
                 AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
@@ -209,8 +226,17 @@ struct ProgressScreen: View {
                          y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
                     .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
                     .interpolationMethod(.catmullRom)
+                // Dot + value at each week with distance, so the numbers are readable.
+                PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                          y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
+                    .foregroundStyle(Theme.ink)
+                    .symbolSize(disp(wk.distanceM) > 0 ? 26 : 0)
+                    .annotation(position: .top, spacing: 2) {
+                        if animateCharts, disp(wk.distanceM) > 0 { barLabel(valueLabel(disp(wk.distanceM))) }
+                    }
             }
             .chartXAxis(.hidden).chartYAxis(.hidden)
+            .chartYScale(domain: 0...max(1, maxDist * 1.25))
             .frame(height: 150)
         }
     }

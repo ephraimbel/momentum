@@ -262,4 +262,69 @@ struct PlanCoachingTests {
         #expect(session.rationale != nil)
         #expect(cal.startOfDay(for: session.date) >= cal.startOfDay(for: Date()))
     }
+
+    // MARK: Opt-in load increase (P5 — AI proposes / engine computes / user confirms)
+
+    /// Solid chronic load with a deliberately light last week ⇒ ACWR < 0.8 ⇒ "increase".
+    private func underloadedHistory(in ctx: ModelContext) {
+        _ = loggedWorkout(in: ctx, daysAgo: 3, minutes: 20, rpe: 5)                  // light acute week
+        for d in [10, 12, 14, 18, 22, 26] { _ = loggedWorkout(in: ctx, daysAgo: d) } // solid chronic
+    }
+
+    private func futureRun(in ctx: ModelContext, distanceM: Double = 6000) -> PlannedSession {
+        let s = PlannedSession()
+        s.date = Calendar.current.date(byAdding: .day, value: 2, to: Date())!
+        s.discipline = .running; s.runType = .easy; s.status = .planned
+        s.targetDistanceM = distanceM; s.targetPaceSPerKm = 400
+        return s
+    }
+
+    @Test func proposesIncreaseWhenUnderloaded() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        underloadedHistory(in: ctx)
+        let plan = makePlan(in: ctx, sessions: [futureRun(in: ctx)])
+        let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+
+        let proposal = PlanCoaching.proposeAdjustment(plan, workouts: workouts)
+        #expect(proposal?.rec == .increase)
+        #expect(proposal?.sessionsAffected == 1)
+    }
+
+    @Test func confirmingProposalBumpsFutureSessions() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        underloadedHistory(in: ctx)
+        let future = futureRun(in: ctx, distanceM: 6000)
+        let plan = makePlan(in: ctx, sessions: [future])
+        let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+
+        let proposal = try #require(PlanCoaching.proposeAdjustment(plan, workouts: workouts))
+        let changed = PlanCoaching.apply(proposal.rec, to: plan, in: ctx)
+
+        #expect(changed == 1)
+        #expect((future.targetDistanceM ?? 0) == 6600)   // bumped ~10% (the engine's number, on confirm)
+        #expect(plan.lastAdaptedAt != nil)
+    }
+
+    @Test func noProposalRightAfterAnAdaptation() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        underloadedHistory(in: ctx)
+        let plan = makePlan(in: ctx, sessions: [futureRun(in: ctx)])
+        plan.lastAdaptedAt = Date()                       // adapted moments ago
+        let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+
+        #expect(PlanCoaching.proposeAdjustment(plan, workouts: workouts) == nil)  // never stack
+    }
+
+    @Test func noProposalWhenNotUnderloaded() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        overreachingHistory(in: ctx)                      // ACWR high ⇒ ease (auto-applied, not offered)
+        let plan = makePlan(in: ctx, sessions: [futureRun(in: ctx)])
+        let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+
+        #expect(PlanCoaching.proposeAdjustment(plan, workouts: workouts) == nil)
+    }
 }

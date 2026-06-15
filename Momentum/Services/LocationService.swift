@@ -39,8 +39,13 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     func requestAuthorization() {
 #if DEBUG
         // UI tests drive a synthetic route (see `fixes()`); skip the real prompt so no system alert
-        // interrupts the flow, and report authorized so the acquiring gate behaves normally.
-        if Self.isUITestRoute { authorizationStatus = .authorizedWhenInUse; return }
+        // interrupts the flow, report authorized so the acquiring gate behaves normally, and seed a
+        // last-known location so the home map centers (as it would with a real fix).
+        if Self.isUITestRoute {
+            authorizationStatus = .authorizedWhenInUse
+            lastLocation = CLLocationCoordinate2D(latitude: 37.7917, longitude: -122.3996)
+            return
+        }
 #endif
         manager.requestWhenInUseAuthorization()
         if isAuthorized { manager.requestLocation() }   // one-shot fix to center the home map

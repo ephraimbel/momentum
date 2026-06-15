@@ -31,6 +31,9 @@ struct CardioTrackingView: View {
     @State private var offRoute = false        // drifted off the guide loop (hysteresis-gated)
     @State private var deviationM = 0.0
     @State private var rejoinBearing = 0.0     // compass bearing to the nearest loop point (north-up)
+    /// While true the camera stays locked on the athlete (zoomed in, north-up). A pan/pinch drops it;
+    /// the recenter arrow re-engages it.
+    @State private var followsUser = true
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -41,6 +44,13 @@ struct CardioTrackingView: View {
 
     /// Tight street-level framing (~400m across) for running.
     private static let runSpan = MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
+    /// Camera-to-ground distance for the locked-on running view — a tight street-level zoom.
+    private static let followDistanceM = 900.0
+
+    /// A north-up camera zoomed in on `coord` — the locked-on follow framing.
+    private func followCamera(on coord: CLLocationCoordinate2D) -> MapCameraPosition {
+        .camera(MapCamera(centerCoordinate: coord, distance: Self.followDistanceM, heading: 0, pitch: 0))
+    }
 
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
@@ -81,8 +91,18 @@ struct CardioTrackingView: View {
         .onChange(of: vm?.hasGPSLock ?? false) { _, locked in
             if locked, phase == .acquiring { proceedToCountdown() }
         }
-        // Re-evaluate the off-route cue each time the trace extends.
-        .onChange(of: routeCoords.count) { updateOffRoute() }
+        // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
+        // the athlete centered at the tight running zoom.
+        .onChange(of: routeCoords.count) {
+            updateOffRoute()
+            if followsUser, phase == .tracking, let here = routeCoords.last {
+                withAnimation(.easeInOut(duration: 0.45)) { camera = followCamera(on: here) }
+            }
+        }
+        // The moment recording starts, snap in to the athlete and follow.
+        .onChange(of: phase) { _, newPhase in
+            if newPhase == .tracking { recenterOnUser() }
+        }
         // Never imply we're still searching forever: after a beat, soften the copy to nudge "Start now".
         .task {
             try? await Task.sleep(for: .seconds(12))
@@ -120,10 +140,11 @@ struct CardioTrackingView: View {
         }
         .mapStyle(mapStyle.mapStyle)
         .ignoresSafeArea()
-        // MapKit follows the user natively in `.userLocation` mode — smooth and jitter-free. We no
-        // longer re-issue a region animation per fix (overlapping animations fought each other and
-        // snapped the camera to raw, noisy points). If the user pans away, MapKit drops follow; the
-        // recenter button re-engages it.
+        // We keep the camera locked on the athlete ourselves (see `recenterOnUser`) so we control the
+        // zoom — `.userLocation` follow can't be pinned to a tight running framing. A manual pan or
+        // pinch drops the lock so the athlete can look around; the recenter arrow re-engages it.
+        .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsUser = false })
+        .simultaneousGesture(MagnifyGesture().onChanged { _ in followsUser = false })
         .overlay(alignment: .bottomTrailing) { if phase == .tracking { recenterButton } }
     }
 
@@ -134,15 +155,27 @@ struct CardioTrackingView: View {
     private var guideColor: Color { mapStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
 
     private var recenterButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.4)) { camera = .userLocation(fallback: .automatic) }
-        } label: {
-            Image(systemName: "location.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+        Button { Haptics.light(); recenterOnUser() } label: {
+            // Filled when locked on the athlete, hollow once the user has panned away — so the arrow
+            // reads as "tap to snap back."
+            Image(systemName: followsUser ? "location.fill" : "location")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(followsUser ? Theme.ink : Theme.inkSecondary)
                 .frame(width: 40, height: 40).momentumGlass(in: Circle())
         }
         .padding(.trailing, Theme.Space.md)
         .padding(.bottom, 220) // clear the stats panel
-        .accessibilityLabel("Recenter map")
+        .accessibilityLabel("Recenter on me")
+    }
+
+    /// Lock the camera back onto the athlete at the tight running zoom (north-up). Falls back to
+    /// native user-location framing until the first fix lands.
+    private func recenterOnUser() {
+        followsUser = true
+        withAnimation(.easeInOut(duration: 0.4)) {
+            if let here = routeCoords.last { camera = followCamera(on: here) }
+            else { camera = .userLocation(fallback: .automatic) }
+        }
     }
 
     private var topBar: some View {

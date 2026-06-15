@@ -221,6 +221,42 @@ enum PlanCoaching {
         return rec   // `apply` already recorded `lastAdaptedAt` + saved
     }
 
+    /// A bounded plan change the athlete can opt into on confirm — the consent-required half of the
+    /// adaptive loop (PRD §9.4). `autoAdapt` applies the *protective* directions (ease/rest) on its
+    /// own; raising load is the one direction that must never happen without a tap, so it's surfaced
+    /// here for "Apply." The numbers are always the engine's; the AI (when present) only narrates the
+    /// same decision in the read card.
+    struct Proposal: Sendable, Equatable {
+        let rec: ProgressInsights.Recommendation
+        let headline: String
+        let detail: String
+        let sessionsAffected: Int
+    }
+
+    /// Offer an opt-in load increase when *completed* load (ACWR) says the athlete is under-loaded and
+    /// has earned more — but only if nothing was adapted in the last 7 days (mirrors `autoAdapt`'s
+    /// safeguard, so a proposal can't stack on an auto-ease) and there are future sessions to change.
+    /// Returns `nil` when there's nothing to offer. Deterministic — this is what `apply` would do.
+    static func proposeAdjustment(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
+                                  calendar: Calendar = .current) -> Proposal? {
+        guard let plan else { return nil }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+        // Only the consent-required direction. ease/rest are auto-applied; hold/start are advisory.
+        guard ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation == .increase
+        else { return nil }
+        let todayStart = calendar.startOfDay(for: today)
+        let future = plan.sessions.filter {
+            $0.status == .planned && $0.completedWorkout == nil
+            && calendar.startOfDay(for: $0.date) >= todayStart
+        }
+        guard !future.isEmpty else { return nil }
+        return Proposal(rec: .increase,
+                        headline: "You've earned more",
+                        detail: "Your load's been light and well-absorbed — bump next week about 10%?",
+                        sessionsAffected: future.count)
+    }
+
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.
     static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto) -> String {
         if session.discipline == .strength {

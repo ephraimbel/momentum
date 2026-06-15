@@ -9,7 +9,7 @@ struct RouteSuggestionView: View {
     private let onUse: (SuggestedLoop) -> Void
     private let onClose: () -> Void
 
-    @State private var camera: MapCameraPosition = .automatic
+    @State private var camera: MapCameraPosition
     @State private var mapStyle: MapStyleOption = .standard
 
     init(start: GeoPoint, targetM: Double = 5000, distanceUnit: DistanceUnit = .auto,
@@ -18,6 +18,11 @@ struct RouteSuggestionView: View {
          onClose: @escaping () -> Void = {}) {
         _vm = State(initialValue: RouteSuggestionViewModel(
             start: start, targetM: targetM, distanceUnit: distanceUnit, directions: directions))
+        // Open locked on the athlete's location, not the whole world — we reframe to the loop once
+        // candidates load.
+        _camera = State(initialValue: .region(MKCoordinateRegion(
+            center: start.clCoordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))))
         self.onUse = onUse
         self.onClose = onClose
     }

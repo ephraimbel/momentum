@@ -54,6 +54,11 @@ struct TodayView: View {
             // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
             // notification permission on first run.
             services.notifications.schedulePlannedReminders(plan)
+            // Lock the map onto the athlete. `.userLocation` centers on them once a fix lands; until
+            // then fall back to their last route's neighborhood (never the whole-world `.automatic`).
+            let fallback: MapCameraPosition = lastKnownCoordinate
+                .map { .region(region(around: $0)) } ?? .automatic
+            camera = .userLocation(fallback: fallback)
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
             // usually settled this); requesting also pulls a one-shot fix to center the map on them.
             locator.requestAuthorization()
@@ -161,6 +166,18 @@ struct TodayView: View {
     }
 
     // MARK: Map
+
+    /// Best guess at where the athlete is before a live fix lands — a cached fix, else their most
+    /// recent route's neighborhood — so the cardio map never opens on the whole world.
+    private var lastKnownCoordinate: CLLocationCoordinate2D? {
+        if let live = locator.lastLocation { return live }
+        return workouts
+            .sorted { $0.startedAt > $1.startedAt }
+            .lazy
+            .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
+            .first
+            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+    }
 
     private var mapLayer: some View {
         Map(position: $camera) { UserAnnotation() }

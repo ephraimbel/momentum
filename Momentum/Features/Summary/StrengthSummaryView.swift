@@ -62,6 +62,7 @@ struct StrengthSummaryContent: View {
                     EarnedShareButton(workout: workout, weightUnit: weightUnit, title: "Share your PR").reveal(0.18)
                 }
                 AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.24)
+                PlanProposalCard().reveal(0.28)
                 muscleSection(session).reveal(0.32)
                 exercisesSection(session).reveal(0.40)
             }
