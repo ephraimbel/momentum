@@ -30,9 +30,13 @@
 	<string>momentum uses motion data to measure cadence and steps.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>RevenueCatAPIKey</key>
+	<string></string>
 	<key>SupabaseAnonKey</key>
 	<string></string>
 	<key>SupabaseURL</key>
+	<string></string>
+	<key>SuperwallAPIKey</key>
 	<string></string>
 	<key>UIAppFonts</key>
 	<array>

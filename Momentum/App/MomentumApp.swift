@@ -12,6 +12,7 @@ struct MomentumApp: App {
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
         // environment (reactive view gating), so entitlement never diverges (PRD §10).
         let controller = PaywallController()
+        controller.configure()   // RevenueCat/Superwall when linked; no-op local seam otherwise
         _paywall = State(initialValue: controller)
         _services = State(initialValue: Services.live(paywall: controller))
     }

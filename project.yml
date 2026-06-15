@@ -16,6 +16,15 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
+# Phase 3 billing SDKs — uncomment with the Momentum-target deps below to go live (PRD §10).
+# packages:
+#   RevenueCat:
+#     url: https://github.com/RevenueCat/purchases-ios
+#     from: "5.0.0"
+#   Superwall:
+#     url: https://github.com/superwall/Superwall-iOS
+#     from: "4.0.0"
+
 targets:
   Momentum:
     type: application
@@ -49,6 +58,10 @@ targets:
         # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
         SupabaseURL: ""
         SupabaseAnonKey: ""
+        # Billing (PRD §10). Empty → local entitlement seam. Set these + link the SDKs to go live
+        # (docs/MONETIZATION-SETUP.md). Read by `BillingKeys`.
+        RevenueCatAPIKey: ""
+        SuperwallAPIKey: ""
         UILaunchScreen:
           UIColorName: background
         UIAppFonts:
@@ -61,15 +74,13 @@ targets:
           - SpaceGrotesk-Bold.ttf
     dependencies:
       - target: MomentumWidgets      # embeds the Live Activity / widget extension into the app
-    # ── Later-phase dependencies (NOT in the Phase 0 build) ──────────────
-    # Add when their phase begins, then re-run `xcodegen generate`:
-    #   Phase 2/4 — supabase-swift  (https://github.com/supabase/supabase-swift)
-    #   Phase 3   — RevenueCat      (https://github.com/RevenueCat/purchases-ios)
-    #   Phase 3   — Superwall       (https://github.com/superwall/Superwall-iOS)
-    # dependencies:
-    #   - package: supabase-swift
+    # ── Phase 3 billing (RevenueCat + Superwall) ─────────────────────────
+    # The integration code is already written behind `#if canImport(...)` (PaywallController);
+    # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
+    # `xcodegen generate`. Full runbook: docs/MONETIZATION-SETUP.md.
     #   - package: RevenueCat
     #   - package: Superwall
+    # Phase 2/4 — supabase-swift (https://github.com/supabase/supabase-swift) when sync lands.
 
   # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
   # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity
