@@ -5,6 +5,10 @@ import SwiftData
 /// route snapshot (cardio) or glyph banner (strength), grouped by week. Tap → workout detail.
 struct HistoryView: View {
     @Query private var allWorkouts: [Workout]
+    @Environment(PaywallController.self) private var paywall
+
+    /// Free tier keeps the most recent weeks; older entries are Pro (PRD §10/§13.10).
+    private static let freeWeeks = 2
 
     private var weightUnit: WeightUnit { .default() }
     private var distanceUnit: DistanceUnit { .auto }
@@ -26,7 +30,9 @@ struct HistoryView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                         HeatmapHistoryCard(workouts: allWorkouts, distanceUnit: distanceUnit)
-                        ForEach(weeks, id: \.start) { week in
+                        let entitled = paywall.isEntitled(to: .fullHistory)
+                        let shown = entitled ? weeks : Array(weeks.prefix(Self.freeWeeks))
+                        ForEach(shown, id: \.start) { week in
                             VStack(alignment: .leading, spacing: Theme.Space.md) {
                                 Text(weekLabel(week.start))
                                     .font(.rounded(Theme.FontSize.label, weight: .bold))
@@ -43,6 +49,8 @@ struct HistoryView: View {
                                 }
                             }
                         }
+                        let hidden = entitled ? 0 : weeks.dropFirst(Self.freeWeeks).reduce(0) { $0 + $1.items.count }
+                        if hidden > 0 { lockedFooter(hidden) }
                     }
                     .padding(Theme.Space.lg)
                     .padding(.bottom, Theme.Space.xxl)
@@ -66,6 +74,30 @@ struct HistoryView: View {
         }
         .padding(Theme.Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The Pro cap under the free window — taps through to the paywall (PRD §10).
+    private func lockedFooter(_ count: Int) -> some View {
+        Button { paywall.present(for: .fullHistory) } label: {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "lock.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(count) earlier workout\(count == 1 ? "" : "s")")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("Unlock your full history with Pro")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.lg)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(IridescentMaterial(), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func weekLabel(_ start: Date) -> String {

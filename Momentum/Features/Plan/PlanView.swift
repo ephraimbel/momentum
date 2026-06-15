@@ -6,12 +6,19 @@ import SwiftData
 /// iridescent tint; missed simply moves with a one-line note. No red, no guilt.
 struct PlanView: View {
     @Environment(\.modelContext) private var context
+    @Environment(PaywallController.self) private var paywall
     @Query private var profiles: [UserProfile]
     @State private var weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
     @State private var showingAdd = false
     @State private var addDay = Date()
 
     private var plan: TrainingPlan? { profiles.first?.plan }
+
+    /// Free tier sees the current week (the plan glimpse); other weeks are Pro (PRD §10/§13.10).
+    private var isCurrentWeek: Bool {
+        guard let cur = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start else { return true }
+        return Calendar.current.isDate(weekStart, inSameDayAs: cur)
+    }
     private var days: [Date] {
         (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) }
     }
@@ -29,6 +36,7 @@ struct PlanView: View {
                                 dayRow(day).reveal(min(Double(i) * 0.04, 0.28))
                             }
                         }
+                        .proLocked(.fullPlan, active: !isCurrentWeek)
                     }
                     .padding(Theme.Space.lg)
                     .padding(.bottom, Theme.Space.xxl)

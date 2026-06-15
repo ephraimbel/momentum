@@ -76,11 +76,17 @@ struct ProgressScreen: View {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 statusHero(insights).reveal(0)
                 coachCard(insights).reveal(0.06)
-                loadChart(insights).reveal(0.12)
-                distanceChart(insights).reveal(0.18)
+                // Advanced analytics — Pro (PRD §10): training load, pace/distance trends, weekly
+                // sets-per-muscle, e1RM PRs. Free keeps the status read, consistency heatmap & totals.
+                VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    loadChart(insights)
+                    distanceChart(insights)
+                    if !weeklyMuscleActivation.isEmpty { muscleWeek }
+                    if !stats.strengthPRs.isEmpty { prShelf(stats) }
+                }
+                .reveal(0.12)
+                .proLocked(.advancedAnalytics)
                 heatmap(stats).reveal(0.24)
-                if !weeklyMuscleActivation.isEmpty { muscleWeek.reveal(0.28) }
-                if !stats.strengthPRs.isEmpty { prShelf(stats).reveal(0.32) }
                 totals(stats).reveal(0.36)
             }
             .padding(Theme.Space.lg)

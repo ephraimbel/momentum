@@ -52,7 +52,9 @@ final class PaywallController: PaywallServing {
     init(isPro override: Bool? = nil) {
         if let override { isPro = override; return }
         #if DEBUG
-        let demo = ProcessInfo.processInfo.arguments.contains("--seed-demo")
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--debug-free") { isPro = false; return }   // QA the free tier with seeded data
+        let demo = args.contains("--seed-demo")
         #else
         let demo = false
         #endif
