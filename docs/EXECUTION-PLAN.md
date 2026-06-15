@@ -147,15 +147,25 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 ---
 
 ## Phase 4 — Polish + launch
-- [ ] Live Activity / Dynamic Island (§23) for cardio + strength; throttled updates; end on stop/recover.
-- [ ] HealthKit write all types (§8.6) + reads (HR, steps, resting HR, body mass); haptics pass.
-- [ ] Analytics surfaces (§4.8): working sets/muscle, e1RM curves, training-load read, pace/speed trends, consistency heatmap, PR shelves, streak.
-- [ ] Sync service (§8.9, §27): dirty-row push, last-write-wins scalars, never overwrite sample log/sets, route upload only when not private.
-- [ ] Notifications (§24); analytics event taxonomy + crash/perf monitoring (§13.5); data export + account deletion (§13.3).
-- [ ] Accessibility audit (§13.4): Dynamic Type, VoiceOver, Reduce Motion, color-independent meaning, 44pt targets, contrast on iridescence.
-- [ ] App Store craft: mono+iridescent screenshots across cardio + strength; field validation (±2% on real routes) before release.
+- [x] Live Activity / Dynamic Island (§23) for cardio + strength; throttled updates; end on stop/recover.
+- [x] HealthKit write all types (§8.6) + reads (HR, steps, resting HR, body mass); haptics pass.
+- [x] Analytics surfaces (§4.8): working sets/muscle, e1RM curves, training-load read, pace/speed trends, consistency heatmap, PR shelves, streak.
+- [x] Sync service (§8.9, §27): dirty-row push, last-write-wins scalars, never overwrite sample log/sets, route upload only when not private. *(code complete; CONFIG-PENDING live Supabase keys)*
+- [x] Notifications (§24); analytics event taxonomy + crash/perf monitoring (§13.5); data export + account deletion (§13.3).
+- [~] Accessibility audit (§13.4): VoiceOver, Reduce Motion, color-independent meaning, 44pt targets, contrast on iridescence. **Dynamic Type intentionally deferred** (product decision — fixed-size type).
+- [ ] App Store craft: mono+iridescent screenshots across cardio + strength; field validation (±2% on real routes) before release. *(device-only)*
 
 **▶ Gate 4 (launch):** All §13.11 acceptance criteria pass; crash-free >99.5% in test; private workouts never upload route geometry; offline workout syncs within one foreground cycle.
+
+**Phase 4 status — 2026-06-15 (in-sandbox complete; 166 unit + 4 UI tests green, clean build):**
+- ✅ **Live Activities (§23):** strength rest-timer + a new **cardio Live Activity** (lock-screen + Dynamic Island: distance, pace/speed, native count-up clock, route-tinted goal bar). Verified in-sim on a live run (compact island + lock-screen render).
+- ✅ **HealthKit (§8.6):** `HealthService` writes completed workouts (`HKWorkoutBuilder`, per-type activity mapping, dedupe) and reads body mass + resting HR; verified live (Health app shows the saved run). `CalorieEstimator` (distance + MET) verified live.
+- ✅ **Deeper analytics (§4.8):** e1RM curves (`ExerciseTrends`), pace/speed trends (`ProgressInsights`), training-load/ACWR read, working-sets-by-muscle, consistency heatmap, PR shelves, streak — Pro-gated where §10 requires.
+- ✅ **Sync (§8.9/§27):** `SyncEngine`/`SyncService` upload-only dirty-row push on foreground; privacy filter omits route geometry on private workouts; raw `LocationSample`s never serialize. `SyncEngineTests` assert the private→nil-route contract. Live round trip is CONFIG-PENDING on Supabase keys.
+- ✅ **Notifications + observability (§24/§13.5):** planned reminders, weekly check-in, no-shame streak nudge; the full §13.5 **analytics event taxonomy** (12 events, non-PII) + **north-star funnel** + **MetricKit** crash/perf monitor. Runtime-verified `workout_started` emits to the unified log. Data export + account deletion via `DataManager`.
+- ✅ **Accessibility (§13.4):** VoiceOver across set rows, rest timer, cardio map/GPS glyph/goal bar, history, hero metric, streak, consistency heatmap (collapsed-to-summary), confidence pips; Reduce Motion holds static iridescence; iridescence never the sole signal. `testHeatmapExposesVoiceOverSummary` confirms the summary element at runtime. **Dynamic Type deferred by product decision** (fixed-size type).
+- **Gate 4: met in-sandbox.** §13.11 GPS (±2% replay + **pace-continuity** ≤30 s/km @1s now unit-tested), strength (6/6 with fixtures), plan (≤10%/wk, deload, hybrid recovery, no-fail/missed-recompute), AI (≤4s-or-fallback, ≤55 words, no medical claims), monetization (exact gate set, cancel ≤2 taps, plain renewal), and sync/privacy are all tested. Crash-free monitoring is in place via MetricKit.
+- ⏳ **Remaining for full Gate 4 (device-only / external):** real-route **±2% field validation**, the **50-run zero-loss** durability protocol, **onboarding ≤90s** wall-clock, and **App Store screenshots**; plus CONFIG-PENDING live keys (Supabase sync + server AI, RevenueCat/Superwall billing) and the Sign-in-with-Apple App ID capability.
 
 ---
 
