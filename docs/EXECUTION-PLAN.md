@@ -179,7 +179,9 @@ Apple Watch (cardio GPS via `HKWorkoutSession` + on-wrist strength logging) → 
 - ⏳ **Slice 4 — WatchConnectivity (paused):** two-way phone↔watch sync (send finished watch workouts → phone SwiftData/HealthKit/sync; receive planned targets). Deferred — `WCSession` needs a **paired phone+watch device** to verify the round-trip (not reliably testable on standalone sims). *Note: finished cardio already reaches the phone via HealthKit; strength is watch-only until Slice 4.*
 - ⏳ **Device-only across all slices:** real HR/distance sensor capture, the success/rest haptics, and interactive taps need a physical Apple Watch.
 
-**Voice coach status — 2026-06-15 (landed; Pro):** spoken cues during workouts (PRD §4.10). `CoachingCueBuilder` (pure, unit-tested) authors the text — milestone + split pace, rest complete, paused/resumed, goal reached (no medical claims). `VoiceCoachService` (AVSpeechSynthesizer) ducks music and reads them, gated behind `Feature.voiceCoach`; passed into the cardio loop + strength rest timer only when entitled. Verified: 171 unit + 4 UI green; runtime-confirmed the cue pipeline dispatches in-sim (`cue=Paused.` in the log). AVSpeech audio itself is device/speaker-only. **Next in the Phase 5 sequence:** richer recovery/training-load → more disciplines (row/HIIT/yoga/swim) → social-lite (last).
+**Voice coach status — 2026-06-15 (landed; Pro):** spoken cues during workouts (PRD §4.10). `CoachingCueBuilder` (pure, unit-tested) authors the text — milestone + split pace, rest complete, paused/resumed, goal reached (no medical claims). `VoiceCoachService` (AVSpeechSynthesizer) ducks music and reads them, gated behind `Feature.voiceCoach`; passed into the cardio loop + strength rest timer only when entitled. Verified: 171 unit + 4 UI green; runtime-confirmed the cue pipeline dispatches in-sim (`cue=Paused.` in the log). AVSpeech audio itself is device/speaker-only.
+
+**Recovery / training-load status — 2026-06-15 (landed; Pro):** rules-only readiness on top of the existing ACWR (resolves §16 "recovery-model depth"). `TrainingLoad` is now the single session-RPE load formula (shared by ProgressInsights + AthleteModelEngine). `RecoveryModel` adds Foster's **monotony** (mean daily load ÷ SD) and **strain** (weekly load × monotony) and a 0–100 **readiness score** banded Primed→Depleted from acute:chronic spikes, monotony, and lack of rest — pure + unit-tested. A Recovery card in Progress shows the iridescent readiness ring + band + guidance + monotony/load/rest-days (VoiceOver-summarized). Verified: 180 unit + 5 UI green; `testRecoveryCardRenders` confirms it at runtime. **Next in the Phase 5 sequence:** more disciplines (row/HIIT/yoga/swim) → social-lite (last).
 
 ---
 
@@ -192,7 +194,7 @@ Apple Watch (cardio GPS via `HKWorkoutSession` + on-wrist strength logging) → 
 ## Resolve early (PRD §16 — these gate decisions)
 1. ✅ **DECIDED 2026-06-09: iOS 18.0 minimum** — native `MeshGradient`, no fallback as primary.
 2. Exercise-library **sourcing/licensing** — blocks the §13.7 seed in Phase 1.
-3. Recovery-model **depth** in v0 (rules-only vs early readiness score).
+3. ✅ **DECIDED 2026-06-15: rules-only readiness** — `RecoveryModel` (ACWR + monotony + strain → banded 0–100 readiness). No biometric/HRV readiness in v0.
 4. Display **typeface** (native SF vs licensed) — much of the brand.
 5. How much to **tease social** (hidden vs "coming soon").
 6. **Name/trademark** vetting (App Store + USPTO).
