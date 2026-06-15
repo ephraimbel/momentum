@@ -56,7 +56,7 @@ final class Services {
             health: HealthService(),
             plan: StubPlanEngine(),
             ai: AIService(),
-            sync: StubSyncService(),
+            sync: SyncService(),
             paywall: paywall,
             notifications: NotificationService(),
             athleteModel: AthleteModelService()
@@ -96,7 +96,12 @@ protocol HealthServing: AnyObject {
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
 }
 protocol PlanEngineServing: AnyObject {}
-protocol SyncServing: AnyObject {}
+@MainActor
+protocol SyncServing: AnyObject {
+    /// Push dirty (never-synced) workouts to the cloud and stamp them synced (PRD §8.9). No-op until
+    /// Supabase is configured.
+    func sync(_ workouts: [Workout], in context: ModelContext) async
+}
 
 @MainActor
 protocol AIServing: AnyObject {
@@ -211,7 +216,9 @@ final class StubHealthService: HealthServing {
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) { (nil, nil) }
 }
 final class StubPlanEngine: PlanEngineServing {}
-final class StubSyncService: SyncServing {}
+final class StubSyncService: SyncServing {
+    func sync(_ workouts: [Workout], in context: ModelContext) async {}
+}
 @MainActor
 final class StubNotificationService: NotificationServing {
     func requestAuthorization() {}

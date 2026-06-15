@@ -63,6 +63,8 @@ struct TodayView: View {
             services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
                                                        isPlannedDayToday: plannedToday,
                                                        hasWorkedOutToday: workedOutToday)
+            // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
+            Task { await services.sync.sync(workouts, in: context) }
             // Lock the map onto the athlete. `.userLocation` centers on them once a fix lands; until
             // then fall back to their last route's neighborhood (never the whole-world `.automatic`).
             let fallback: MapCameraPosition = lastKnownCoordinate
