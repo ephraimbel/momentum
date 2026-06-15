@@ -26,7 +26,7 @@ struct WatchRootView: View {
             .navigationDestination(for: WatchDestination.self) { dest in
                 switch dest {
                 case .cardio(let type): WatchCardioView(type: type)
-                case .strength: WatchStrengthPlaceholder()
+                case .strength: WatchStrengthView()
                 }
             }
         }
@@ -55,16 +55,3 @@ enum WatchDestination: Hashable {
     case strength
 }
 
-// MARK: - Slice 3 placeholder (replaced by on-wrist strength logging next)
-
-struct WatchStrengthPlaceholder: View {
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "dumbbell.fill").font(.title2).foregroundStyle(WatchTheme.accent)
-            Text("Lift").font(.headline)
-            Text("On-wrist logging — coming next").font(.caption2).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .navigationTitle("Lift")
-    }
-}
