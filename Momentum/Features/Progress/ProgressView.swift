@@ -323,11 +323,18 @@ struct ProgressScreen: View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             sectionTitle("Personal records")
             ForEach(stats.strengthPRs, id: \.name) { pr in
-                HStack {
-                    Text(pr.name).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                    Spacer()
-                    Text(Formatters.weight(kg: pr.e1RMKg, unit: weightUnit)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                NavigationLink {
+                    ExerciseDetailView(exerciseName: pr.name, weightUnit: weightUnit)
+                } label: {
+                    HStack {
+                        Text(pr.name).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                        Spacer()
+                        Text(Formatters.weight(kg: pr.e1RMKg, unit: weightUnit)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                        Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
