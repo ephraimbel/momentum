@@ -172,6 +172,13 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 ## Phase 5 (v1+) — deferred
 Apple Watch (cardio GPS via `HKWorkoutSession` + on-wrist strength logging) → voice coach → richer recovery/training-load → more disciplines (row/HIIT/yoga/swim) → **then** the opt-in social-lite layer. Never before the personal app is loved.
 
+**Watch status — 2026-06-15 (Slices 1–3 landed; core verified on a watchOS 26.2 sim):**
+- ✅ **Slice 1 — scaffold + home:** `MomentumWatch` watchOS target embedded in the iOS app, sharing only platform-agnostic phone code (`Enums`, `Formatters`). True-black brand home with a discipline picker (Run/Ride/Walk + Lift) over a `NavigationStack`. DEBUG deep link `--watch-screen=…` for deterministic sim verification (watch taps are unreliable in the sim).
+- ✅ **Slice 2 — on-wrist cardio:** `HKWorkoutSession` + `HKLiveWorkoutBuilder` (HR, active energy, distance); live screen with HK-managed elapsed clock, discipline hero (pace/speed), HR (iridescent), energy, pause/end. HealthKit entitlement + `workout-processing` background mode + usage strings. `--watch-demo` feeds a synthetic session for sim verification.
+- ✅ **Slice 3 — on-wrist strength:** weight/reps steppers (SI stored, unit-natural steps) + one-tap Log set → success haptic + iridescent rest countdown ring with Skip.
+- ⏳ **Slice 4 — WatchConnectivity (paused):** two-way phone↔watch sync (send finished watch workouts → phone SwiftData/HealthKit/sync; receive planned targets). Deferred — `WCSession` needs a **paired phone+watch device** to verify the round-trip (not reliably testable on standalone sims). *Note: finished cardio already reaches the phone via HealthKit; strength is watch-only until Slice 4.*
+- ⏳ **Device-only across all slices:** real HR/distance sensor capture, the success/rest haptics, and interactive taps need a physical Apple Watch.
+
 ---
 
 ## Cross-cutting (every phase)
