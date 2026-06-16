@@ -4,7 +4,7 @@ import Foundation
 /// (Progress hosts both trends and history via a segmented switch; Coach is the immersive AI chat.)
 /// Named `AppTab` to avoid colliding with SwiftUI's iOS 18 `Tab` view.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
-    case today, plan, progress, coach
+    case today, plan, progress, world, coach
     var id: String { rawValue }
 
     var title: String {
@@ -12,6 +12,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .today: "Today"
         case .plan: "Plan"
         case .progress: "Progress"
+        case .world: "World"
         case .coach: "Coach"
         }
     }
@@ -21,6 +22,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .today: "map"
         case .plan: "calendar"
         case .progress: "chart.line.uptrend.xyaxis"
+        case .world: "globe"
         case .coach: "sparkles"
         }
     }
