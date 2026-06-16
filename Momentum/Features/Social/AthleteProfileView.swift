@@ -7,6 +7,9 @@ struct AthleteProfileView: View {
     let athlete: CommunityAthlete
     var distanceUnit: DistanceUnit = .auto
     @Environment(FollowStore.self) private var follows
+    @Environment(ModerationStore.self) private var moderation
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingReport = false
 
     var body: some View {
         ScrollView {
@@ -32,6 +35,28 @@ struct AthleteProfileView: View {
         .background(Theme.background)
         .navigationTitle(athlete.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button { confirmingReport = true } label: { Label("Report", systemImage: "flag") }
+                    Button(role: .destructive) {
+                        moderation.block(athlete.handle)
+                        if follows.isFollowing(athlete.handle) { follows.toggle(athlete.handle) }   // also unfollow
+                        Haptics.medium()
+                        dismiss()
+                    } label: { Label("Block \(athlete.name)", systemImage: "hand.raised") }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("More")
+            }
+        }
+        .confirmationDialog("Report \(athlete.name)?", isPresented: $confirmingReport, titleVisibility: .visible) {
+            ForEach(ReportReason.allCases) { reason in
+                Button(reason.rawValue) { athlete.posts.forEach { moderation.report($0.id) }; Haptics.success() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("We'll review their content and hide it from you.")
+        }
     }
 
     private var identity: some View {

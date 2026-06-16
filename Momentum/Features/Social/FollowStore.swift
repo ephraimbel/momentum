@@ -13,6 +13,7 @@ final class FollowStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        SocialDebug.resetIfRequested(defaults, keys: [Self.key])
         following = Set(defaults.stringArray(forKey: Self.key) ?? [])
     }
 

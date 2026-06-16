@@ -8,7 +8,7 @@ final class GlobeUITests: XCTestCase {
 
     func testGlobeRenders() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-route", "--social-globe"]
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--social-globe", "--reset-social"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]; if b.exists { b.tap(); return true }

@@ -12,6 +12,7 @@ struct WorldView: View {
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
     @Environment(FollowStore.self) private var follows
+    @Environment(ModerationStore.self) private var moderation
     @State private var segment: Segment = .discover
     #if DEBUG
     @State private var debugGlobe = ProcessInfo.processInfo.arguments.contains("--social-globe")
@@ -20,11 +21,12 @@ struct WorldView: View {
     private var profile: UserProfile? { profiles.first }
     private var discoverFeed: [FeedItem] {
         FeedAssembler.feed(userWorkouts: workouts, profile: profile, community: CommunityFeed.seed())
+            .filter(moderation.isVisible)
     }
     /// Posts from athletes the user follows, newest first.
     private var followingFeed: [FeedItem] {
         CommunityFeed.seed()
-            .filter { follows.isFollowing($0.authorHandle ?? "") }
+            .filter { follows.isFollowing($0.authorHandle ?? "") && moderation.isVisible($0) }
             .sorted { $0.date > $1.date }
     }
 

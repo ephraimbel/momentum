@@ -10,6 +10,7 @@ struct GlobeView: View {
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(ModerationStore.self) private var moderation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var liveCount = 0
 
@@ -20,8 +21,9 @@ struct GlobeView: View {
     @State private var globeSize: CGSize = .zero
     @State private var selected: CommunityAthlete?
 
-    private let athletes = CommunityDirectory.all()
     private let tick = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
+    /// Community athletes shown on the globe — blocked athletes are removed.
+    private var athletes: [CommunityAthlete] { CommunityDirectory.all().filter { !moderation.isBlocked($0.handle) } }
 
     private var profile: UserProfile? { profiles.first }
     private var onMap: Bool { profile?.appearOnMap ?? false }

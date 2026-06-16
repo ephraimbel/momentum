@@ -9,7 +9,7 @@ final class WorldFeedUITests: XCTestCase {
 
     func testWorldShowsLabeledCommunityFeed() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-route"]
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--reset-social"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]; if b.exists { b.tap(); return true }
@@ -33,9 +33,35 @@ final class WorldFeedUITests: XCTestCase {
 
     }
 
+    func testBlockRemovesAthleteFromFeed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--reset-social"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+        app.tap()
+
+        let world = app.tabBars.buttons["World"]
+        XCTAssertTrue(world.waitForExistence(timeout: 15)); world.tap()
+
+        XCTAssertTrue(app.staticTexts["Sunrise tempo"].waitForExistence(timeout: 5))
+        app.staticTexts["Sunrise tempo"].tap()           // open Maya's profile
+
+        app.buttons["More"].tap()                         // toolbar ⋯ menu
+        app.buttons["Block Maya Rivera"].tap()
+
+        // Back on the feed, her post is gone.
+        XCTAssertFalse(app.staticTexts["Sunrise tempo"].waitForExistence(timeout: 3),
+                       "Blocked athlete's post still shown.")
+    }
+
     func testRespectReaction() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-route"]
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--reset-social"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]; if b.exists { b.tap(); return true }
@@ -57,7 +83,7 @@ final class WorldFeedUITests: XCTestCase {
 
     func testFollowAthleteSurfacesInFollowing() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-route"]
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--reset-social"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]; if b.exists { b.tap(); return true }

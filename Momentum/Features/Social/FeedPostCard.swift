@@ -6,7 +6,9 @@ import SwiftUI
 struct FeedPostCard: View {
     let item: FeedItem
     @Environment(ReactionStore.self) private var reactions
+    @Environment(ModerationStore.self) private var moderation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var confirmingReport = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +21,25 @@ struct FeedPostCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.authorName), \(item.type.title)")
         .accessibilityValue("\(item.title). \(item.statLine)\(item.isCommunity ? ". Momentum community" : "")")
+        .contextMenu { moderationMenu }
+        .confirmationDialog("Report this post?", isPresented: $confirmingReport, titleVisibility: .visible) {
+            ForEach(ReportReason.allCases) { reason in
+                Button(reason.rawValue) { moderation.report(item.id); Haptics.success() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("We'll review it and hide it from your feed.")
+        }
+    }
+
+    @ViewBuilder
+    private var moderationMenu: some View {
+        Button { confirmingReport = true } label: { Label("Report post", systemImage: "flag") }
+        if item.isCommunity, let handle = item.authorHandle {
+            Button(role: .destructive) { moderation.block(handle); Haptics.medium() } label: {
+                Label("Block \(item.authorName)", systemImage: "hand.raised")
+            }
+        }
     }
 
     @ViewBuilder

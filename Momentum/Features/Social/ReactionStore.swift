@@ -14,6 +14,7 @@ final class ReactionStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        SocialDebug.resetIfRequested(defaults, keys: [Self.key])
         reacted = Set(defaults.stringArray(forKey: Self.key) ?? [])
     }
 
