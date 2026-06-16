@@ -7,7 +7,7 @@ import SwiftData
 struct WorldView: View {
     enum Segment: String, CaseIterable, Identifiable { case discover = "Discover", following = "Following"; var id: String { rawValue } }
     /// Pushed destinations within the World tab's NavigationStack.
-    enum WorldRoute: Hashable { case athlete(String) }
+    enum WorldRoute: Hashable { case athlete(String), me }
 
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
@@ -60,6 +60,8 @@ struct WorldView: View {
                 if let athlete = CommunityDirectory.athlete(handle: handle) {
                     AthleteProfileView(athlete: athlete)
                 }
+            case .me:
+                ProfileView()
             }
         }
         #if DEBUG
@@ -79,10 +81,9 @@ struct WorldView: View {
     private func feedList(_ items: [FeedItem]) -> some View {
         ForEach(items) { item in
             if item.isCommunity, let handle = item.authorHandle {
-                NavigationLink(value: WorldRoute.athlete(handle)) { FeedPostCard(item: item) }
-                    .buttonStyle(.plain)
+                FeedPostCard(item: item, navValue: .athlete(handle))
             } else {
-                FeedPostCard(item: item)
+                FeedPostCard(item: item, navValue: .me)
             }
         }
     }
@@ -105,7 +106,7 @@ struct WorldView: View {
         VStack(spacing: Theme.Space.sm) {
             Image(systemName: "person.2").font(.system(size: 32, weight: .light)).foregroundStyle(Theme.inkTertiary)
             Text("Follow athletes to see them here").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-            Text("Following arrives soon. For now, explore Discover.")
+            Text("Tap an athlete in Discover, then Follow — their posts land here.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .multilineTextAlignment(.center)
         }

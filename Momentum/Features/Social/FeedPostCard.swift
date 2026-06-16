@@ -7,6 +7,8 @@ import UIKit
 /// posting their workouts. Community posts carry a clear "Momentum community" badge.
 struct FeedPostCard: View {
     let item: FeedItem
+    /// Where tapping the author byline navigates (nil = not tappable, e.g. on a profile's own list).
+    var navValue: WorldView.WorldRoute? = nil
     @Environment(ReactionStore.self) private var reactions
     @Environment(ModerationStore.self) private var moderation
     @Environment(CommentStore.self) private var comments
@@ -42,14 +44,32 @@ struct FeedPostCard: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("We'll review it and hide it from your feed.") }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.authorName), \(item.type.title)")
-        .accessibilityValue("\(item.title). \(item.statLine)\(item.isCommunity ? ". Momentum community" : "")")
     }
 
     // MARK: Byline
 
     private var authorRow: some View {
+        HStack(spacing: Theme.Space.sm) {
+            // Tapping the author (avatar + name) opens their profile — the standard social pattern, and
+            // it avoids the whole-card-as-NavigationLink conflict with the embedded live map.
+            if let navValue {
+                NavigationLink(value: navValue) {
+                    authorIdentity
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(item.authorName)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("feed-author")
+                .accessibilityHint("Open profile")
+            } else {
+                authorIdentity
+            }
+            Spacer(minLength: 0)
+            Image(systemName: item.type.systemImage).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    private var authorIdentity: some View {
         HStack(spacing: Theme.Space.sm) {
             AvatarView(photo: item.avatarData, name: item.authorName, size: 34)
             VStack(alignment: .leading, spacing: 1) {
@@ -59,9 +79,8 @@ struct FeedPostCard: View {
                 }
                 Text(byline).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary).lineLimit(1)
             }
-            Spacer(minLength: 0)
-            Image(systemName: item.type.systemImage).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
         }
+        .contentShape(Rectangle())
     }
 
     private var byline: String {

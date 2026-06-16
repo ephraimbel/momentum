@@ -79,15 +79,19 @@ final class WorldFeedUITests: XCTestCase {
         let world = app.tabBars.buttons["World"]
         XCTAssertTrue(world.waitForExistence(timeout: 15)); world.tap()
 
-        XCTAssertTrue(app.staticTexts["Sunrise tempo"].waitForExistence(timeout: 5))
-        app.staticTexts["Sunrise tempo"].tap()           // open Maya's profile
+        // Open the profile of whichever athlete leads the feed (date-sorted, so order isn't fixed).
+        let lead = app.buttons.matching(identifier: "feed-author").firstMatch
+        XCTAssertTrue(lead.waitForExistence(timeout: 5), "No author byline in the feed.")
+        let leadName = lead.label
+        lead.tap()
 
         app.buttons["More"].tap()                         // toolbar ⋯ menu
-        app.buttons["Block Maya Rivera"].tap()
+        app.buttons["Block \(leadName)"].tap()
 
-        // Back on the feed, her post is gone.
-        XCTAssertFalse(app.staticTexts["Sunrise tempo"].waitForExistence(timeout: 3),
-                       "Blocked athlete's post still shown.")
+        // Back on the feed, a different athlete now leads — the blocked one's post is gone.
+        let newLead = app.buttons.matching(identifier: "feed-author").firstMatch
+        XCTAssertTrue(newLead.waitForExistence(timeout: 5), "Feed empty after block.")
+        XCTAssertNotEqual(newLead.label, leadName, "Blocked athlete still leads the feed.")
     }
 
     func testRespectReaction() {
@@ -127,19 +131,22 @@ final class WorldFeedUITests: XCTestCase {
         let world = app.tabBars.buttons["World"]
         XCTAssertTrue(world.waitForExistence(timeout: 15)); world.tap()
 
-        // Open Maya's profile from her post.
-        let post = app.staticTexts["Sunrise tempo"]
-        XCTAssertTrue(post.waitForExistence(timeout: 5)); post.tap()
+        // Open the profile of whichever athlete leads the feed via their author byline.
+        let lead = app.buttons.matching(identifier: "feed-author").firstMatch
+        XCTAssertTrue(lead.waitForExistence(timeout: 5), "No author byline in the feed.")
+        lead.tap()
 
-        // Ensure we end up Following her (deterministic regardless of persisted state).
-        let followBtn = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Maya Rivera'")).firstMatch
+        // Ensure we end up Following them. After --reset-social we start un-followed, so the button
+        // reads "Follow <name>" (note the trailing space — distinct from the "Following …" state).
+        let followBtn = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Follow '")).firstMatch
         XCTAssertTrue(followBtn.waitForExistence(timeout: 5), "Follow button not found on profile.")
-        if followBtn.label.hasPrefix("Follow ") { followBtn.tap() }
+        followBtn.tap()
 
-        // Back to the feed, switch to Following — her post should be there.
+        // Back to the feed, switch to Following — a followed athlete's post should be there.
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["Following"].tap()
-        XCTAssertTrue(app.staticTexts["Sunrise tempo"].waitForExistence(timeout: 5),
+        let followedPost = app.buttons.matching(identifier: "feed-author").firstMatch
+        XCTAssertTrue(followedPost.waitForExistence(timeout: 5),
                       "Followed athlete's post not in Following feed.")
     }
 }
