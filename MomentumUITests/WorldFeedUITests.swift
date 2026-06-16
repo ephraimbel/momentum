@@ -33,6 +33,37 @@ final class WorldFeedUITests: XCTestCase {
 
     }
 
+    func testCommentOnPost() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--reset-social"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+        app.tap()
+
+        let world = app.tabBars.buttons["World"]
+        XCTAssertTrue(world.waitForExistence(timeout: 15)); world.tap()
+
+        // Open comments on the first post.
+        let commentsBtn = app.buttons["Comments"].firstMatch
+        XCTAssertTrue(commentsBtn.waitForExistence(timeout: 5), "Comment button not found.")
+        commentsBtn.tap()
+
+        let field = app.textViews["Add a comment…"].firstMatch
+        let field2 = app.textFields["Add a comment…"].firstMatch
+        let input = field.exists ? field : field2
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "Comment composer not found.")
+        input.tap(); input.typeText("Strong work")
+        app.buttons["Post comment"].tap()
+
+        XCTAssertTrue(app.staticTexts["Strong work"].waitForExistence(timeout: 5),
+                      "Posted comment didn't appear.")
+    }
+
     func testBlockRemovesAthleteFromFeed() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--ui-test-route", "--reset-social"]

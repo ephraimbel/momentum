@@ -9,8 +9,10 @@ struct FeedPostCard: View {
     let item: FeedItem
     @Environment(ReactionStore.self) private var reactions
     @Environment(ModerationStore.self) private var moderation
+    @Environment(CommentStore.self) private var comments
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var confirmingReport = false
+    @State private var showingComments = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
@@ -91,9 +93,33 @@ struct FeedPostCard: View {
     private var footer: some View {
         HStack(spacing: Theme.Space.lg) {
             respectButton
+            commentButton
             Spacer(minLength: 0)
         }
         .padding(.top, 2)
+        .sheet(isPresented: $showingComments) { PostCommentsView(item: item) }
+    }
+
+    private var commentButton: some View {
+        Button { showingComments = true } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "bubble.left").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                if commentCount > 0 {
+                    Text("\(commentCount)").font(.rounded(Theme.FontSize.caption, weight: .bold))
+                        .monospacedDigit().foregroundStyle(Theme.inkTertiary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Comments")
+        .accessibilityValue("\(commentCount)")
+    }
+
+    /// Visible comment count = seeded community + the user's own, minus moderation-hidden.
+    private var commentCount: Int {
+        (CommunityComments.seed(for: item.id) + comments.comments(for: item.id))
+            .filter(moderation.isVisible).count
     }
 
     private var respectButton: some View {

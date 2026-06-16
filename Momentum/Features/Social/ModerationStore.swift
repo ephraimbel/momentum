@@ -47,6 +47,11 @@ final class ModerationStore {
     func isVisible(_ item: FeedItem) -> Bool {
         !isReported(item.id) && !(item.authorHandle.map(isBlocked) ?? false)
     }
+
+    /// Whether a comment should be shown — not reported, and not from a blocked athlete.
+    func isVisible(_ comment: Comment) -> Bool {
+        !isReported(comment.id) && !(comment.authorHandle.map(isBlocked) ?? false)
+    }
 }
 
 /// Why a post was reported — surfaced in the report dialog (App Store UGC expectation).
