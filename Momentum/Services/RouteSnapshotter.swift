@@ -23,7 +23,7 @@ enum RouteSnapshotter {
         snapshotter.styleURI = .light
         snapshotter.setCamera(to: snapshotter.camera(
             for: drawn, padding: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26), bearing: 0, pitch: 0))
-        let routeColor = UIColor(Theme.route)
+        let gradientStart = UIColor(Theme.route), gradientEnd = UIColor(Theme.iridescent[3])
 
         // Wait for the style to load, then snapshot and stroke the route over it in the overlay
         // handler (Core Graphics). Resume with the Sendable PNG `Data`.
@@ -39,13 +39,21 @@ enum RouteSnapshotter {
             snapshotter.onStyleLoaded.observeNext { _ in
                 snapshotter.start(overlayHandler: { overlay in
                     let ctx = overlay.context
-                    ctx.setLineWidth(6); ctx.setLineJoin(.round); ctx.setLineCap(.round)
-                    ctx.setStrokeColor(routeColor.cgColor)
-                    for (i, coord) in drawn.enumerated() {
-                        let p = overlay.pointForCoordinate(coord)
-                        if i == 0 { ctx.move(to: p) } else { ctx.addLine(to: p) }
-                    }
+                    let pts = drawn.map(overlay.pointForCoordinate)
+                    guard pts.count > 1 else { return }
+                    ctx.setLineJoin(.round); ctx.setLineCap(.round)
+                    // White casing under the route so it pops on the muted map.
+                    ctx.setLineWidth(8.5); ctx.setStrokeColor(UIColor.white.cgColor)
+                    ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
                     ctx.strokePath()
+                    // Periwinkle→lilac gradient, drawn per segment so the colour follows the path.
+                    ctx.setLineWidth(6)
+                    for i in 0..<(pts.count - 1) {
+                        let frac = Double(i) / Double(pts.count - 1)
+                        ctx.setStrokeColor(lerp(gradientStart, gradientEnd, frac).cgColor)
+                        ctx.beginPath(); ctx.move(to: pts[i]); ctx.addLine(to: pts[i + 1])
+                        ctx.strokePath()
+                    }
                 }, completion: { result in
                     switch result {
                     case .success(let image): finish(image.pngData())
@@ -76,4 +84,13 @@ enum RouteSnapshotter {
         return trimmed.count >= 2 ? trimmed : coords
     }
 
+    /// Linear interpolation between two colours (for the route gradient).
+    private static func lerp(_ a: UIColor, _ b: UIColor, _ t: Double) -> UIColor {
+        var (ar, ag, ab, aa): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        var (br, bg, bb, ba): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
+        b.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+        let f = CGFloat(min(1, max(0, t)))
+        return UIColor(red: ar + (br - ar) * f, green: ag + (bg - ag) * f, blue: ab + (bb - ab) * f, alpha: aa + (ba - aa) * f)
+    }
 }

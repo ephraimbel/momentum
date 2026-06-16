@@ -114,33 +114,70 @@ struct CardioTrackingView: View {
 
     private var mapLayer: some View {
         // North-up (rotation disabled) so the rejoin arrow's compass bearing reads as screen rotation.
-        Map(viewport: $viewport) {
-            // The suggested loop to follow, drawn first so the live trace sits on top of it.
-            if guideRoute.count > 1 {
-                PolylineAnnotation(lineCoordinates: guideRoute.map(\.clCoordinate))
-                    .lineColor(StyleColor(UIColor(guideColor)))
-                    .lineWidth(5).lineJoin(.round)
+        MapReader { proxy in
+            Map(viewport: $viewport) {
+                // A green dot where the run began (one stable annotation — no churn).
+                if let start = smoothedRoute.first {
+                    MapViewAnnotation(coordinate: start) { startDot }.allowOverlap(true)
+                }
+                // The athlete's purple location puck — its pulse marks the live trace head. The trace
+                // and dashed guide are LineLayers managed below (efficient source updates, no churn).
+                Puck2D(bearing: .heading).brandStyled()
             }
-            if smoothedRoute.count > 1 {
-                // The brand-purple trace with a crisp white casing so it pops on any base style.
-                PolylineAnnotation(lineCoordinates: smoothedRoute)
-                    .lineColor(StyleColor(UIColor(Theme.route)))
-                    .lineWidth(5.5).lineJoin(.round)
-                    .lineBorderColor(UIColor.white)
-                    .lineBorderWidth(1.5)
-            }
-            // The athlete's purple location puck (its pulse marks the live head of the trace).
-            Puck2D(bearing: .heading).brandStyled()
+            .mapStyle(mapStyle.mapboxStyle)
+            .ornamentOptions(MapChrome.hidden)
+            .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
+            .onStyleLoaded { _ in syncRouteLayers(proxy.map) }    // re-add layers on every style (re)load
+            .onChange(of: routeCoords.count) { syncRouteLayers(proxy.map) }
+            .ignoresSafeArea()
+            // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
+            // manual pan or pinch drops the lock; the recenter arrow re-engages it.
+            .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsUser = false })
+            .simultaneousGesture(MagnifyGesture().onChanged { _ in followsUser = false })
+            .overlay(alignment: .bottomTrailing) { if phase == .tracking { recenterButton } }
         }
-        .mapStyle(mapStyle.mapboxStyle)
-        .ornamentOptions(MapChrome.hidden)
-        .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
-        .ignoresSafeArea()
-        // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A manual
-        // pan or pinch drops the lock so the athlete can look around; the recenter arrow re-engages it.
-        .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsUser = false })
-        .simultaneousGesture(MagnifyGesture().onChanged { _ in followsUser = false })
-        .overlay(alignment: .bottomTrailing) { if phase == .tracking { recenterButton } }
+    }
+
+    /// Builds/updates the route layers: a dashed guide loop beneath the live trace (white casing +
+    /// solid purple). The trace is solid, not a gradient — Mapbox's `line-gradient` crashes when its
+    /// source is updated live, so the gradient lives on the completed-route maps (`RouteMapView`).
+    /// Sources update efficiently as the run grows; layers are re-added whenever the style reloads.
+    private func syncRouteLayers(_ map: MapboxMap?) {
+        guard let map, map.isStyleLoaded else { return }
+
+        // Dashed guide loop (the static suggested route), under the trace.
+        if guideRoute.count > 1 {
+            let data = GeoJSONSourceData.geometry(.lineString(LineString(guideRoute.map(\.clCoordinate))))
+            if map.sourceExists(withId: "guide-src") {
+                try? map.updateGeoJSONSource(withId: "guide-src", data: data)
+            } else {
+                var source = GeoJSONSource(id: "guide-src"); source.data = data
+                try? map.addSource(source)
+                var layer = LineLayer(id: "guide-line", source: "guide-src")
+                    .lineColor(StyleColor(UIColor(guideColor)))
+                    .lineWidth(4).lineCap(.round).lineJoin(.round)
+                layer.lineDasharray = .constant([1.6, 2.4])
+                try? map.addLayer(layer)
+            }
+        }
+
+        // Live trace: a white casing + a solid purple line on top.
+        guard smoothedRoute.count > 1 else { return }
+        let traceData = GeoJSONSourceData.geometry(.lineString(LineString(smoothedRoute)))
+        if map.sourceExists(withId: "trace-src") {
+            try? map.updateGeoJSONSource(withId: "trace-src", data: traceData)
+        } else {
+            var source = GeoJSONSource(id: "trace-src"); source.data = traceData
+            try? map.addSource(source)
+            let casing = LineLayer(id: "trace-casing", source: "trace-src")
+                .lineColor(StyleColor(UIColor.white))
+                .lineWidth(8.5).lineCap(.round).lineJoin(.round)
+            try? map.addLayer(casing)
+            let trace = LineLayer(id: "trace-line", source: "trace-src")
+                .lineColor(StyleColor(UIColor(Theme.route)))
+                .lineWidth(5.5).lineCap(.round).lineJoin(.round)
+            try? map.addLayer(trace)
+        }
     }
 
     /// The live trace, corner-rounded so the sparse (≥2m) accepted points read as a fluid GPS track.
@@ -148,6 +185,16 @@ struct CardioTrackingView: View {
 
     /// The guide line reads as a quiet dashed path — lighter over satellite imagery for contrast.
     private var guideColor: Color { mapStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
+
+    /// Green "start" dot (white ring) marking where the run began — matches the completed-route map.
+    private var startDot: some View {
+        ZStack {
+            Circle().fill(.white).frame(width: 16, height: 16)
+            Circle().fill(Theme.success).frame(width: 10, height: 10)
+        }
+        .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+        .accessibilityLabel("Start")
+    }
 
     private var recenterButton: some View {
         Button { Haptics.light(); recenterOnUser() } label: {
