@@ -19,20 +19,23 @@ struct FeedPostCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             authorRow
-            Text(item.title)
-                .font(.display(21, weight: .bold)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: Theme.Space.sm) {
-                Text(item.statLine).font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                    .monospacedDigit().foregroundStyle(Theme.inkSecondary)
-                if let pr = item.prBadge { PRBadge(text: pr) }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.title)
+                    .font(.display(23, weight: .bold)).foregroundStyle(Theme.ink)
+                    .lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Theme.Space.sm) {
+                    Text(item.statLine).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                        .monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                    if let pr = item.prBadge { PRBadge(text: pr) }
+                }
             }
-            media
+            media.padding(.top, 2)
             if let caption = item.caption {
                 Text(caption).font(.rounded(Theme.FontSize.body, weight: .regular))
-                    .foregroundStyle(Theme.inkSecondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(Theme.inkSecondary).lineSpacing(2)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
             }
-            footer
+            footer.padding(.top, 2)
         }
         .padding(.vertical, Theme.Space.lg)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
@@ -71,7 +74,7 @@ struct FeedPostCard: View {
 
     private var authorIdentity: some View {
         HStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: item.avatarData, name: item.authorName, size: 34)
+            AvatarView(photo: item.avatarData, name: item.authorName, size: 38)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(item.authorName).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
@@ -98,6 +101,9 @@ struct FeedPostCard: View {
             Image(uiImage: ui).resizable().scaledToFill()
                 .frame(maxWidth: .infinity).frame(height: 220).clipped()
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        } else if item.type.isStrengthStyle, let muscles = item.muscles, !muscles.isEmpty {
+            // The lift counterpart to the route map: the body, with worked muscles glowing iridescent.
+            muscleMedia(muscles)
         } else if let coords = item.routeCoordinates, coords.count > 1 {
             // The actual map behind the route trace; the basemap varies per post (Strava-style).
             RouteMapView(coordinates: coords, style: item.mapStyle, interactive: false)
@@ -105,6 +111,33 @@ struct FeedPostCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
                 .allowsHitTesting(false)   // never steal the feed's scroll
         }
+    }
+
+    /// Strength media — front/back body on a faint card, worked muscles lit, with a small caption of
+    /// the top muscles so the post reads at a glance like a route map shows the route.
+    private func muscleMedia(_ muscles: [MuscleGroup: Double]) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            MuscleMapView(activation: muscles)
+                .padding(.vertical, Theme.Space.md)
+            Text(workedSummary(muscles))
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.3)
+                .foregroundStyle(Theme.inkSecondary)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(Theme.background.opacity(0.7)))
+                .overlay(Capsule().stroke(Theme.hairline))
+                .padding(Theme.Space.sm)
+        }
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .allowsHitTesting(false)
+    }
+
+    /// "Chest · Shoulders · Triceps" — the most-worked muscles, for the media caption + a11y.
+    private func workedSummary(_ muscles: [MuscleGroup: Double]) -> String {
+        muscles.filter { $0.value > 0 }.sorted { $0.value > $1.value }
+            .prefix(3).map { $0.key.displayName }.joined(separator: " · ")
     }
 
     // MARK: Footer (reaction)

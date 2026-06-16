@@ -17,6 +17,9 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let caption: String?
     let statLine: String
     let prBadge: String?
+    /// Muscles worked (strength/HIIT) → rendered as a glowing `MuscleMapView`, the lift counterpart
+    /// to the route map. nil/empty for non-strength posts.
+    var muscles: [MuscleGroup: Double]? = nil
     /// Real route coordinates [[lat, lon]] — rendered as a map+trace in the feed. nil → glyph media.
     var routeLatLon: [[Double]]? = nil
     /// Which basemap to show behind this post's route (variety across the feed).
@@ -52,6 +55,7 @@ enum FeedAssembler {
         let distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
         let showRoute = profile.map { SocialPrivacy.showsRoute(w, profile: $0) } ?? false
         let route: [[Double]]? = showRoute ? routeLatLon(w) : nil
+        let muscles: [MuscleGroup: Double]? = muscleMap(w)
         return FeedItem(
             id: w.id,
             authorName: displayName(profile),
@@ -64,6 +68,7 @@ enum FeedAssembler {
             caption: w.note.isEmpty ? nil : w.note,
             statLine: statLine(w, weightUnit: weightUnit, distanceUnit: distanceUnit),
             prBadge: nil,
+            muscles: muscles,
             routeLatLon: route,
             mapStyle: .standard,
             photoData: w.photoData,
@@ -83,6 +88,18 @@ enum FeedAssembler {
             return "\(Formatters.distance(meters: gps.distanceM, unit: distanceUnit)) · \(Formatters.duration(s: w.durationS))"
         }
         return Formatters.duration(s: w.durationS)
+    }
+
+    /// Muscles a strength/HIIT workout worked — from real logged sets, with a title-based fallback so
+    /// a lift post always has a body to light up. nil for non-strength workouts.
+    static func muscleMap(_ w: Workout) -> [MuscleGroup: Double]? {
+        guard w.type.isStrengthStyle else { return nil }
+        if let session = w.strength {
+            let logged = MuscleActivation.from(session: session)
+            if !logged.isEmpty { return logged }
+        }
+        let title = w.title.isEmpty ? w.type.title : w.title
+        return StrengthFeedMuscles.activation(forTitle: title, type: w.type)
     }
 
     /// A workout's accepted GPS samples as real [[lat, lon]] coordinates for the feed map.

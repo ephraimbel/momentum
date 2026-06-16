@@ -49,9 +49,10 @@ enum CommunityGenerator {
         let style = feedStyles[rng.int(0...(feedStyles.count - 1))]
         let route: [[Double]]? = discipline.isGPS ? loopRoute(lat: lat, lon: lon, rng: &rng) : nil
         let (title, stat, pr) = content(for: discipline, rng: &rng)
+        let muscles = discipline.isStrengthStyle ? StrengthFeedMuscles.activation(forTitle: title, type: discipline) : nil
         return FeedItem(id: id, authorName: name, authorHandle: handle, location: city,
                         isCommunity: true, type: discipline, date: date, title: title, caption: caption,
-                        statLine: stat, prBadge: pr, routeLatLon: route, mapStyle: style,
+                        statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: route, mapStyle: style,
                         baseReactions: reactions)
     }
 

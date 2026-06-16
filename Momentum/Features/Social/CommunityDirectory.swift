@@ -34,10 +34,11 @@ enum CommunityDirectory {
                   pr: String? = nil, reactions: Int = 0) -> FeedItem {
             var rng = SeededRNG(n &* 99_173)
             let route = type.isGPS ? CommunityGenerator.loopRoute(lat: lat, lon: lon, rng: &rng) : nil
+            let muscles = type.isStrengthStyle ? StrengthFeedMuscles.activation(forTitle: title, type: type) : nil
             let style = CommunityGenerator.feedStyles[n % CommunityGenerator.feedStyles.count]
             return FeedItem(id: pid(n), authorName: a.name, authorHandle: a.handle, location: a.location,
                             isCommunity: true, type: type, date: when, title: title, caption: caption,
-                            statLine: stat, prBadge: pr, routeLatLon: route, mapStyle: style, baseReactions: reactions)
+                            statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: route, mapStyle: style, baseReactions: reactions)
         }
 
         let maya = CommunityAuthor("mayaruns", "Maya Rivera", "Austin, TX")

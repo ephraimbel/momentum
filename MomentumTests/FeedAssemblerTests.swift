@@ -57,4 +57,25 @@ struct FeedAssemblerTests {
         // Stable IDs across calls (deterministic feed).
         #expect(CommunityFeed.seed().map(\.id) == community.map(\.id))
     }
+
+    @Test func strengthPostsCarryMuscleMap() {
+        // Every strength/HIIT community post must light up a body (the lift counterpart to a route).
+        let strength = community.filter { $0.type.isStrengthStyle }
+        #expect(!strength.isEmpty)
+        #expect(strength.allSatisfy { ($0.muscles?.isEmpty == false) })
+        // Cardio posts never carry muscle data (they get a route map instead).
+        #expect(community.filter { $0.type.isGPS }.allSatisfy { $0.muscles == nil })
+    }
+
+    @Test func titleDrivesWorkedMuscles() {
+        #expect(StrengthFeedMuscles.activation(forTitle: "Push day", type: .strength).keys.contains(.chest))
+        #expect(StrengthFeedMuscles.activation(forTitle: "Pull day", type: .strength).keys.contains(.back))
+        #expect(StrengthFeedMuscles.activation(forTitle: "Leg day", type: .strength).keys.contains(.quads))
+    }
+
+    @Test func myStrengthWorkoutGetsMuscleMap() {
+        let w = Workout(); w.type = .strength; w.privacy = .public; w.title = "Push day"
+        let item = FeedAssembler.item(from: w, profile: UserProfile())
+        #expect(item.muscles?.isEmpty == false)
+    }
 }
