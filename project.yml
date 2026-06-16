@@ -18,7 +18,9 @@ settings:
 
 # Maps: Mapbox Maps SDK (replaces MapKit for all map rendering). The binary frameworks download
 # from api.mapbox.com via a DOWNLOADS:READ secret token in ~/.netrc (not committed); the runtime
-# public token lives in Info.plist (MBXAccessToken).
+# public token is injected from the untracked Secrets.xcconfig (MBX_ACCESS_TOKEN) into Info.plist's
+# MBXAccessToken at build — never committed. Copy Secrets.xcconfig.example → Secrets.xcconfig and
+# fill in your pk.* token.
 packages:
   MapboxMaps:
     url: https://github.com/mapbox/mapbox-maps-ios.git
@@ -38,6 +40,10 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Momentum
+    # Injects MBX_ACCESS_TOKEN (the Mapbox runtime token) from the untracked Secrets.xcconfig.
+    configFiles:
+      Debug: Secrets.xcconfig
+      Release: Secrets.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app
@@ -60,9 +66,9 @@ targets:
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
-        # Mapbox runtime public token (pk.* — safe to ship; URL-restrict to the app's bundle id in
-        # the Mapbox dashboard). The Maps SDK reads this key automatically at init.
-        MBXAccessToken: "MBX_TOKEN_PLACEHOLDER"
+        # Mapbox runtime token — injected from Secrets.xcconfig (MBX_ACCESS_TOKEN) at build, so no
+        # token is committed. The Maps SDK reads MBXAccessToken automatically at init.
+        MBXAccessToken: "$(MBX_ACCESS_TOKEN)"
         # Athlete Model / AI read (ATHLETE-MODEL.md §7). Empty → deterministic-template path (ships
         # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
         SupabaseURL: ""
