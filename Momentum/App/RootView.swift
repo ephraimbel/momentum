@@ -31,7 +31,12 @@ struct RootView: View {
                 }
             }
         }
-        .onAppear { if auth.isSignedIn && profiles.isEmpty { showOnboarding = true } }
+        .onAppear {
+            if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--social-globe") { selection = .world }
+            #endif
+        }
         // Just signed in (new athlete) → straight into onboarding.
         .onChange(of: auth.isSignedIn) { _, signedIn in if signedIn && profiles.isEmpty { showOnboarding = true } }
         // Returning to onboarding after a data wipe (Settings → Delete all data).

@@ -4,7 +4,7 @@ import Foundation
 /// (docs/SOCIAL-LAYER.md). Honest by design: clearly community content, never fake strangers. Both
 /// the feed (their posts) and their profile page read from this one source. Replaced by real network
 /// profiles once Supabase is configured.
-struct CommunityAthlete: Identifiable, Sendable, Equatable {
+struct CommunityAthlete: Identifiable, Sendable, Hashable {
     let handle: String
     let name: String
     let location: String?
@@ -12,6 +12,8 @@ struct CommunityAthlete: Identifiable, Sendable, Equatable {
     let totalWorkouts: Int
     let dayStreak: Int
     let totalDistanceM: Double
+    let lat: Double            // approximate home location for the globe (fuzzed — city-level)
+    let lon: Double
     let posts: [FeedItem]
     var id: String { handle }
 }
@@ -38,35 +40,35 @@ enum CommunityDirectory {
         return [
             CommunityAthlete(handle: maya.handle, name: maya.name, location: maya.location,
                 bio: "Marathoner chasing a sub-3. Coffee, then miles.",
-                totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000,
+                totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000, lat: 30.27, lon: -97.74,
                 posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", "6.2 mi · 48:10", pr: "5K PR", route: Routes.loop)]),
             CommunityAthlete(handle: theo.handle, name: theo.name, location: theo.location,
                 bio: "Strength coach. Big believer in boring consistency.",
-                totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000,
+                totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000, lat: 40.71, lon: -74.01,
                 posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02", pr: "Squat e1RM PR")]),
             CommunityAthlete(handle: lin.handle, name: lin.name, location: lin.location,
                 bio: "Cyclist. Hills are just downhills in waiting.",
-                totalWorkouts: 268, dayStreak: 5, totalDistanceM: 9_800_000,
+                totalWorkouts: 268, dayStreak: 5, totalDistanceM: 9_800_000, lat: 45.52, lon: -122.68,
                 posts: [post(3, lin, .ride, ago(7), "Hill repeats", nil, "24.3 mi · 1:31", route: Routes.wander)]),
             CommunityAthlete(handle: priya.handle, name: priya.name, location: priya.location,
                 bio: "Hybrid athlete — lift heavy, move fast.",
-                totalWorkouts: 190, dayStreak: 12, totalDistanceM: 620_000,
+                totalWorkouts: 190, dayStreak: 12, totalDistanceM: 620_000, lat: 51.51, lon: -0.13,
                 posts: [post(4, priya, .hiit, ago(11), "Conditioning", "Quick and brutal.", "22:00")]),
             CommunityAthlete(handle: marcus.handle, name: marcus.name, location: marcus.location,
                 bio: "Swimmer. The water always tells the truth.",
-                totalWorkouts: 221, dayStreak: 7, totalDistanceM: 540_000,
+                totalWorkouts: 221, dayStreak: 7, totalDistanceM: 540_000, lat: 25.76, lon: -80.19,
                 posts: [post(5, marcus, .swimming, ago(20), "Pool intervals", "2km steady.", "38:42")]),
             CommunityAthlete(handle: sofia.handle, name: sofia.name, location: sofia.location,
                 bio: "Trail runner. Higher is better.",
-                totalWorkouts: 156, dayStreak: 4, totalDistanceM: 1_900_000,
+                totalWorkouts: 156, dayStreak: 4, totalDistanceM: 1_900_000, lat: 40.01, lon: -105.27,
                 posts: [post(6, sofia, .trailRun, ago(28), "Mesa loop", "Big climb, bigger views.", "8.0 mi · 1:14", pr: "Longest run", route: Routes.bigLoop)]),
             CommunityAthlete(handle: devon.handle, name: devon.name, location: devon.location,
                 bio: "Erg every morning. Meters don't lie.",
-                totalWorkouts: 410, dayStreak: 15, totalDistanceM: 2_400_000,
+                totalWorkouts: 410, dayStreak: 15, totalDistanceM: 2_400_000, lat: 41.88, lon: -87.63,
                 posts: [post(7, devon, .rowing, ago(33), "Steady state", nil, "40:00")]),
             CommunityAthlete(handle: amara.handle, name: amara.name, location: amara.location,
                 bio: "Walking my way back to strong. One step at a time.",
-                totalWorkouts: 88, dayStreak: 30, totalDistanceM: 410_000,
+                totalWorkouts: 88, dayStreak: 30, totalDistanceM: 410_000, lat: 47.61, lon: -122.33,
                 posts: [post(8, amara, .walk, ago(46), "Recovery walk", "Easy day, clear head.", "3.1 mi · 47:20")]),
         ]
     }

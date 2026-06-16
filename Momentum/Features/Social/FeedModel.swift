@@ -4,7 +4,7 @@ import SwiftData
 /// One card in the community feed. A value type so the user's own public workouts and the
 /// clearly-labeled "Momentum community" content render through the same card without inventing fake
 /// SwiftData workouts (community items are never written to the user's history/analytics).
-struct FeedItem: Identifiable, Sendable, Equatable {
+struct FeedItem: Identifiable, Sendable, Hashable {
     let id: UUID
     let authorName: String
     let authorHandle: String?

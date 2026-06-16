@@ -13,6 +13,9 @@ struct WorldView: View {
     @Query private var profiles: [UserProfile]
     @Environment(FollowStore.self) private var follows
     @State private var segment: Segment = .discover
+    #if DEBUG
+    @State private var debugGlobe = ProcessInfo.processInfo.arguments.contains("--social-globe")
+    #endif
 
     private var profile: UserProfile? { profiles.first }
     private var discoverFeed: [FeedItem] {
@@ -57,6 +60,16 @@ struct WorldView: View {
                 }
             }
         }
+        #if DEBUG
+        // Deterministic deep link for sim verification (small toolbar buttons are unreliable to tap).
+        .fullScreenCover(isPresented: $debugGlobe) {
+            NavigationStack {
+                GlobeView().toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button("Close") { debugGlobe = false } }
+                }
+            }
+        }
+        #endif
     }
 
     /// A list of feed cards; community authors are tappable through to their profile.
@@ -76,8 +89,11 @@ struct WorldView: View {
         HStack(alignment: .firstTextBaseline) {
             Text("World").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
-            // The globe lands here in Slice 3.
-            Image(systemName: "globe").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            NavigationLink { GlobeView() } label: {
+                Image(systemName: "globe").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .frame(width: 32, height: 32)
+            }
+            .accessibilityLabel("Globe")
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.md).padding(.bottom, Theme.Space.md)
