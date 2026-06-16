@@ -80,10 +80,10 @@ struct GlobeView: View {
             CircleAnnotationGroup(athletes) { athlete in
                 CircleAnnotation(centerCoordinate: CLLocationCoordinate2D(latitude: athlete.lat, longitude: athlete.lon))
                     .circleColor(StyleColor(UIColor(Theme.route)))
-                    .circleRadius(5)
-                    .circleBlur(0.8)
-                    .circleStrokeColor(StyleColor(UIColor.white.withAlphaComponent(0.55)))
-                    .circleStrokeWidth(0.5)
+                    .circleRadius(6)
+                    .circleBlur(0.6)
+                    .circleStrokeColor(StyleColor(UIColor.white.withAlphaComponent(0.85)))
+                    .circleStrokeWidth(1)
                     .onTapGesture { selected = athlete }
             }
             // Your own dot (white core, purple ring) when opted onto the map.
@@ -95,7 +95,7 @@ struct GlobeView: View {
                     .circleStrokeWidth(2)
             }
         }
-        .mapStyle(.dark)                       // realistic dark globe — real geography, floats in space
+        .mapStyle(.standard)                   // realistic blue-and-green Earth (vector + atmosphere) — lighter than satellite imagery
         .ornamentOptions(MapChrome.hidden)
     }
 
