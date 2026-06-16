@@ -1,18 +1,19 @@
 import SwiftUI
-import MapKit
+import MapboxMaps
 
 /// The map base layers a user can switch between (Strava's "layers" control), kept in one place so
 /// every map — route suggestion, live tracking, history — offers the same set. `.standard` is the
-/// brand default (muted monochrome, the light hero look); `.hybrid` / `.satellite` are opt-in for
-/// athletes who want real terrain and greenery. All 100% Apple-native (MapKit `MapStyle`).
+/// brand default (Mapbox Light — muted, the light hero look); `.hybrid` / `.satellite` are opt-in for
+/// athletes who want real terrain and greenery. Rendered by Mapbox.
 enum MapStyleOption: String, CaseIterable, Identifiable {
-    case standard, hybrid, satellite
+    case standard, realistic, hybrid, satellite
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .standard: "Map"
+        case .realistic: "Realistic"
         case .hybrid: "Hybrid"
         case .satellite: "Satellite"
         }
@@ -21,23 +22,36 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .standard: "map"
+        case .realistic: "building.2"
         case .hybrid: "globe.americas"
         case .satellite: "globe.americas.fill"
         }
     }
 
-    /// Points of interest are excluded everywhere — the map is a canvas for the route, not a directory.
-    var mapStyle: MapStyle {
+    /// The Mapbox base style. Light is the brand's muted canvas; Realistic is Mapbox Standard (3D
+    /// buildings, terrain, dynamic lighting); hybrid/satellite add aerial imagery.
+    var mapboxStyle: MapboxMaps.MapStyle {
         switch self {
-        case .standard: .standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll)
-        case .hybrid:   .hybrid(elevation: .realistic, pointsOfInterest: .excludingAll)
-        case .satellite: .imagery(elevation: .realistic)
+        case .standard: .light
+        case .realistic: .standard
+        case .hybrid: .standardSatellite
+        case .satellite: .satelliteStreets
         }
     }
 
-    /// True once we leave the monochrome base — route accents/labels need brighter contrast over
-    /// satellite imagery (a heavier white halo, lighter ink) than over the muted standard map.
-    var isImagery: Bool { self != .standard }
+    /// Same base styles as a `StyleURI`, for UIKit `MapView`s (the heatmap) that load a style by URI.
+    var styleURI: StyleURI {
+        switch self {
+        case .standard: .light
+        case .realistic: .standard
+        case .hybrid: .satelliteStreets
+        case .satellite: .satellite
+        }
+    }
+
+    /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
+    /// than over the muted/standard basemaps.
+    var isImagery: Bool { self == .hybrid || self == .satellite }
 }
 
 /// Strava-style layers control — a floating glass button that switches the map base. Shared by every

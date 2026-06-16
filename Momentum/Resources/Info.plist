@@ -20,6 +20,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>MBXAccessToken</key>
+	<string>MBX_TOKEN_PLACEHOLDER</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>momentum reads heart rate, body weight, and workout data to personalize your stats and coaching.</string>
 	<key>NSHealthUpdateUsageDescription</key>

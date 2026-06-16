@@ -10,7 +10,7 @@ A premium, AI-personalized, **multi-discipline** iOS fitness app — tracks **ru
 One-liner: **keep moving.**
 
 ## Non-negotiable principles
-- **100% Apple-native.** SwiftUI, iOS 17+, MapKit, HealthKit. **No third-party map or UI SDKs.** Allowed third-party deps: RevenueCat, Superwall, supabase-swift.
+- **Apple-native UI.** SwiftUI, iOS 18+, HealthKit; no third-party **UI** SDKs. **Maps are Mapbox** (decision 2026-06-16, overrides the original MapKit-only rule) — all map rendering uses the MapboxMaps SDK via `MapStyleOption`/`RouteMapView`/`HeatmapMapView` (`MBXAccessToken` pk-token in Info.plist; SDK download via a `~/.netrc` secret token, not committed). Allowed third-party deps: MapboxMaps, RevenueCat, Superwall, supabase-swift.
 - **Monochrome + iridescent.** ~95% pure black/white. Iridescence is an *earned* accent — it appears ONLY on progress/achievement (rings, PRs, streaks, live route accent, rest-timer ring, plan reveal). If it's not marking progress, it's not there. Dark mode is the hero look (true black).
 - **Offline-first, zero lost workouts.** SwiftData is the local source of truth; persist every GPS sample and every completed set as they occur; recover on cold launch.
 - **No-shame coaching.** Never a red "failed" state; missed sessions move with a one-line rationale.

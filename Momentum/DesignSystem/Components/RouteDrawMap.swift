@@ -1,8 +1,8 @@
 import SwiftUI
-import MapKit
+import MapboxMaps
 import CoreLocation
 
-/// A MapKit map with an iridescent route that **draws itself** — momentum's Strava-style motif, shared
+/// A Mapbox map with an iridescent route that **draws itself** — momentum's Strava-style motif, shared
 /// by the welcome screen and the "building your plan" beat. The map fades in, a slow dolly frames the
 /// loop, and an organic GPS-like path traces across it with an eased pen and a glowing comet head that
 /// lands with a pop. A whisper-quiet live distance ticks up as it draws. It's a brand visual (not the
@@ -14,7 +14,7 @@ struct RouteDrawMap: View {
     /// Called once the route has finished drawing and the head has landed — lets the caller time a handoff.
     var onComplete: (() -> Void)? = nil
 
-    @State private var camera: MapCameraPosition
+    @State private var viewport: Viewport
     @State private var drawProgress = 0.0     // 0…1, eased; maps to how much of the path is drawn
     @State private var mapIn = false
     @State private var headPulse = false
@@ -32,7 +32,14 @@ struct RouteDrawMap: View {
         self.route = r
         self.cumDist = RouteDrawMap.cumulativeDistances(r)
         // Open on a wide establishing frame; begin() dollies in to the full loop as it draws.
-        _camera = State(initialValue: .region(RouteDrawMap.region(for: r, zoom: 1.6)))
+        _viewport = State(initialValue: .overview(geometry: LineString(r),
+            geometryPadding: EdgeInsets(top: 130, leading: 130, bottom: 130, trailing: 130)))
+    }
+
+    /// Tight frame that snugly fits the loop — the dolly-in target.
+    private var tightViewport: Viewport {
+        .overview(geometry: LineString(route),
+                  geometryPadding: EdgeInsets(top: 56, leading: 56, bottom: 56, trailing: 56))
     }
 
     private var shownCount: Int {
@@ -48,22 +55,24 @@ struct RouteDrawMap: View {
     }
 
     var body: some View {
-        Map(position: $camera, interactionModes: []) {
+        Map(viewport: $viewport) {
             // Soft white halo under the line so the iridescent route reads as glowing on the light map.
-            MapPolyline(coordinates: drawn)
-                .stroke(.white.opacity(0.5), style: StrokeStyle(lineWidth: 12, lineCap: .round, lineJoin: .round))
-            MapPolyline(coordinates: drawn)
-                .stroke(iridescent, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+            PolylineAnnotation(lineCoordinates: drawn)
+                .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.5))).lineWidth(12).lineJoin(.round)
+            PolylineAnnotation(lineCoordinates: drawn)
+                .lineColor(StyleColor(UIColor(Theme.iridescent[0]))).lineWidth(6).lineJoin(.round)
             // Comet: a brighter white-cored streak trailing the head gives the draw direction + energy.
-            MapPolyline(coordinates: comet)
-                .stroke(.white.opacity(0.65), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-            MapPolyline(coordinates: comet)
-                .stroke(iridescent, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+            PolylineAnnotation(lineCoordinates: comet)
+                .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.65))).lineWidth(8).lineJoin(.round)
+            PolylineAnnotation(lineCoordinates: comet)
+                .lineColor(StyleColor(UIColor(Theme.iridescent[2]))).lineWidth(4).lineJoin(.round)
             if let head {
-                Annotation("", coordinate: head, anchor: .center) { headDot }
+                MapViewAnnotation(coordinate: head) { headDot }.allowOverlap(true)
             }
         }
-        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false))
+        .mapStyle(MapStyleOption.standard.mapboxStyle)
+        .ornamentOptions(MapChrome.hidden)
+        .allowsHitTesting(false)
         .opacity(mapIn ? 1 : 0)
         .overlay(alignment: .bottom) { if showsStats { statsPill } }
         .onAppear(perform: begin)
@@ -108,7 +117,7 @@ struct RouteDrawMap: View {
 
         guard !reduceMotion else {
             drawProgress = 1
-            camera = .region(Self.region(for: route, zoom: 1.0))
+            viewport = tightViewport
             landed = true
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(0.6))
@@ -124,7 +133,7 @@ struct RouteDrawMap: View {
 
             // Slow dolly from the wide establishing frame to the full loop, finishing as the path does.
             withAnimation(.easeInOut(duration: drawDuration + 0.5)) {
-                camera = .region(Self.region(for: route, zoom: 1.0))
+                viewport = tightViewport
             }
             // Eased pen: gentle out of the start, decelerate into the finish — reads hand-drawn.
             withAnimation(Motion.pen(drawDuration)) { drawProgress = 1 }
@@ -185,12 +194,4 @@ struct RouteDrawMap: View {
         return out
     }
 
-    static func region(for coords: [CLLocationCoordinate2D], zoom: Double) -> MKCoordinateRegion {
-        let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
-        let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
-        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
-        let span = MKCoordinateSpan(latitudeDelta: max(0.004, (maxLat - minLat) * 1.5 * zoom),
-                                    longitudeDelta: max(0.004, (maxLon - minLon) * 1.5 * zoom))
-        return MKCoordinateRegion(center: center, span: span)
-    }
 }

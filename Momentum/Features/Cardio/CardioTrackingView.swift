@@ -1,5 +1,5 @@
 import SwiftUI
-import MapKit
+import MapboxMaps
 import SwiftData
 import CoreLocation
 import UIKit
@@ -21,7 +21,7 @@ struct CardioTrackingView: View {
     @Query private var workouts: [Workout]
     @State private var phase: Phase = .acquiring
     @State private var countdown = 3
-    @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
+    @State private var viewport: Viewport = .idle
     @State private var confirmStop = false
     @State private var vm: CardioViewModel?
     @State private var goalReached = false
@@ -43,15 +43,11 @@ struct CardioTrackingView: View {
     private static let offRouteM = 35.0
     private static let onRouteM = 20.0
 
-    /// Tight street-level framing (~400m across) for running.
-    private static let runSpan = MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
-    /// Camera-to-ground distance for the locked-on running view — a tight street-level zoom.
-    private static let followDistanceM = 900.0
+    /// Tight street-level zoom for the locked-on running view (north-up).
+    private static let followZoom: Double = 16
 
-    /// A north-up camera zoomed in on `coord` — the locked-on follow framing.
-    private func followCamera(on coord: CLLocationCoordinate2D) -> MapCameraPosition {
-        .camera(MapCamera(centerCoordinate: coord, distance: Self.followDistanceM, heading: 0, pitch: 0))
-    }
+    /// The locked-on follow viewport — follows the location puck, north-up, at a tight running zoom.
+    private var followViewport: Viewport { .followPuck(zoom: Self.followZoom, bearing: .constant(0)) }
 
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
@@ -97,12 +93,7 @@ struct CardioTrackingView: View {
         }
         // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
         // the athlete centered at the tight running zoom.
-        .onChange(of: routeCoords.count) {
-            updateOffRoute()
-            if followsUser, phase == .tracking, let here = routeCoords.last {
-                withAnimation(.easeInOut(duration: 0.45)) { camera = followCamera(on: here) }
-            }
-        }
+        .onChange(of: routeCoords.count) { updateOffRoute() }   // followPuck keeps the camera centered
         // The moment recording starts, snap in to the athlete and follow.
         .onChange(of: phase) { _, newPhase in
             if newPhase == .tracking { recenterOnUser() }
@@ -113,40 +104,43 @@ struct CardioTrackingView: View {
             if phase == .acquiring { withAnimation(Motion.standard) { acquireTimedOut = true } }
         }
         .onAppear {
-            // Center on the user (follows live); until a fix lands, fall back to their last route's
-            // neighborhood rather than the default country-wide view.
-            let fallback: MapCameraPosition = lastKnownCoordinate
-                .map { .region(MKCoordinateRegion(center: $0, span: Self.runSpan)) } ?? .automatic
-            camera = .userLocation(fallback: fallback)
+            // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
+            // begins we follow the location puck (see `recenterOnUser`).
+            if case .idle = viewport {
+                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 15) } ?? followViewport
+            }
         }
     }
 
     private var mapLayer: some View {
-        // North-up (no rotation gesture) so the rejoin arrow's compass bearing reads as screen rotation.
-        Map(position: $camera, interactionModes: [.pan, .zoom]) {
-            UserAnnotation()
+        // North-up (rotation disabled) so the rejoin arrow's compass bearing reads as screen rotation.
+        Map(viewport: $viewport) {
+            Puck2D(bearing: .heading)
             // The suggested loop to follow, drawn first so the live trace sits on top of it.
             if guideRoute.count > 1 {
-                MapPolyline(coordinates: guideRoute.map(\.clCoordinate))
-                    .stroke(guideColor, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round, dash: [2, 9]))
+                PolylineAnnotation(lineCoordinates: guideRoute.map(\.clCoordinate))
+                    .lineColor(StyleColor(UIColor(guideColor)))
+                    .lineWidth(5).lineJoin(.round)
             }
             if smoothedRoute.count > 1 {
-                // The light-purple trace (the onboarding accent) over a soft white halo so it glows
-                // on the light map.
-                MapPolyline(coordinates: smoothedRoute)
-                    .stroke(.white.opacity(0.55), style: StrokeStyle(lineWidth: 11, lineCap: .round, lineJoin: .round))
-                MapPolyline(coordinates: smoothedRoute)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                // The light-purple trace (the onboarding accent) over a soft white halo so it glows.
+                PolylineAnnotation(lineCoordinates: smoothedRoute)
+                    .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.55)))
+                    .lineWidth(11).lineJoin(.round)
+                PolylineAnnotation(lineCoordinates: smoothedRoute)
+                    .lineColor(StyleColor(UIColor(Theme.route)))
+                    .lineWidth(6).lineJoin(.round)
             }
             if let last = routeCoords.last {
-                Annotation("", coordinate: last) { BreathingDot() }
+                MapViewAnnotation(coordinate: last) { BreathingDot() }.allowOverlap(true)
             }
         }
-        .mapStyle(mapStyle.mapStyle)
+        .mapStyle(mapStyle.mapboxStyle)
+        .ornamentOptions(MapChrome.hidden)
+        .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
         .ignoresSafeArea()
-        // We keep the camera locked on the athlete ourselves (see `recenterOnUser`) so we control the
-        // zoom — `.userLocation` follow can't be pinned to a tight running framing. A manual pan or
-        // pinch drops the lock so the athlete can look around; the recenter arrow re-engages it.
+        // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A manual
+        // pan or pinch drops the lock so the athlete can look around; the recenter arrow re-engages it.
         .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsUser = false })
         .simultaneousGesture(MagnifyGesture().onChanged { _ in followsUser = false })
         .overlay(alignment: .bottomTrailing) { if phase == .tracking { recenterButton } }
@@ -176,10 +170,7 @@ struct CardioTrackingView: View {
     /// native user-location framing until the first fix lands.
     private func recenterOnUser() {
         followsUser = true
-        withAnimation(.easeInOut(duration: 0.4)) {
-            if let here = routeCoords.last { camera = followCamera(on: here) }
-            else { camera = .userLocation(fallback: .automatic) }
-        }
+        withAnimation(.easeInOut(duration: 0.4)) { viewport = followViewport }
     }
 
     private var topBar: some View {

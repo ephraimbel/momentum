@@ -188,6 +188,11 @@ struct SettingsView: View {
             actionRow("Terms of Service", icon: "doc.text") { open("https://momentum.fit/terms") }
             Divider().overlay(Theme.hairline)
             actionRow("Privacy Policy", icon: "hand.raised") { open("https://momentum.fit/privacy") }
+            Divider().overlay(Theme.hairline)
+            // Map attribution (the on-map Mapbox/OSM credit is hidden, so it lives here).
+            actionRow("Map data © Mapbox", icon: "map") { open("https://www.mapbox.com/about/maps/") }
+            Divider().overlay(Theme.hairline)
+            actionRow("Map data © OpenStreetMap", icon: "globe") { open("https://www.openstreetmap.org/copyright") }
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.vertical, Theme.Space.xs)

@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import MapKit
 
 /// "Your map" — every place the athlete has been active, drawn as an iridescent density heatmap from
 /// their *own* routes (the private mirror, north-star). Switchable base layers; lights up as they log
@@ -13,7 +12,6 @@ struct PersonalHeatmapView: View {
     @Query private var workouts: [Workout]
 
     @State private var cells: [HeatCell] = []
-    @State private var region: MKCoordinateRegion?
     @State private var style: MapStyleOption = .standard
     @State private var totalMeters = 0.0
     @State private var activityCount = 0
@@ -24,7 +22,7 @@ struct PersonalHeatmapView: View {
             if cells.isEmpty {
                 Color.clear.overlay { if loaded { emptyState } }
             } else {
-                HeatmapMapView(cells: cells, style: style, region: region).ignoresSafeArea()
+                HeatmapMapView(cells: cells, style: style).ignoresSafeArea()
             }
             topBar
             if !cells.isEmpty { statsBar }
@@ -37,7 +35,6 @@ struct PersonalHeatmapView: View {
     private func build() async {
         let r = await HeatmapSource.build(from: workouts)
         cells = r.cells
-        region = r.region
         totalMeters = r.totalMeters
         activityCount = r.activityCount
         loaded = true

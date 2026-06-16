@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
-import MapKit
+import CoreLocation
+import MapboxMaps
 
 /// Today — the map-first home (PRD §4.2/§7.2). A full-screen map for instant access to starting a
 /// run/ride/walk/hike, an activity selector, today's plan banner, and a goal customizer. Start →
@@ -17,7 +18,7 @@ struct TodayView: View {
         ProcessInfo.processInfo.arguments.contains("--ui-test-strength") ? .strength : .run
     @State private var goalKind: GoalKind = .open
     @State private var goalValue = 3.0
-    @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
+    @State private var viewport: Viewport = .idle
     @State private var launch: TodayLaunch?
     @State private var summary: PresentedWorkout?
     @State private var locator = LocationService()
@@ -65,19 +66,19 @@ struct TodayView: View {
                                                        hasWorkedOutToday: workedOutToday)
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
-            // Lock the map onto the athlete. `.userLocation` centers on them once a fix lands; until
-            // then fall back to their last route's neighborhood (never the whole-world `.automatic`).
-            let fallback: MapCameraPosition = lastKnownCoordinate
-                .map { .region(region(around: $0)) } ?? .automatic
-            camera = .userLocation(fallback: fallback)
+            // Open over the athlete's last-known neighborhood (never the whole world); once a live
+            // fix lands we switch to following the location puck.
+            if case .idle = viewport {
+                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 13.5) } ?? .followPuck(zoom: 14)
+            }
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
             // usually settled this); requesting also pulls a one-shot fix to center the map on them.
             locator.requestAuthorization()
         }
-        // Center on the athlete the moment a fix lands (the blue dot is theirs).
+        // Follow the athlete's puck the moment a fix lands.
         .onChange(of: locator.lastLocation?.latitude) {
-            if let loc = locator.lastLocation {
-                withAnimation(Motion.standard) { camera = .region(region(around: loc)) }
+            if locator.lastLocation != nil {
+                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15) }
             }
         }
         .fullScreenCover(item: $launch) { liveScreen($0) }
@@ -191,9 +192,12 @@ struct TodayView: View {
     }
 
     private var mapLayer: some View {
-        Map(position: $camera) { UserAnnotation() }
-            .mapStyle(mapStyle.mapStyle)
-            .ignoresSafeArea()
+        Map(viewport: $viewport) {
+            Puck2D(bearing: .heading)   // the athlete's location puck
+        }
+        .mapStyle(mapStyle.mapboxStyle)
+        .ornamentOptions(MapChrome.hidden)
+        .ignoresSafeArea()
     }
 
     /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
@@ -356,17 +360,13 @@ struct TodayView: View {
     }
 
 
-    private func region(around c: CLLocationCoordinate2D) -> MKCoordinateRegion {
-        MKCoordinateRegion(center: c, span: MKCoordinateSpan(latitudeDelta: 0.014, longitudeDelta: 0.014))
-    }
-
     private var recenterButton: some View {
         Button {
             Haptics.light()
             locator.refreshLocation()
             withAnimation(Motion.standard) {
-                if let loc = locator.lastLocation { camera = .region(region(around: loc)) }
-                else { camera = .userLocation(fallback: .automatic) }
+                if let loc = locator.lastLocation { viewport = .camera(center: loc, zoom: 15) }
+                else { viewport = .followPuck(zoom: 15) }
             }
         } label: {
             Image(systemName: "location.fill")

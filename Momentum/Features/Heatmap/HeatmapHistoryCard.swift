@@ -1,5 +1,4 @@
 import SwiftUI
-import MapKit
 
 /// A compact "Your map" banner at the top of History — the personal heatmap as a glanceable look-back
 /// (not a tab). Renders nothing until there are GPS routes, so it never shows an empty box; taps to
@@ -26,7 +25,7 @@ struct HeatmapHistoryCard: View {
 
     private func card(_ r: HeatmapSource.Result) -> some View {
         ZStack(alignment: .bottomLeading) {
-            HeatmapMapView(cells: r.cells, style: .standard, region: r.region)
+            HeatmapMapView(cells: r.cells, style: .standard)
                 .frame(height: 200)
                 .allowsHitTesting(false)               // the whole card is the tap target
             LinearGradient(colors: [.clear, .black.opacity(0.5)], startPoint: .center, endPoint: .bottom)

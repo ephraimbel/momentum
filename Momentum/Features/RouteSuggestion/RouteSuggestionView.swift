@@ -1,15 +1,16 @@
 import SwiftUI
-import MapKit
+import CoreLocation
+import MapboxMaps
 
 /// "Suggest a loop" — pick a distance, get up to three path-snapped loops from here, shuffle for
 /// alternatives, pick one. Chrome floats (glass) over the map; the selected loop wears the
-/// earned-iridescent accent (PRD §6). Run/walk/hike only (MapKit has no cycling directions).
+/// earned-iridescent accent (PRD §6). Run/walk/hike only (no cycling directions).
 struct RouteSuggestionView: View {
     @State private var vm: RouteSuggestionViewModel
     private let onUse: (SuggestedLoop) -> Void
     private let onClose: () -> Void
 
-    @State private var camera: MapCameraPosition
+    @State private var viewport: Viewport
     @State private var mapStyle: MapStyleOption = .standard
 
     init(start: GeoPoint, targetM: Double = 5000, distanceUnit: DistanceUnit = .auto,
@@ -20,9 +21,7 @@ struct RouteSuggestionView: View {
             start: start, targetM: targetM, distanceUnit: distanceUnit, directions: directions))
         // Open locked on the athlete's location, not the whole world — we reframe to the loop once
         // candidates load.
-        _camera = State(initialValue: .region(MKCoordinateRegion(
-            center: start.clCoordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))))
+        _viewport = State(initialValue: .camera(center: start.clCoordinate, zoom: 13))
         self.onUse = onUse
         self.onClose = onClose
     }
@@ -43,24 +42,26 @@ struct RouteSuggestionView: View {
     // MARK: Map
 
     private var map: some View {
-        Map(position: $camera, interactionModes: [.pan, .zoom]) {
-            Annotation("Start", coordinate: vm.start.clCoordinate) { startDot }
+        Map(viewport: $viewport) {
+            MapViewAnnotation(coordinate: vm.start.clCoordinate) { startDot }.allowOverlap(true)
             // Non-selected first, so the selected loop draws on top.
-            ForEach(vm.candidates.filter { $0.id != vm.selectedID }) { loop in
-                MapPolyline(coordinates: loop.polyline.map(\.clCoordinate))
-                    .stroke(mapStyle.isImagery ? Color.white.opacity(0.7) : Theme.inkTertiary.opacity(0.35),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+            PolylineAnnotationGroup(vm.candidates.filter { $0.id != vm.selectedID }) { loop in
+                PolylineAnnotation(lineCoordinates: loop.polyline.map(\.clCoordinate))
+                    .lineColor(StyleColor(UIColor(mapStyle.isImagery ? Color.white.opacity(0.7) : Theme.inkTertiary.opacity(0.35))))
+                    .lineWidth(4).lineJoin(.round)
             }
             if let sel = vm.selected {
-                let coords = sel.polyline.map(\.clCoordinate)
-                MapPolyline(coordinates: coords)
-                    .stroke(.white.opacity(0.55), style: StrokeStyle(lineWidth: 10, lineCap: .round, lineJoin: .round))
-                MapPolyline(coordinates: coords)
-                    .stroke(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing),
-                            style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                PolylineAnnotation(lineCoordinates: sel.polyline.map(\.clCoordinate))
+                    .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.55)))
+                    .lineWidth(10).lineJoin(.round)
+                // Earned accent — solid iridescent stop (annotations can't carry a gradient stroke).
+                PolylineAnnotation(lineCoordinates: sel.polyline.map(\.clCoordinate))
+                    .lineColor(StyleColor(UIColor(Theme.iridescent[0])))
+                    .lineWidth(6).lineJoin(.round)
             }
         }
-        .mapStyle(mapStyle.mapStyle)
+        .mapStyle(mapStyle.mapboxStyle)
+        .ornamentOptions(MapChrome.hidden)
         .ignoresSafeArea()
     }
 
@@ -195,13 +196,10 @@ struct RouteSuggestionView: View {
 
     private func frameSelected() {
         guard let loop = vm.selected, loop.polyline.count > 1 else { return }
-        let lats = loop.polyline.map(\.lat), lons = loop.polyline.map(\.lon)
-        let center = CLLocationCoordinate2D(latitude: (lats.min()! + lats.max()!) / 2,
-                                            longitude: (lons.min()! + lons.max()!) / 2)
-        let span = MKCoordinateSpan(latitudeDelta: max(0.005, (lats.max()! - lats.min()!) * 1.5),
-                                    longitudeDelta: max(0.005, (lons.max()! - lons.min()!) * 1.5))
+        let coords = loop.polyline.map(\.clCoordinate)
         withAnimation(.easeInOut(duration: 0.5)) {
-            camera = .region(MKCoordinateRegion(center: center, span: span))
+            viewport = .overview(geometry: LineString(coords),
+                                 geometryPadding: EdgeInsets(top: 90, leading: 40, bottom: 230, trailing: 40))
         }
     }
 }

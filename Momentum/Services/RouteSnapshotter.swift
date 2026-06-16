@@ -1,10 +1,11 @@
 import Foundation
-import MapKit
+import CoreLocation
+import MapboxMaps
 import UIKit
 import SwiftUI
 
 /// Renders a clean, muted route snapshot (PRD §8.5) — a Strava-style image of the run drawn on a
-/// light muted map, stored in `GPSDetail.mapSnapshotData` and shown as the workout's image in
+/// light muted Mapbox map, stored in `GPSDetail.mapSnapshotData` and shown as the workout's image in
 /// Today's "done today" and the History feed.
 @MainActor
 enum RouteSnapshotter {
@@ -18,37 +19,42 @@ enum RouteSnapshotter {
         let drawn = RouteSmoothing.smooth(clippingEnds(coordinates))
         guard drawn.count > 1 else { return nil }
 
-        let options = MKMapSnapshotter.Options()
-        options.region = region(for: drawn)
-        options.size = size
-        options.pointOfInterestFilter = .excludingAll
-        options.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: .flat, emphasisStyle: .muted)
-        options.traitCollection = UITraitCollection(userInterfaceStyle: .light)
-
-        let snapshotter = MKMapSnapshotter(options: options)
+        let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2))
+        snapshotter.styleURI = .light
+        snapshotter.setCamera(to: snapshotter.camera(
+            for: drawn, padding: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26), bearing: 0, pitch: 0))
         let routeColor = UIColor(Theme.route)
 
-        // Render the route on the snapshot inside the completion (on the main queue) and resume
-        // with the Sendable PNG `Data` — avoids sending the non-Sendable snapshot across actors.
+        // Wait for the style to load, then snapshot and stroke the route over it in the overlay
+        // handler (Core Graphics). Resume with the Sendable PNG `Data`.
         return await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
-            snapshotter.start(with: .main) { snapshot, _ in
-                guard let snapshot else { cont.resume(returning: nil); return }
-                let renderer = UIGraphicsImageRenderer(size: size)
-                let data = renderer.pngData { _ in
-                    snapshot.image.draw(at: .zero)
-                    let path = UIBezierPath()
-                    for (i, coord) in drawn.enumerated() {
-                        let p = snapshot.point(for: coord)
-                        if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
-                    }
-                    path.lineWidth = 6
-                    path.lineJoinStyle = .round
-                    path.lineCapStyle = .round
-                    routeColor.setStroke()
-                    path.stroke()
-                }
+            var tokens: [AnyCancelable] = []
+            var done = false
+            func finish(_ data: Data?) {
+                guard !done else { return }
+                done = true
+                tokens.removeAll()
                 cont.resume(returning: data)
             }
+            snapshotter.onStyleLoaded.observeNext { _ in
+                snapshotter.start(overlayHandler: { overlay in
+                    let ctx = overlay.context
+                    ctx.setLineWidth(6); ctx.setLineJoin(.round); ctx.setLineCap(.round)
+                    ctx.setStrokeColor(routeColor.cgColor)
+                    for (i, coord) in drawn.enumerated() {
+                        let p = overlay.pointForCoordinate(coord)
+                        if i == 0 { ctx.move(to: p) } else { ctx.addLine(to: p) }
+                    }
+                    ctx.strokePath()
+                }, completion: { result in
+                    switch result {
+                    case .success(let image): finish(image.pngData())
+                    case .failure: finish(nil)
+                    }
+                })
+            }.store(in: &tokens)
+            // Never hang the caller if the style/tiles fail to load.
+            snapshotter.onMapLoadingError.observeNext { _ in finish(nil) }.store(in: &tokens)
         }
     }
 
@@ -70,12 +76,4 @@ enum RouteSnapshotter {
         return trimmed.count >= 2 ? trimmed : coords
     }
 
-    private static func region(for coords: [CLLocationCoordinate2D]) -> MKCoordinateRegion {
-        let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
-        let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
-        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
-        let span = MKCoordinateSpan(latitudeDelta: max(0.003, (maxLat - minLat) * 1.4),
-                                    longitudeDelta: max(0.003, (maxLon - minLon) * 1.4))
-        return MKCoordinateRegion(center: center, span: span)
-    }
 }

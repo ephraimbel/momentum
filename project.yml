@@ -16,8 +16,14 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
+# Maps: Mapbox Maps SDK (replaces MapKit for all map rendering). The binary frameworks download
+# from api.mapbox.com via a DOWNLOADS:READ secret token in ~/.netrc (not committed); the runtime
+# public token lives in Info.plist (MBXAccessToken).
+packages:
+  MapboxMaps:
+    url: https://github.com/mapbox/mapbox-maps-ios.git
+    from: "11.0.0"
 # Phase 3 billing SDKs — uncomment with the Momentum-target deps below to go live (PRD §10).
-# packages:
 #   RevenueCat:
 #     url: https://github.com/RevenueCat/purchases-ios
 #     from: "5.0.0"
@@ -54,6 +60,9 @@ targets:
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
+        # Mapbox runtime public token (pk.* — safe to ship; URL-restrict to the app's bundle id in
+        # the Mapbox dashboard). The Maps SDK reads this key automatically at init.
+        MBXAccessToken: "MBX_TOKEN_PLACEHOLDER"
         # Athlete Model / AI read (ATHLETE-MODEL.md §7). Empty → deterministic-template path (ships
         # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
         SupabaseURL: ""
@@ -76,6 +85,7 @@ targets:
       - target: MomentumWidgets      # embeds the Live Activity / widget extension into the app
       - target: MomentumWatch        # embeds the watchOS app into the phone app (PRD §8.10)
         embed: true
+      - package: MapboxMaps          # map rendering (Today, live route, heatmap, route suggestion)
     # ── Phase 3 billing (RevenueCat + Superwall) ─────────────────────────
     # The integration code is already written behind `#if canImport(...)` (PaywallController);
     # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
