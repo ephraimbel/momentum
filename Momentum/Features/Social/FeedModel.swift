@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import CoreLocation
 
 /// One card in the community feed. A value type so the user's own public workouts and the
 /// clearly-labeled "Momentum community" content render through the same card without inventing fake
@@ -16,12 +17,19 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let caption: String?
     let statLine: String
     let prBadge: String?
-    /// Normalized 0…1 route path for the silhouette banner; nil → glyph banner (strength/timed/no route).
-    let routeNorm: [CGPoint]?
+    /// Real route coordinates [[lat, lon]] — rendered as a map+trace in the feed. nil → glyph media.
+    var routeLatLon: [[Double]]? = nil
+    /// Which basemap to show behind this post's route (variety across the feed).
+    var mapStyle: MapStyleOption = .standard
     /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
     var baseReactions: Int = 0
-    /// A photo the athlete attached (Strava-style). nil → route silhouette / glyph media.
+    /// A photo the athlete attached (Strava-style). Takes priority over the route map.
     var photoData: Data? = nil
+
+    /// Route as map coordinates for `RouteMapView`.
+    var routeCoordinates: [CLLocationCoordinate2D]? {
+        routeLatLon.map { $0.map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) } }
+    }
 }
 
 /// Pure, testable feed assembly (docs/SOCIAL-LAYER.md). Merges the athlete's **shared** workouts with
@@ -41,7 +49,7 @@ enum FeedAssembler {
         let weightUnit = WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg
         let distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
         let showRoute = profile.map { SocialPrivacy.showsRoute(w, profile: $0) } ?? false
-        let coords: [CGPoint]? = showRoute ? normalizedRoute(w) : nil
+        let route: [[Double]]? = showRoute ? routeLatLon(w) : nil
         return FeedItem(
             id: w.id,
             authorName: displayName(profile),
@@ -54,7 +62,8 @@ enum FeedAssembler {
             caption: w.note.isEmpty ? nil : w.note,
             statLine: statLine(w, weightUnit: weightUnit, distanceUnit: distanceUnit),
             prBadge: nil,
-            routeNorm: coords,
+            routeLatLon: route,
+            mapStyle: .standard,
             photoData: w.photoData)
     }
 
@@ -73,14 +82,10 @@ enum FeedAssembler {
         return Formatters.duration(s: w.durationS)
     }
 
-    /// Project a workout's accepted GPS samples into a normalized 0…1 path (y-flipped for screen).
-    static func normalizedRoute(_ w: Workout) -> [CGPoint]? {
+    /// A workout's accepted GPS samples as real [[lat, lon]] coordinates for the feed map.
+    static func routeLatLon(_ w: Workout) -> [[Double]]? {
         let pts = (w.gps?.samples ?? []).filter(\.accepted).sorted { $0.t < $1.t }
         guard pts.count > 1 else { return nil }
-        let lats = pts.map(\.lat), lons = pts.map(\.lon)
-        guard let minLat = lats.min(), let maxLat = lats.max(),
-              let minLon = lons.min(), let maxLon = lons.max() else { return nil }
-        let dLat = max(maxLat - minLat, 1e-6), dLon = max(maxLon - minLon, 1e-6)
-        return pts.map { CGPoint(x: ($0.lon - minLon) / dLon, y: 1 - ($0.lat - minLat) / dLat) }
+        return pts.map { [$0.lat, $0.lon] }
     }
 }

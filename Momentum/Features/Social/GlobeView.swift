@@ -15,7 +15,8 @@ struct GlobeView: View {
     @Environment(ModerationStore.self) private var moderation
     @State private var liveCount = 0
     @State private var selected: CommunityAthlete?
-    @State private var viewport: Viewport = .camera(center: CLLocationCoordinate2D(latitude: 25, longitude: 0), zoom: 1.3)
+    // Opens on North America (the community is US-majority); drag to spin the globe.
+    @State private var viewport: Viewport = .camera(center: CLLocationCoordinate2D(latitude: 38, longitude: -97), zoom: 1.35)
 
     /// Community athletes shown on the globe — blocked athletes are removed.
     private var athletes: [CommunityAthlete] { CommunityDirectory.all().filter { !moderation.isBlocked($0.handle) } }

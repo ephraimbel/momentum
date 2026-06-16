@@ -77,14 +77,12 @@ struct FeedPostCard: View {
             Image(uiImage: ui).resizable().scaledToFill()
                 .frame(maxWidth: .infinity).frame(height: 220).clipped()
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-        } else if let route = item.routeNorm, route.count > 1 {
-            ZStack {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                NormalizedPath(points: route)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .padding(Theme.Space.lg)
-            }
-            .frame(height: 150)
+        } else if let coords = item.routeCoordinates, coords.count > 1 {
+            // The actual map behind the route trace; the basemap varies per post (Strava-style).
+            RouteMapView(coordinates: coords, style: item.mapStyle, interactive: false)
+                .frame(height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                .allowsHitTesting(false)   // never steal the feed's scroll
         }
     }
 
@@ -137,18 +135,5 @@ struct FeedPostCard: View {
             .background(Capsule().fill(IridescentMaterial()).opacity(0.55))
             .overlay(Capsule().stroke(Theme.hairline))
             .accessibilityLabel("Momentum community")
-    }
-}
-
-/// A normalized (0…1) point path scaled into the available rect.
-struct NormalizedPath: Shape {
-    let points: [CGPoint]
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        guard let first = points.first else { return p }
-        func map(_ pt: CGPoint) -> CGPoint { CGPoint(x: rect.minX + pt.x * rect.width, y: rect.minY + pt.y * rect.height) }
-        p.move(to: map(first))
-        for pt in points.dropFirst() { p.addLine(to: map(pt)) }
-        return p
     }
 }

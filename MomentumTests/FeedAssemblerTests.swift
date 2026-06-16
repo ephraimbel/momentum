@@ -44,11 +44,11 @@ struct FeedAssemblerTests {
         g.distanceM = 1000; w.gps = g
 
         let noRoute = UserProfile()                              // publicRouteMaps off
-        #expect(FeedAssembler.item(from: w, profile: noRoute).routeNorm == nil)
+        #expect(FeedAssembler.item(from: w, profile: noRoute).routeLatLon == nil)
 
         let withRoute = UserProfile(); withRoute.publicRouteMaps = true
         let item = FeedAssembler.item(from: w, profile: withRoute)
-        #expect(item.routeNorm != nil && item.routeNorm!.count == 5)
+        #expect(item.routeLatLon != nil && item.routeLatLon!.count == 5)
     }
 
     @Test func communitySeedIsLabeledAndStable() {

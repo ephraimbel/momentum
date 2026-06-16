@@ -8,7 +8,7 @@ struct SocialReactionsTests {
     private func item(base: Int) -> FeedItem {
         FeedItem(id: UUID(), authorName: "A", authorHandle: "a", location: nil, isCommunity: true,
                  type: .run, date: Date(), title: "Run", caption: nil, statLine: "5 mi",
-                 prBadge: nil, routeNorm: nil, baseReactions: base)
+                 prBadge: nil, baseReactions: base)
     }
     private func freshStore() -> (ReactionStore, String) {
         let suite = "react.test.\(UUID().uuidString)"

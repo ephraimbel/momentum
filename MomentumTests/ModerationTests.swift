@@ -8,7 +8,7 @@ struct ModerationTests {
     private func item(_ handle: String?, id: UUID = UUID()) -> FeedItem {
         FeedItem(id: id, authorName: "A", authorHandle: handle, location: nil, isCommunity: true,
                  type: .run, date: Date(), title: "Run", caption: nil, statLine: "5 mi",
-                 prBadge: nil, routeNorm: nil)
+                 prBadge: nil)
     }
     private func freshStore() -> (ModerationStore, String) {
         let suite = "mod.test.\(UUID().uuidString)"
