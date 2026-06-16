@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
-/// A feed post in the share-card language (PRD §7.11). Banner = route silhouette (cardio with a
-/// public route) or a discipline glyph; below it the author, title/caption, and stat line. Community
-/// items carry a clear "Momentum community" badge (honest labeling).
+/// One post in the feed — a Substack-style editorial row, not a boxed card (PRD §7.11): author byline,
+/// a bold headline, the workout's numbers as a subtitle, optional photo/route media, a caption
+/// excerpt, and a quiet reaction footer, separated by a hairline. Reads like a feed of athletes
+/// posting their workouts. Community posts carry a clear "Momentum community" badge.
 struct FeedPostCard: View {
     let item: FeedItem
     @Environment(ReactionStore.self) private var reactions
@@ -11,77 +13,91 @@ struct FeedPostCard: View {
     @State private var confirmingReport = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            banner.frame(height: 150).frame(maxWidth: .infinity).clipped()
-            details
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            authorRow
+            Text(item.title)
+                .font(.display(21, weight: .bold)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Theme.Space.sm) {
+                Text(item.statLine).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                if let pr = item.prBadge { PRBadge(text: pr) }
+            }
+            media
+            if let caption = item.caption {
+                Text(caption).font(.rounded(Theme.FontSize.body, weight: .regular))
+                    .foregroundStyle(Theme.inkSecondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            }
+            footer
         }
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.authorName), \(item.type.title)")
-        .accessibilityValue("\(item.title). \(item.statLine)\(item.isCommunity ? ". Momentum community" : "")")
+        .padding(.vertical, Theme.Space.lg)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+        .contentShape(Rectangle())
         .contextMenu { moderationMenu }
         .confirmationDialog("Report this post?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
                 Button(reason.rawValue) { moderation.report(item.id); Haptics.success() }
             }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("We'll review it and hide it from your feed.")
-        }
+        } message: { Text("We'll review it and hide it from your feed.") }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.authorName), \(item.type.title)")
+        .accessibilityValue("\(item.title). \(item.statLine)\(item.isCommunity ? ". Momentum community" : "")")
     }
 
-    @ViewBuilder
-    private var moderationMenu: some View {
-        Button { confirmingReport = true } label: { Label("Report post", systemImage: "flag") }
-        if item.isCommunity, let handle = item.authorHandle {
-            Button(role: .destructive) { moderation.block(handle); Haptics.medium() } label: {
-                Label("Block \(item.authorName)", systemImage: "hand.raised")
+    // MARK: Byline
+
+    private var authorRow: some View {
+        HStack(spacing: Theme.Space.sm) {
+            IridescentOrb(size: 34)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(item.authorName).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
+                    if item.isCommunity { communityBadge }
+                }
+                Text(byline).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary).lineLimit(1)
             }
+            Spacer(minLength: 0)
+            Image(systemName: item.type.systemImage).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
         }
     }
 
+    private var byline: String {
+        var parts = [item.date.formatted(.relative(presentation: .named))]
+        if let handle = item.authorHandle { parts.insert("@\(handle)", at: 0) }
+        if let loc = item.location { parts.append(loc) }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: Media (photo > route silhouette > none)
+
     @ViewBuilder
-    private var banner: some View {
-        if let route = item.routeNorm, route.count > 1 {
+    private var media: some View {
+        if let data = item.photoData, let ui = UIImage(data: data) {
+            Image(uiImage: ui).resizable().scaledToFill()
+                .frame(maxWidth: .infinity).frame(height: 220).clipped()
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        } else if let route = item.routeNorm, route.count > 1 {
             ZStack {
-                Theme.background
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
                 NormalizedPath(points: route)
                     .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     .padding(Theme.Space.lg)
             }
-        } else {
-            ZStack {
-                LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: item.type.systemImage)
-                    .font(.system(size: 44, weight: .bold)).foregroundStyle(Theme.ink.opacity(0.85))
-            }
+            .frame(height: 150)
         }
     }
 
-    private var details: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            authorRow
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
-                if let caption = item.caption {
-                    Text(caption).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            HStack(spacing: Theme.Space.sm) {
-                Text(item.statLine).font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
-                if let pr = item.prBadge { PRBadge(text: pr) }
-                Spacer(minLength: 0)
-                respectButton
-            }
+    // MARK: Footer (reaction)
+
+    private var footer: some View {
+        HStack(spacing: Theme.Space.lg) {
+            respectButton
+            Spacer(minLength: 0)
         }
-        .padding(Theme.Space.md)
+        .padding(.top, 2)
     }
 
-    /// The single iridescent "respect" reaction (PRD §10 social-lite — no kudos-spam, one warm signal).
     private var respectButton: some View {
         let reacted = reactions.hasReacted(item.id)
         return Button {
@@ -104,31 +120,19 @@ struct FeedPostCard: View {
         .accessibilityValue("\(reactions.count(for: item))")
     }
 
-    private var authorRow: some View {
-        HStack(spacing: Theme.Space.sm) {
-            IridescentOrb(size: 28)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(item.authorName).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
-                    if item.isCommunity { communityBadge }
-                }
-                Text(subtitle).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary).lineLimit(1)
+    @ViewBuilder
+    private var moderationMenu: some View {
+        Button { confirmingReport = true } label: { Label("Report post", systemImage: "flag") }
+        if item.isCommunity, let handle = item.authorHandle {
+            Button(role: .destructive) { moderation.block(handle); Haptics.medium() } label: {
+                Label("Block \(item.authorName)", systemImage: "hand.raised")
             }
-            Spacer(minLength: 0)
         }
-    }
-
-    private var subtitle: String {
-        var parts = [item.date.formatted(.relative(presentation: .named))]
-        if let handle = item.authorHandle { parts.insert("@\(handle)", at: 0) }
-        if let loc = item.location { parts.append(loc) }
-        return parts.joined(separator: " · ")
     }
 
     private var communityBadge: some View {
         Text("Momentum")
-            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4)
-            .foregroundStyle(Theme.ink)
+            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4).foregroundStyle(Theme.ink)
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(Capsule().fill(IridescentMaterial()).opacity(0.55))
             .overlay(Capsule().stroke(Theme.hairline))

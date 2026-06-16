@@ -19,7 +19,15 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
 }
 
 enum CommunityDirectory {
-    static func all(now: Date = Date()) -> [CommunityAthlete] {
+    // Generated once per launch (≈250 athletes) so the feed + globe are stable and not rebuilt on each
+    // access. Featured (hand-curated) athletes lead; the generated community fills out the rest.
+    private static let baseDate = Date()
+    private static let cached: [CommunityAthlete] = featured(now: baseDate) + CommunityGenerator.generate(now: baseDate)
+
+    static func all(now: Date = Date()) -> [CommunityAthlete] { cached }
+
+    /// The hand-curated featured athletes (lead the feed; richer copy + globe spread).
+    static func featured(now: Date = Date()) -> [CommunityAthlete] {
         func ago(_ h: Double) -> Date { now.addingTimeInterval(-h * 3600) }
         func post(_ n: Int, _ a: CommunityAuthor, _ type: WorkoutType, _ when: Date, _ title: String,
                   _ caption: String?, _ stat: String, pr: String? = nil, route: [CGPoint]? = nil,

@@ -18,6 +18,9 @@ final class Workout {
     var aiSummary: String?
     var syncedAt: Date?
     var plannedSession: PlannedSession?
+    /// An optional photo the athlete attached to this workout (Strava-style). Stored outside the row
+    /// (external storage) since it's a large blob; only the public projection ever syncs.
+    @Attribute(.externalStorage) var photoData: Data?
 
     @Relationship(deleteRule: .cascade) var gps: GPSDetail?
     @Relationship(deleteRule: .cascade) var strength: StrengthSession?

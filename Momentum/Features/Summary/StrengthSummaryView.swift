@@ -20,7 +20,7 @@ struct StrengthSummaryView: View {
         NavigationStack {
             ScrollView {
                 if let workout {
-                    StrengthSummaryContent(workout: workout, weightUnit: weightUnit, celebratePRs: true)
+                    StrengthSummaryContent(workout: workout, weightUnit: weightUnit, celebratePRs: true, canEditPhoto: true)
                         .padding(Theme.Space.md)
                 } else {
                     ContentUnavailableView("Workout not found", systemImage: "questionmark")
@@ -64,6 +64,7 @@ struct StrengthSummaryContent: View {
     var celebratePRs: Bool = false
     /// Show the user's title/description header (off in the save editor, which has editable fields).
     var showsHeader: Bool = true
+    var canEditPhoto: Bool = false
 
     @Environment(\.modelContext) private var context
     @State private var prs: [StrengthPRs.Hit] = []
@@ -79,6 +80,7 @@ struct StrengthSummaryContent: View {
                     prSection.reveal(0.12)
                     EarnedShareButton(workout: workout, weightUnit: weightUnit, title: "Share your PR").reveal(0.18)
                 }
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.22)
                 AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.24)
                 PlanProposalCard().reveal(0.28)
                 muscleSection(session).reveal(0.32)

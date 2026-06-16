@@ -1,5 +1,5 @@
 import SwiftUI
-import MapKit
+import CoreLocation
 import SwiftData
 
 /// Post-workout summary screen for cardio (PRD §4.3 finish, §4.6): presented cover with Done.
@@ -21,7 +21,7 @@ struct CardioSummaryView: View {
         NavigationStack {
             ScrollView {
                 if let workout {
-                    CardioSummaryContent(workout: workout, distanceUnit: distanceUnit)
+                    CardioSummaryContent(workout: workout, distanceUnit: distanceUnit, canEditPhoto: true)
                         .padding(Theme.Space.md)
                 } else {
                     ContentUnavailableView("Workout not found", systemImage: "questionmark")
@@ -64,6 +64,8 @@ struct CardioSummaryContent: View {
     var distanceUnit: DistanceUnit = .auto
     /// Show the user's title/description header (off in the save editor, which has editable fields).
     var showsHeader: Bool = true
+    /// Allow attaching/replacing the workout photo (post-workout only; read-only in history).
+    var canEditPhoto: Bool = false
 
     @Environment(\.modelContext) private var context
     @State private var hits: [CardioAchievements.Hit] = []
@@ -83,6 +85,7 @@ struct CardioSummaryContent: View {
                     achievementsSection.reveal(0.10)
                     EarnedShareButton(workout: workout, distanceUnit: distanceUnit, title: "Share your run").reveal(0.16)
                 }
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.20)
                 routeMap(gps).reveal(0.22)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
                 PlanProposalCard().reveal(0.34)
@@ -127,13 +130,9 @@ struct CardioSummaryContent: View {
         let coords = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
             .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
         if coords.count > 1 {
-            Map(interactionModes: []) {
-                MapPolyline(coordinates: RouteSmoothing.smooth(coords))
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-            }
-            .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
-            .frame(height: 220)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            RouteMapView(coordinates: RouteSmoothing.smooth(coords))
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
     }
 

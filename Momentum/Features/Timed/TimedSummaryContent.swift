@@ -5,10 +5,12 @@ import SwiftUI
 struct TimedSummaryContent: View {
     let workout: Workout
     var showsHeader: Bool = true
+    var canEditPhoto: Bool = false
 
     var body: some View {
         VStack(spacing: Theme.Space.lg) {
             if showsHeader { header }
+            WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto)
 
             VStack(spacing: Theme.Space.xs) {
                 Text(Formatters.duration(s: workout.durationS))

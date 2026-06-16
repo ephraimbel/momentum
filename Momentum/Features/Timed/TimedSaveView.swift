@@ -27,7 +27,7 @@ struct TimedSaveView: View {
             ScrollView {
                 if let workout {
                     VStack(spacing: Theme.Space.xl) {
-                        TimedSummaryContent(workout: workout, showsHeader: false)
+                        TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true)
                         editor
                     }
                     .padding(Theme.Space.md)

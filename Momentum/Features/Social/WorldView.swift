@@ -40,7 +40,7 @@ struct WorldView: View {
             .padding(.horizontal, Theme.Space.lg).padding(.bottom, Theme.Space.sm)
 
             ScrollView {
-                LazyVStack(spacing: Theme.Space.lg) {
+                LazyVStack(spacing: 0) {       // editorial feed — rows carry their own padding + divider
                     switch segment {
                     case .discover:
                         feedList(discoverFeed)

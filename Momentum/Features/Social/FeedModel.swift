@@ -20,6 +20,8 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let routeNorm: [CGPoint]?
     /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
     var baseReactions: Int = 0
+    /// A photo the athlete attached (Strava-style). nil → route silhouette / glyph media.
+    var photoData: Data? = nil
 }
 
 /// Pure, testable feed assembly (docs/SOCIAL-LAYER.md). Merges the athlete's **shared** workouts with
@@ -52,7 +54,8 @@ enum FeedAssembler {
             caption: w.note.isEmpty ? nil : w.note,
             statLine: statLine(w, weightUnit: weightUnit, distanceUnit: distanceUnit),
             prBadge: nil,
-            routeNorm: coords)
+            routeNorm: coords,
+            photoData: w.photoData)
     }
 
     static func displayName(_ profile: UserProfile?) -> String {
