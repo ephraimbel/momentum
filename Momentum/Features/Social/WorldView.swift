@@ -6,14 +6,23 @@ import SwiftData
 /// labeled Momentum community. Private workouts never appear.
 struct WorldView: View {
     enum Segment: String, CaseIterable, Identifiable { case discover = "Discover", following = "Following"; var id: String { rawValue } }
+    /// Pushed destinations within the World tab's NavigationStack.
+    enum WorldRoute: Hashable { case athlete(String) }
 
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
+    @Environment(FollowStore.self) private var follows
     @State private var segment: Segment = .discover
 
     private var profile: UserProfile? { profiles.first }
     private var discoverFeed: [FeedItem] {
         FeedAssembler.feed(userWorkouts: workouts, profile: profile, community: CommunityFeed.seed())
+    }
+    /// Posts from athletes the user follows, newest first.
+    private var followingFeed: [FeedItem] {
+        CommunityFeed.seed()
+            .filter { follows.isFollowing($0.authorHandle ?? "") }
+            .sorted { $0.date > $1.date }
     }
 
     var body: some View {
@@ -29,9 +38,9 @@ struct WorldView: View {
                 LazyVStack(spacing: Theme.Space.lg) {
                     switch segment {
                     case .discover:
-                        ForEach(discoverFeed) { FeedPostCard(item: $0) }
+                        feedList(discoverFeed)
                     case .following:
-                        followingEmptyState
+                        if followingFeed.isEmpty { followingEmptyState } else { feedList(followingFeed) }
                     }
                 }
                 .padding(.horizontal, Theme.Space.lg)
@@ -40,6 +49,27 @@ struct WorldView: View {
         }
         .background(Theme.background)
         .navigationBarHidden(true)
+        .navigationDestination(for: WorldRoute.self) { route in
+            switch route {
+            case .athlete(let handle):
+                if let athlete = CommunityDirectory.athlete(handle: handle) {
+                    AthleteProfileView(athlete: athlete)
+                }
+            }
+        }
+    }
+
+    /// A list of feed cards; community authors are tappable through to their profile.
+    @ViewBuilder
+    private func feedList(_ items: [FeedItem]) -> some View {
+        ForEach(items) { item in
+            if item.isCommunity, let handle = item.authorHandle {
+                NavigationLink(value: WorldRoute.athlete(handle)) { FeedPostCard(item: item) }
+                    .buttonStyle(.plain)
+            } else {
+                FeedPostCard(item: item)
+            }
+        }
     }
 
     private var header: some View {
