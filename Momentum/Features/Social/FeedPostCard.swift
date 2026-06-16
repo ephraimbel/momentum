@@ -5,6 +5,8 @@ import SwiftUI
 /// items carry a clear "Momentum community" badge (honest labeling).
 struct FeedPostCard: View {
     let item: FeedItem
+    @Environment(ReactionStore.self) private var reactions
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,9 +54,33 @@ struct FeedPostCard: View {
                 Text(item.statLine).font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
                 if let pr = item.prBadge { PRBadge(text: pr) }
                 Spacer(minLength: 0)
+                respectButton
             }
         }
         .padding(Theme.Space.md)
+    }
+
+    /// The single iridescent "respect" reaction (PRD §10 social-lite — no kudos-spam, one warm signal).
+    private var respectButton: some View {
+        let reacted = reactions.hasReacted(item.id)
+        return Button {
+            reactions.toggle(item.id); Haptics.light()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: reacted ? "bolt.fill" : "bolt")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(reacted ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkTertiary))
+                    .scaleEffect(reacted && !reduceMotion ? 1.12 : 1)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.5), value: reacted)
+                Text("\(reactions.count(for: item))")
+                    .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
+                    .foregroundStyle(reacted ? Theme.ink : Theme.inkTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(reacted ? "Respected" : "Respect")
+        .accessibilityValue("\(reactions.count(for: item))")
     }
 
     private var authorRow: some View {

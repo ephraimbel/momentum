@@ -25,6 +25,7 @@ final class Services {
     let athleteModel: any AthleteModelServing
     let analytics: any AnalyticsServing
     let voiceCoach: any VoiceCoachServing
+    let presence: any PresenceServing
 
     init(
         location: any LocationServing,
@@ -37,7 +38,8 @@ final class Services {
         notifications: any NotificationServing,
         athleteModel: any AthleteModelServing,
         analytics: any AnalyticsServing = StubAnalyticsService(),
-        voiceCoach: any VoiceCoachServing = StubVoiceCoachService()
+        voiceCoach: any VoiceCoachServing = StubVoiceCoachService(),
+        presence: any PresenceServing = StubPresenceService()
     ) {
         self.location = location
         self.motion = motion
@@ -50,6 +52,7 @@ final class Services {
         self.athleteModel = athleteModel
         self.analytics = analytics
         self.voiceCoach = voiceCoach
+        self.presence = presence
     }
 
     /// The default wiring used by the running app. The real app injects the live `PaywallController`
@@ -67,7 +70,8 @@ final class Services {
             notifications: NotificationService(),
             athleteModel: AthleteModelService(),
             analytics: AnalyticsService(),
-            voiceCoach: VoiceCoachService()
+            voiceCoach: VoiceCoachService(),
+            presence: LivePresenceService()
         )
     }
 }

@@ -18,6 +18,8 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let prBadge: String?
     /// Normalized 0…1 route path for the silhouette banner; nil → glyph banner (strength/timed/no route).
     let routeNorm: [CGPoint]?
+    /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
+    var baseReactions: Int = 0
 }
 
 /// Pure, testable feed assembly (docs/SOCIAL-LAYER.md). Merges the athlete's **shared** workouts with

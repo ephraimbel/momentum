@@ -9,6 +9,7 @@ struct MomentumApp: App {
     @State private var paywall: PaywallController
     @State private var auth: AuthController
     @State private var follows = FollowStore()
+    @State private var reactions = ReactionStore()
 
     init() {
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
@@ -30,6 +31,7 @@ struct MomentumApp: App {
                 .environment(paywall)
                 .environment(auth)
                 .environment(follows)
+                .environment(reactions)
                 .tint(Theme.ink)
                 .preferredColorScheme(.light) // light/white is the hero aesthetic
         }

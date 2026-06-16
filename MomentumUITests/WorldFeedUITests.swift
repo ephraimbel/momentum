@@ -33,6 +33,28 @@ final class WorldFeedUITests: XCTestCase {
 
     }
 
+    func testRespectReaction() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-route"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+        app.tap()
+
+        let world = app.tabBars.buttons["World"]
+        XCTAssertTrue(world.waitForExistence(timeout: 15)); world.tap()
+
+        // Tap a respect button if any post is un-reacted; end state must show a "Respected" reaction.
+        let respect = app.buttons["Respect"].firstMatch
+        if respect.waitForExistence(timeout: 5) { respect.tap() }
+        XCTAssertTrue(app.buttons["Respected"].firstMatch.waitForExistence(timeout: 5),
+                      "Respect reaction didn't register.")
+    }
+
     func testFollowAthleteSurfacesInFollowing() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--ui-test-route"]

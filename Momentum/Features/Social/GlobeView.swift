@@ -9,7 +9,9 @@ struct GlobeView: View {
     @Query private var profiles: [UserProfile]
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var liveCount = 0
 
     @State private var rotation: Double = 0
     @State private var tilt: Double = 0.35
@@ -48,14 +50,21 @@ struct GlobeView: View {
             guard !reduceMotion, !dragging else { return }
             rotation += 0.0022
         }
+        .task { liveCount = await services.presence.refresh(appearOnMap: onMap) }
     }
 
     private var header: some View {
         VStack(spacing: 2) {
             Text("Around the world").font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
-            Text("\(athletes.count) in the Momentum community")
+            Text(subtitle)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
         }
+    }
+
+    private var subtitle: String {
+        // "live now" only appears when the realtime backend reports real presence (never fabricated).
+        let base = "\(athletes.count) in the Momentum community"
+        return liveCount > 0 ? "\(base) · \(liveCount) live now" : base
     }
 
     private var globe: some View {
