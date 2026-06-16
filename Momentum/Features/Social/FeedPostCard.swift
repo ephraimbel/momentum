@@ -51,7 +51,7 @@ struct FeedPostCard: View {
 
     private var authorRow: some View {
         HStack(spacing: Theme.Space.sm) {
-            IridescentOrb(size: 34)
+            AvatarView(photo: item.avatarData, name: item.authorName, size: 34)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(item.authorName).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)

@@ -48,7 +48,7 @@ struct ProfileView: View {
 
     private var identity: some View {
         VStack(spacing: Theme.Space.sm) {
-            IridescentOrb(size: 84)
+            AvatarView(photo: profile?.avatarData, name: displayName, size: 84)
             VStack(spacing: 3) {
                 Text(displayName).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
                 if let handle = handleText {

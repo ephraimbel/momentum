@@ -61,7 +61,7 @@ struct AthleteProfileView: View {
 
     private var identity: some View {
         VStack(spacing: Theme.Space.sm) {
-            IridescentOrb(size: 84)
+            AvatarView(photo: nil, name: athlete.name, size: 84)
             VStack(spacing: 3) {
                 HStack(spacing: 6) {
                     Text(athlete.name).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)

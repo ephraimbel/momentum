@@ -25,6 +25,8 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var baseReactions: Int = 0
     /// A photo the athlete attached (Strava-style). Takes priority over the route map.
     var photoData: Data? = nil
+    /// The author's profile photo (the user's own posts); nil → initials avatar (community).
+    var avatarData: Data? = nil
 
     /// Route as map coordinates for `RouteMapView`.
     var routeCoordinates: [CLLocationCoordinate2D]? {
@@ -64,7 +66,8 @@ enum FeedAssembler {
             prBadge: nil,
             routeLatLon: route,
             mapStyle: .standard,
-            photoData: w.photoData)
+            photoData: w.photoData,
+            avatarData: profile?.avatarData)
     }
 
     static func displayName(_ profile: UserProfile?) -> String {

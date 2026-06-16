@@ -25,6 +25,8 @@ final class UserProfile {
     // MARK: Social profile + privacy (opt-in; conservative defaults — see docs/SOCIAL-LAYER.md)
     var handle: String = ""                                  // @handle (lowercased, unique per user)
     var bio: String = ""
+    /// The athlete's chosen profile photo; nil → an initials avatar. Stored outside the row (blob).
+    @Attribute(.externalStorage) var avatarData: Data?
     var city: String = ""
     /// How precisely location may ever be shown publicly. Off by default.
     var locationGranularity: String = LocationGranularity.off.rawValue

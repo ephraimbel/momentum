@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
 
 /// Edit the social profile + the full privacy matrix (docs/SOCIAL-LAYER.md). Every control defaults
 /// conservative; nothing is shared until the athlete opts in here. Writes straight to the SwiftData
@@ -10,11 +11,13 @@ struct EditProfileView: View {
     @Environment(\.modelContext) private var context
 
     @State private var handle: String = ""
+    @State private var pickedAvatar: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    avatarPicker
                     section("YOU") { AnyView(identityCard) }
                     section("DEFAULT VISIBILITY") { AnyView(visibilityCard) }
                     section("SHARING") { AnyView(sharingCard) }
@@ -30,7 +33,39 @@ struct EditProfileView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { save() }.fontWeight(.semibold) }
             }
             .onAppear { handle = profile.handle }
+            .onChange(of: pickedAvatar) { _, item in Task { await loadAvatar(item) } }
         }
+    }
+
+    // MARK: Avatar
+
+    private var avatarPicker: some View {
+        VStack(spacing: Theme.Space.sm) {
+            PhotosPicker(selection: $pickedAvatar, matching: .images) {
+                ZStack(alignment: .bottomTrailing) {
+                    AvatarView(photo: profile.avatarData, name: profile.displayName.isEmpty ? "You" : profile.displayName, size: 96)
+                    Image(systemName: "camera.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.background)
+                        .frame(width: 30, height: 30).background(Circle().fill(Theme.ink))
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 2))
+                }
+            }
+            Text(profile.avatarData == nil ? "Add a profile photo" : "Change photo")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            if profile.avatarData != nil {
+                Button("Remove photo", role: .destructive) {
+                    profile.avatarData = nil; try? context.save(); Haptics.medium()
+                }
+                .font(.rounded(Theme.FontSize.caption, weight: .medium))
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func loadAvatar(_ item: PhotosPickerItem?) async {
+        guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
+        profile.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
+        try? context.save()
+        Haptics.success()
     }
 
     // MARK: Identity
