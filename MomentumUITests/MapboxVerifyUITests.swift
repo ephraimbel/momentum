@@ -38,4 +38,45 @@ final class MapboxVerifyUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
     }
+
+    /// Starts a live run (deterministic moving GPS via --ui-test-route) and captures the tracking map
+    /// — the purple location puck + purple route trace.
+    func testLiveTrackingMap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-route"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+        app.tap()
+
+        // Ensure Run mode, then start.
+        let startRun = app.buttons["Start run"]
+        if !startRun.waitForExistence(timeout: 10) {
+            app.buttons["Run"].firstMatch.tap()
+            app.buttons["Run"].firstMatch.tap()
+        }
+        XCTAssertTrue(startRun.waitForExistence(timeout: 10), "Could not find 'Start run'.")
+        startRun.tap()
+
+        // Reach the tracking screen (skip the acquiring gate via "Start now" if needed).
+        let pause = app.buttons["Pause"]
+        let startNow = app.buttons["Start now"]
+        let deadline = Date().addingTimeInterval(25)
+        while !pause.exists && Date() < deadline {
+            if startNow.exists && startNow.isHittable { startNow.tap() }
+            usleep(300_000)
+        }
+        XCTAssertTrue(pause.waitForExistence(timeout: 5), "Live tracking did not begin.")
+
+        sleep(6)   // let the trace accumulate + tiles render
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "live-tracking-map"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
 }

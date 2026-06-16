@@ -6,7 +6,7 @@ import MapboxMaps
 /// brand default (Mapbox Light — muted, the light hero look); `.hybrid` / `.satellite` are opt-in for
 /// athletes who want real terrain and greenery. Rendered by Mapbox.
 enum MapStyleOption: String, CaseIterable, Identifiable {
-    case standard, realistic, hybrid, satellite
+    case standard, realistic, streets, outdoors, dark, satellite, standardSatellite
 
     var id: String { rawValue }
 
@@ -14,8 +14,11 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         switch self {
         case .standard: "Map"
         case .realistic: "Realistic"
-        case .hybrid: "Hybrid"
+        case .streets: "Streets"
+        case .outdoors: "Outdoors"
+        case .dark: "Dark"
         case .satellite: "Satellite"
+        case .standardSatellite: "3D Satellite"
         }
     }
 
@@ -23,19 +26,31 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         switch self {
         case .standard: "map"
         case .realistic: "building.2"
-        case .hybrid: "globe.americas"
+        case .streets: "road.lanes"
+        case .outdoors: "mountain.2.fill"
+        case .dark: "moon.fill"
         case .satellite: "globe.americas.fill"
+        case .standardSatellite: "cube.fill"
         }
     }
 
-    /// The Mapbox base style. Light is the brand's muted canvas; Realistic is Mapbox Standard (3D
-    /// buildings, terrain, dynamic lighting); hybrid/satellite add aerial imagery.
+    /// A curated set of Mapbox styles — all rendered by the Mapbox SDK:
+    /// • **Map** — Mapbox Light, the brand's muted canvas.
+    /// • **Realistic** — Mapbox Standard: 3D buildings, terrain, dynamic lighting.
+    /// • **Streets** — Mapbox Streets: classic detailed, colorful street map.
+    /// • **Outdoors** — Mapbox Outdoors: terrain, contour lines, hillshading (great for trails).
+    /// • **Dark** — Mapbox Dark: sleek night basemap.
+    /// • **Satellite** — Mapbox Satellite Streets: aerial imagery + roads/labels.
+    /// • **3D Satellite** — Mapbox Standard Satellite: aerial imagery with 3D terrain + buildings.
     var mapboxStyle: MapboxMaps.MapStyle {
         switch self {
         case .standard: .light
         case .realistic: .standard
-        case .hybrid: .standardSatellite
+        case .streets: .streets
+        case .outdoors: .outdoors
+        case .dark: .dark
         case .satellite: .satelliteStreets
+        case .standardSatellite: .standardSatellite
         }
     }
 
@@ -44,14 +59,21 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         switch self {
         case .standard: .light
         case .realistic: .standard
-        case .hybrid: .satelliteStreets
-        case .satellite: .satellite
+        case .streets: .streets
+        case .outdoors: .outdoors
+        case .dark: .dark
+        case .satellite: .satelliteStreets
+        case .standardSatellite: .standardSatellite
         }
     }
 
     /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
-    /// than over the muted/standard basemaps.
-    var isImagery: Bool { self == .hybrid || self == .satellite }
+    /// than over the non-imagery basemaps.
+    var isImagery: Bool { self == .satellite || self == .standardSatellite }
+
+    /// Camera tilt (degrees) for the explore map. 3D Satellite tilts so its 3D terrain + buildings
+    /// read as a real skyline; the flat styles stay top-down.
+    var explorePitch: CGFloat { self == .standardSatellite ? 55 : 0 }
 }
 
 /// Strava-style layers control — a floating glass button that switches the map base. Shared by every

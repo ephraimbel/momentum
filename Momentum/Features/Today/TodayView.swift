@@ -69,7 +69,8 @@ struct TodayView: View {
             // Open over the athlete's last-known neighborhood (never the whole world); once a live
             // fix lands we switch to following the location puck.
             if case .idle = viewport {
-                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 13.5) } ?? .followPuck(zoom: 14)
+                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 13.5, pitch: mapStyle.explorePitch) }
+                    ?? .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
             }
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
             // usually settled this); requesting also pulls a one-shot fix to center the map on them.
@@ -78,8 +79,12 @@ struct TodayView: View {
         // Follow the athlete's puck the moment a fix lands.
         .onChange(of: locator.lastLocation?.latitude) {
             if locator.lastLocation != nil {
-                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15) }
+                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
+        }
+        // Re-tilt the camera when switching to/from 3D Satellite (and other layers reset it flat).
+        .onChange(of: mapStyle) {
+            withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
         }
         .fullScreenCover(item: $launch) { liveScreen($0) }
         .fullScreenCover(item: $summary) { presented in
@@ -193,7 +198,7 @@ struct TodayView: View {
 
     private var mapLayer: some View {
         Map(viewport: $viewport) {
-            Puck2D(bearing: .heading)   // the athlete's location puck
+            Puck2D(bearing: .heading).brandStyled()   // the athlete's purple location puck
         }
         .mapStyle(mapStyle.mapboxStyle)
         .ornamentOptions(MapChrome.hidden)
@@ -365,8 +370,8 @@ struct TodayView: View {
             Haptics.light()
             locator.refreshLocation()
             withAnimation(Motion.standard) {
-                if let loc = locator.lastLocation { viewport = .camera(center: loc, zoom: 15) }
-                else { viewport = .followPuck(zoom: 15) }
+                if let loc = locator.lastLocation { viewport = .camera(center: loc, zoom: 15, pitch: mapStyle.explorePitch) }
+                else { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         } label: {
             Image(systemName: "location.fill")

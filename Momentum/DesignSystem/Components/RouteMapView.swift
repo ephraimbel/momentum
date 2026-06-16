@@ -18,6 +18,8 @@ struct RouteMapView: View {
                 .lineColor(StyleColor(UIColor(lineColor)))
                 .lineWidth(4)
                 .lineJoin(.round)
+                .lineBorderColor(UIColor.white)      // crisp white casing — pops on any base style
+                .lineBorderWidth(1.2)
         }
         .mapStyle(style.mapboxStyle)
         .ornamentOptions(MapChrome.hidden)

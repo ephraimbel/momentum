@@ -115,7 +115,6 @@ struct CardioTrackingView: View {
     private var mapLayer: some View {
         // North-up (rotation disabled) so the rejoin arrow's compass bearing reads as screen rotation.
         Map(viewport: $viewport) {
-            Puck2D(bearing: .heading)
             // The suggested loop to follow, drawn first so the live trace sits on top of it.
             if guideRoute.count > 1 {
                 PolylineAnnotation(lineCoordinates: guideRoute.map(\.clCoordinate))
@@ -123,17 +122,15 @@ struct CardioTrackingView: View {
                     .lineWidth(5).lineJoin(.round)
             }
             if smoothedRoute.count > 1 {
-                // The light-purple trace (the onboarding accent) over a soft white halo so it glows.
-                PolylineAnnotation(lineCoordinates: smoothedRoute)
-                    .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.55)))
-                    .lineWidth(11).lineJoin(.round)
+                // The brand-purple trace with a crisp white casing so it pops on any base style.
                 PolylineAnnotation(lineCoordinates: smoothedRoute)
                     .lineColor(StyleColor(UIColor(Theme.route)))
-                    .lineWidth(6).lineJoin(.round)
+                    .lineWidth(5.5).lineJoin(.round)
+                    .lineBorderColor(UIColor.white)
+                    .lineBorderWidth(1.5)
             }
-            if let last = routeCoords.last {
-                MapViewAnnotation(coordinate: last) { BreathingDot() }.allowOverlap(true)
-            }
+            // The athlete's purple location puck (its pulse marks the live head of the trace).
+            Puck2D(bearing: .heading).brandStyled()
         }
         .mapStyle(mapStyle.mapboxStyle)
         .ornamentOptions(MapChrome.hidden)
