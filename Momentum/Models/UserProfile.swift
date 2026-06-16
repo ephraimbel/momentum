@@ -22,6 +22,19 @@ final class UserProfile {
     var bodyMassKg: Double?
     var createdAt: Date = Date()
 
+    // MARK: Social profile + privacy (opt-in; conservative defaults — see docs/SOCIAL-LAYER.md)
+    var handle: String = ""                                  // @handle (lowercased, unique per user)
+    var bio: String = ""
+    var city: String = ""
+    /// How precisely location may ever be shown publicly. Off by default.
+    var locationGranularity: String = LocationGranularity.off.rawValue
+    /// Default visibility applied to newly-finished workouts.
+    var defaultWorkoutVisibility: String = WorkoutPrivacy.private.rawValue
+    var appearOnMap: Bool = false                            // ephemeral fuzzed presence on the globe
+    var publicRouteMaps: Bool = false                        // include (trimmed/fuzzed) routes on public posts
+    var showExactNumbers: Bool = true                        // pace/weights on public posts
+    var discoverable: Bool = false                           // appear in search / suggestions
+
     @Relationship(deleteRule: .cascade) var workouts: [Workout] = []
     @Relationship(deleteRule: .cascade) var plan: TrainingPlan?
     @Relationship(deleteRule: .cascade) var prs: [PersonalRecord] = []

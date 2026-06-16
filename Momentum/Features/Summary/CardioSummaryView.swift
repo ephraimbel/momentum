@@ -10,6 +10,7 @@ struct CardioSummaryView: View {
     var onDone: () -> Void
 
     @Query private var workouts: [Workout]
+    @Query private var profiles: [UserProfile]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     @Environment(Services.self) private var services
@@ -31,6 +32,11 @@ struct CardioSummaryView: View {
                 // Fire once on the post-workout screen (not in history, which uses Content directly).
                 guard !logged, let workout else { return }
                 logged = true
+                // Apply the athlete's default visibility to this freshly-finished workout (PRD §11).
+                if let profile = profiles.first {
+                    workout.privacy = SocialPrivacy.defaultVisibility(profile)
+                    try? context.save()
+                }
                 services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
                 if !CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context).isEmpty {
                     services.analytics.log(.prHit(type: workout.type.rawValue))

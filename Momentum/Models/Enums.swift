@@ -57,7 +57,38 @@ enum PRType: String, Codable, Sendable, CaseIterable {
     case heaviestWeight, bestE1RM, repMax, bestSetVolume, bestSessionVolume
 }
 enum WorkoutPrivacy: String, Codable, Sendable, CaseIterable {
-    case `private`, friends, `public` // friends/public reserved for deferred social
+    case `private`, friends, `public`
+
+    /// User-facing label for the visibility picker.
+    var label: String {
+        switch self {
+        case .private: "Only me"
+        case .friends: "Followers"
+        case .public: "Everyone"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .private: "lock.fill"
+        case .friends: "person.2.fill"
+        case .public: "globe"
+        }
+    }
+}
+
+/// How precisely an opted-in athlete's location may ever be shown publicly (PRD §11 — fuzzed; never
+/// precise coordinates). See docs/SOCIAL-LAYER.md.
+enum LocationGranularity: String, Codable, Sendable, CaseIterable {
+    case off, city, region
+
+    var label: String {
+        switch self {
+        case .off: "Hidden"
+        case .city: "City"
+        case .region: "Region"
+        }
+    }
 }
 
 extension WorkoutType: Identifiable {

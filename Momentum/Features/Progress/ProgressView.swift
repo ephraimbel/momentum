@@ -50,6 +50,11 @@ struct ProgressScreen: View {
             Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
             StreakChip(days: stats.currentStreak)
+            NavigationLink { ProfileView() } label: {
+                Image(systemName: "person.crop.circle").font(.system(size: 19, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 32, height: 32)
+            }
+            .accessibilityLabel("Profile")
             NavigationLink { SettingsView() } label: {
                 Image(systemName: "gearshape.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                     .frame(width: 32, height: 32)
