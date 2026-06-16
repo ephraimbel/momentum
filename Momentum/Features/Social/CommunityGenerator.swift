@@ -6,7 +6,7 @@ import Foundation
 /// real network athletes once Supabase is configured.
 enum CommunityGenerator {
     /// How many athletes to seed beyond the hand-curated featured set.
-    static let count = 240
+    static let count = 950
 
     static func generate(now: Date) -> [CommunityAthlete] {
         (0..<count).map { athlete(index: $0, now: now) }
@@ -33,7 +33,9 @@ enum CommunityGenerator {
             handle: handle, name: name, location: city.name,
             bio: rng.pick(bios),
             totalWorkouts: workouts, dayStreak: streak, totalDistanceM: distance,
-            lat: city.lat + rng.double(-0.08, 0.08), lon: city.lon + rng.double(-0.08, 0.08),
+            // Wide regional scatter around the home city (≈±4°) so ~950 athletes read as ~950 distinct
+            // dots across the world rather than 36 overlapping blobs — and it fuzzes location further.
+            lat: max(-78, min(80, city.lat + rng.double(-4, 4))), lon: city.lon + rng.double(-4.5, 4.5),
             posts: [post])
     }
 
