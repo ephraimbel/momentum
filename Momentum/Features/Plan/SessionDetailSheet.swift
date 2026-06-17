@@ -8,6 +8,7 @@ struct SessionDetailSheet: View {
     @Bindable var session: PlannedSession
     var distanceUnit: DistanceUnit = .auto
     var onRemove: () -> Void
+    var onStart: (PlannedSession) -> Void = { _ in }
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -252,22 +253,30 @@ struct SessionDetailSheet: View {
 
     private var actions: some View {
         VStack(spacing: Theme.Space.sm) {
-            // Primary — check off / undo.
+            // Primary — do the workout now (when it isn't already done).
+            if !done {
+                Button { Haptics.medium(); onStart(session); dismiss() } label: {
+                    Label("Start", systemImage: "play.fill")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                        .frame(maxWidth: .infinity).frame(height: 52)
+                        .foregroundStyle(Theme.background)
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Check off / undo.
             Button {
                 Haptics.success()
                 withAnimation(Motion.standard) { PlanCoaching.setCompletion(session, done: !done, in: context) }
             } label: {
                 Label(done ? "Mark not done" : "Mark done", systemImage: done ? "arrow.uturn.left" : "checkmark")
                     .font(.rounded(Theme.FontSize.body, weight: .bold))
-                    .frame(maxWidth: .infinity).frame(height: 52)
-                    .foregroundStyle(done ? Theme.ink : Theme.background)
+                    .frame(maxWidth: .infinity).frame(height: 50)
+                    .foregroundStyle(Theme.ink)
                     .background {
-                        if done {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                        } else {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink)
-                        }
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
                     }
             }
             .buttonStyle(.plain)

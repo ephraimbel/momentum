@@ -20,7 +20,6 @@ struct TodayView: View {
     @State private var goalValue = 3.0
     @State private var viewport: Viewport = .idle
     @State private var launch: TodayLaunch?
-    @State private var summary: PresentedWorkout?
     @State private var locator = LocationService()
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
@@ -112,17 +111,7 @@ struct TodayView: View {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
-        .fullScreenCover(item: $launch) { liveScreen($0) }
-        .fullScreenCover(item: $summary) { presented in
-            // Strava-style: name + describe the workout, Save → celebration → back to Today.
-            if presented.type.isStrengthStyle {
-                StrengthSaveView(workoutId: presented.id) { summary = nil }
-            } else if presented.type.isTimed {
-                TimedSaveView(workoutId: presented.id) { summary = nil }
-            } else {
-                CardioSaveView(workoutId: presented.id) { summary = nil }
-            }
-        }
+        .workoutRunner(launch: $launch)
         .sheet(item: $confirmingPlan, onDismiss: {
             if let session = pendingPlanStart { pendingPlanStart = nil; startPlanned(session) }
         }) { session in
@@ -674,69 +663,6 @@ struct TodayView: View {
             locator.requestAuthorization()
             launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
         }
-    }
-
-    @ViewBuilder
-    private func liveScreen(_ launch: TodayLaunch) -> some View {
-        switch launch {
-        case let .cardio(type, goal, planned, guide):
-            CardioTrackingView(type: type, goalMeters: goal, container: context.container, guideRoute: guide) { id in
-                finish(id, type: type, planned: planned)
-            }
-        case let .strength(type, planned):
-            StrengthLiveView(container: context.container, type: type, plannedSession: planned) { id in
-                finish(id, type: type, planned: planned)
-            }
-        case let .timed(type):
-            TimedTrackingView(type: type, container: context.container) { id in
-                finish(id, type: type, planned: nil)
-            }
-        }
-    }
-
-    private func finish(_ id: UUID?, type: WorkoutType, planned: PlannedSession?) {
-        launch = nil
-        guard let id else { return }
-        var didNudge = false
-        if let workout = fetchWorkout(id) {
-            // Deterministic active-energy estimate (body-mass aware) — drives the calorie stat and the
-            // Apple Health energy sample. Recomputed on save if the sport type is corrected.
-            workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
-            try? context.save()   // persist now so the fresh-context strength summary reader sees it
-            if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
-            else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
-            // Adaptive coaching: a strong run re-calibrates future paces (deterministic + bounded),
-            // and the coach tells you about it.
-            if workout.type.discipline == .running,
-               let rec = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context),
-               rec.sessionsUpdated > 0 {
-                let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
-                services.notifications.notifyPlanUpdated(
-                    title: "Your paces just got faster",
-                    body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: distanceUnit)).")
-                didNudge = true
-            }
-        }
-        // Let the Athlete Model learn from this session (local, never blocks the summary).
-        if let profile = profiles.first {
-            services.athleteModel.ingest(profile: profile, in: context)
-        }
-        // Auto-protect from overreaching (ACWR-driven, ≤1×/week, never auto-increases load).
-        let recent = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-        if let rec = PlanCoaching.autoAdapt(plan, workouts: recent, in: context), !didNudge {
-            services.notifications.notifyPlanUpdated(
-                title: rec == .rest ? "Recovery banked" : "Eased your upcoming sessions",
-                body: rec == .rest
-                    ? "Your load's been climbing — I pulled the next sessions back so it lands. No streak lost."
-                    : "Your load's been climbing — I eased the next sessions ~15%. Still on track.")
-        }
-        // Refresh next-workout reminders so they reflect the completed/credited/recalibrated/eased plan.
-        services.notifications.schedulePlannedReminders(plan)
-        summary = PresentedWorkout(id: id, type: type)
-    }
-
-    private func fetchWorkout(_ id: UUID) -> Workout? {
-        ((try? context.fetch(FetchDescriptor<Workout>())) ?? []).first { $0.id == id }
     }
 
     private func workoutType(for d: Discipline) -> WorkoutType {

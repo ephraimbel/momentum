@@ -15,6 +15,9 @@ struct PlanView: View {
     @State private var addDay = Date()
     @State private var editing: EditingSession?
     @State private var adjusted = false
+    @State private var launch: TodayLaunch?
+    @State private var pendingStart: PlannedSession?     // start after the detail sheet dismisses
+    @State private var locator = LocationService()
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
@@ -66,9 +69,29 @@ struct PlanView: View {
                 AddSessionSheet(plan: plan, defaultDate: addDay) { showingAdd = false }
             }
         }
-        .sheet(item: $editing) { item in
-            SessionDetailSheet(session: item.session, distanceUnit: distanceUnit) { delete(item.session) }
+        .sheet(item: $editing, onDismiss: {
+            if let s = pendingStart { pendingStart = nil; start(s) }
+        }) { item in
+            SessionDetailSheet(session: item.session, distanceUnit: distanceUnit,
+                               onRemove: { delete(item.session) },
+                               onStart: { pendingStart = $0 })
         }
+        .workoutRunner(launch: $launch)
+    }
+
+    /// Launch the right recorder for a planned session (uses its precise sport; requests GPS for cardio).
+    private func start(_ session: PlannedSession) {
+        let t = session.workoutType ?? workoutType(for: session.discipline)
+        if t.isStrengthStyle { launch = .strength(type: t, planned: session) }
+        else if t.isTimed { launch = .timed(type: t) }
+        else {
+            locator.requestAuthorization()
+            launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+        }
+    }
+
+    private func workoutType(for d: Discipline) -> WorkoutType {
+        switch d { case .strength: .strength; case .cycling: .ride; case .walking: .walk; case .running: .run }
     }
 
     private func presentAdd(for day: Date) { addDay = day; showingAdd = true }
