@@ -45,6 +45,19 @@ Public projection of the athlete: avatar (iridescent orb/initials v1), name, @ha
 city, bio, lifetime totals + streak + consistency heatmap + PR shelf (reuses `ProfileStats`), recent
 public activities. Own profile shows Edit + privacy; others' show Follow + public content only.
 
+## 2026-06-17 — World tab IS the globe (feed removed)
+**Decision (overrides the feed-as-World-tab IA above):** the World tab is now *only* the globe — the
+map of everyone on Momentum. The aggregated Discover/Following **feed stream is removed** (deleted
+`WorldView`, `FeaturedFeedCard`, `WorldFeedUITests`). Rationale: the globe is the differentiated,
+honest centerpiece ("see everyone in the world"); a scrolling feed is the commodity Strava already
+owns and pulled focus from the map.
+- **What stays:** tapping a globe dot → that athlete's **profile**, which still shows their posts via
+  `FeedPostCard` (route map / muscle map / timed discipline card). Your own posts still render on your
+  profile (Progress → Profile). `FeedAssembler`/`CommunityDirectory`/`FollowStore`/reactions/comments
+  all remain — they're profile-scoped now, not a global stream.
+- `RootView` routes `.world → GlobeView()`; the globe hides its nav bar (the "Around the world"
+  overlay is the title) and bleeds full-screen behind safe-area-inset overlays.
+
 ## 2026-06-17 — Profile becomes a tab; editorial-feed redesign
 A push to make the social surface feel Substack/Strava-grade (clean, editorial, enterprise):
 - **Navigation:** the immersive **Coach chat tab was removed** and **Profile is now its own tab**

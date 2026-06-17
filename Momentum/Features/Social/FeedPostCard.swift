@@ -8,8 +8,6 @@ import UIKit
 /// posts carry a clear "Momentum community" badge.
 struct FeedPostCard: View {
     let item: FeedItem
-    /// Where tapping the author byline navigates (nil = not tappable, e.g. on a profile's own list).
-    var navValue: WorldView.WorldRoute? = nil
     @Environment(ReactionStore.self) private var reactions
     @Environment(ModerationStore.self) private var moderation
     @Environment(CommentStore.self) private var comments
@@ -56,22 +54,11 @@ struct FeedPostCard: View {
 
     // MARK: Byline
 
+    // Cards render inside a profile (athlete or your own), so the byline isn't a navigation target —
+    // you're already on that person's page.
     private var authorRow: some View {
         HStack(spacing: Theme.Space.sm) {
-            // Tapping the author (avatar + name) opens their profile — the standard social pattern, and
-            // it avoids the whole-card-as-NavigationLink conflict with the embedded live map.
-            if let navValue {
-                NavigationLink(value: navValue) {
-                    authorIdentity
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(item.authorName)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("feed-author")
-                .accessibilityHint("Open profile")
-            } else {
-                authorIdentity
-            }
+            authorIdentity
             Spacer(minLength: 0)
             Image(systemName: item.type.systemImage).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
         }

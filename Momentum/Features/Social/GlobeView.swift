@@ -3,10 +3,11 @@ import SwiftData
 import CoreLocation
 import MapboxMaps
 
-/// The momentum globe (docs/SOCIAL-LAYER.md) — a real Mapbox globe of the world (dark basemap, brand
-/// canvas). Glowing iridescent dots mark the community at their (city-level, fuzzed) locations, plus
-/// you when you've opted onto the map. Drag to spin the globe; tap a dot to open that athlete. Honest
-/// presence: only the real seeded community + your own location — no fabricated crowd.
+/// The momentum globe (docs/SOCIAL-LAYER.md) — the **World tab**: a real Mapbox globe of the world
+/// (dark basemap, brand canvas) showing everyone on Momentum. Glowing iridescent dots mark the
+/// community at their (city-level, fuzzed) locations, plus you when you've opted onto the map. Drag to
+/// spin the globe; tap a dot to open that athlete. Honest presence: only the real community + your own
+/// location — no fabricated crowd, and no feed (the World tab is the globe, not a stream).
 struct GlobeView: View {
     @Query private var profiles: [UserProfile]
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
@@ -33,13 +34,10 @@ struct GlobeView: View {
 
     var body: some View {
         globe
-            .ignoresSafeArea()
             .overlay(alignment: .top) { header }
             .overlay(alignment: .bottom) { bottomControls }
             .background(.black)
-            .navigationTitle("World")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar(.hidden, for: .navigationBar)   // the "Around the world" overlay is the title
             .navigationDestination(item: $selected) { AthleteProfileView(athlete: $0) }
             .task { liveCount = await services.presence.refresh(appearOnMap: onMap) }
     }
@@ -98,6 +96,7 @@ struct GlobeView: View {
         }
         .mapStyle(.standard)                   // realistic blue-and-green Earth (vector + atmosphere) — lighter than satellite imagery
         .ornamentOptions(MapChrome.hidden)
+        .ignoresSafeArea()                     // map bleeds full-screen; overlays stay inside the safe area
     }
 
     private var legend: some View {
