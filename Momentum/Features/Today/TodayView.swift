@@ -354,15 +354,18 @@ struct TodayView: View {
     }
 
     /// Opens the world: the Today map zooms all the way out to the globe of everyone on Momentum.
+    /// `highPriorityGesture` so the tap reliably wins over the live map's gesture recognizer (a plain
+    /// Button loses the race over Mapbox), same as the globe's exit control.
     private var worldButton: some View {
-        Button { enterWorld() } label: {
-            Image(systemName: "globe")
-                .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 44, height: 44)
-                .momentumGlass(in: Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("See the world")
+        Image(systemName: "globe")
+            .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44)
+            .momentumGlass(in: Circle())
+            .contentShape(Circle())
+            .highPriorityGesture(TapGesture().onEnded { enterWorld() })
+            .accessibilityElement()
+            .accessibilityLabel("See the world")
+            .accessibilityAddTraits(.isButton)
     }
 
 
@@ -537,7 +540,9 @@ struct TodayView: View {
     /// Fly back in to the athlete's neighborhood and bring the cards back.
     private func exitWorld() {
         Haptics.light()
-        let home: Viewport = locator.lastLocation
+        // Fly back to a real place (live fix, else the last workout's neighborhood) so the camera
+        // reliably leaves the globe — `followPuck` alone does nothing without a live location.
+        let home: Viewport = lastKnownCoordinate
             .map { .camera(center: $0, zoom: 15, pitch: mapStyle.explorePitch) }
             ?? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
         withAnimation(Motion.reversible) { worldMode = false }
@@ -553,20 +558,29 @@ struct TodayView: View {
     private var worldTopChrome: some View {
         VStack {
             HStack(alignment: .top) {
-                Button { exitWorld() } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 44, height: 44)
-                        .momentumGlass(in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back to Today")
+                exitButton
                 Spacer()
             }
             .padding(Theme.Space.md)
             Spacer()
         }
         .overlay(alignment: .top) { worldHeader }
+    }
+
+    /// The "back to Today" control. A live Mapbox map's tap recognizer wins the gesture race against a
+    /// plain SwiftUI `Button`, so this uses a solid hit shape + `highPriorityGesture` to claim the tap.
+    private var exitButton: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
+            .frame(width: 46, height: 46)
+            .background(Circle().fill(.black.opacity(0.45)))
+            .overlay(Circle().stroke(.white.opacity(0.35)))
+            .shadow(color: .black.opacity(0.4), radius: 6, y: 1)
+            .contentShape(Circle())
+            .highPriorityGesture(TapGesture().onEnded { exitWorld() })
+            .accessibilityElement()
+            .accessibilityLabel("Back to Today")
+            .accessibilityAddTraits(.isButton)
     }
 
     private var worldHeader: some View {
