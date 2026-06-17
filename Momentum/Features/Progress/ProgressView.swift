@@ -258,51 +258,48 @@ struct ProgressScreen: View {
         let paced = insights.weeks.filter { $0.avgPaceSPerKm > 0 }
         let slowest = paced.map(\.avgPaceSPerKm).max() ?? 0
         let fastest = paced.map(\.avgPaceSPerKm).min() ?? 1
+        let last = paced.last?.weekStart
         return chartSection("Weekly pace", subtitle: "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))") {
-            Chart(paced) { wk in
-                LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                         y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
-                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .interpolationMethod(.catmullRom)
-                PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                          y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
-                    .foregroundStyle(Theme.ink).symbolSize(26)
-                    .annotation(position: .top, spacing: 2) {
-                        if animateCharts { barLabel(Formatters.pace(secPerKm: wk.avgPaceSPerKm, unit: distanceUnit)) }
+            if paced.count < 2 { notEnoughData } else {
+                Chart(paced) { wk in
+                    LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                             y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
+                        .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.monotone)
+                    if wk.weekStart == last {
+                        PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                                  y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
+                            .foregroundStyle(IridescentMaterial()).symbolSize(70)
                     }
+                }
+                .chartYScale(domain: (fastest * 0.94)...(slowest * 1.06))
+                .chartXAxis { weekAxis }
+                .chartYAxis { paceAxis }
+                .frame(height: 168)
             }
-            .chartXAxis(.hidden).chartYAxis(.hidden)
-            .chartYScale(domain: (fastest * 0.96)...(slowest * 1.06))
-            .frame(height: 120)
         }
-    }
-
-    /// Compact value label over a bar/point — "1.2k" for big loads, "23" / "4.5" for distances.
-    private func valueLabel(_ v: Double) -> String {
-        if v >= 1000 { return String(format: "%.1fk", v / 1000) }
-        if v >= 10 || v == v.rounded() { return "\(Int(v.rounded()))" }
-        return String(format: "%.1f", v)
-    }
-
-    private func barLabel(_ text: String) -> some View {
-        Text(text).font(.rounded(10, weight: .bold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
     }
 
     private func loadChart(_ insights: ProgressInsights) -> some View {
         let maxLoad = insights.weeks.map(\.load).max() ?? 0
+        let last = insights.weeks.last?.weekStart
         return chartSection("Weekly training load", subtitle: "Last 8 weeks\(trendSuffix(insights.loadTrendPct))") {
-            Chart(insights.weeks) { wk in
-                BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                        y: .value("Load", animateCharts ? wk.load : 0))
-                    .foregroundStyle(IridescentMaterial())
-                    .cornerRadius(5)
-                    .annotation(position: .top, spacing: 3) {
-                        if animateCharts, wk.load > 0 { barLabel(valueLabel(wk.load)) }
-                    }
+            if maxLoad <= 0 { notEnoughData } else {
+                Chart(insights.weeks) { wk in
+                    BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                            y: .value("Load", animateCharts ? wk.load : 0),
+                            width: .ratio(0.62))
+                        // Earned-iridescent only on the current week; prior weeks are clean ink.
+                        .foregroundStyle(wk.weekStart == last
+                                         ? AnyShapeStyle(IridescentMaterial())
+                                         : AnyShapeStyle(Theme.ink.opacity(0.82)))
+                        .cornerRadius(4)
+                }
+                .chartYScale(domain: 0...max(1, maxLoad * 1.15))
+                .chartXAxis { weekAxis }
+                .chartYAxis { valueAxis }
+                .frame(height: 168)
             }
-            .chartXAxis(.hidden).chartYAxis(.hidden)
-            .chartYScale(domain: 0...max(1, maxLoad * 1.22))   // headroom so labels don't clip
-            .frame(height: 150)
         }
     }
 
@@ -310,29 +307,84 @@ struct ProgressScreen: View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
         let maxDist = insights.weeks.map { disp($0.distanceM) }.max() ?? 0
+        let last = insights.weeks.last?.weekStart
         return chartSection("Weekly distance", subtitle: "In \(unit)\(trendSuffix(insights.distanceTrendPct))") {
-            Chart(insights.weeks) { wk in
-                AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                         y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                    .foregroundStyle(IridescentMaterial()).opacity(0.25)
-                    .interpolationMethod(.catmullRom)
-                LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                         y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .interpolationMethod(.catmullRom)
-                // Dot + value at each week with distance, so the numbers are readable.
-                PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                          y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                    .foregroundStyle(Theme.ink)
-                    .symbolSize(disp(wk.distanceM) > 0 ? 26 : 0)
-                    .annotation(position: .top, spacing: 2) {
-                        if animateCharts, disp(wk.distanceM) > 0 { barLabel(valueLabel(disp(wk.distanceM))) }
+            if maxDist <= 0 { notEnoughData } else {
+                Chart(insights.weeks) { wk in
+                    AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                             y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
+                        .foregroundStyle(LinearGradient(colors: [Theme.ink.opacity(0.10), .clear],
+                                                        startPoint: .top, endPoint: .bottom))
+                        .interpolationMethod(.monotone)
+                    LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                             y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
+                        .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.monotone)
+                    if wk.weekStart == last {
+                        PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                                  y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
+                            .foregroundStyle(IridescentMaterial()).symbolSize(70)
                     }
+                }
+                .chartYScale(domain: 0...max(1, maxDist * 1.15))
+                .chartXAxis { weekAxis }
+                .chartYAxis { valueAxis }
+                .frame(height: 168)
             }
-            .chartXAxis(.hidden).chartYAxis(.hidden)
-            .chartYScale(domain: 0...max(1, maxDist * 1.25))
-            .frame(height: 150)
         }
+    }
+
+    // MARK: Shared chart axes — a quiet week timeline + faint value gridlines, so every chart reads
+    // as tracking something over time (not a floating squiggle).
+
+    /// X axis: a week/date timeline, labelled every other week.
+    private var weekAxis: some AxisContent {
+        AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { _ in
+            AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// Y axis: three faint hairline gridlines with muted numeric labels.
+    private var valueAxis: some AxisContent {
+        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisGridLine().foregroundStyle(Theme.hairline)
+            AxisValueLabel()
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// Y axis for pace — gridlines with the value formatted as m:ss (raw seconds are unreadable).
+    private var paceAxis: some AxisContent {
+        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+            AxisGridLine().foregroundStyle(Theme.hairline)
+            if let secPerKm = value.as(Double.self) {
+                AxisValueLabel { Text(paceMMSS(secPerKm)) }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+        }
+    }
+
+    /// "m:ss" for the pace axis (per display unit, no suffix — the subtitle already states per-mi/km).
+    private func paceMMSS(_ secPerKm: Double) -> String {
+        let secPerUnit = distanceUnit.resolved() == .imperial ? secPerKm * (Formatters.metersPerMile / 1000) : secPerKm
+        let total = Int(secPerUnit.rounded())
+        return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    /// Quiet placeholder when a chart has fewer than ~2 weeks of real data, so it never shows a lone
+    /// floating bar or point.
+    private var notEnoughData: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "chart.line.uptrend.xyaxis").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            Text("A couple more weeks and your trend shows here.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 100)
     }
 
     private func chartSection<C: View>(_ title: String, subtitle: String, @ViewBuilder _ content: () -> C) -> some View {

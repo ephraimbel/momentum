@@ -12,6 +12,7 @@ struct RootView: View {
         // Deterministic deep-links for sim verification (tab-bar taps are unreliable in the sim).
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--profile-tab") { return .profile }
+        if args.contains("--progress-tab") { return .progress }
         if args.contains("--world-feed") || args.contains("--social-globe") { return .world }
         #endif
         return .today
