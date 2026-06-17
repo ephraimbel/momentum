@@ -73,8 +73,10 @@ final class OnboardingViewModel {
 
     /// Goal-first, branching order — each user only sees the steps relevant to their goal/disciplines.
     enum Step: Int, CaseIterable {
-        case coldOpen, name, goal, disciplines, race, muscleFocus, experience, days, preferredDays,
-             session, equipment, metrics, why, calibration, commitment, building, reveal, primers
+        // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
+        // everywhere it appears (focus step, building beat, reveal).
+        case coldOpen, name, goal, disciplines, metrics, race, muscleFocus, experience, days,
+             preferredDays, session, equipment, why, calibration, commitment, building, reveal, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }

@@ -19,6 +19,7 @@ struct EditProfileView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     avatarPicker
                     section("YOU") { AnyView(identityCard) }
+                    section("ABOUT YOU") { AnyView(aboutCard) }
                     section("DEFAULT VISIBILITY") { AnyView(visibilityCard) }
                     section("SHARING") { AnyView(sharingCard) }
                 }
@@ -89,6 +90,76 @@ struct EditProfileView: View {
         }
         .padding(.horizontal, Theme.Space.lg)
         .background(card)
+    }
+
+    // MARK: About you (sex drives the anatomy figure; height/weight tune your targets)
+
+    private var aboutCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("SEX").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
+            HStack(spacing: Theme.Space.sm) {
+                ForEach(BiologicalSex.allCases) { s in
+                    let on = profile.sex == s.rawValue
+                    Button { Haptics.selection(); profile.sex = on ? nil : s.rawValue } label: {
+                        Text(s.label)
+                            .font(.rounded(Theme.FontSize.body, weight: .bold))
+                            .frame(maxWidth: .infinity).frame(height: 44)
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            divider
+            stepperRow("Height", value: heightLabel, dec: { bumpHeight(false) }, inc: { bumpHeight(true) })
+            divider
+            stepperRow("Weight", value: weightLabel, dec: { bumpWeight(false) }, inc: { bumpWeight(true) })
+        }
+        .padding(Theme.Space.lg)
+        .background(card)
+    }
+
+    private func stepperRow(_ label: String, value: String, dec: @escaping () -> Void, inc: @escaping () -> Void) -> some View {
+        HStack {
+            Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            Spacer()
+            Button { Haptics.light(); dec() } label: { stepGlyph("minus") }.buttonStyle(.plain)
+            Text(value).font(.display(18, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                .frame(minWidth: 78).contentTransition(.numericText())
+            Button { Haptics.light(); inc() } label: { stepGlyph("plus") }.buttonStyle(.plain)
+        }
+        .padding(.vertical, 6)
+        .animation(.snappy(duration: 0.2), value: value)
+    }
+
+    private func stepGlyph(_ s: String) -> some View {
+        Image(systemName: s).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 40, height: 40).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+    }
+
+    private var heightInches: Double { (profile.heightCm ?? 172.72) / 2.54 }
+    private var heightLabel: String { let t = Int(heightInches.rounded()); return "\(t / 12)'\(t % 12)\"" }
+    private func bumpHeight(_ up: Bool) {
+        let inch = min(84, max(48, heightInches.rounded() + (up ? 1 : -1)))
+        profile.heightCm = inch * 2.54
+    }
+
+    private var isLb: Bool { profile.weightUnit == WeightUnit.lb.rawValue }
+    private var weightLabel: String {
+        let kg = profile.bodyMassKg ?? 72.5748
+        return isLb ? "\(Int((kg * Formatters.lbPerKg).rounded())) lb" : "\(Int(kg.rounded())) kg"
+    }
+    private func bumpWeight(_ up: Bool) {
+        let kg = profile.bodyMassKg ?? 72.5748
+        if isLb {
+            let lb = (kg * Formatters.lbPerKg).rounded() + (up ? 5 : -5)
+            profile.bodyMassKg = min(400, max(80, lb)) * Formatters.kgPerLb
+        } else {
+            profile.bodyMassKg = min(180, max(35, kg.rounded() + (up ? 1 : -1)))
+        }
     }
 
     // MARK: Default visibility

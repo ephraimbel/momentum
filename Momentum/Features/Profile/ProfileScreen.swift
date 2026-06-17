@@ -36,7 +36,6 @@ struct ProfileScreen: View {
                         .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
-                if let profile { aboutSection(profile) }
                 lifetimeTotals
                 if !stats.countsByType.isEmpty { breakdownSection }
                 consistencySection
@@ -212,57 +211,6 @@ struct ProfileScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Edit your sharing and privacy settings")
-    }
-
-    // MARK: About you (from onboarding)
-
-    @ViewBuilder
-    private func aboutSection(_ profile: UserProfile) -> some View {
-        let rows = aboutRows(profile)
-        if !rows.isEmpty {
-            section("About you") {
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                        if i > 0 { Divider().overlay(Theme.hairline) }
-                        HStack {
-                            Text(row.0).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                            Spacer()
-                            Text(row.1).font(.rounded(Theme.FontSize.body, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
-                        }
-                        .padding(.vertical, 12)
-                    }
-                }
-                .padding(.horizontal, Theme.Space.lg)
-                .background(card)
-            }
-        }
-    }
-
-    private func aboutRows(_ p: UserProfile) -> [(String, String)] {
-        var rows: [(String, String)] = [("Goal", goalLabel(p.goal))]
-        if let primary = p.disciplines.first, let lvl = p.experience[primary] {
-            rows.append(("Experience", experienceLabel(lvl)))
-        }
-        rows.append(("Days / week", "\(p.daysPerWeek)"))
-        if let h = p.heightCm { let inch = Int((h / 2.54).rounded()); rows.append(("Height", "\(inch / 12)'\(inch % 12)\"")) }
-        if let w = p.bodyMassKg {
-            rows.append(("Weight", weightUnit == .lb ? "\(Int((w * Formatters.lbPerKg).rounded())) lb" : "\(Int(w.rounded())) kg"))
-        }
-        if let s = p.sex, let bs = BiologicalSex(rawValue: s) { rows.append(("Sex", bs.label)) }
-        return rows
-    }
-
-    private func goalLabel(_ g: Goal) -> String {
-        switch g {
-        case .loseFat: "Lose fat"; case .buildMuscle: "Build muscle"; case .getStronger: "Get stronger"
-        case .raceDistance: "Run a race"; case .endurance: "Endurance"; case .generalFitness: "General fitness"
-        case .stayConsistent: "Stay consistent"
-        }
-    }
-    private func experienceLabel(_ raw: String) -> String {
-        switch ExperienceLevel(rawValue: raw) {
-        case .new: "New"; case .some: "Some"; case .experienced: "Experienced"; default: "—"
-        }
     }
 
     // MARK: Building blocks
