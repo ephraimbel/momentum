@@ -7,6 +7,8 @@ import Observation
 @Observable
 final class OnboardingViewModel {
     // Answers
+    /// What to call the athlete (prefilled from Sign in with Apple; editable). Fills the profile.
+    var name: String = ""
     /// Everything the athlete chose to do (source of truth for the picker).
     var activities: Set<ActivityChoice> = []
     /// Engine-facing disciplines — the programmable subset of the chosen activities.
@@ -53,11 +55,23 @@ final class OnboardingViewModel {
     /// Whether this athlete's plan includes lifting (drives the anatomy beats vs. the route beat).
     var includesStrength: Bool { disciplines.contains(.strength) }
 
+    /// A tasteful default bio derived from the goal (the athlete can edit it later).
+    var bioForGoal: String {
+        switch goal {
+        case .raceDistance: return raceDistance.map { "Training for a \($0.label)" } ?? "Chasing a finish line"
+        case .buildMuscle: return "Building muscle"
+        case .getStronger: return "Getting stronger"
+        case .loseFat: return "Getting lean"
+        case .endurance: return "Building endurance"
+        case .generalFitness, .stayConsistent: return "Keep moving."
+        }
+    }
+
     var step: Step = .coldOpen
 
     /// Goal-first, branching order — each user only sees the steps relevant to their goal/disciplines.
     enum Step: Int, CaseIterable {
-        case coldOpen, goal, disciplines, race, muscleFocus, experience, days, preferredDays,
+        case coldOpen, name, goal, disciplines, race, muscleFocus, experience, days, preferredDays,
              session, equipment, metrics, why, calibration, commitment, building, reveal, primers
     }
 
@@ -197,6 +211,9 @@ final class OnboardingViewModel {
     func finish(in context: ModelContext) -> UserProfile {
         let profile = UserProfile()
         let chosen = disciplines.isEmpty ? [Discipline.running] : Array(disciplines)
+        // Identity from onboarding fills the profile (no more blank "Athlete").
+        profile.displayName = name.trimmingCharacters(in: .whitespaces)
+        if profile.bio.isEmpty { profile.bio = bioForGoal }
         profile.disciplines = chosen.map(\.rawValue)
         profile.goal = goal
         // Per-discipline experience: lifting uses its own level when hybrid; everything else the general one.

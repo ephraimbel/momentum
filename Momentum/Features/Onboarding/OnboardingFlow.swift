@@ -11,6 +11,7 @@ struct OnboardingFlow: View {
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(Services.self) private var services
+    @Environment(AuthController.self) private var auth
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
     @State private var goingBack = false
@@ -54,6 +55,7 @@ struct OnboardingFlow: View {
         }
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
+        .onAppear { if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n } }
         .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
@@ -129,6 +131,7 @@ struct OnboardingFlow: View {
     private var content: some View {
         switch vm.step {
         case .coldOpen: EmptyView()   // rendered full-bleed in `body`
+        case .name: nameStep
         case .goal: goalStep
         case .disciplines: disciplinesStep
         case .race: raceStep
@@ -217,6 +220,21 @@ struct OnboardingFlow: View {
     private func activitySectionLabel(_ text: String) -> some View {
         Text(text).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var nameStep: some View {
+        questionScaffold("What should we call you?", subtitle: "We'll make the plan feel like it's yours.") {
+            TextField("Your name", text: $vm.name)
+                .font(.display(24, weight: .bold)).foregroundStyle(Theme.ink)
+                .textInputAutocapitalization(.words).autocorrectionDisabled()
+                .submitLabel(.done)
+                .padding(Theme.Space.md)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                }
+                .reveal(cascade(0))
+        }
     }
 
     private var goalStep: some View {
