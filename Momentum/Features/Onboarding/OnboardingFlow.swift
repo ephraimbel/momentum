@@ -24,8 +24,10 @@ struct OnboardingFlow: View {
         ZStack {
             Theme.background.ignoresSafeArea()
             if vm.step == .building {
-                // The hero beat renders full-bleed (the map must escape the flow's padding).
-                BuildingPlanView(lines: vm.buildingLines())
+                // The hero beat renders full-bleed (the map must escape the flow's padding). Strength
+                // and hybrid plans build over the body lighting up; pure cardio over the route draw.
+                BuildingPlanView(lines: vm.buildingLines(),
+                                 anatomy: vm.includesStrength ? vm.targetMuscles() : nil)
                     .task { await buildPlan() }
                     .transition(.opacity)
             } else if vm.step == .coldOpen {

@@ -17,10 +17,31 @@ final class OnboardingViewModel {
     var raceDate: Date = Calendar.current.date(byAdding: .weekOfYear, value: 8, to: Date()) ?? Date()
     var reason: String = "health"
 
+    // Deeper tailoring (PRD §26 — goal-branched)
+    var raceDistance: RaceDistance? = nil           // for "run a race"
+    var muscleFocus: Set<MuscleGroup> = []          // for "build muscle" — areas to emphasize
+    var preferredDays: Set<Int> = []                // Calendar weekday 1…7; empty → auto-spread
+    var sex: BiologicalSex? = nil
+    var heightCm: Double? = nil
+    var birthYear: Int? = nil
+
     // Optional calibration
     var addRecentRun = false
     var recentRunMeters: Double = 5000
     var recentRunSeconds: Double = 1500
+
+    /// A balanced full-body activation for the anatomy animation, emphasized by the chosen focus.
+    func targetMuscles() -> [MuscleGroup: Double] {
+        let balanced: [MuscleGroup: Double] = [
+            .chest: 0.85, .back: 0.85, .shoulders: 0.6, .biceps: 0.5, .triceps: 0.5,
+            .quads: 0.9, .hamstrings: 0.7, .glutes: 0.75, .calves: 0.4, .core: 0.6]
+        guard !muscleFocus.isEmpty else { return balanced }
+        var m = balanced.mapValues { _ in 0.35 }
+        for f in muscleFocus { m[f] = 1.0 }
+        return m
+    }
+    /// Whether this athlete's plan includes lifting (drives the anatomy beats vs. the route beat).
+    var includesStrength: Bool { disciplines.contains(.strength) }
 
     var step: Step = .coldOpen
 
@@ -138,6 +159,12 @@ final class OnboardingViewModel {
         profile.equipment = equipment
         profile.sessionMinutes = sessionMinutes
         profile.raceDate = hasRace ? raceDate : nil
+        profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
+        profile.muscleFocus = muscleFocus.map(\.rawValue)
+        profile.preferredDays = Array(preferredDays).sorted()
+        profile.sex = sex?.rawValue
+        profile.heightCm = heightCm
+        profile.birthYear = birthYear
         profile.reason = reason
         context.insert(profile)
         PlanService.regenerate(for: profile, calibration: calibration, in: context)

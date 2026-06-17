@@ -10,25 +10,47 @@ struct BuildingPlanView: View {
     var lines: [String] = ["Balancing your week", "Spacing your efforts",
                            "Setting your paces", "Finalizing your plan"]
 
+    /// When set, the hero is the human body lighting up muscle-by-muscle (strength/hybrid plans);
+    /// otherwise the iridescent route draws itself (pure cardio).
+    var anatomy: [MuscleGroup: Double]? = nil
+
     @State private var completed = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let lineTick = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
-    init(lines: [String]? = nil) {
+    init(lines: [String]? = nil, anatomy: [MuscleGroup: Double]? = nil) {
         if let lines { self.lines = lines }
+        self.anatomy = anatomy
     }
 
     var body: some View {
-        RouteDrawMap()
-            .ignoresSafeArea()
-            .overlay(alignment: .bottom) { caption }
-            .onReceive(lineTick) { _ in
-                guard !reduceMotion, completed < lines.count else { return }
-                withAnimation(.easeOut(duration: 0.35)) { completed += 1 }
+        ZStack(alignment: .bottom) {
+            hero
+            caption
+        }
+        .onReceive(lineTick) { _ in
+            guard !reduceMotion, completed < lines.count else { return }
+            withAnimation(.easeOut(duration: 0.35)) { completed += 1 }
+        }
+        .onAppear { if reduceMotion { completed = lines.count } }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Building your plan")
+    }
+
+    @ViewBuilder
+    private var hero: some View {
+        if let anatomy {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                AnatomyGlowView(activation: anatomy, loops: true, step: 0.18)
+                    .padding(.horizontal, Theme.Space.xl)
+                    .padding(.top, 56)
+                    .padding(.bottom, 280)   // clear the caption block
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .onAppear { if reduceMotion { completed = lines.count } }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Building your plan")
+        } else {
+            RouteDrawMap().ignoresSafeArea()
+        }
     }
 
     /// Title + a personalization line, the per-answer checklist, and an iridescent progress bar — over

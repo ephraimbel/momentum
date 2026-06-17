@@ -29,6 +29,7 @@ struct PlanRevealView: View {
                 hero
                 reflectionChips.reveal(0.24)
                 projectionCard.reveal(0.3)
+                if vm.includesStrength { anatomySection.reveal(0.33) }
                 sessionList
             }
             .frame(maxWidth: .infinity)
@@ -137,6 +138,20 @@ struct PlanRevealView: View {
                 .frame(height: 100)
                 .padding(Theme.Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Anatomy — where the plan will build you (strength/hybrid)
+
+    private var anatomySection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            sectionLabel("WHERE YOU'LL GROW")
+            AnatomyGlowView(activation: vm.targetMuscles())
+                .frame(height: 230)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Theme.Space.md)
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
