@@ -177,10 +177,11 @@ struct RouteSuggestionView: View {
     }
 
     private func selectedStats(_ loop: SuggestedLoop) -> some View {
+        // Distance only — no estimated time. Everyone runs at their own pace, so a nominal-pace
+        // estimate would be misleading; the loop's actual distance is the honest, useful number.
         HStack {
             stat(Formatters.distance(meters: loop.distanceM, unit: vm.distanceUnit), "Distance")
             Spacer()
-            stat(Formatters.duration(s: loop.estDurationS), "Est. time")
         }
         .padding(.horizontal, Theme.Space.sm)
     }

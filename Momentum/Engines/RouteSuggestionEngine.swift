@@ -28,7 +28,6 @@ struct SuggestedLoop: Sendable, Identifiable {
     let polyline: [GeoPoint]      // assembled, path-snapped, start…→…start
     let waypoints: [GeoPoint]
     let distanceM: Double
-    let estDurationS: TimeInterval
     let bearingSeed: Double       // lets the UI "shuffle" to a different loop
 }
 
@@ -59,7 +58,6 @@ actor RouteSuggestionEngine {
         static let tolerance = 0.10       // accept within ±10% of target
         static let maxIterations = 4      // request budget per loop
         static let earthRadiusM = 6_371_000.0
-        static let runPaceSPerKm = 360.0  // 6:00/km nominal, for the duration estimate only
     }
 
     /// Generate up to `count` distinct loops by seeding evenly-spaced start bearings. `seedOffset`
@@ -148,8 +146,7 @@ actor RouteSuggestionEngine {
             // each leg starts where the previous ended — drop the duplicated joint
             poly.append(contentsOf: poly.isEmpty ? leg.polyline : Array(leg.polyline.dropFirst()))
         }
-        return SuggestedLoop(polyline: poly, waypoints: waypoints, distanceM: distanceM,
-                             estDurationS: distanceM / 1000 * Const.runPaceSPerKm, bearingSeed: seed)
+        return SuggestedLoop(polyline: poly, waypoints: waypoints, distanceM: distanceM, bearingSeed: seed)
     }
 
     /// Quantises endpoints to ~1m so a retried leg hits the cache (helps the MapKit rate limit).

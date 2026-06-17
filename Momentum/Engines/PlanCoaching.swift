@@ -29,6 +29,29 @@ enum PlanCoaching {
         try? context.save()
     }
 
+    /// Manual check-off from the Plan page (no workout attached). Toggling off unlinks any credited
+    /// workout so the session reads as open again. No-shame: this never creates a "failed" state.
+    static func setCompletion(_ session: PlannedSession, done: Bool, in context: ModelContext) {
+        session.status = done ? .completed : .planned
+        if done {
+            session.rationale = nil          // clear any "moved" note — it's done now
+        } else {
+            session.completedWorkout?.plannedSession = nil
+            session.completedWorkout = nil
+        }
+        try? context.save()
+    }
+
+    /// Move a session to another day from the Plan page. A manual move clears the auto-"moved" note so
+    /// it reads as a deliberate plan, not a slipped one.
+    static func reschedule(_ session: PlannedSession, to date: Date, in context: ModelContext,
+                           calendar: Calendar = .current) {
+        session.date = calendar.startOfDay(for: date)
+        if session.status == .moved { session.status = .planned }
+        session.rationale = nil
+        try? context.save()
+    }
+
     /// Credit a free workout toward today's matching planned session, if still open.
     @discardableResult
     static func creditWorkout(_ workout: Workout, to plan: TrainingPlan?, in context: ModelContext,
