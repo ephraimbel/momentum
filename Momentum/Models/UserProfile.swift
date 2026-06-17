@@ -13,6 +13,15 @@ final class UserProfile {
     var equipment: Equipment = Equipment.fullGym
     var sessionMinutes: Int = 45
     var raceDate: Date?
+    /// Target race distance in meters (for "run a race" goals) — drives long-run progression + taper.
+    var raceDistanceM: Double?
+    /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
+    var muscleFocus: [String] = []
+    /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.
+    var preferredDays: [Int] = []
+    /// Optional biological sex + height for load / HR / calorie tailoring.
+    var sex: String?
+    var heightCm: Double?
     var reason: String = "health"
     var weightUnit: String = "kg"               // "kg" | "lb"
     var distanceUnit: String = "auto"           // "metric" | "imperial" | "auto"

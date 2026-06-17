@@ -115,6 +115,61 @@ struct PlanEngineTests {
         }
     }
 
+    // MARK: Race-distance tailoring
+
+    @Test func raceDistanceShapesLongRun() {
+        func peakLong(_ raceM: Double) -> Double {
+            var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+            inp.raceDistanceM = raceM
+            let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                           startDate: Date(timeIntervalSinceReferenceDate: 0))
+            return plan.weeks.flatMap(\.sessions).filter { $0.runType == .long }.map { $0.targetDistanceM ?? 0 }.max() ?? 0
+        }
+        // A marathon's longest run dwarfs a 5K's — and never exceeds the engine's clamp.
+        let fiveK = peakLong(5_000), marathon = peakLong(42_195)
+        #expect(marathon > fiveK)
+        #expect(marathon <= 32_000 + 1)
+        #expect(fiveK <= PlanEngine.longRunPeak(forRaceM: 5_000) + 1)
+    }
+
+    @Test func shortRaceUsesIntervalsLongRaceUsesTempo() {
+        func qualityTypes(_ raceM: Double) -> Set<RunType> {
+            var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+            inp.raceDistanceM = raceM
+            let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                           startDate: Date(timeIntervalSinceReferenceDate: 0))
+            return Set(plan.weeks[0].sessions.compactMap(\.runType))
+        }
+        #expect(qualityTypes(5_000).contains(.intervals))
+        #expect(qualityTypes(42_195).contains(.tempo))
+    }
+
+    // MARK: Muscle focus
+
+    @Test func muscleFocusAddsVolumeToChosenMuscles() {
+        var inp = inputs(disciplines: [.strength], goal: .buildMuscle, days: 4)
+        inp.muscleFocus = [.chest]
+        let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        // The chest exercise in an Upper day gets an extra working set vs the base scheme (4 → 5).
+        let chestSets = plan.weeks[0].sessions
+            .flatMap(\.strengthTargets)
+            .filter { $0.exerciseName == "Barbell Bench Press" }
+            .map(\.targetSets).max() ?? 0
+        #expect(chestSets >= 5)
+    }
+
+    // MARK: Preferred days
+
+    @Test func preferredDaysAreHonored() {
+        var inp = inputs(disciplines: [.strength], goal: .buildMuscle, days: 3)
+        inp.preferredDayOffsets = [1, 3, 5]   // Mon/Wed/Fri-style spacing from the start day
+        let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let offsets = Set(plan.weeks[0].sessions.map(\.dayOffset))
+        #expect(offsets.isSubset(of: [1, 3, 5]))
+    }
+
     @Test func unifiedPlanFillsRequestedDays() {
         let plan = PlanEngine.generate(profile: inputs(disciplines: [.running, .strength], goal: .raceDistance, days: 6),
                                        catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))

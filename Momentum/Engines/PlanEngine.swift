@@ -86,14 +86,15 @@ enum PlanEngine {
 
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
-                                 goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload || isTaper)
+                                 goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload || isTaper,
+                                 raceDistanceM: profile.raceDistanceM)
                 : []
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
-                                   catalog: catalog, isDeload: isDeload)
+                                   catalog: catalog, isDeload: isDeload, muscleFocus: Set(profile.muscleFocus))
                 : []
-            let scheduled = schedule(runs: runs, lifts: lifts)
+            let scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
             weeks.append(GeneratedWeek(index: w, isDeload: isDeload, isTaper: isTaper, sessions: scheduled))
         }
 
@@ -109,20 +110,35 @@ enum PlanEngine {
     // MARK: Cardio sessions
 
     static func cardioSessions(discipline: Discipline, runDays: Int, level: ExperienceLevel,
-                               goal: Goal, p5k: Double, volumeMult: Double, isDeload: Bool) -> [GeneratedSession] {
+                               goal: Goal, p5k: Double, volumeMult: Double, isDeload: Bool,
+                               raceDistanceM: Double? = nil) -> [GeneratedSession] {
         guard runDays > 0 else { return [] }
-        let (easyBase, longBase, qualityBase): (Double, Double, Double)
+        var (easyBase, longBase, qualityBase): (Double, Double, Double)
         switch level {
         case .new: (easyBase, longBase, qualityBase) = (3000, 5000, 3000)
         case .some: (easyBase, longBase, qualityBase) = (6000, 10000, 5000)
         case .experienced: (easyBase, longBase, qualityBase) = (9000, 16000, 8000)
         }
         let isRunning = discipline == .running
-        var out: [GeneratedSession] = []
 
-        func makeRun(_ type: RunType, _ base: Double, hard: Bool, intervals: String? = nil) -> GeneratedSession {
+        // Race-specific shaping: the long run progresses toward a race-appropriate peak and is clamped
+        // there so a 5K plan doesn't drift into marathon volume (and a marathon's long run actually
+        // gets long). Short races sharpen with intervals; long races build threshold with tempo.
+        let longCap = raceDistanceM.map { longRunPeak(forRaceM: $0) }
+        if let cap = longCap {
+            longBase = min(max(longBase, cap * 0.5), cap)   // start ~half-peak, grow toward the cap
+        }
+        let useIntervals: Bool = {
+            if let r = raceDistanceM { return r <= 12_000 }     // 5K/10K → speed; half/marathon → tempo
+            return goal == .raceDistance || goal == .endurance
+        }()
+
+        var out: [GeneratedSession] = []
+        func makeRun(_ type: RunType, _ base: Double, hard: Bool, intervals: String? = nil, cap: Double? = nil) -> GeneratedSession {
             var s = GeneratedSession(dayOffset: -1, discipline: discipline)
-            s.targetDistanceM = (base * volumeMult).rounded()
+            var dist = (base * volumeMult).rounded()
+            if let cap { dist = min(dist, cap.rounded()) }
+            s.targetDistanceM = dist
             if isRunning {
                 s.runType = type
                 s.targetPaceSPerKm = pace(type, p5k: p5k)
@@ -132,10 +148,11 @@ enum PlanEngine {
             return s
         }
 
-        if runDays >= 2 { out.append(makeRun(.long, longBase, hard: false)) }
+        if runDays >= 2 { out.append(makeRun(.long, longBase, hard: false, cap: longCap)) }
         if runDays >= 3 && !isDeload && goal != .stayConsistent && isRunning {
-            if goal == .raceDistance || goal == .endurance {
-                out.append(makeRun(.intervals, qualityBase, hard: true, intervals: "6×400m @ 5k pace"))
+            if useIntervals {
+                let reps = (raceDistanceM ?? 5_000) <= 6_000 ? "6×400m @ 5K pace" : "5×800m @ 5K pace"
+                out.append(makeRun(.intervals, qualityBase, hard: true, intervals: reps))
             } else {
                 out.append(makeRun(.tempo, qualityBase, hard: true))
             }
@@ -147,10 +164,22 @@ enum PlanEngine {
         return out
     }
 
+    /// The peak weekly long-run distance a race builds toward (meters). Short races multiply up; long
+    /// races run a fraction of race distance (you never run a full marathon in training).
+    static func longRunPeak(forRaceM race: Double) -> Double {
+        switch race {
+        case ..<6_000:    return race * 1.8          // 5K → ~9K long
+        case ..<13_000:   return race * 1.5          // 10K → ~15K long
+        case ..<25_000:   return min(20_000, race * 0.9)   // half → ~19K
+        default:          return min(32_000, race * 0.76)  // marathon → ~32K
+        }
+    }
+
     // MARK: Strength sessions (§9.2)
 
     static func strengthSessions(liftDays: Int, goal: Goal, level: ExperienceLevel, equipment: Equipment,
-                                 sessionMinutes: Int, catalog: [ExerciseCatalogItem], isDeload: Bool) -> [GeneratedSession] {
+                                 sessionMinutes: Int, catalog: [ExerciseCatalogItem], isDeload: Bool,
+                                 muscleFocus: Set<MuscleGroup> = []) -> [GeneratedSession] {
         guard liftDays > 0 else { return [] }
         let labels = splitLabels(liftDays: liftDays)
         let allowed = allowedEquipment(equipment)
@@ -162,11 +191,18 @@ enum PlanEngine {
             s.isHardLowerLift = ["Lower", "Legs", "Full Body"].contains(label)
             var used = Set<String>()
             var targets: [GeneratedExercise] = []
-            for slot in muscleSlots(for: label).prefix(exerciseCount) {
+            // Emphasized muscles in this day's slots come first so focus work survives the count cap.
+            let slots = muscleSlots(for: label).sorted { a, b in
+                muscleFocus.contains(a.muscle) && !muscleFocus.contains(b.muscle)
+            }
+            for slot in slots.prefix(exerciseCount) {
                 guard let pick = selectExercise(muscle: slot.muscle, preferCompound: slot.compound,
                                                 allowed: allowed, catalog: catalog, used: used) else { continue }
                 used.insert(pick.name)
-                targets.append(scheme(for: pick, goal: goal, level: level, isDeload: isDeload))
+                var ge = scheme(for: pick, goal: goal, level: level, isDeload: isDeload)
+                // Earned extra volume on the muscles the athlete chose to grow.
+                if muscleFocus.contains(slot.muscle), !isDeload { ge.targetSets = min(6, ge.targetSets + 1) }
+                targets.append(ge)
             }
             s.strengthTargets = targets
             return s
@@ -234,17 +270,26 @@ enum PlanEngine {
     /// Assigns day offsets so a **hard run never lands the day after a heavy lower-body lift**.
     /// Lifts are spread first; hard runs take the remaining non-adjacent days, downgrading to easy
     /// only if forced. Also tags rationale.
-    static func schedule(runs: [GeneratedSession], lifts: [GeneratedSession]) -> [GeneratedSession] {
+    static func schedule(runs: [GeneratedSession], lifts: [GeneratedSession],
+                         preferredDayOffsets: [Int] = []) -> [GeneratedSession] {
         var lifts = lifts, runs = runs
-        guard !lifts.isEmpty || !runs.isEmpty else { return [] }
+        let total = lifts.count + runs.count
+        guard total > 0 else { return [] }
 
-        let liftDayList = spread(lifts.count)
+        // Use the athlete's preferred days as the candidate pool when they gave enough of them;
+        // otherwise fall back to an even spread across the whole week.
+        let cleanedPref = Array(Set(preferredDayOffsets.filter { (0..<7).contains($0) })).sorted()
+        let pool = cleanedPref.count >= total ? cleanedPref : Array(0..<7)
+
+        let liftDayList = pickSpread(from: pool, count: lifts.count)
         for i in lifts.indices { lifts[i].dayOffset = liftDayList[i] }
         let lowerDays = Set(zip(lifts.indices, liftDayList).filter { lifts[$0.0].isHardLowerLift }.map { $0.1 })
         let usedByLifts = Set(liftDayList)
         let forbidden = Set(lowerDays.map { $0 + 1 })
 
-        let available = (0..<7).filter { !usedByLifts.contains($0) }
+        // Prefer remaining pool days for runs; fall back to other week days only if the pool runs out.
+        let available = pool.filter { !usedByLifts.contains($0) }
+            + (0..<7).filter { !pool.contains($0) && !usedByLifts.contains($0) }
         var safe = available.filter { !forbidden.contains($0) }
         var unsafe = available.filter { forbidden.contains($0) }
 
@@ -286,6 +331,32 @@ enum PlanEngine {
         return days.sorted()
     }
 
+    /// Evenly pick `count` distinct days from a candidate `pool` (the athlete's preferred days). If the
+    /// pool is smaller than needed, it's used in full and backfilled from the rest of the week.
+    static func pickSpread(from pool: [Int], count: Int) -> [Int] {
+        guard count > 0 else { return [] }
+        let sorted = pool.sorted()
+        guard !sorted.isEmpty else { return spread(count) }
+        if count >= sorted.count {
+            var out = sorted
+            var extras = (0..<7).filter { !sorted.contains($0) }
+            while out.count < count, !extras.isEmpty { out.append(extras.removeFirst()) }
+            return out.sorted()
+        }
+        var seen = Set<Int>(), result: [Int] = []
+        for i in 0..<count {
+            let idx = min(sorted.count - 1, Int((Double(i) + 0.5) * Double(sorted.count) / Double(count)))
+            if seen.insert(sorted[idx]).inserted { result.append(sorted[idx]) }
+        }
+        // Backfill any collisions so we always return `count` distinct days.
+        var k = 0
+        while result.count < count, k < sorted.count {
+            if seen.insert(sorted[k]).inserted { result.append(sorted[k]) }
+            k += 1
+        }
+        return result.sorted()
+    }
+
     private static func rationale(for s: GeneratedSession) -> String {
         if s.discipline == .strength { return "\(s.strengthLabel ?? "Strength") day." }
         switch s.runType {
@@ -313,4 +384,10 @@ struct PlanInputs: Sendable {
     var raceDate: Date?
     var runningExperience: ExperienceLevel
     var liftingExperience: ExperienceLevel
+    /// Target race distance (meters) — shapes the long run + quality work. nil → general fitness.
+    var raceDistanceM: Double? = nil
+    /// Muscles to emphasize — adds a working set to matching strength exercises.
+    var muscleFocus: [MuscleGroup] = []
+    /// Preferred in-week day offsets (0…6 from the plan's start day). Empty → even auto-spread.
+    var preferredDayOffsets: [Int] = []
 }

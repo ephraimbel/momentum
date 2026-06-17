@@ -34,6 +34,30 @@ enum SportCategory: String, CaseIterable, Identifiable {
     }
 }
 enum Discipline: String, Codable, Sendable, CaseIterable { case running, cycling, walking, strength }
+
+/// A target race the plan points at (drives long-run progression + taper). Onboarding captures one
+/// for "run a race" goals; the engine reads `raceDistanceM`.
+enum RaceDistance: String, Codable, Sendable, CaseIterable, Identifiable {
+    case fiveK, tenK, half, marathon
+    var id: String { rawValue }
+    var meters: Double {
+        switch self { case .fiveK: 5_000; case .tenK: 10_000; case .half: 21_097.5; case .marathon: 42_195 }
+    }
+    var label: String {
+        switch self { case .fiveK: "5K"; case .tenK: "10K"; case .half: "Half marathon"; case .marathon: "Marathon" }
+    }
+    /// The closest preset to a stored meters value (for display of a custom distance).
+    static func nearest(toMeters m: Double) -> RaceDistance {
+        allCases.min { abs($0.meters - m) < abs($1.meters - m) } ?? .fiveK
+    }
+}
+
+/// Optional, used to refine load/HR/figure tailoring. "Prefer not to say" → nil.
+enum BiologicalSex: String, Codable, Sendable, CaseIterable, Identifiable {
+    case male, female, other
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+}
 enum Goal: String, Codable, Sendable, CaseIterable {
     case loseFat, buildMuscle, getStronger, raceDistance, endurance, generalFitness, stayConsistent
 }

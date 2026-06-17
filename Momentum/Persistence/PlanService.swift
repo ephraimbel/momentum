@@ -13,7 +13,7 @@ enum PlanService {
                            startDate: Date = Date(),
                            in context: ModelContext) -> TrainingPlan {
         let catalogItems = catalog(in: context)
-        let inputs = planInputs(from: profile)
+        let inputs = planInputs(from: profile, startDate: startDate)
         let generated = PlanEngine.generate(profile: inputs, catalog: catalogItems,
                                             calibration: calibration, startDate: startDate)
         return persist(generated, for: profile, startDate: startDate, in: context)
@@ -31,17 +31,24 @@ enum PlanService {
         }
     }
 
-    static func planInputs(from p: UserProfile) -> PlanInputs {
+    static func planInputs(from p: UserProfile, startDate: Date = Date(),
+                           calendar: Calendar = .current) -> PlanInputs {
         let disciplines = p.disciplines.compactMap(Discipline.init(rawValue:))
         func level(_ key: String) -> ExperienceLevel {
             ExperienceLevel(rawValue: p.experience[key] ?? "") ?? .some
         }
+        // Map preferred weekdays (1 = Sun … 7 = Sat) to in-week offsets from the plan's start day.
+        let anchorWeekday = calendar.component(.weekday, from: calendar.startOfDay(for: startDate))
+        let offsets = p.preferredDays.map { ((($0 - anchorWeekday) % 7) + 7) % 7 }
         return PlanInputs(
             disciplines: disciplines.isEmpty ? [.running] : disciplines,
             goal: p.goal, daysPerWeek: p.daysPerWeek, equipment: p.equipment,
             sessionMinutes: p.sessionMinutes, raceDate: p.raceDate,
             runningExperience: level(Discipline.running.rawValue),
-            liftingExperience: level(Discipline.strength.rawValue))
+            liftingExperience: level(Discipline.strength.rawValue),
+            raceDistanceM: p.raceDistanceM,
+            muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
+            preferredDayOffsets: offsets)
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,
