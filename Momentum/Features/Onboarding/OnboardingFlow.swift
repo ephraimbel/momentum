@@ -78,10 +78,7 @@ struct OnboardingFlow: View {
         }
     }
 
-    private var isQuestion: Bool {
-        (OnboardingViewModel.Step.disciplines.rawValue...OnboardingViewModel.Step.calibration.rawValue)
-            .contains(vm.step.rawValue)
-    }
+    private var isQuestion: Bool { vm.isQuestionStep }
 
     // MARK: Header (back + progress)
 
@@ -131,12 +128,16 @@ struct OnboardingFlow: View {
     private var content: some View {
         switch vm.step {
         case .coldOpen: EmptyView()   // rendered full-bleed in `body`
-        case .disciplines: disciplinesStep
         case .goal: goalStep
+        case .disciplines: disciplinesStep
+        case .race: raceStep
+        case .muscleFocus: muscleFocusStep
         case .experience: experienceStep
         case .days: daysStep
-        case .equipment: equipmentStep
+        case .preferredDays: preferredDaysStep
         case .session: sessionStep
+        case .equipment: equipmentStep
+        case .metrics: metricsStep
         case .why: whyStep
         case .calibration: calibrationStep
         case .commitment: EmptyView()   // rendered full-bleed in `body`
@@ -203,22 +204,55 @@ struct OnboardingFlow: View {
     private var goalStep: some View {
         let goals: [(Goal, String, String)] = [
             (.loseFat, "Lose fat / get fit", "flame"), (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"),
-            (.getStronger, "Get stronger", "dumbbell.fill"), (.raceDistance, "Run a distance", "figure.run"),
+            (.getStronger, "Get stronger", "dumbbell.fill"), (.raceDistance, "Run a race", "flag.checkered"),
             (.endurance, "Improve endurance", "wind"), (.stayConsistent, "Stay consistent", "calendar")]
-        return questionScaffold("What's your main goal?") {
+        return questionScaffold("What's your main goal?", subtitle: "This shapes everything that follows.") {
             ForEach(Array(goals.enumerated()), id: \.element.0) { i, g in
-                SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) { pick { vm.goal = g.0 } }
-                    .reveal(cascade(i))
+                SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) {
+                    pick { vm.goal = g.0; vm.applyGoalDefaults() }
+                }
+                .reveal(cascade(i))
             }
         }
     }
 
     private var experienceStep: some View {
-        questionScaffold("How experienced are you?") {
-            ForEach(Array([ExperienceLevel.new, .some, .experienced].enumerated()), id: \.element) { i, e in
-                SelectionCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
-                              isSelected: vm.experience == e) { pick { vm.experience = e } }
-                    .reveal(cascade(i))
+        questionScaffold("How experienced are you?",
+                         subtitle: vm.hybrid ? "We'll set running and lifting separately." : nil) {
+            if vm.hybrid {
+                expSegment("Running", vm.experience) { vm.experience = $0 }.reveal(cascade(0))
+                expSegment("Lifting", vm.liftExperience) { vm.liftExperience = $0 }.reveal(cascade(1))
+            } else {
+                ForEach(Array([ExperienceLevel.new, .some, .experienced].enumerated()), id: \.element) { i, e in
+                    SelectionCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
+                                  isSelected: vm.experience == e) { pick { vm.experience = e } }
+                        .reveal(cascade(i))
+                }
+            }
+        }
+    }
+
+    /// A compact labelled 3-way experience selector (used per-discipline for hybrids).
+    private func expSegment(_ title: String, _ current: ExperienceLevel,
+                            _ set: @escaping (ExperienceLevel) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(title.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
+            HStack(spacing: Theme.Space.sm) {
+                ForEach([ExperienceLevel.new, .some, .experienced], id: \.self) { e in
+                    let on = current == e
+                    Button { pick { set(e) } } label: {
+                        Text(e == .new ? "New" : e == .some ? "Some" : "Pro")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold))
+                            .frame(maxWidth: .infinity).frame(height: 50)
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Theme.surface)
+                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
+                }
             }
         }
     }
@@ -287,6 +321,173 @@ struct OnboardingFlow: View {
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
             .reveal(cascade(0))
         }
+    }
+
+    // MARK: Race setup (racers) — distance + optional date
+
+    private var raceStep: some View {
+        questionScaffold("Which race?", subtitle: "We'll point your long runs and taper at it.") {
+            ForEach(Array(RaceDistance.allCases.enumerated()), id: \.element) { i, d in
+                SelectionCard(title: d.label, subtitle: raceSubtitle(d), isSelected: vm.raceDistance == d) {
+                    pick { vm.raceDistance = d }
+                }
+                .reveal(cascade(i))
+            }
+            raceDateCard.reveal(cascade(RaceDistance.allCases.count))
+        }
+    }
+
+    private func raceSubtitle(_ d: RaceDistance) -> String {
+        switch d {
+        case .fiveK: "Fast and punchy"; case .tenK: "Speed meets stamina"
+        case .half: "The endurance test"; case .marathon: "The big one"
+        }
+    }
+
+    private var raceDateCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Toggle(isOn: $vm.hasRace) {
+                Text("I have a race date").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
+            .tint(Theme.ink)
+            if vm.hasRace {
+                DatePicker("Race day", selection: $vm.raceDate, in: Date()..., displayedComponents: .date)
+                    .datePickerStyle(.compact).tint(Theme.ink)
+            } else {
+                Text("No date is fine — we'll build a rolling block you can race off anytime.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+    }
+
+    // MARK: Muscle focus (build-muscle) — live anatomy
+
+    private struct FocusOption { let title: String; let muscles: [MuscleGroup] }
+    private var focusOptions: [FocusOption] {
+        [.init(title: "Chest", muscles: [.chest]), .init(title: "Back", muscles: [.back]),
+         .init(title: "Shoulders", muscles: [.shoulders]), .init(title: "Arms", muscles: [.biceps, .triceps]),
+         .init(title: "Legs", muscles: [.quads, .hamstrings]), .init(title: "Glutes", muscles: [.glutes]),
+         .init(title: "Core", muscles: [.core])]
+    }
+
+    private var muscleFocusStep: some View {
+        questionScaffold("Where do you want to grow?", subtitle: "Pick areas to emphasize — your plan adds volume there.") {
+            AnatomyGlowView(activation: vm.targetMuscles(), sequential: false)
+                .frame(height: 200).frame(maxWidth: .infinity)
+                .reveal(cascade(0))
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],
+                      spacing: Theme.Space.sm) {
+                ForEach(focusOptions, id: \.title) { opt in
+                    let on = !vm.muscleFocus.isDisjoint(with: Set(opt.muscles))
+                    Button { pick { toggleFocus(opt) } } label: {
+                        Text(opt.title)
+                            .font(.rounded(Theme.FontSize.body, weight: .bold))
+                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .reveal(cascade(1))
+        }
+    }
+
+    private func toggleFocus(_ opt: FocusOption) {
+        let on = !vm.muscleFocus.isDisjoint(with: Set(opt.muscles))
+        if on { opt.muscles.forEach { vm.muscleFocus.remove($0) } }
+        else { opt.muscles.forEach { vm.muscleFocus.insert($0) } }
+    }
+
+    // MARK: Preferred days (optional)
+
+    private var preferredDaysStep: some View {
+        questionScaffold("Any preferred days?",
+                         subtitle: "Optional — we'll fit your \(vm.daysPerWeek)-day week to these. Skip to auto-spread.") {
+            HStack(spacing: 6) {
+                ForEach(1...7, id: \.self) { wd in
+                    let on = vm.preferredDays.contains(wd)
+                    Button { pick { if on { vm.preferredDays.remove(wd) } else { vm.preferredDays.insert(wd) } } } label: {
+                        Text(weekdayLetter(wd))
+                            .font(.rounded(Theme.FontSize.body, weight: .bold))
+                            .frame(maxWidth: .infinity).frame(height: 56)
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .reveal(cascade(0))
+        }
+    }
+
+    private func weekdayLetter(_ wd: Int) -> String { ["S", "M", "T", "W", "T", "F", "S"][(wd - 1) % 7] }
+
+    // MARK: Body metrics (optional)
+
+    private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
+    private var ageDisplay: Int { vm.birthYear.map { currentYear - $0 } ?? 30 }
+    private var heightDisplay: Double { vm.heightCm ?? 170 }
+    private var weightDisplay: Double { vm.bodyMassKg ?? 70 }
+
+    private var metricsStep: some View {
+        questionScaffold("A bit about you", subtitle: "Optional — sharpens your starting loads and targets.") {
+            sexSelector.reveal(cascade(0))
+            metricRow("Age", "\(ageDisplay)", { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
+            metricRow("Height", "\(Int(heightDisplay)) cm",
+                      { vm.heightCm = max(120, heightDisplay - 1) }, { vm.heightCm = min(220, heightDisplay + 1) }).reveal(cascade(2))
+            metricRow("Weight", "\(Int(weightDisplay)) kg",
+                      { vm.bodyMassKg = max(35, weightDisplay - 1) }, { vm.bodyMassKg = min(220, weightDisplay + 1) }).reveal(cascade(3))
+        }
+    }
+
+    private func setAge(_ a: Int) { vm.birthYear = currentYear - min(90, max(13, a)) }
+
+    private var sexSelector: some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach(BiologicalSex.allCases) { s in
+                let on = vm.sex == s
+                Button { pick { vm.sex = on ? nil : s } } label: {
+                    Text(s.label)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                        .frame(maxWidth: .infinity).frame(height: 50)
+                        .foregroundStyle(on ? Theme.background : Theme.ink)
+                        .background {
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                            if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func metricRow(_ label: String, _ value: String, _ minus: @escaping () -> Void, _ plus: @escaping () -> Void) -> some View {
+        HStack(spacing: Theme.Space.md) {
+            Text(label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            Spacer()
+            Button { Haptics.light(); minus() } label: { metricStep("minus") }.buttonStyle(.plain)
+            Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                .frame(minWidth: 76).contentTransition(.numericText())
+            Button { Haptics.light(); plus() } label: { metricStep("plus") }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .animation(.snappy(duration: 0.2), value: value)
+    }
+
+    private func metricStep(_ s: String) -> some View {
+        Image(systemName: s).font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
     }
 
     // MARK: Commitment (the investment beat — hold the iridescent ring to commit)

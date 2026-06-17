@@ -28,6 +28,7 @@ struct PlanRevealView: View {
             VStack(spacing: Theme.Space.lg) {
                 hero
                 reflectionChips.reveal(0.24)
+                if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.27) }
                 projectionCard.reveal(0.3)
                 if vm.includesStrength { anatomySection.reveal(0.33) }
                 sessionList
@@ -141,6 +142,30 @@ struct PlanRevealView: View {
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Race countdown (dated race goals)
+
+    private func raceCountdown(_ weeks: Int) -> some View {
+        HStack(spacing: Theme.Space.md) {
+            Image(systemName: "flag.checkered").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44).background(Circle().fill(IridescentMaterial()).opacity(0.32))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(weeks == 0 ? "Race week" : "\(weeks) week\(weeks == 1 ? "" : "s") to race day")
+                    .font(.display(20, weight: .black)).foregroundStyle(Theme.ink).monospacedDigit()
+                if let r = vm.raceDistance {
+                    Text("\(r.label) · \(vm.raceDate.formatted(.dateTime.weekday(.wide).month().day()))")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.12)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
     }
 
     // MARK: Anatomy — where the plan will build you (strength/hybrid)

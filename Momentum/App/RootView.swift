@@ -54,6 +54,9 @@ struct RootView: View {
         }
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
+            #endif
         }
         // Just signed in (new athlete) → straight into onboarding.
         .onChange(of: auth.isSignedIn) { _, signedIn in if signedIn && profiles.isEmpty { showOnboarding = true } }
