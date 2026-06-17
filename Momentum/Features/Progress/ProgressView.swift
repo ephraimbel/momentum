@@ -266,16 +266,19 @@ struct ProgressScreen: View {
                              y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
                         .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
-                    if wk.weekStart == last {
-                        PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                                  y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
-                            .foregroundStyle(IridescentMaterial()).symbolSize(70)
-                    }
+                    PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                              y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
+                        .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                        .symbolSize(wk.weekStart == last ? 90 : 22)
+                        .annotation(position: .top, spacing: 6) {
+                            if animateCharts, wk.weekStart == last { valuePill(paceMMSS(wk.avgPaceSPerKm)) }
+                        }
                 }
-                .chartYScale(domain: (fastest * 0.94)...(slowest * 1.06))
+                .chartXScale(domain: paddedWeekDomain(paced.map(\.weekStart)))
+                .chartYScale(domain: (fastest * 0.93)...(slowest * 1.07))
                 .chartXAxis { weekAxis }
                 .chartYAxis { paceAxis }
-                .frame(height: 168)
+                .frame(height: 172)
             }
         }
     }
@@ -288,17 +291,21 @@ struct ProgressScreen: View {
                 Chart(insights.weeks) { wk in
                     BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                             y: .value("Load", animateCharts ? wk.load : 0),
-                            width: .ratio(0.62))
+                            width: 18)
                         // Earned-iridescent only on the current week; prior weeks are clean ink.
                         .foregroundStyle(wk.weekStart == last
                                          ? AnyShapeStyle(IridescentMaterial())
-                                         : AnyShapeStyle(Theme.ink.opacity(0.82)))
-                        .cornerRadius(4)
+                                         : AnyShapeStyle(Theme.ink.opacity(0.85)))
+                        .cornerRadius(3)
+                        .annotation(position: .top, spacing: 5) {
+                            if animateCharts, wk.weekStart == last, wk.load > 0 { valuePill(Formatters.compact(wk.load)) }
+                        }
                 }
-                .chartYScale(domain: 0...max(1, maxLoad * 1.15))
+                .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
+                .chartYScale(domain: 0...max(1, maxLoad * 1.18))
                 .chartXAxis { weekAxis }
                 .chartYAxis { valueAxis }
-                .frame(height: 168)
+                .frame(height: 172)
             }
         }
     }
@@ -320,16 +327,24 @@ struct ProgressScreen: View {
                              y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
                         .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
-                    if wk.weekStart == last {
+                    if disp(wk.distanceM) > 0 {
                         PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                                   y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                            .foregroundStyle(IridescentMaterial()).symbolSize(70)
+                            .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                            .symbolSize(wk.weekStart == last ? 90 : 22)
+                            .annotation(position: .top, spacing: 6) {
+                                if animateCharts, wk.weekStart == last {
+                                    let v = disp(wk.distanceM)
+                                    valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
+                                }
+                            }
                     }
                 }
-                .chartYScale(domain: 0...max(1, maxDist * 1.15))
+                .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
+                .chartYScale(domain: 0...max(1, maxDist * 1.18))
                 .chartXAxis { weekAxis }
                 .chartYAxis { valueAxis }
-                .frame(height: 168)
+                .frame(height: 172)
             }
         }
     }
@@ -346,10 +361,12 @@ struct ProgressScreen: View {
         }
     }
 
-    /// Y axis: three faint hairline gridlines with muted numeric labels.
+    /// Y axis: faint hairline gridlines with muted numeric labels; the zero line is a touch stronger
+    /// so the chart sits on a clear baseline.
     private var valueAxis: some AxisContent {
-        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
-            AxisGridLine().foregroundStyle(Theme.hairline)
+        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+            let isZero = (value.as(Double.self) ?? 1) == 0
+            AxisGridLine().foregroundStyle(isZero ? Theme.inkTertiary.opacity(0.35) : Theme.hairline)
             AxisValueLabel()
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
@@ -373,6 +390,24 @@ struct ProgressScreen: View {
         let secPerUnit = distanceUnit.resolved() == .imperial ? secPerKm * (Formatters.metersPerMile / 1000) : secPerKm
         let total = Int(secPerUnit.rounded())
         return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    /// Pads a weekly date range by half a week on each side so the first/last bar or point has room
+    /// and never clips against the plot edge.
+    private func paddedWeekDomain(_ dates: [Date]) -> ClosedRange<Date> {
+        guard let lo = dates.min(), let hi = dates.max(), lo <= hi else { return Date()...Date().addingTimeInterval(1) }
+        let pad: TimeInterval = 4 * 24 * 3600
+        return lo.addingTimeInterval(-pad)...hi.addingTimeInterval(pad)
+    }
+
+    /// A small monospaced value callout pinned to the current week's mark — the "where you are now"
+    /// number, so the latest point reads precisely without labelling every week.
+    private func valuePill(_ text: String) -> some View {
+        Text(text).font(.system(size: 11, weight: .bold)).monospacedDigit()
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(Theme.background))
+            .overlay(Capsule().stroke(Theme.hairline))
     }
 
     /// Quiet placeholder when a chart has fewer than ~2 weeks of real data, so it never shows a lone
