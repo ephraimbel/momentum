@@ -59,13 +59,19 @@ struct FeedMediaView: View {
     }
 
     /// Strength media — front/back body on a faint card, worked muscles lit, with a small caption of
-    /// the top muscles so the post reads at a glance like a route map shows the route.
+    /// the top muscles so the post reads at a glance like a route map shows the route. The body figures
+    /// are narrow, so they're centered in the card (not pinned left) and the summary capsule floats in
+    /// the bottom-leading corner as an overlay.
     private func muscleMedia(_ muscles: [MuscleGroup: Double]) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
             MuscleMapView(activation: muscles)
                 .padding(.vertical, Theme.Space.md)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(height: 220)
+        .overlay(alignment: .bottomLeading) {
             Text(workedSummary(muscles))
                 .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.3)
                 .foregroundStyle(Theme.inkSecondary)
@@ -74,7 +80,6 @@ struct FeedMediaView: View {
                 .overlay(Capsule().stroke(Theme.hairline))
                 .padding(Theme.Space.sm)
         }
-        .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         .allowsHitTesting(false)
     }
