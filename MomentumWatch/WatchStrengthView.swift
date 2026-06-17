@@ -23,42 +23,59 @@ struct WatchStrengthView: View {
         ScrollView {
             VStack(spacing: 10) {
                 HStack {
-                    Text("Lift").font(.headline).foregroundStyle(WatchTheme.ink)
+                    Text("Lift").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(WatchTheme.ink)
                     Spacer()
-                    Text("\(model.completedSets) set\(model.completedSets == 1 ? "" : "s")")
-                        .font(.caption2.monospacedDigit()).foregroundStyle(WatchTheme.inkSecondary)
+                    Text("\(model.completedSets) SET\(model.completedSets == 1 ? "" : "S")")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.8).monospacedDigit()
+                        .foregroundStyle(WatchTheme.accent)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Capsule().fill(WatchTheme.accent.opacity(0.18)))
                 }
-                stepperRow(value: model.weightText, label: "",
-                           onMinus: { model.addWeight(-1) }, onPlus: { model.addWeight(1) })
-                stepperRow(value: "\(model.reps)", label: "reps",
-                           onMinus: { model.addReps(-1) }, onPlus: { model.addReps(1) })
+                stepperCard(value: model.weightText, label: "Weight",
+                            onMinus: { model.addWeight(-1) }, onPlus: { model.addWeight(1) })
+                stepperCard(value: "\(model.reps)", label: "Reps",
+                            onMinus: { model.addReps(-1) }, onPlus: { model.addReps(1) })
                 Button(action: model.logSet) {
-                    Text("Log set").font(.headline).frame(maxWidth: .infinity)
+                    Label("Log set", systemImage: "checkmark")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
                 .tint(WatchTheme.accent)
+                .foregroundStyle(.black)
                 .padding(.top, 2)
             }
+            .padding(.bottom, 4)
         }
     }
 
-    private func stepperRow(value: String, label: String,
-                            onMinus: @escaping () -> Void, onPlus: @escaping () -> Void) -> some View {
+    private func stepperCard(value: String, label: String,
+                             onMinus: @escaping () -> Void, onPlus: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
-            Button(action: onMinus) { Image(systemName: "minus") }
-                .tint(WatchTheme.surface)
+            stepButton("minus", action: onMinus)
             VStack(spacing: 0) {
-                Text(value).font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(WatchTheme.ink)
-                if !label.isEmpty {
-                    Text(label.uppercased()).font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(WatchTheme.inkSecondary)
-                }
+                Text(value)
+                    .font(.system(size: 26, weight: .bold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(WatchTheme.ink).minimumScaleFactor(0.7).lineLimit(1)
+                Text(label.uppercased())
+                    .font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    .foregroundStyle(WatchTheme.inkSecondary)
             }
             .frame(maxWidth: .infinity)
-            Button(action: onPlus) { Image(systemName: "plus") }
-                .tint(WatchTheme.surface)
+            stepButton("plus", action: onPlus)
         }
-        .font(.title3)
+        .padding(.vertical, 6).padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(WatchTheme.surface))
+    }
+
+    private func stepButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 17, weight: .bold))
+                .frame(width: 42, height: 42)
+        }
+        .buttonStyle(.plain)
+        .background(Circle().fill(WatchTheme.control))
+        .foregroundStyle(WatchTheme.ink)
     }
 
     private var restOverlay: some View {
@@ -67,22 +84,21 @@ struct WatchStrengthView: View {
             let progress = min(1, max(0, remaining / model.restDurationS))
             ZStack {
                 WatchTheme.bg.ignoresSafeArea()
-                Circle()
-                    .stroke(WatchTheme.surface, lineWidth: 8)
+                Circle().stroke(WatchTheme.surface, lineWidth: 9)
                 Circle()
                     .trim(from: 0, to: progress)
-                    .stroke(WatchTheme.iridescent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .stroke(WatchTheme.iridescent, style: StrokeStyle(lineWidth: 9, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 4) {
-                    Text("REST").font(.system(size: 11, weight: .bold)).tracking(1.5)
+                    Text("REST").font(.system(size: 11, weight: .bold)).tracking(1.8)
                         .foregroundStyle(WatchTheme.inkSecondary)
                     Text(Formatters.duration(s: remaining))
-                        .font(.system(size: 34, weight: .bold, design: .rounded)).monospacedDigit()
+                        .font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
                         .foregroundStyle(WatchTheme.ink)
                     Button("Skip") { model.skipRest() }
-                        .font(.caption2).tint(WatchTheme.surface)
+                        .font(.system(size: 13, weight: .semibold)).tint(WatchTheme.control)
                 }
-                .padding(24)
+                .padding(26)
             }
             .onChange(of: remaining <= 0) { _, done in if done { model.skipRest() } }
         }

@@ -284,13 +284,35 @@ enum PlanCoaching {
     static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto) -> String {
         if session.discipline == .strength {
             let label = session.strengthTargets.count >= 5 ? "Full body" : "Strength"
-            return "\(label) — \(session.strengthTargets.count) exercises"
+            let n = session.strengthTargets.count
+            return n > 0 ? "\(label) — \(n) exercise\(n == 1 ? "" : "s")" : "Strength session"
         }
-        let type = session.runType?.rawValue.capitalized ?? "Session"
+        // Timed sports (swim, row, yoga, tennis…) — no distance/pace; show the sport + any duration.
+        if let wt = session.workoutType, wt.isTimed {
+            if let dur = session.targetDurationS, dur > 0 { return "\(wt.title) \(Formatters.duration(s: dur))" }
+            return wt.title
+        }
+        // GPS: a run keeps its quality label (Easy/Tempo/Long); ride/walk/etc. use the sport name.
+        let label: String = {
+            if let wt = session.workoutType, wt != .run { return wt.title }
+            return session.runType?.rawValue.capitalized ?? "Session"
+        }()
         let dist = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? ""
+        let base = "\(label) \(dist)".trimmingCharacters(in: .whitespaces)
         if let pace = session.targetPaceSPerKm, pace > 0 {
-            return "\(type) \(dist) ~\(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
+            return "\(base) ~\(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
         }
-        return "\(type) \(dist)"
+        return base
+    }
+
+    /// The SF Symbol for a session — the precise sport when chosen, else the discipline glyph.
+    static func icon(for session: PlannedSession) -> String {
+        if let wt = session.workoutType { return wt.systemImage }
+        switch session.discipline {
+        case .running: return "figure.run"
+        case .cycling: return "bicycle"
+        case .walking: return "figure.walk"
+        case .strength: return "dumbbell.fill"
+        }
     }
 }

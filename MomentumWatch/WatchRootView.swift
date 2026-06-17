@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Watch home: pick a discipline to start an on-wrist session (PRD §4.10). The three GPS cardio
-/// types plus strength — the v1 set that the watch can capture itself.
+/// types plus strength — the v1 set the watch can capture itself. Each is a tappable brand card
+/// (icon + name) rather than a plain row, for a premium first glance.
 struct WatchRootView: View {
     private let cardio: [WorkoutType] = [.run, .ride, .walk]
     @State private var path: [WatchDestination] = []
@@ -9,19 +10,18 @@ struct WatchRootView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                Section("Cardio") {
-                    ForEach(cardio) { type in
-                        NavigationLink(value: WatchDestination.cardio(type)) {
-                            Label(type.title, systemImage: type.systemImage)
-                        }
+                ForEach(cardio) { type in
+                    NavigationLink(value: WatchDestination.cardio(type)) {
+                        StartCard(title: type.title, icon: type.systemImage, tint: WatchTheme.accent)
                     }
+                    .listRowBackground(Color.clear)
                 }
-                Section("Strength") {
-                    NavigationLink(value: WatchDestination.strength) {
-                        Label("Lift", systemImage: "dumbbell.fill")
-                    }
+                NavigationLink(value: WatchDestination.strength) {
+                    StartCard(title: "Lift", icon: "dumbbell.fill", tint: WatchTheme.accent)
                 }
+                .listRowBackground(Color.clear)
             }
+            .listStyle(.carousel)
             .navigationTitle("momentum")
             .navigationDestination(for: WatchDestination.self) { dest in
                 switch dest {
@@ -49,9 +49,33 @@ struct WatchRootView: View {
     }
 }
 
-/// Where a start row leads. Cardio + strength session screens fill these in over the next slices.
+/// A start row styled as a brand card — an accent icon chip + the discipline name.
+private struct StartCard: View {
+    let title: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(tint.opacity(0.22))
+                Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundStyle(tint)
+            }
+            .frame(width: 40, height: 40)
+            Text(title)
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .foregroundStyle(WatchTheme.ink)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(WatchTheme.surface))
+    }
+}
+
+/// Where a start row leads.
 enum WatchDestination: Hashable {
     case cardio(WorkoutType)
     case strength
 }
-

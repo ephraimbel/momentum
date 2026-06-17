@@ -13,15 +13,17 @@ struct AddSessionSheet: View {
     @Environment(\.modelContext) private var context
 
     @State private var date: Date
-    @State private var discipline: Discipline = .running
+    @State private var sport: WorkoutType = .run
     @State private var goalKind: GoalKind = .open
-    @State private var goalValue = 5.0
+    @State private var goalValue = 5.0          // km/mi for distance
+    @State private var goalMinutes = 30.0       // minutes for timed sports
+    @State private var showSportPicker = false
 
     enum GoalKind: Hashable { case open, distance }
     private let distanceUnit: DistanceUnit = .auto
-    private var isCardio: Bool { discipline != .strength }
+    private var isGPS: Bool { sport.isGPS }
+    private var isTimed: Bool { sport.isTimed }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
-    private let disciplines: [Discipline] = [.running, .cycling, .walking, .strength]
 
     init(plan: TrainingPlan, defaultDate: Date = Date(), onDone: @escaping () -> Void) {
         self.plan = plan
@@ -37,7 +39,7 @@ struct AddSessionSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     daySection
                     activitySection
-                    if isCardio { goalSection }
+                    if isGPS { goalSection } else if isTimed { durationSection }
                 }
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
@@ -50,6 +52,9 @@ struct AddSessionSheet: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+        .sheet(isPresented: $showSportPicker) {
+            SportPicker(selection: $sport) { showSportPicker = false }
+        }
     }
 
     // MARK: Header
@@ -115,20 +120,34 @@ struct AddSessionSheet: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
     }
 
-    // MARK: Activity
+    // MARK: Activity — any sport via the full picker
 
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             label("Activity")
-            ForEach(disciplines, id: \.self) { d in
-                SelectionCard(title: name(d), systemImage: icon(d), isSelected: discipline == d) {
-                    discipline = d
+            Button { Haptics.light(); showSportPicker = true } label: {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: sport.systemImage).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 44, height: 44)
+                        .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(sport.title).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text("Tap to change").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(Theme.Space.md)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
                 }
             }
+            .buttonStyle(.plain)
         }
     }
 
-    // MARK: Goal (cardio only)
+    // MARK: Goal — distance for GPS sports
 
     private var goalSection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -139,6 +158,36 @@ struct AddSessionSheet: View {
             }
             if goalKind == .distance { distanceStepper }
         }
+    }
+
+    // MARK: Goal — duration for timed sports (swim, row, yoga, tennis…)
+
+    private var durationSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            label("Goal")
+            HStack(spacing: Theme.Space.sm) {
+                goalButton(.open, "Open")
+                goalButton(.distance, "Duration")
+            }
+            if goalKind == .distance { minutesStepper }
+        }
+    }
+
+    private var minutesStepper: some View {
+        HStack(spacing: Theme.Space.lg) {
+            Spacer()
+            stepBtn("minus") { goalMinutes = max(5, goalMinutes - 5) }
+            VStack(spacing: 0) {
+                Text("\(Int(goalMinutes))")
+                    .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    .contentTransition(.numericText())
+                Text("MIN").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            }.frame(minWidth: 96)
+            stepBtn("plus") { goalMinutes += 5 }
+            Spacer()
+        }
+        .padding(.top, Theme.Space.xs)
+        .animation(.snappy(duration: 0.2), value: goalMinutes)
     }
 
     private func goalButton(_ kind: GoalKind, _ title: String) -> some View {
@@ -200,25 +249,21 @@ struct AddSessionSheet: View {
     private func add() {
         let s = PlannedSession()
         s.date = Calendar.current.startOfDay(for: date)
-        s.discipline = discipline
+        s.sportType = sport.rawValue
+        s.discipline = sport.discipline      // coaching bucket; sportType carries the exact sport
         s.status = .planned
-        if isCardio {
+        if isGPS {
             s.runType = .easy
             if goalKind == .distance {
                 s.targetDistanceM = goalValue * (distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000)
             }
+        } else if isTimed, goalKind == .distance {
+            s.targetDurationS = goalMinutes * 60
         }
         plan.sessions.append(s)
         context.insert(s)
         try? context.save()
         Haptics.success()
         onDone()
-    }
-
-    private func icon(_ d: Discipline) -> String {
-        switch d { case .running: "figure.run"; case .cycling: "bicycle"; case .walking: "figure.walk"; case .strength: "dumbbell.fill" }
-    }
-    private func name(_ d: Discipline) -> String {
-        switch d { case .running: "Run"; case .cycling: "Ride"; case .walking: "Walk"; case .strength: "Strength" }
     }
 }

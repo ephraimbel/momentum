@@ -21,6 +21,10 @@ final class PlannedSession {
     var id: UUID = UUID()
     var date: Date = Date()           // local day
     var discipline: Discipline = Discipline.running
+    /// The precise sport (WorkoutType rawValue) when the athlete planned a specific one — swim, row,
+    /// yoga, tennis, etc. `discipline` stays the coaching/analytics bucket; this carries the exact
+    /// activity for display + matching. `nil` for AI-prescribed run/ride/walk/strength sessions.
+    var sportType: String?
     var runType: RunType?
     var targetDistanceM: Double?
     var targetDurationS: Double?
@@ -32,6 +36,11 @@ final class PlannedSession {
     var completedWorkout: Workout?
 
     init() {}
+}
+
+extension PlannedSession {
+    /// The exact planned sport, if one was chosen (else nil → falls back to `discipline` for display).
+    var workoutType: WorkoutType? { sportType.flatMap(WorkoutType.init(rawValue:)) }
 }
 
 @Model

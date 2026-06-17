@@ -15,7 +15,9 @@ struct SessionDetailSheet: View {
     @State private var adjusting = false
     @State private var confirmRemove = false
 
-    private var isCardio: Bool { session.discipline != .strength }
+    /// Key off the precise sport when set (discipline buckets swim/row under running).
+    private var isGPS: Bool { session.workoutType?.isGPS ?? (session.discipline != .strength) }
+    private var isStrength: Bool { session.workoutType?.isStrengthStyle ?? (session.discipline == .strength) }
     private var done: Bool { session.status == .completed }
 
     var body: some View {
@@ -29,7 +31,7 @@ struct SessionDetailSheet: View {
                         note(why)
                     }
                     if rescheduling { rescheduleStrip }
-                    if adjusting, isCardio { distanceAdjuster }
+                    if adjusting, isGPS { distanceAdjuster }
                     actions
                 }
                 .padding(.horizontal, Theme.Space.lg)
@@ -55,7 +57,7 @@ struct SessionDetailSheet: View {
             ZStack {
                 Circle().fill(done ? AnyShapeStyle(IridescentMaterial().opacity(0.5)) : AnyShapeStyle(Theme.surface))
                 Circle().stroke(Theme.hairline)
-                Image(systemName: disciplineIcon).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
+                Image(systemName: PlanCoaching.icon(for: session)).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
             }
             .frame(width: 48, height: 48)
             VStack(alignment: .leading, spacing: 2) {
@@ -101,7 +103,9 @@ struct SessionDetailSheet: View {
 
     @ViewBuilder
     private var targets: some View {
-        if isCardio {
+        if isStrength {
+            if !session.strengthTargets.isEmpty { exercisesSection }
+        } else {
             let chips = cardioChips
             if !chips.isEmpty {
                 section("Targets") {
@@ -110,12 +114,14 @@ struct SessionDetailSheet: View {
                     }
                 }
             }
-        } else if !session.strengthTargets.isEmpty {
-            section("Exercises") {
-                VStack(spacing: Theme.Space.sm) {
-                    ForEach(session.strengthTargets.sorted { $0.order < $1.order }, id: \.persistentModelID) { ex in
-                        exerciseRow(ex)
-                    }
+        }
+    }
+
+    private var exercisesSection: some View {
+        section("Exercises") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(session.strengthTargets.sorted { $0.order < $1.order }, id: \.persistentModelID) { ex in
+                    exerciseRow(ex)
                 }
             }
         }
@@ -270,7 +276,7 @@ struct SessionDetailSheet: View {
                 secondary(rescheduling ? "Close" : "Move", systemImage: "calendar") {
                     withAnimation(.easeOut(duration: 0.2)) { rescheduling.toggle(); if rescheduling { adjusting = false } }
                 }
-                if isCardio {
+                if isGPS {
                     secondary(adjusting ? "Close" : "Adjust", systemImage: "slider.horizontal.3") {
                         withAnimation(.easeOut(duration: 0.2)) { adjusting.toggle(); if adjusting { rescheduling = false } }
                     }
@@ -310,9 +316,4 @@ struct SessionDetailSheet: View {
         }
     }
 
-    private var disciplineIcon: String {
-        switch session.discipline {
-        case .running: "figure.run"; case .cycling: "bicycle"; case .walking: "figure.walk"; case .strength: "dumbbell.fill"
-        }
-    }
 }
