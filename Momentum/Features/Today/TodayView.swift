@@ -27,6 +27,13 @@ struct TodayView: View {
     @State private var mapStyle: MapStyleOption = .standard
     @State private var showSuggest = false
     @State private var showSportPicker = false
+    @Environment(ModerationStore.self) private var moderation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // The Today map zoomed all the way out to the globe of everyone on Momentum (no separate tab).
+    // `--world` opens straight on the globe (DEBUG deep link for deterministic sim verification).
+    @State private var worldMode = ProcessInfo.processInfo.arguments.contains("--world")
+    @State private var liveCount = 0
+    @State private var selectedAthlete: CommunityAthlete?
 
     enum GoalKind { case open, distance }
 
@@ -43,13 +50,20 @@ struct TodayView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Discipline-adaptive backdrop: a live map for cardio, a strength home for lifting —
-            // so Strength isn't a second-class citizen staring at a meaningless map.
-            if isCardio { mapLayer } else { strengthHome }
-            topBar
-            bottomPanel
+            // Discipline-adaptive backdrop: a live map for cardio, a strength home for lifting — and
+            // the *same* map for the world globe, so it zooms out continuously instead of being a
+            // separate screen. So Strength isn't a second-class citizen staring at a meaningless map.
+            if isCardio || worldMode { mapLayer } else { strengthHome }
+            if worldMode {
+                worldTopChrome.transition(.opacity)
+                worldBottomChrome.transition(.opacity)
+            } else {
+                topBar.transition(.opacity)
+                bottomPanel.transition(.opacity)
+            }
         }
         .navigationBarHidden(true)
+        .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .onAppear {
             PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
             // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
@@ -72,19 +86,28 @@ struct TodayView: View {
                 viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 13.5, pitch: mapStyle.explorePitch) }
                     ?? .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
             }
+            #if DEBUG
+            // --world deep link: let the map bind, then fly out to the globe (same path as the button).
+            if worldMode {
+                worldMode = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { enterWorld() }
+            }
+            #endif
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
             // usually settled this); requesting also pulls a one-shot fix to center the map on them.
             locator.requestAuthorization()
         }
-        // Follow the athlete's puck the moment a fix lands.
+        // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
-            if locator.lastLocation != nil {
+            if !worldMode, locator.lastLocation != nil {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
         // Re-tilt the camera when switching to/from 3D Satellite (and other layers reset it flat).
         .onChange(of: mapStyle) {
-            withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
+            if !worldMode {
+                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
+            }
         }
         .fullScreenCover(item: $launch) { liveScreen($0) }
         .fullScreenCover(item: $summary) { presented in
@@ -198,12 +221,32 @@ struct TodayView: View {
 
     private var mapLayer: some View {
         Map(viewport: $viewport) {
-            Puck2D(bearing: .heading).brandStyled()   // the athlete's purple location puck
+            Puck2D(bearing: .heading).brandStyled()   // the athlete's purple location puck (this is you)
+            // Zoomed out to the world: every athlete on Momentum as a glowing iridescent dot at their
+            // (city-level, fuzzed) location. Tap one to open that athlete. Honest presence — the real
+            // community only, no fabricated crowd.
+            if worldMode {
+                CircleAnnotationGroup(communityAthletes) { athlete in
+                    CircleAnnotation(centerCoordinate: CLLocationCoordinate2D(latitude: athlete.lat, longitude: athlete.lon))
+                        .circleColor(StyleColor(UIColor(Theme.route)))
+                        .circleRadius(6)
+                        .circleBlur(0.6)
+                        .circleStrokeColor(StyleColor(UIColor.white.withAlphaComponent(0.85)))
+                        .circleStrokeWidth(1)
+                        .onTapGesture { selectedAthlete = athlete }
+                }
+            }
         }
-        .mapStyle(mapStyle.mapboxStyle)
+        .mapStyle(activeMapboxStyle)
         .ornamentOptions(MapChrome.hidden)
         .ignoresSafeArea()
     }
+
+    /// The globe wears a realistic satellite Earth — green/blue land + ocean and an atmospheric halo
+    /// over black space (Mapbox Standard Satellite, globe projection at low zoom). It's the one place
+    /// we leave the monochrome basemap: a *world* view should feel like the actual world. The street
+    /// map keeps the athlete's chosen explore style.
+    private var activeMapboxStyle: MapboxMaps.MapStyle { worldMode ? .standardSatellite : mapStyle.mapboxStyle }
 
     /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
     /// so lifting has its own identity (the brand orb + a quiet last-session readout), not a dead map.
@@ -302,11 +345,24 @@ struct TodayView: View {
             HStack(spacing: Theme.Space.sm) {
                 activitySelector
                 Spacer()
+                worldButton
                 StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
             }
             .padding(Theme.Space.md)
             Spacer()
         }
+    }
+
+    /// Opens the world: the Today map zooms all the way out to the globe of everyone on Momentum.
+    private var worldButton: some View {
+        Button { enterWorld() } label: {
+            Image(systemName: "globe")
+                .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44)
+                .momentumGlass(in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("See the world")
     }
 
 
@@ -452,6 +508,121 @@ struct TodayView: View {
             Image(systemName: system).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
                 .frame(width: 50, height: 50).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
         }.buttonStyle(.plain)
+    }
+
+    // MARK: World globe (the Today map zoomed out)
+
+    /// Everyone on Momentum, minus anyone the user has blocked.
+    private var communityAthletes: [CommunityAthlete] {
+        CommunityDirectory.all().filter { !moderation.isBlocked($0.handle) }
+    }
+    private var onMap: Bool { profiles.first?.appearOnMap ?? false }
+
+    /// Slide the cards away and fly the camera from the street all the way out to the globe. Mapbox's
+    /// native `.fly` runs the cinematic zoom-out → arc → settle, so the planet eases into frame instead
+    /// of a flat linear zoom.
+    private func enterWorld() {
+        Haptics.light()
+        let target = lastKnownCoordinate ?? CLLocationCoordinate2D(latitude: 20, longitude: 0)
+        let globe = Viewport.camera(center: target, zoom: 1.3, pitch: 0)
+        withAnimation(Motion.reversible) { worldMode = true }
+        if reduceMotion {
+            viewport = globe
+        } else {
+            withViewportAnimation(.fly(duration: 2.4)) { viewport = globe }
+        }
+        Task { liveCount = await services.presence.refresh(appearOnMap: onMap) }
+    }
+
+    /// Fly back in to the athlete's neighborhood and bring the cards back.
+    private func exitWorld() {
+        Haptics.light()
+        let home: Viewport = locator.lastLocation
+            .map { .camera(center: $0, zoom: 15, pitch: mapStyle.explorePitch) }
+            ?? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
+        withAnimation(Motion.reversible) { worldMode = false }
+        if reduceMotion {
+            viewport = home
+        } else {
+            withViewportAnimation(.fly(duration: 1.8)) { viewport = home }
+        }
+    }
+
+    /// Top chrome over the globe: a back-to-Today control + the honest community header. White ink with
+    /// a soft shadow, legible over the realistic satellite globe and its dark space backdrop.
+    private var worldTopChrome: some View {
+        VStack {
+            HStack(alignment: .top) {
+                Button { exitWorld() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 44, height: 44)
+                        .momentumGlass(in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to Today")
+                Spacer()
+            }
+            .padding(Theme.Space.md)
+            Spacer()
+        }
+        .overlay(alignment: .top) { worldHeader }
+    }
+
+    private var worldHeader: some View {
+        VStack(spacing: 2) {
+            Text("Around the world").font(.display(24, weight: .black)).foregroundStyle(.white)
+            Text(worldSubtitle)
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
+        }
+        .shadow(color: .black.opacity(0.5), radius: 8, y: 1)   // legible over the bright/dark globe
+        .padding(.top, Theme.Space.sm)
+        .allowsHitTesting(false)
+    }
+
+    private var worldSubtitle: String {
+        // "live now" only appears when the realtime backend reports real presence (never fabricated).
+        let base = "\(communityAthletes.count) in the Momentum community"
+        return liveCount > 0 ? "\(base) · \(liveCount) live now" : base
+    }
+
+    /// Bottom chrome over the globe: legend + the "appear on the map" opt-in (off by default).
+    private var worldBottomChrome: some View {
+        VStack(spacing: Theme.Space.md) {
+            HStack(spacing: Theme.Space.sm) {
+                Circle().fill(Theme.route).frame(width: 8, height: 8)
+                Text("Community").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(.white.opacity(0.75))
+                Spacer(minLength: 0)
+            }
+            worldOptInRow
+        }
+        .padding(Theme.Space.lg)
+        .padding(.bottom, Theme.Space.lg)
+        .frame(maxWidth: .infinity)
+        // Fade to deep space so the chrome reads over the satellite globe (not a white wash over it).
+        .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+    }
+
+    @ViewBuilder
+    private var worldOptInRow: some View {
+        if onMap {
+            Label("You're on the map", systemImage: "checkmark.circle.fill")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Button {
+                profiles.first?.appearOnMap = true; try? context.save(); Haptics.light()
+            } label: {
+                Label("Appear on the map", systemImage: "mappin.and.ellipse")
+                    .font(.rounded(Theme.FontSize.body, weight: .bold))
+                    .frame(maxWidth: .infinity).frame(height: 46)
+                    .foregroundStyle(Theme.background)
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+            }
+            .buttonStyle(.plain)
+            .disabled(profiles.first == nil)
+            .accessibilityHint("Show as a fuzzed dot. Never your exact location.")
+        }
     }
 
     // MARK: Launch

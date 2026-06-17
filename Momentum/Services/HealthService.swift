@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import SwiftData
 
 /// Writes completed workouts to Apple Health (PRD §8.6). Best-effort and non-blocking — a Health
 /// failure never affects the in-app save — and de-duplicated, so a workout reaches Health at most
@@ -8,6 +9,7 @@ import HealthKit
 final class HealthService: HealthServing {
     private let store = HKHealthStore()
     private static let savedKey = "com.momentum.health.savedWorkoutIDs"
+    private static let importedKey = "com.momentum.health.importedWorkoutIDs"
 
     /// Types we write. Reads (HR, resting HR, body mass, steps) are requested so a later slice can
     /// personalize from them; the write set is what gates `isAuthorized`.
@@ -18,10 +20,14 @@ final class HealthService: HealthServing {
         HKQuantityType(.distanceCycling),
     ]
     private static let readTypes: Set<HKObjectType> = [
+        HKObjectType.workoutType(),               // import workouts from other apps/devices (Garmin, Watch)
         HKQuantityType(.heartRate),
         HKQuantityType(.restingHeartRate),
         HKQuantityType(.bodyMass),
         HKQuantityType(.stepCount),
+        HKQuantityType(.activeEnergyBurned),       // workout calorie totals
+        HKQuantityType(.distanceWalkingRunning),   // workout distance totals
+        HKQuantityType(.distanceCycling),
     ]
 
     /// True once the user has granted permission to share workouts. (HealthKit hides read status by
@@ -65,6 +71,9 @@ final class HealthService: HealthServing {
                     quantity: HKQuantity(unit: .meter(), doubleValue: distance), start: start, end: end))
             }
             if !samples.isEmpty { try await builder.addSamples(samples) }
+            // Stamp our own writes so the importer can skip them (an echo of a workout already in our
+            // store) while still importing foreign ones (Garmin, Apple Watch) that lack this marker.
+            try await builder.addMetadata([HKMetadataKeyExternalUUID: workout.id.uuidString])
 
             try await builder.endCollection(at: end)
             _ = try await builder.finishWorkout()
@@ -81,6 +90,148 @@ final class HealthService: HealthServing {
         async let mass = latest(.bodyMass, unit: .gramUnit(with: .kilo))
         async let rhr = latest(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()))
         return (await mass, (await rhr).map { Int($0.rounded()) })
+    }
+
+    // MARK: Import (Apple Watch / Garmin via Apple Health → our store)
+
+    /// Pull workouts recorded by **other** sources (Apple Watch, Garmin via Garmin Connect, Strava,
+    /// etc.) out of Apple Health and into our local store (PRD §8.6). The realistic "connect to
+    /// Garmin" path — Garmin Connect mirrors activities into Health, and we ingest them here.
+    ///
+    /// - Our own writes are skipped (same source bundle *and* our `externalUUID` marker), so a saved
+    ///   momentum workout never re-imports as a duplicate of itself.
+    /// - Every HealthKit workout imports at most once (UUID dedupe, persisted).
+    /// - Imported workouts are marked already-saved so we never echo them straight back to Health.
+    ///
+    /// Best-effort and non-blocking; returns the number newly imported.
+    @discardableResult
+    func importExternalWorkouts(into context: ModelContext, since: Date? = nil) async -> Int {
+        guard HKHealthStore.isHealthDataAvailable() else { return 0 }
+        let cutoff = since ?? Calendar.current.date(byAdding: .year, value: -1, to: Date())
+        let hkWorkouts = await fetchWorkouts(since: cutoff)
+        guard !hkWorkouts.isEmpty else { return 0 }
+
+        let ownBundle = Bundle.main.bundleIdentifier
+        var imported = savedSet(Self.importedKey)
+        var saved = savedSet(Self.savedKey)
+        var count = 0
+
+        for hk in hkWorkouts {
+            guard Self.shouldImport(sourceBundle: hk.sourceRevision.source.bundleIdentifier,
+                                    ownBundle: ownBundle, metadata: hk.metadata ?? [:],
+                                    alreadyImported: imported, uuid: hk.uuid.uuidString)
+            else { continue }
+
+            let type = Self.workoutType(for: hk.workoutActivityType)
+            let calories = hk.statistics(for: HKQuantityType(.activeEnergyBurned))?
+                .sumQuantity()?.doubleValue(for: .kilocalorie())
+            var distanceM = 0.0
+            if type.isGPS {
+                let distID: HKQuantityTypeIdentifier = type.discipline == .cycling
+                    ? .distanceCycling : .distanceWalkingRunning
+                distanceM = hk.statistics(for: HKQuantityType(distID))?.sumQuantity()?.doubleValue(for: .meter()) ?? 0
+            }
+            let avgHR = await averageHR(start: hk.startDate, end: hk.endDate)
+
+            let workout = Self.assembleImport(
+                type: type, start: hk.startDate, duration: hk.duration,
+                elapsed: hk.endDate.timeIntervalSince(hk.startDate),
+                calories: calories, distanceM: distanceM, avgHR: avgHR)
+            context.insert(workout)
+            imported.insert(hk.uuid.uuidString)
+            saved.insert(workout.id.uuidString)
+            count += 1
+        }
+
+        if count > 0 {
+            UserDefaults.standard.set(Array(imported), forKey: Self.importedKey)
+            UserDefaults.standard.set(Array(saved), forKey: Self.savedKey)
+            try? context.save()
+        }
+        return count
+    }
+
+    /// Pure import filter (testable): skip our own echoes and anything already imported.
+    static func shouldImport(sourceBundle: String?, ownBundle: String?, metadata: [String: Any],
+                             alreadyImported: Set<String>, uuid: String) -> Bool {
+        // Our own write: same app bundle *and* carries the externalUUID we stamp on save().
+        if sourceBundle == ownBundle, metadata[HKMetadataKeyExternalUUID] != nil { return false }
+        return !alreadyImported.contains(uuid)
+    }
+
+    /// Pure assembly (testable): build a `Workout` from extracted HealthKit values. GPS types get a
+    /// `gps` payload with derived pace (run/walk) or speed (ride); strength/timed stay payload-free.
+    static func assembleImport(type: WorkoutType, start: Date, duration: Double, elapsed: Double,
+                               calories: Double?, distanceM: Double, avgHR: Int?) -> Workout {
+        let w = Workout()
+        w.type = type
+        w.startedAt = start
+        w.durationS = duration
+        w.elapsedS = max(elapsed, duration)
+        w.calories = (calories ?? 0) > 0 ? calories : nil
+        if type.isGPS {
+            let gps = GPSDetail()
+            gps.distanceM = distanceM
+            if distanceM > 0, duration > 0 {
+                if type.discipline == .cycling { gps.avgSpeedMS = distanceM / duration }
+                else { gps.avgPaceSPerKm = duration / (distanceM / 1000) }
+            }
+            gps.avgHR = avgHR
+            w.gps = gps
+        }
+        return w
+    }
+
+    /// Pure mapping (testable): HealthKit activity → our discipline-rich `WorkoutType`. Inverse of
+    /// `activityType(for:)` for the types we capture; everything else falls back to `.other`.
+    static func workoutType(for activity: HKWorkoutActivityType) -> WorkoutType {
+        switch activity {
+        case .running: .run
+        case .walking: .walk
+        case .hiking: .hike
+        case .cycling: .ride
+        case .traditionalStrengthTraining, .functionalStrengthTraining: .strength
+        case .crossTraining: .crossfit
+        case .highIntensityIntervalTraining: .hiit
+        case .tennis: .tennis
+        case .soccer: .soccer
+        case .basketball: .basketball
+        case .golf: .golf
+        case .yoga: .yoga
+        case .pilates: .pilates
+        case .swimming: .swimming
+        case .rowing: .rowing
+        default: .other
+        }
+    }
+
+    private func fetchWorkouts(since: Date?) async -> [HKWorkout] {
+        await withCheckedContinuation { continuation in
+            let predicate = since.map { HKQuery.predicateForSamples(withStart: $0, end: nil) }
+            let sort = [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+            let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate,
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: sort) { _, samples, _ in
+                continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
+            }
+            store.execute(query)
+        }
+    }
+
+    private func averageHR(start: Date, end: Date) async -> Int? {
+        await withCheckedContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+            let query = HKStatisticsQuery(quantityType: HKQuantityType(.heartRate),
+                                          quantitySamplePredicate: predicate,
+                                          options: .discreteAverage) { _, stats, _ in
+                let bpm = stats?.averageQuantity()?.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+                continuation.resume(returning: bpm.map { Int($0.rounded()) })
+            }
+            store.execute(query)
+        }
+    }
+
+    private func savedSet(_ key: String) -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
     }
 
     private func latest(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
@@ -115,6 +266,39 @@ final class HealthService: HealthServing {
         case .other: .other
         }
     }
+
+    #if DEBUG
+    /// Sim-only: write a few synthetic workouts to Health (run / ride / strength) as if recorded by
+    /// another device, so the import path can be exercised without a physical Garmin. Deliberately
+    /// omits our `externalUUID` marker, so the importer treats them as foreign. No-op without auth.
+    func seedSyntheticHealthWorkouts() async {
+        guard isAuthorized else { return }
+        let now = Date()
+        await seedOne(.running, start: now.addingTimeInterval(-3600), duration: 1800, kcal: 320, distanceM: 5000)
+        await seedOne(.cycling, start: now.addingTimeInterval(-7200), duration: 2400, kcal: 410, distanceM: 16000)
+        await seedOne(.traditionalStrengthTraining, start: now.addingTimeInterval(-10800), duration: 2700, kcal: 260, distanceM: 0)
+    }
+
+    private func seedOne(_ activity: HKWorkoutActivityType, start: Date, duration: Double,
+                         kcal: Double, distanceM: Double) async {
+        let end = start.addingTimeInterval(duration)
+        let config = HKWorkoutConfiguration(); config.activityType = activity
+        let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
+        do {
+            try await builder.beginCollection(at: start)
+            var samples: [HKSample] = [HKQuantitySample(type: HKQuantityType(.activeEnergyBurned),
+                quantity: HKQuantity(unit: .kilocalorie(), doubleValue: kcal), start: start, end: end)]
+            if distanceM > 0 {
+                let dt = activity == .cycling ? HKQuantityType(.distanceCycling) : HKQuantityType(.distanceWalkingRunning)
+                samples.append(HKQuantitySample(type: dt,
+                    quantity: HKQuantity(unit: .meter(), doubleValue: distanceM), start: start, end: end))
+            }
+            try await builder.addSamples(samples)
+            try await builder.endCollection(at: end)
+            _ = try await builder.finishWorkout()
+        } catch {}
+    }
+    #endif
 
     // MARK: Dedupe (UserDefaults set of saved workout UUIDs)
 

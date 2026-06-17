@@ -45,6 +45,19 @@ Public projection of the athlete: avatar (iridescent orb/initials v1), name, @ha
 city, bio, lifetime totals + streak + consistency heatmap + PR shelf (reuses `ProfileStats`), recent
 public activities. Own profile shows Edit + privacy; others' show Follow + public content only.
 
+## 2026-06-17 — Globe moves to Today (World tab removed)
+**Decision (supersedes the section below):** the **World tab is removed** (tabs are now Today · Plan ·
+Progress · Profile). The globe becomes a **zoom-out from the Today map**: a `globe` button on Today
+slides the cards away and flies the *same* Mapbox camera from the street all the way out to the world
+(`worldMode` in `TodayView`). It's one continuous map — street → planet — not a separate screen. The
+globe wears a realistic **satellite Earth** (`MapStyle.standardSatellite`: green/blue land + ocean +
+atmospheric halo over space) — the one place we leave the monochrome basemap, because a *world* view
+should feel like the actual world. Enter/exit use Mapbox's native `withViewportAnimation(.fly())` for
+the cinematic zoom-out → arc → settle. Tapping a community dot still opens that athlete's profile.
+`GlobeView` (the standalone tab screen) is deleted. DEBUG `--world` opens straight on the globe;
+verified by the deterministic `GlobeLookUITests`. Everything in the section below about the World
+*tab* still describes how the globe + profiles behave — only the entry point changed (tab → Today).
+
 ## 2026-06-17 — World tab IS the globe (feed removed)
 **Decision (overrides the feed-as-World-tab IA above):** the World tab is now *only* the globe — the
 map of everyone on Momentum. The aggregated Discover/Following **feed stream is removed** (deleted

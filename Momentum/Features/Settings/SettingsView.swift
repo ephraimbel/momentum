@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var confirmDelete = false
     @State private var healthConnected = false
     @State private var connectingHealth = false
+    @State private var importingHealth = false
+    @State private var importMessage: String?
     @State private var showCoachChat = false
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
@@ -81,6 +83,24 @@ struct SettingsView: View {
                             .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     }
                     Spacer(minLength: 0)
+                }
+                Divider().overlay(Theme.hairline)
+                Text("Import runs and rides from Apple Watch, Garmin, and anything else that syncs to Apple Health.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                actionRow("Import from Apple Health", icon: "square.and.arrow.down", busy: importingHealth) {
+                    Task {
+                        importingHealth = true
+                        importMessage = nil
+                        let n = await services.health.importExternalWorkouts(into: context, since: nil)
+                        importMessage = n == 0 ? "No new workouts to import."
+                            : "Imported \(n) workout\(n == 1 ? "" : "s")."
+                        importingHealth = false
+                    }
+                }
+                if let importMessage {
+                    Text(importMessage)
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                 }
             } else {
                 Text("Save your runs, rides, and lifts to Apple Health.")

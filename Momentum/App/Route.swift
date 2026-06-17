@@ -1,12 +1,13 @@
 import Foundation
 
-/// The tabs of the app shell: Today · Plan · Progress · World · Profile.
+/// The tabs of the app shell: Today · Plan · Progress · Profile.
 /// (Progress hosts trends, history, and the athlete-model "Coach" read via a segmented switch.
-/// The immersive Coach chat moved off the tab bar — it's reachable from Settings; Profile takes its
-/// slot as the athlete's dedicated identity + social page.) Named `AppTab` to avoid colliding with
-/// SwiftUI's iOS 18 `Tab` view.
+/// The immersive Coach chat moved off the tab bar — it's reachable from Settings; Profile is the
+/// athlete's dedicated identity + social page. **The World globe is no longer a tab** — it lives as a
+/// zoom-out from the Today map, see `TodayView`.) Named `AppTab` to avoid colliding with SwiftUI's
+/// iOS 18 `Tab` view.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
-    case today, plan, progress, world, profile
+    case today, plan, progress, profile
     var id: String { rawValue }
 
     var title: String {
@@ -14,7 +15,6 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .today: "Today"
         case .plan: "Plan"
         case .progress: "Progress"
-        case .world: "World"
         case .profile: "Profile"
         }
     }
@@ -24,7 +24,6 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .today: "map"
         case .plan: "calendar"
         case .progress: "chart.line.uptrend.xyaxis"
-        case .world: "globe"
         case .profile: "person.crop.circle"
         }
     }

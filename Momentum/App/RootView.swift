@@ -14,15 +14,26 @@ struct RootView: View {
         if args.contains("--profile-tab") { return .profile }
         if args.contains("--plan-tab") { return .plan }
         if args.contains("--progress-tab") { return .progress }
-        if args.contains("--world-tab") || args.contains("--social-globe") { return .world }
         #endif
         return .today
     }()
     @State private var showOnboarding = false
 
     var body: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--health-e2e") {
+            HealthE2EView()
+        } else {
+            mainBody
+        }
+        #else
+        mainBody
+        #endif
+    }
+
+    private var mainBody: some View {
         @Bindable var paywall = paywall
-        Group {
+        return Group {
             if !auth.isSignedIn {
                 // Login gate (PRD §8.11): Sign in with Apple before anything else.
                 SignInView()
@@ -72,7 +83,6 @@ struct RootView: View {
         case .today: TodayView()
         case .plan: PlanView()
         case .progress: ProgressScreen()
-        case .world: GlobeView()
         case .profile: ProfileScreen()
         }
     }
