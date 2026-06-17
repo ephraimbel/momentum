@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AuthenticationServices
 
 /// Settings — currently the **subscription / billing** surface (PRD §10 honesty bar: status, plain
 /// renewal terms, cancel in ≤2 taps, restore). Units / equipment / privacy / export land later.
@@ -128,7 +129,44 @@ struct SettingsView: View {
 
     // MARK: Account
 
+    @ViewBuilder
     private var accountCard: some View {
+        if auth.isGuest { guestAccountCard } else { signedInAccountCard }
+    }
+
+    /// A guest can keep everything they've logged by upgrading to Sign in with Apple — surfaced here
+    /// as the back-up/sync prompt rather than ever blocking them.
+    private var guestAccountCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "person.crop.circle").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Guest").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("Saved on this device only").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            SignInWithAppleButton(.signIn) { request in
+                request.requestedScopes = [.fullName, .email]
+            } onCompletion: { result in
+                if case .success(let authResult) = result,
+                   let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
+                    // Upgrading from guest keeps all local data (see AuthController.signIn).
+                    auth.signIn(userID: credential.user, fullName: credential.fullName, email: credential.email)
+                }
+            }
+            .signInWithAppleButtonStyle(.black)
+            .frame(height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            Text("Back up your training and sync across devices. Keeps everything you've logged so far.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(Theme.Space.lg)
+        .background(card)
+    }
+
+    private var signedInAccountCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.md) {
                 Image(systemName: "applelogo").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)

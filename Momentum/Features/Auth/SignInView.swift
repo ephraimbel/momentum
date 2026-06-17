@@ -33,6 +33,26 @@ struct SignInView: View {
                     .font(.rounded(Theme.FontSize.label, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
                     .multilineTextAlignment(.center)
+
+                // Try it now, commit later — local-only until they sign in (back up / sync / social).
+                VStack(spacing: 4) {
+                    Button { auth.continueAsGuest() } label: {
+                        Text("Continue without an account")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                            .frame(maxWidth: .infinity).frame(height: 50)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    Text("Saved on this device. Sign in anytime to back up & sync.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, Theme.Space.xs)
             }
             .padding(.horizontal, Theme.Space.xl)
             .padding(.bottom, Theme.Space.xxl)
