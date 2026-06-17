@@ -225,11 +225,18 @@ final class OnboardingViewModel {
         profile.reason = reason
         context.insert(profile)
         let startDate = Date()
+        // Honor the chosen number of training days: the day budget is SHARED between the structured
+        // plan and the tracked add-ons, so total distinct workout days never exceeds daysPerWeek.
+        // Structured work keeps at least one day per discipline; add-ons fill the days left over.
+        let extras = extraActivities.map(\.workoutType)
+        let userDays = daysPerWeek
+        let structuredDays = max(1, min(userDays, max(disciplines.count, userDays - extras.count)))
+        profile.daysPerWeek = structuredDays
         PlanService.regenerate(for: profile, calibration: calibration, startDate: startDate, in: context)
-        // Fold in the tracked add-ons (swim/row/yoga…) as recurring cross-training sessions.
-        if let plan = profile.plan, !extraActivities.isEmpty {
-            PlanService.addCrossTraining(extraActivities.map(\.workoutType), to: plan,
-                                         startDate: startDate, in: context)
+        profile.daysPerWeek = userDays   // restore the athlete's actual choice (for the plan + display)
+        if let plan = profile.plan, !extras.isEmpty {
+            PlanService.addCrossTraining(extras, to: plan, startDate: startDate, in: context,
+                                         totalDaysPerWeek: userDays)
         }
         // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).
         AthleteModelService().seedOnboarding(for: profile, in: context)

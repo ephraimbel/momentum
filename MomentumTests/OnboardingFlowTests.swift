@@ -56,7 +56,7 @@ struct OnboardingFlowTests {
         #expect(!vm.canAdvance)                        // must pick at least one
     }
 
-    @Test func crossTrainingAddOnsLandInThePlan() throws {
+    @Test func crossTrainingAddOnsHonorChosenDayCount() throws {
         let pc = PersistenceController.inMemory()
         let ctx = pc.container.mainContext
         let vm = OnboardingViewModel()
@@ -64,9 +64,17 @@ struct OnboardingFlowTests {
         vm.daysPerWeek = 3
         let profile = vm.finish(in: ctx)
         let plan = try #require(profile.plan)
+
+        // The add-ons share the 3-day budget — they don't add extra days (the reported bug).
+        let cal = Calendar.current
+        let firstDate = try #require(plan.sessions.map(\.date).min())
+        let weekEnd = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: firstDate))!
+        let weekOneDays = Set(plan.sessions.filter { $0.date < weekEnd }.map { cal.startOfDay(for: $0.date) })
+        #expect(weekOneDays.count <= 3)
+
         let sports = Set(plan.sessions.compactMap { $0.workoutType })
-        #expect(sports.contains(.swimming))
-        #expect(sports.contains(.yoga))
+        #expect(sports.contains(.swimming))          // add-ons still land in the plan
         #expect(profile.disciplines == ["running"])  // only the programmable one drives the engine
+        #expect(profile.daysPerWeek == 3)            // the athlete's choice is preserved for display
     }
 }

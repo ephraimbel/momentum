@@ -20,10 +20,12 @@ enum PlanService {
     }
 
     /// Add tracked cross-training the engine doesn't program (swim/row/yoga…) as one recurring
-    /// session per activity per week, on an open day. Clearly flagged; never displaces the structured
-    /// plan. Each carries its precise `sportType` so it displays as the real sport everywhere.
+    /// session per activity per week, on a day the structured plan didn't already use. Capped at
+    /// `totalDaysPerWeek` distinct workout days so the athlete's chosen day count is honored — extras
+    /// that don't fit are dropped rather than adding days. Each carries its precise `sportType`.
     static func addCrossTraining(_ types: [WorkoutType], to plan: TrainingPlan, startDate: Date = Date(),
-                                 in context: ModelContext, calendar: Calendar = .current) {
+                                 in context: ModelContext, totalDaysPerWeek: Int = 7,
+                                 calendar: Calendar = .current) {
         guard !types.isEmpty else { return }
         let anchor = calendar.startOfDay(for: startDate)
         func dayIndex(_ d: Date) -> Int {
@@ -37,7 +39,8 @@ enum PlanService {
                 let di = dayIndex(s.date); return weekRange.contains(di) ? di % 7 : nil
             })
             for type in types {
-                guard let off = (0..<7).first(where: { !used.contains($0) }) else { break }  // week full
+                guard used.count < totalDaysPerWeek else { break }   // honor the chosen training-day count
+                guard let off = (0..<7).first(where: { !used.contains($0) }) else { break }
                 used.insert(off)
                 let s = PlannedSession()
                 s.date = calendar.date(byAdding: .day, value: w * 7 + off, to: anchor) ?? anchor
