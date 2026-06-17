@@ -32,6 +32,9 @@ struct TodayView: View {
     // The Today map zoomed all the way out to the globe of everyone on Momentum (no separate tab).
     // `--world` opens straight on the globe (DEBUG deep link for deterministic sim verification).
     @State private var worldMode = ProcessInfo.processInfo.arguments.contains("--world")
+    // Basemap is decoupled from `worldMode` so the satellite↔light swap never lands mid-fly (a style
+    // reload during a camera animation cancels it). We flip this only when the fly has settled.
+    @State private var mapShowsGlobe = ProcessInfo.processInfo.arguments.contains("--world")
     @State private var liveCount = 0
     @State private var selectedAthlete: CommunityAthlete?
 
@@ -224,8 +227,9 @@ struct TodayView: View {
             Puck2D(bearing: .heading).brandStyled()   // the athlete's purple location puck (this is you)
             // Zoomed out to the world: every athlete on Momentum as a glowing iridescent dot at their
             // (city-level, fuzzed) location. Tap one to open that athlete. Honest presence — the real
-            // community only, no fabricated crowd.
-            if worldMode {
+            // community only, no fabricated crowd. Gated on `mapShowsGlobe` (not `worldMode`) so the dots
+            // aren't added/removed mid-fly — a map content change interrupts the camera animation.
+            if mapShowsGlobe {
                 CircleAnnotationGroup(communityAthletes) { athlete in
                     CircleAnnotation(centerCoordinate: CLLocationCoordinate2D(latitude: athlete.lat, longitude: athlete.lon))
                         .circleColor(StyleColor(UIColor(Theme.route)))
@@ -246,7 +250,7 @@ struct TodayView: View {
     /// over black space (Mapbox Standard Satellite, globe projection at low zoom). It's the one place
     /// we leave the monochrome basemap: a *world* view should feel like the actual world. The street
     /// map keeps the athlete's chosen explore style.
-    private var activeMapboxStyle: MapboxMaps.MapStyle { worldMode ? .standardSatellite : mapStyle.mapboxStyle }
+    private var activeMapboxStyle: MapboxMaps.MapStyle { mapShowsGlobe ? .standardSatellite : mapStyle.mapboxStyle }
 
     /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
     /// so lifting has its own identity (the brand orb + a quiet last-session readout), not a dead map.
@@ -529,6 +533,7 @@ struct TodayView: View {
         let target = lastKnownCoordinate ?? CLLocationCoordinate2D(latitude: 20, longitude: 0)
         let globe = Viewport.camera(center: target, zoom: 1.3, pitch: 0)
         withAnimation(Motion.reversible) { worldMode = true }
+        mapShowsGlobe = true   // satellite earth; set before the fly so it's loaded as we pull back
         if reduceMotion {
             viewport = globe
         } else {
@@ -537,19 +542,29 @@ struct TodayView: View {
         Task { liveCount = await services.presence.refresh(appearOnMap: onMap) }
     }
 
-    /// Fly back in to the athlete's neighborhood and bring the cards back.
+    /// Fly back in to the user's position and bring the cards back. The basemap stays on the satellite
+    /// style for the whole fly (swapping it mid-animation cancels the fly), then crossfades to the
+    /// street style once the camera has settled.
     private func exitWorld() {
         Haptics.light()
-        // Fly back to a real place (live fix, else the last workout's neighborhood) so the camera
-        // reliably leaves the globe — `followPuck` alone does nothing without a live location.
-        let home: Viewport = lastKnownCoordinate
-            .map { .camera(center: $0, zoom: 15, pitch: mapStyle.explorePitch) }
+        // Target the user's position — the live puck if we have a fix, else their last workout's
+        // neighborhood — so the camera reliably leaves the globe (followPuck alone does nothing without
+        // a live location).
+        let me = locator.lastLocation ?? lastKnownCoordinate
+        let home: Viewport = me.map { .camera(center: $0, zoom: 15, pitch: mapStyle.explorePitch) }
             ?? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
         withAnimation(Motion.reversible) { worldMode = false }
         if reduceMotion {
             viewport = home
+            mapShowsGlobe = false
         } else {
-            withViewportAnimation(.fly(duration: 1.8)) { viewport = home }
+            let fly = 1.8
+            withViewportAnimation(.fly(duration: fly)) { viewport = home }
+            // Swap satellite → street only after the camera lands, so the fly is never interrupted.
+            DispatchQueue.main.asyncAfter(deadline: .now() + fly) {
+                guard !worldMode else { return }   // didn't re-enter the globe meanwhile
+                withAnimation(.easeInOut(duration: 0.4)) { mapShowsGlobe = false }
+            }
         }
     }
 
