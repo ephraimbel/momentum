@@ -145,8 +145,9 @@ enum CommunityGenerator {
         "Consistent splits and a relaxed cadence — this is the kind of repeatable session that compounds over months.",
         "Effort matched the plan. Nothing flashy, just another deposit in the consistency account.",
         "Good intensity discipline — you held back early and had something left to give late."]
-    /// Variety of basemaps across the feed (Strava-style "people use different maps").
-    static let feedStyles: [MapStyleOption] = [.standard, .realistic, .streets, .outdoors, .dark, .satellite]
+    /// Variety of basemaps across the feed (Strava-style "people use different maps"). No satellite —
+    /// aerial imagery is off-brand and removed from the app's map choices.
+    static let feedStyles: [MapStyleOption] = [.standard, .realistic, .streets, .outdoors, .dark]
     private static let disciplines: [WorkoutType] = [.run,.run,.ride,.walk,.trailRun,.strength,.strength,.hiit,.swimming,.rowing,.yoga]
 }
 

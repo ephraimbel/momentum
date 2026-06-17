@@ -135,10 +135,17 @@ struct RouteDrawMap: View {
             withAnimation(.easeInOut(duration: drawDuration + 0.5)) {
                 viewport = tightViewport
             }
-            // Eased pen: gentle out of the start, decelerate into the finish — reads hand-drawn.
-            withAnimation(Motion.pen(drawDuration)) { drawProgress = 1 }
-
-            try? await Task.sleep(for: .seconds(drawDuration))
+            // Frame-stepped pen: advance `drawProgress` every frame so the polyline visibly *extends*
+            // around the lake. A single `withAnimation` can't tween this — it slices the coordinate
+            // array (a structural change), so it would pop to the full loop instead of drawing.
+            let start = Date()
+            while true {
+                let t = min(1, Date().timeIntervalSince(start) / drawDuration)
+                drawProgress = 1 - pow(1 - t, 3)            // ease-out: quick start, glide into the finish
+                if t >= 1 { break }
+                try? await Task.sleep(for: .seconds(1.0 / 60.0))
+            }
+            drawProgress = 1
             landed = true                                   // arrival pop on the head
             try? await Task.sleep(for: .seconds(0.45))      // let it settle before the handoff
             onComplete?()
@@ -147,21 +154,35 @@ struct RouteDrawMap: View {
 
     // MARK: Route + camera geometry
 
-    /// A believable neighborhood run — hand-traced waypoints (irregular turns, an out-and-back tail
-    /// into a loop) smoothed with Catmull-Rom so it flows like a real GPS track, not a math circle.
-    /// No location needed; it's a brand visual.
+    /// The **Lady Bird Lake** hike-and-bike loop, Austin TX (~10-mile town-lake loop) — hand-traced
+    /// shoreline waypoints, west (Mopac/Pfluger) along the north bank to Longhorn Dam and back along the
+    /// south bank, smoothed with Catmull-Rom so it flows like a real GPS trace. The overview viewport
+    /// frames the lake automatically. No location needed; it's a brand visual.
     static func makeRoute() -> [CLLocationCoordinate2D] {
-        let cLat = 30.2672, cLon = -97.7431, scale = 0.0013
-        // (lon, lat) units — a route that heads out, loops a few blocks, and returns.
-        let waypoints: [(Double, Double)] = [
-            (-0.2, -2.6), (0.1, -1.4), (-0.1, -0.3), (0.6, 0.8), (1.9, 1.1),
-            (3.0, 0.7), (3.8, 1.6), (3.5, 2.9), (3.9, 4.0), (2.9, 4.8),
-            (1.5, 4.7), (0.5, 3.8), (-0.8, 4.0), (-2.0, 3.4), (-2.5, 2.1),
-            (-1.9, 0.9), (-0.7, 0.6), (0.2, -0.4), (-0.1, -1.5), (-0.2, -2.6)
+        let waypoints: [(lat: Double, lon: Double)] = [
+            (30.2745, -97.7800),  // Mopac / Pfluger bridge — west end
+            (30.2735, -97.7710),
+            (30.2720, -97.7625),
+            (30.2700, -97.7545),  // Lamar
+            (30.2668, -97.7480),  // South 1st St
+            (30.2634, -97.7435),  // Congress Ave
+            (30.2595, -97.7388),
+            (30.2545, -97.7312),
+            (30.2500, -97.7220),
+            (30.2466, -97.7150),  // Longhorn Dam — east end
+            (30.2444, -97.7152),  // cross to the south bank
+            (30.2452, -97.7235),  // south shore, heading back west
+            (30.2480, -97.7330),
+            (30.2510, -97.7430),  // Auditorium Shores
+            (30.2542, -97.7520),
+            (30.2576, -97.7615),
+            (30.2618, -97.7705),
+            (30.2680, -97.7778),
+            (30.2728, -97.7806),
+            (30.2745, -97.7800),  // close the loop
         ]
-        let pts = catmullRom(waypoints, subdivisions: 5)
-        return pts.map { CLLocationCoordinate2D(latitude: cLat + $0.1 * scale * 0.8,
-                                                longitude: cLon + $0.0 * scale) }
+        let pts = catmullRom(waypoints.map { ($0.lat, $0.lon) }, subdivisions: 6)
+        return pts.map { CLLocationCoordinate2D(latitude: $0.0, longitude: $0.1) }
     }
 
     /// Smooth an open polyline through its points (Catmull-Rom), so straight-ish segments flow into

@@ -2,9 +2,9 @@ import SwiftUI
 import MapboxMaps
 
 /// The map base layers a user can switch between (Strava's "layers" control), kept in one place so
-/// every map — route suggestion, live tracking, history — offers the same set. `.standard` is the
-/// brand default (Mapbox Light — muted, the light hero look); `.hybrid` / `.satellite` are opt-in for
-/// athletes who want real terrain and greenery. Rendered by Mapbox.
+/// every map — route suggestion, live tracking, history — offers the same set (`pickable`). `.standard`
+/// is the brand default (Mapbox Light — muted, the light hero look); Realistic/Streets/Outdoors/Dark are
+/// the other choices. Satellite styles exist for internal use but aren't user-selectable. Rendered by Mapbox.
 enum MapStyleOption: String, CaseIterable, Identifiable {
     case standard, realistic, streets, outdoors, dark, satellite, standardSatellite
 
@@ -67,6 +67,11 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The styles offered in the layers picker. Satellite imagery (`.satellite`, `.standardSatellite`)
+    /// is intentionally excluded — it's off-brand for a monochrome/iridescent app. The cases remain for
+    /// internal use (e.g. the `isImagery` halo logic) but are never user-selectable.
+    static let pickable: [MapStyleOption] = [.standard, .realistic, .streets, .outdoors, .dark]
+
     /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
     /// than over the non-imagery basemaps.
     var isImagery: Bool { self == .satellite || self == .standardSatellite }
@@ -84,7 +89,7 @@ struct MapLayersButton: View {
     var body: some View {
         Menu {
             Picker("Map style", selection: $style) {
-                ForEach(MapStyleOption.allCases) { option in
+                ForEach(MapStyleOption.pickable) { option in
                     Label(option.label, systemImage: option.systemImage).tag(option)
                 }
             }
