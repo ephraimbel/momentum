@@ -666,8 +666,10 @@ struct TodayView: View {
     }
 
     private func startPlanned(_ session: PlannedSession) {
-        let t = workoutType(for: session.discipline)
+        // Use the session's precise sport (swim/yoga/row…) when set; fall back to the discipline bucket.
+        let t = session.workoutType ?? workoutType(for: session.discipline)
         if t.isStrengthStyle { launch = .strength(type: t, planned: session) }
+        else if t.isTimed { launch = .timed(type: t) }
         else {
             locator.requestAuthorization()
             launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
