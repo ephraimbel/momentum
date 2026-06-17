@@ -246,11 +246,11 @@ struct TodayView: View {
         .ignoresSafeArea()
     }
 
-    /// The globe wears a realistic satellite Earth — green/blue land + ocean and an atmospheric halo
-    /// over black space (Mapbox Standard Satellite, globe projection at low zoom). It's the one place
-    /// we leave the monochrome basemap: a *world* view should feel like the actual world. The street
-    /// map keeps the athlete's chosen explore style.
-    private var activeMapboxStyle: MapboxMaps.MapStyle { mapShowsGlobe ? .standardSatellite : mapStyle.mapboxStyle }
+    /// The globe wears Mapbox Standard — a vivid, *living* vector Earth: bright blue oceans, green/tan
+    /// land, soft clouds and an atmospheric halo over black space (globe projection at low zoom). It's
+    /// brighter and livelier than satellite imagery (whose oceans read dark). The one place we leave the
+    /// monochrome basemap — a *world* view should feel alive. The street map keeps the chosen explore style.
+    private var activeMapboxStyle: MapboxMaps.MapStyle { mapShowsGlobe ? .standard : mapStyle.mapboxStyle }
 
     /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
     /// so lifting has its own identity (the brand orb + a quiet last-session readout), not a dead map.
