@@ -54,6 +54,8 @@ final class OnboardingViewModel {
     }
     /// Whether this athlete's plan includes lifting (drives the anatomy beats vs. the route beat).
     var includesStrength: Bool { disciplines.contains(.strength) }
+    /// The body figure to render in the anatomy beats (female warps the silhouette).
+    var bodySex: BodySex { BodySex(profileSex: sex?.rawValue) }
 
     /// A tasteful default bio derived from the goal (the athlete can edit it later).
     var bioForGoal: String {

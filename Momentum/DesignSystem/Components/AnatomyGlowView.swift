@@ -7,6 +7,7 @@ struct AnatomyGlowView: View {
     /// Target activation (which muscles, relative weight). Muscles with value 0 stay unlit anatomy.
     let activation: [MuscleGroup: Double]
     var sides: [BodySide] = [.front, .back]
+    var sex: BodySex = .neutral
     /// Ignite muscles in sequence (vs. all at once).
     var sequential: Bool = true
     /// Loop the ignite continuously — the "building your plan" beat.
@@ -30,7 +31,7 @@ struct AnatomyGlowView: View {
     }
 
     var body: some View {
-        MuscleMapView(activation: shown, sides: sides)
+        MuscleMapView(activation: shown, sides: sides, sex: sex)
             .animation(.easeOut(duration: 0.45), value: lit)
             .task(id: activationKey) { await ignite() }
     }

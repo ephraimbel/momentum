@@ -13,14 +13,16 @@ struct BuildingPlanView: View {
     /// When set, the hero is the human body lighting up muscle-by-muscle (strength/hybrid plans);
     /// otherwise the iridescent route draws itself (pure cardio).
     var anatomy: [MuscleGroup: Double]? = nil
+    var sex: BodySex = .neutral
 
     @State private var completed = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let lineTick = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
-    init(lines: [String]? = nil, anatomy: [MuscleGroup: Double]? = nil) {
+    init(lines: [String]? = nil, anatomy: [MuscleGroup: Double]? = nil, sex: BodySex = .neutral) {
         if let lines { self.lines = lines }
         self.anatomy = anatomy
+        self.sex = sex
     }
 
     var body: some View {
@@ -42,7 +44,7 @@ struct BuildingPlanView: View {
         if let anatomy {
             ZStack {
                 Theme.background.ignoresSafeArea()
-                AnatomyGlowView(activation: anatomy, loops: true, step: 0.18)
+                AnatomyGlowView(activation: anatomy, sex: sex, loops: true, step: 0.18)
                     .padding(.horizontal, Theme.Space.xl)
                     .padding(.top, 56)
                     .padding(.bottom, 280)   // clear the caption block

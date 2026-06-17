@@ -173,7 +173,7 @@ struct PlanRevealView: View {
     private var anatomySection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             sectionLabel("WHERE YOU'LL GROW")
-            AnatomyGlowView(activation: vm.targetMuscles())
+            AnatomyGlowView(activation: vm.targetMuscles(), sex: vm.bodySex)
                 .frame(height: 230)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Theme.Space.md)

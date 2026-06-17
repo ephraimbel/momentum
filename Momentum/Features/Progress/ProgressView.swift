@@ -451,7 +451,7 @@ struct ProgressScreen: View {
         let ranked = activation.filter { $0.value > 0 }.sorted { $0.value > $1.value }
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             sectionTitle("This week's muscles")
-            MuscleMapView(activation: activation)
+            MuscleMapView(activation: activation, sex: BodySex(profileSex: profiles.first?.sex))
                 .frame(height: 260)
                 .frame(maxWidth: .infinity)
             if let top = ranked.first {

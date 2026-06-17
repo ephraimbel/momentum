@@ -29,7 +29,8 @@ struct OnboardingFlow: View {
                 // The hero beat renders full-bleed (the map must escape the flow's padding). Strength
                 // and hybrid plans build over the body lighting up; pure cardio over the route draw.
                 BuildingPlanView(lines: vm.buildingLines(),
-                                 anatomy: vm.includesStrength ? vm.targetMuscles() : nil)
+                                 anatomy: vm.includesStrength ? vm.targetMuscles() : nil,
+                                 sex: vm.bodySex)
                     .task { await buildPlan() }
                     .transition(.opacity)
             } else if vm.step == .coldOpen {
@@ -473,7 +474,7 @@ struct OnboardingFlow: View {
 
     private var muscleFocusStep: some View {
         questionScaffold("Where do you want to grow?", subtitle: "Pick areas to emphasize — your plan adds volume there.") {
-            AnatomyGlowView(activation: vm.targetMuscles(), sequential: false)
+            AnatomyGlowView(activation: vm.targetMuscles(), sex: vm.bodySex, sequential: false)
                 .frame(height: 200).frame(maxWidth: .infinity)
                 .reveal(cascade(0))
             LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],

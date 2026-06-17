@@ -12,6 +12,9 @@ struct MuscleMapView: View {
     let activation: [MuscleGroup: Double]
     /// Which figures to show, left→right. Default front + back (the iconic anatomy-chart look).
     var sides: [BodySide] = [.front, .back]
+    /// The body shape to render. `.female` warps the figure (narrower shoulders/waist, wider hips);
+    /// a true female anatomical dataset can drop into `BodyAnatomy` later with no call-site changes.
+    var sex: BodySex = .neutral
 
     /// `.fullBody` credit floods every muscle (cardio/HIIT/"other"); fold it into the real regions.
     private var resolved: [MuscleGroup: Double] {
@@ -29,7 +32,7 @@ struct MuscleMapView: View {
     var body: some View {
         HStack(spacing: Theme.Space.md) {
             ForEach(sides) { side in
-                BodyFigure(side: side, activation: resolved, maxVal: maxVal)
+                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: sex)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -45,17 +48,38 @@ struct MuscleMapView: View {
 
 enum BodySide: String, Identifiable, CaseIterable { case front, back; var id: String { rawValue } }
 
+/// Which body shape to render. `.neutral` is the source anatomy; `.female` applies a proportion warp.
+enum BodySex { case neutral, female
+    /// Map a stored profile sex (BiologicalSex raw) to a figure — only `female` changes the shape.
+    init(profileSex: String?) { self = (profileSex == "female") ? .female : .neutral }
+}
+
 // MARK: - One figure
 
 private struct BodyFigure: View {
     let side: BodySide
     let activation: [MuscleGroup: Double]
     let maxVal: Double
+    var sex: BodySex = .neutral
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var parts: [BodyAnatomy.Part] { side == .front ? BodyAnatomy.front : BodyAnatomy.back }
-    private var outline: Path { side == .front ? BodyAnatomy.frontOutline : BodyAnatomy.backOutline }
+    private var parts: [BodyAnatomy.Part] {
+        switch (side, sex) {
+        case (.front, .female): BodyAnatomy.femaleFront
+        case (.back, .female):  BodyAnatomy.femaleBack
+        case (.front, _):       BodyAnatomy.front
+        case (.back, _):        BodyAnatomy.back
+        }
+    }
+    private var outline: Path {
+        switch (side, sex) {
+        case (.front, .female): BodyAnatomy.femaleFrontOutline
+        case (.back, .female):  BodyAnatomy.femaleBackOutline
+        case (.front, _):       BodyAnatomy.frontOutline
+        case (.back, _):        BodyAnatomy.backOutline
+        }
+    }
     private var originX: CGFloat { side == .front ? 0 : BodyAnatomy.viewBoxWidth }
 
     var body: some View {
@@ -135,6 +159,39 @@ enum BodyAnatomy {
     static let back: [Part] = build(MuscleBodyData.back, map: backMuscle, skip: ["head"])
     static let frontOutline: Path = SVGPath.parse(MuscleBodyData.frontOutline)
     static let backOutline: Path = SVGPath.parse(MuscleBodyData.backOutline)
+
+    // Female figures: the same muscle regions warped into a more feminine silhouette (narrower
+    // shoulders + waist, slightly wider hips). A proportion warp until a true female anatomical
+    // dataset is added — every path warps with the SAME function so glow/outline stay aligned.
+    static let femaleFront: [Part] = front.map { Part(muscle: $0.muscle, path: femaleWarp($0.path, centerX: viewBoxWidth / 2)) }
+    static let femaleBack: [Part] = back.map { Part(muscle: $0.muscle, path: femaleWarp($0.path, centerX: viewBoxWidth + viewBoxWidth / 2)) }
+    static let femaleFrontOutline: Path = femaleWarp(frontOutline, centerX: viewBoxWidth / 2)
+    static let femaleBackOutline: Path = femaleWarp(backOutline, centerX: viewBoxWidth + viewBoxWidth / 2)
+
+    /// Warp a path horizontally as a function of height: pull in the shoulders + waist, push out the
+    /// hips. Subtle (≤~9%), applied around the figure's own centerline (`centerX`).
+    static func femaleWarp(_ path: Path, centerX: CGFloat) -> Path {
+        func warp(_ p: CGPoint) -> CGPoint {
+            let h = Double(p.y / viewBoxHeight)                       // 0 = head, 1 = feet
+            func gauss(_ c: Double, _ w: Double) -> Double { exp(-pow((h - c) / w, 2)) }
+            let sx = 1 - 0.085 * gauss(0.17, 0.07)                    // narrower shoulders
+                       - 0.05 * gauss(0.41, 0.06)                     // pinched waist
+                       + 0.075 * gauss(0.57, 0.075)                   // wider hips
+            return CGPoint(x: centerX + (p.x - centerX) * CGFloat(sx), y: p.y)
+        }
+        var out = Path()
+        path.forEach { element in
+            switch element {
+            case .move(let to): out.move(to: warp(to))
+            case .line(let to): out.addLine(to: warp(to))
+            case .quadCurve(let to, let c): out.addQuadCurve(to: warp(to), control: warp(c))
+            case .curve(let to, let c1, let c2): out.addCurve(to: warp(to), control1: warp(c1), control2: warp(c2))
+            case .closeSubpath: out.closeSubpath()
+            @unknown default: break
+            }
+        }
+        return out
+    }
 
     private static func build(_ data: [(slug: String, paths: [String])],
                               map: (String) -> MuscleGroup?, skip: Set<String> = []) -> [Part] {
