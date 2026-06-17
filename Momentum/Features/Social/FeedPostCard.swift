@@ -93,7 +93,7 @@ struct FeedPostCard: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: Media (photo > route silhouette > none)
+    // MARK: Media (photo > muscle map > route map > timed discipline card)
 
     @ViewBuilder
     private var media: some View {
@@ -110,7 +110,38 @@ struct FeedPostCard: View {
                 .frame(height: 200)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
                 .allowsHitTesting(false)   // never steal the feed's scroll
+        } else if item.type.isTimed {
+            // Timed sports (pool swim, erg, yoga…) have no route or muscle map — a discipline card
+            // gives the post a visual anchor so the feed reads consistently, not text-only.
+            timedMedia
         }
+    }
+
+    /// Stopwatch-sport media — the sport's glyph as a faint watermark with a quiet label, monochrome
+    /// (no earned-iridescence — there's no progress to mark here, just identity).
+    private var timedMedia: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            Image(systemName: item.type.systemImage)
+                .font(.system(size: 130, weight: .regular))
+                .foregroundStyle(Theme.inkTertiary.opacity(0.10))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .offset(x: 34)
+                .clipped()
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: item.type.systemImage)
+                    .font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                Text(item.type.title.uppercased())
+                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.6)
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .padding(Theme.Space.md)
+        }
+        .frame(height: 150)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .allowsHitTesting(false)
     }
 
     /// Strength media — front/back body on a faint card, worked muscles lit, with a small caption of
