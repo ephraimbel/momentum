@@ -436,21 +436,28 @@ struct OnboardingFlow: View {
 
     private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
     private var ageDisplay: Int { vm.birthYear.map { currentYear - $0 } ?? 30 }
-    private var heightDisplay: Double { vm.heightCm ?? 170 }
-    private var weightDisplay: Double { vm.bodyMassKg ?? 70 }
+    // Height/weight are entered imperial (ft/in, lb) but stored SI (cm/kg) per the units rule.
+    private var heightInches: Double { (vm.heightCm ?? 172.72) / 2.54 }              // default 5'8"
+    private var weightLb: Double { (vm.bodyMassKg ?? 72.5748) * Formatters.lbPerKg } // default 160 lb
 
     private var metricsStep: some View {
         questionScaffold("A bit about you", subtitle: "Optional — sharpens your starting loads and targets.") {
             sexSelector.reveal(cascade(0))
             metricRow("Age", "\(ageDisplay)", { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
-            metricRow("Height", "\(Int(heightDisplay)) cm",
-                      { vm.heightCm = max(120, heightDisplay - 1) }, { vm.heightCm = min(220, heightDisplay + 1) }).reveal(cascade(2))
-            metricRow("Weight", "\(Int(weightDisplay)) kg",
-                      { vm.bodyMassKg = max(35, weightDisplay - 1) }, { vm.bodyMassKg = min(220, weightDisplay + 1) }).reveal(cascade(3))
+            metricRow("Height", feetInchesLabel(heightInches),
+                      { setHeight(inches: heightInches - 1) }, { setHeight(inches: heightInches + 1) }).reveal(cascade(2))
+            metricRow("Weight", "\(Int(weightLb.rounded())) lb",
+                      { setWeight(lb: weightLb - 5) }, { setWeight(lb: weightLb + 5) }).reveal(cascade(3))
         }
     }
 
     private func setAge(_ a: Int) { vm.birthYear = currentYear - min(90, max(13, a)) }
+    /// "5'8\"" from inches.
+    private func feetInchesLabel(_ inches: Double) -> String {
+        let t = Int(inches.rounded()); return "\(t / 12)'\(t % 12)\""
+    }
+    private func setHeight(inches: Double) { vm.heightCm = min(84, max(48, inches.rounded())) * 2.54 }
+    private func setWeight(lb: Double) { vm.bodyMassKg = min(400, max(80, lb.rounded())) * Formatters.kgPerLb }
 
     private var sexSelector: some View {
         HStack(spacing: Theme.Space.sm) {
