@@ -115,6 +115,24 @@ struct PlanEngineTests {
         }
     }
 
+    // MARK: Calibration
+
+    @Test func feelEstimateSeedsPace() {
+        var seed = CalibrationSeed(); seed.estimatedP5kSPerKm = 360   // "easy jogger"
+        let plan = PlanEngine.generate(profile: inputs(disciplines: [.running], goal: .endurance, days: 3),
+                                       catalog: catalog, calibration: seed,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(abs(plan.p5kSPerKm - 360) < 0.5)
+    }
+
+    @Test func recentTimeOverridesFeel() {
+        var seed = CalibrationSeed(); seed.recentRun = (5000, 1500); seed.estimatedP5kSPerKm = 400
+        let plan = PlanEngine.generate(profile: inputs(disciplines: [.running], goal: .endurance, days: 3),
+                                       catalog: catalog, calibration: seed,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(abs(plan.p5kSPerKm - 300) < 1)   // a precise 5K time wins over the by-feel estimate
+    }
+
     // MARK: Race-distance tailoring
 
     @Test func raceDistanceShapesLongRun() {

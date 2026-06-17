@@ -19,6 +19,7 @@ struct OnboardingFlow: View {
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
+    @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
 
     var body: some View {
         ZStack {
@@ -304,23 +305,85 @@ struct OnboardingFlow: View {
     }
 
     private var calibrationStep: some View {
-        questionScaffold("Calibrate?", subtitle: "Optional — seeds your paces. Skip and we'll learn from your first sessions.") {
-            VStack(spacing: Theme.Space.md) {
-                Toggle("Add a recent run", isOn: $vm.addRecentRun).tint(Theme.ink)
-                if vm.addRecentRun {
-                    HStack {
-                        Text("5 km in").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        Spacer()
-                        Stepper("\(Int(vm.recentRunSeconds / 60)) min",
-                                value: $vm.recentRunSeconds, in: 600...3600, step: 30)
-                    }
-                    .onAppear { vm.recentRunMeters = 5000 }
+        questionScaffold("How's your running pace?",
+                         subtitle: "So your easy runs feel easy and the hard ones land right. Not sure? Just continue — we'll learn from your first runs.") {
+            ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
+                SelectionCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
+                              isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
+                    pick { vm.calibrationMode = .feel; vm.paceFeel = f }
                 }
+                .reveal(cascade(i))
             }
-            .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-            .reveal(cascade(0))
+            timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
         }
+    }
+
+    /// The optional precise path — expand to enter a recent time over a distance you know.
+    private var timeEntryCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Button { Haptics.light(); withAnimation(Motion.standard) { showTimeEntry.toggle() } } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: vm.calibrationMode == .time ? "checkmark.circle.fill" : "stopwatch")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(vm.calibrationMode == .time ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkSecondary))
+                    Text(vm.calibrationMode == .time ? "\(vm.benchmark.label) in \(Formatters.duration(s: vm.recentRunSeconds))" : "I know a recent time")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                    Image(systemName: showTimeEntry ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showTimeEntry {
+                HStack(spacing: Theme.Space.sm) {
+                    ForEach(RunBenchmark.allCases) { b in
+                        let on = vm.benchmark == b
+                        Button {
+                            Haptics.selection()
+                            vm.benchmark = b; vm.recentRunSeconds = b.defaultSeconds; vm.calibrationMode = .time
+                        } label: {
+                            Text(b.label).font(.rounded(Theme.FontSize.caption, weight: .bold))
+                                .frame(maxWidth: .infinity).frame(height: 40)
+                                .foregroundStyle(on ? Theme.background : Theme.ink)
+                                .background {
+                                    Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                                    if !on { Capsule().stroke(Theme.hairline) }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                HStack(spacing: Theme.Space.md) {
+                    Text("Time").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    Spacer()
+                    Button { Haptics.light(); adjustTime(-vm.benchmark.step) } label: { metricStep("minus") }.buttonStyle(.plain)
+                    Text(Formatters.duration(s: vm.recentRunSeconds))
+                        .font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .frame(minWidth: 84).contentTransition(.numericText())
+                    Button { Haptics.light(); adjustTime(vm.benchmark.step) } label: { metricStep("plus") }.buttonStyle(.plain)
+                }
+                .animation(.snappy(duration: 0.2), value: vm.recentRunSeconds)
+                Text(paceHint).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+        }
+        .padding(Theme.Space.md)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    private func adjustTime(_ delta: Double) {
+        vm.calibrationMode = .time
+        vm.recentRunSeconds = min(vm.benchmark.range.upperBound, max(vm.benchmark.range.lowerBound, vm.recentRunSeconds + delta))
+    }
+
+    /// "Easy runs ≈ 6:10 /mi" — the resulting easy pace, so the number feels meaningful.
+    private var paceHint: String {
+        let p5k = PlanEngine.riegelP5k(distanceM: vm.benchmark.meters, timeS: vm.recentRunSeconds)
+        return "Easy runs ≈ \(Formatters.pace(secPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: .auto))"
     }
 
     // MARK: Race setup (racers) — distance + optional date

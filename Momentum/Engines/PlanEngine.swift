@@ -45,7 +45,10 @@ enum PlanEngine {
             : disciplines.contains(.cycling) ? .cycling : nil
         let hasCardio = cardio != nil
 
+        // Most precise first: a real recent effort (Riegel) → a self-reported "by feel" estimate →
+        // the experience-level default.
         let p5k = calibration.recentRun.map { riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
+            ?? calibration.estimatedP5kSPerKm
             ?? levelP5k(profile.runningExperience)
 
         // Day allocation across disciplines.

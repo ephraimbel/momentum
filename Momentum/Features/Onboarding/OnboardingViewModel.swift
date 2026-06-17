@@ -27,10 +27,11 @@ final class OnboardingViewModel {
     var birthYear: Int? = nil
     var bodyMassKg: Double? = nil
 
-    // Optional calibration
-    var addRecentRun = false
-    var recentRunMeters: Double = 5000
-    var recentRunSeconds: Double = 1500
+    // Calibration — how we seed running paces (works for total beginners, not just 5K racers)
+    var calibrationMode: CalibrationMode = .none
+    var paceFeel: PaceFeel? = nil
+    var benchmark: RunBenchmark = .fiveK
+    var recentRunSeconds: Double = 1800     // time for the chosen benchmark
 
     /// A balanced full-body activation for the anatomy animation, emphasized by the chosen focus.
     func targetMuscles() -> [MuscleGroup: Double] {
@@ -114,7 +115,11 @@ final class OnboardingViewModel {
 
     var calibration: CalibrationSeed {
         var seed = CalibrationSeed()
-        if addRecentRun { seed.recentRun = (recentRunMeters, recentRunSeconds) }
+        switch calibrationMode {
+        case .time: seed.recentRun = (benchmark.meters, recentRunSeconds)
+        case .feel: if let f = paceFeel { seed.estimatedP5kSPerKm = f.p5kSPerKm }
+        case .none: break
+        }
         return seed
     }
 
@@ -228,4 +233,51 @@ final class OnboardingViewModel {
         AthleteModelService().seedOnboarding(for: profile, in: context)
         return profile
     }
+}
+
+// MARK: - Calibration model
+
+/// How running paces get seeded in onboarding. `.none` = skipped (use experience default).
+enum CalibrationMode { case none, feel, time }
+
+/// A beginner-friendly "by feel" running self-assessment → an estimated 5k pace (s/km). Lets someone
+/// who has never timed a run still give the plan a sensible starting pace.
+enum PaceFeel: String, CaseIterable, Identifiable {
+    case newRunner, easyJogger, regular, fast
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .newRunner: "New to running"; case .easyJogger: "Easy jogger"
+        case .regular: "Regular runner"; case .fast: "Fast / competitive"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .newRunner: "Walk/jog — just building up"
+        case .easyJogger: "I can hold a conversation"
+        case .regular: "Comfortable steady miles"
+        case .fast: "I train and race hard"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .newRunner: "figure.walk"; case .easyJogger: "figure.run"
+        case .regular: "figure.run.circle"; case .fast: "hare.fill"
+        }
+    }
+    /// Estimated 5k pace in seconds per km (feeds `PlanEngine` pace offsets).
+    var p5kSPerKm: Double {
+        switch self { case .newRunner: 420; case .easyJogger: 360; case .regular: 315; case .fast: 270 }
+    }
+}
+
+/// A known recent effort the athlete can time, for a precise (Riegel) pace seed.
+enum RunBenchmark: String, CaseIterable, Identifiable {
+    case mile, fiveK, tenK
+    var id: String { rawValue }
+    var meters: Double { switch self { case .mile: 1_609.344; case .fiveK: 5_000; case .tenK: 10_000 } }
+    var label: String { switch self { case .mile: "1 mile"; case .fiveK: "5K"; case .tenK: "10K" } }
+    var defaultSeconds: Double { switch self { case .mile: 600; case .fiveK: 1_800; case .tenK: 3_600 } }
+    var range: ClosedRange<Double> { switch self { case .mile: 300...1_200; case .fiveK: 900...3_600; case .tenK: 1_800...7_200 } }
+    var step: Double { switch self { case .mile: 15; case .fiveK: 30; case .tenK: 60 } }
 }
