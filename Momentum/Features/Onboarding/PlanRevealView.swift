@@ -28,7 +28,8 @@ struct PlanRevealView: View {
             VStack(spacing: Theme.Space.lg) {
                 hero
                 reflectionChips.reveal(0.24)
-                if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.27) }
+                firstWorkoutCard.reveal(0.27)
+                if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.29) }
                 projectionCard.reveal(0.3)
                 if vm.includesStrength { anatomySection.reveal(0.33) }
                 sessionList
@@ -83,9 +84,10 @@ struct PlanRevealView: View {
                 .accessibilityLabel("\(vm.daysPerWeek) days per week")
             }
             VStack(spacing: Theme.Space.xs) {
-                Text("Your plan is ready")
+                Text(planReadyTitle)
                     .font(.display(30, weight: .black))
                     .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
                 Text(vm.projectedOutcome())
                     .font(.rounded(Theme.FontSize.body, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
@@ -142,6 +144,49 @@ struct PlanRevealView: View {
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "Your plan is ready, Maya" when we have a first name, else the generic version.
+    private var planReadyTitle: String {
+        let first = vm.name.trimmingCharacters(in: .whitespaces).split(separator: " ").first.map(String.init)
+        return first.map { "Your plan is ready, \($0)" } ?? "Your plan is ready"
+    }
+
+    // MARK: First workout — a concrete, completable session (the "do this" moment)
+
+    @ViewBuilder
+    private var firstWorkoutCard: some View {
+        // Prefer a strength session (its exercises read as a real, doable workout); else the first session.
+        if let s = weekOne.first(where: { !$0.strengthTargets.isEmpty }) ?? weekOne.first {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                sectionLabel("YOUR FIRST WORKOUT")
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    HStack(spacing: Theme.Space.sm) {
+                        Image(systemName: PlanCoaching.icon(for: s)).font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 38, height: 38).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(PlanCoaching.brief(for: s)).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                            Text(s.date.formatted(.dateTime.weekday(.wide))).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    if !s.strengthTargets.isEmpty {
+                        Divider().overlay(Theme.hairline)
+                        ForEach(s.strengthTargets.sorted { $0.order < $1.order }, id: \.persistentModelID) { ex in
+                            HStack {
+                                Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                                Spacer(minLength: Theme.Space.sm)
+                                Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
+                                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                            }
+                        }
+                    }
+                }
+                .padding(Theme.Space.lg)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: Race countdown (dated race goals)
