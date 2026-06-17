@@ -209,6 +209,9 @@ final class OnboardingViewModel {
         profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
+        // Default display units to the athlete's locale (lb + miles in the US/UK) so the whole app
+        // matches the imperial figures they just entered. Distance stays `auto` (locale-resolved).
+        profile.weightUnit = WeightUnit.default().rawValue
         profile.sex = sex?.rawValue
         profile.heightCm = heightCm
         profile.birthYear = birthYear

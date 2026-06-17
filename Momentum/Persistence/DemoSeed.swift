@@ -17,6 +17,7 @@ enum DemoSeed {
         profile.goal = .buildMuscle
         profile.daysPerWeek = 4
         profile.experience = ["running": "some", "strength": "some"]
+        profile.weightUnit = WeightUnit.default().rawValue   // locale display units (lb in US/UK)
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
 
