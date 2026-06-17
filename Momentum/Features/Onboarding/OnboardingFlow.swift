@@ -191,15 +191,32 @@ struct OnboardingFlow: View {
     // MARK: Question steps
 
     private var disciplinesStep: some View {
-        questionScaffold("What do you want to do?", subtitle: "Pick all that apply.") {
-            ForEach(Array([Discipline.running, .cycling, .walking, .strength].enumerated()), id: \.element) { i, d in
-                SelectionCard(title: label(d), systemImage: icon(d),
-                              isSelected: vm.disciplines.contains(d)) {
-                    pick { if vm.disciplines.contains(d) { vm.disciplines.remove(d) } else { vm.disciplines.insert(d) } }
-                }
-                .reveal(cascade(i))
+        let programmed = ActivityChoice.allCases.filter(\.isProgrammed)
+        let extras = ActivityChoice.allCases.filter { !$0.isProgrammed }
+        return questionScaffold("What do you want to do?", subtitle: "Pick all that apply — we'll build your plan around these.") {
+            activitySectionLabel("TRAIN")
+            ForEach(Array(programmed.enumerated()), id: \.element) { i, a in
+                activityCard(a).reveal(cascade(i))
+            }
+            activitySectionLabel("ALSO TRACK").padding(.top, Theme.Space.xs)
+            Text("Logged as cross-training and added to your weeks — your call.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(Array(extras.enumerated()), id: \.element) { i, a in
+                activityCard(a).reveal(cascade(programmed.count + i))
             }
         }
+    }
+
+    private func activityCard(_ a: ActivityChoice) -> some View {
+        SelectionCard(title: a.title, systemImage: a.icon, isSelected: vm.activities.contains(a)) {
+            pick { if vm.activities.contains(a) { vm.activities.remove(a) } else { vm.activities.insert(a) } }
+        }
+    }
+
+    private func activitySectionLabel(_ text: String) -> some View {
+        Text(text).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var goalStep: some View {
@@ -210,7 +227,7 @@ struct OnboardingFlow: View {
         return questionScaffold("What's your main goal?", subtitle: "This shapes everything that follows.") {
             ForEach(Array(goals.enumerated()), id: \.element.0) { i, g in
                 SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) {
-                    pick { vm.goal = g.0; vm.applyGoalDefaults() }
+                    pick { vm.goal = g.0 }
                 }
                 .reveal(cascade(i))
             }
@@ -667,13 +684,6 @@ struct OnboardingFlow: View {
             insertion: .opacity.combined(with: .offset(x: goingBack ? -dx : dx)),
             removal: .opacity.combined(with: .offset(x: goingBack ? dx : -dx))
         )
-    }
-
-    private func label(_ d: Discipline) -> String {
-        switch d { case .running: "Run"; case .cycling: "Ride"; case .walking: "Walk"; case .strength: "Lift weights" }
-    }
-    private func icon(_ d: Discipline) -> String {
-        switch d { case .running: "figure.run"; case .cycling: "bicycle"; case .walking: "figure.walk"; case .strength: "dumbbell.fill" }
     }
 
     private func buildPlan() async {

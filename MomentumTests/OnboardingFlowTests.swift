@@ -12,7 +12,7 @@ struct OnboardingFlowTests {
         let ctx = pc.container.mainContext
 
         let vm = OnboardingViewModel()
-        vm.disciplines = [.running, .strength]
+        vm.activities = [.run, .strength]
         vm.goal = .buildMuscle
         vm.experience = .some
         vm.daysPerWeek = 4
@@ -45,14 +45,28 @@ struct OnboardingFlowTests {
 
     @Test func progressAdvancesAndSkipsEquipmentForNonLifters() {
         let vm = OnboardingViewModel()
-        vm.disciplines = [.running]                  // no lifting
+        vm.activities = [.run]                        // no lifting
         #expect(!vm.steps.contains(.equipment))
-        vm.disciplines = [.strength]
+        vm.activities = [.strength]
         #expect(vm.steps.contains(.equipment))
 
         vm.step = .disciplines
-        #expect(vm.canAdvance)                        // disciplines chosen
-        vm.disciplines = []
+        #expect(vm.canAdvance)                        // activities chosen
+        vm.activities = []
         #expect(!vm.canAdvance)                        // must pick at least one
+    }
+
+    @Test func crossTrainingAddOnsLandInThePlan() throws {
+        let pc = PersistenceController.inMemory()
+        let ctx = pc.container.mainContext
+        let vm = OnboardingViewModel()
+        vm.activities = [.run, .swim, .yoga]         // run is programmed; swim/yoga are tracked add-ons
+        vm.daysPerWeek = 3
+        let profile = vm.finish(in: ctx)
+        let plan = try #require(profile.plan)
+        let sports = Set(plan.sessions.compactMap { $0.workoutType })
+        #expect(sports.contains(.swimming))
+        #expect(sports.contains(.yoga))
+        #expect(profile.disciplines == ["running"])  // only the programmable one drives the engine
     }
 }

@@ -7,7 +7,14 @@ import Observation
 @Observable
 final class OnboardingViewModel {
     // Answers
-    var disciplines: Set<Discipline> = []
+    /// Everything the athlete chose to do (source of truth for the picker).
+    var activities: Set<ActivityChoice> = []
+    /// Engine-facing disciplines — the programmable subset of the chosen activities.
+    var disciplines: Set<Discipline> { Set(activities.compactMap(\.discipline)) }
+    /// Chosen activities the engine can't program yet — added to the plan as tracked sessions.
+    var extraActivities: [ActivityChoice] {
+        ActivityChoice.allCases.filter { activities.contains($0) && $0.discipline == nil }
+    }
     var goal: Goal = .generalFitness
     var experience: ExperienceLevel = .some          // running / general
     var liftExperience: ExperienceLevel = .some      // used when hybrid (run + lift)
@@ -86,7 +93,7 @@ final class OnboardingViewModel {
 
     var canAdvance: Bool {
         switch step {
-        case .disciplines: return !disciplines.isEmpty
+        case .disciplines: return !activities.isEmpty
         case .race: return raceDistance != nil
         default: return true
         }
@@ -100,17 +107,6 @@ final class OnboardingViewModel {
     func back() {
         guard let idx = steps.firstIndex(of: step), idx > 0 else { return }
         step = steps[idx - 1]
-    }
-
-    /// When the goal is chosen, pre-select sensible disciplines (only if the user hasn't picked yet),
-    /// so racers default to running, lifters to strength, and general goals to a hybrid mix.
-    func applyGoalDefaults() {
-        guard disciplines.isEmpty else { return }
-        switch goal {
-        case .raceDistance, .endurance: disciplines = [.running]
-        case .buildMuscle, .getStronger: disciplines = [.strength]
-        case .loseFat, .generalFitness, .stayConsistent: disciplines = [.running, .strength]
-        }
     }
 
     var calibration: CalibrationSeed {
@@ -228,11 +224,59 @@ final class OnboardingViewModel {
         }
         profile.reason = reason
         context.insert(profile)
-        PlanService.regenerate(for: profile, calibration: calibration, in: context)
+        let startDate = Date()
+        PlanService.regenerate(for: profile, calibration: calibration, startDate: startDate, in: context)
+        // Fold in the tracked add-ons (swim/row/yoga…) as recurring cross-training sessions.
+        if let plan = profile.plan, !extraActivities.isEmpty {
+            PlanService.addCrossTraining(extraActivities.map(\.workoutType), to: plan,
+                                         startDate: startDate, in: context)
+        }
         // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).
         AthleteModelService().seedOnboarding(for: profile, in: context)
         return profile
     }
+}
+
+// MARK: - Activity picker
+
+/// A choice on the onboarding "what do you want to do?" step. Programmable activities map to a
+/// `Discipline` the engine writes structured sessions for; the rest are tracked add-ons the plan
+/// includes as simple recurring sessions you can check off.
+enum ActivityChoice: String, CaseIterable, Identifiable {
+    case run, cycle, walk, hike, strength, hiit, swim, rowing, yoga
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .run: "Run"; case .cycle: "Cycle"; case .walk: "Walk"; case .hike: "Hike"
+        case .strength: "Lift weights"; case .hiit: "HIIT"; case .swim: "Swim"
+        case .rowing: "Row"; case .yoga: "Yoga"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .run: "figure.run"; case .cycle: "bicycle"; case .walk: "figure.walk"; case .hike: "figure.hiking"
+        case .strength: "dumbbell.fill"; case .hiit: "figure.highintensity.intervaltraining"
+        case .swim: "figure.pool.swim"; case .rowing: "figure.rower"; case .yoga: "figure.yoga"
+        }
+    }
+    /// The engine discipline this maps to when programmable; nil → a tracked add-on.
+    var discipline: Discipline? {
+        switch self {
+        case .run: .running; case .cycle: .cycling; case .walk: .walking
+        case .hike: .walking; case .strength: .strength; case .hiit: .strength
+        case .swim, .rowing, .yoga: nil
+        }
+    }
+    /// The concrete workout type for a tracked add-on session.
+    var workoutType: WorkoutType {
+        switch self {
+        case .run: .run; case .cycle: .ride; case .walk: .walk; case .hike: .hike
+        case .strength: .strength; case .hiit: .hiit; case .swim: .swimming
+        case .rowing: .rowing; case .yoga: .yoga
+        }
+    }
+    var isProgrammed: Bool { discipline != nil }
 }
 
 // MARK: - Calibration model

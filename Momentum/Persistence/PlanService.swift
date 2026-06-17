@@ -19,6 +19,40 @@ enum PlanService {
         return persist(generated, for: profile, startDate: startDate, in: context)
     }
 
+    /// Add tracked cross-training the engine doesn't program (swim/row/yoga…) as one recurring
+    /// session per activity per week, on an open day. Clearly flagged; never displaces the structured
+    /// plan. Each carries its precise `sportType` so it displays as the real sport everywhere.
+    static func addCrossTraining(_ types: [WorkoutType], to plan: TrainingPlan, startDate: Date = Date(),
+                                 in context: ModelContext, calendar: Calendar = .current) {
+        guard !types.isEmpty else { return }
+        let anchor = calendar.startOfDay(for: startDate)
+        func dayIndex(_ d: Date) -> Int {
+            calendar.dateComponents([.day], from: anchor, to: calendar.startOfDay(for: d)).day ?? 0
+        }
+        let weekCount = (plan.sessions.map { dayIndex($0.date) / 7 }.max() ?? 3) + 1
+
+        for w in 0..<weekCount {
+            let weekRange = (w * 7)..<((w + 1) * 7)
+            var used = Set(plan.sessions.compactMap { s -> Int? in
+                let di = dayIndex(s.date); return weekRange.contains(di) ? di % 7 : nil
+            })
+            for type in types {
+                guard let off = (0..<7).first(where: { !used.contains($0) }) else { break }  // week full
+                used.insert(off)
+                let s = PlannedSession()
+                s.date = calendar.date(byAdding: .day, value: w * 7 + off, to: anchor) ?? anchor
+                s.sportType = type.rawValue
+                s.discipline = type.discipline
+                s.targetDurationS = 1800   // a 30-min default the athlete can adjust
+                s.status = .planned
+                s.rationale = "Cross-training — your call."
+                plan.sessions.append(s)
+                context.insert(s)
+            }
+        }
+        try? context.save()
+    }
+
     /// Snapshot the exercise library for the engine.
     static func catalog(in context: ModelContext) -> [ExerciseCatalogItem] {
         let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
