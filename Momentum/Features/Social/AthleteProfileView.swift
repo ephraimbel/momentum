@@ -1,19 +1,26 @@
 import SwiftUI
 
 /// Another athlete's public profile (docs/SOCIAL-LAYER.md, Slice 2) — identity, body-of-work, a
-/// follow button, and their recent public activities. Community athletes are clearly badged. Real
-/// network profiles reuse this once Supabase is on.
+/// follow button, and their recent public activities. Shares the same component scaffold as the
+/// athlete's own `ProfileScreen` (StatGrid / DisciplineBreakdown / ConsistencyHeatmap / PRShelf) so
+/// the two never diverge. Community athletes are clearly badged; real network profiles reuse this once
+/// Supabase is on.
 struct AthleteProfileView: View {
     let athlete: CommunityAthlete
     var distanceUnit: DistanceUnit = .auto
+    var weightUnit: WeightUnit = .default()
     @Environment(FollowStore.self) private var follows
     @Environment(ModerationStore.self) private var moderation
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingReport = false
 
+    private var records: (prs: [(name: String, e1RMKg: Double)], longestRunM: Double, longestDurationS: Double) {
+        athlete.personalRecords
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: Theme.Space.xl) {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 identity
                 followButton
                 if !athlete.bio.isEmpty {
@@ -21,10 +28,24 @@ struct AthleteProfileView: View {
                         .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
-                statsCard
+                headlineStats
+                section("How you train") {
+                    DisciplineBreakdown(counts: athlete.disciplineCounts)
+                        .padding(Theme.Space.lg).background(card)
+                }
+                section("Consistency") {
+                    ConsistencyHeatmap(countingDays: athlete.consistencyDays)
+                        .padding(Theme.Space.lg).background(card)
+                }
+                if !records.prs.isEmpty || records.longestRunM > 0 || records.longestDurationS > 0 {
+                    section("Personal records") {
+                        PRShelf(strengthPRs: records.prs, longestRunM: records.longestRunM,
+                                longestDurationS: records.longestDurationS, weightUnit: weightUnit, distanceUnit: distanceUnit)
+                    }
+                }
                 if !athlete.posts.isEmpty {
-                    VStack(alignment: .leading, spacing: Theme.Space.md) {
-                        Text("RECENT").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                    VStack(alignment: .leading, spacing: 0) {
+                        sectionTitle("Recent")
                         ForEach(athlete.posts) { FeedPostCard(item: $0) }
                     }
                 }
@@ -77,6 +98,16 @@ struct AthleteProfileView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var headlineStats: some View {
+        StatGrid(cells: [
+            .init(value: "\(athlete.totalWorkouts)", label: "Workouts"),
+            .init(value: "\(athlete.dayStreak)", label: "Day streak"),
+            .init(value: Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit), label: "Distance"),
+        ], valueSize: 20)
+        .padding(.vertical, Theme.Space.lg)
+        .background(card)
+    }
+
     private var followButton: some View {
         let following = follows.isFollowing(athlete.handle)
         return Button { follows.toggle(athlete.handle); Haptics.light() } label: {
@@ -94,27 +125,6 @@ struct AthleteProfileView: View {
         .accessibilityLabel(following ? "Following \(athlete.name). Tap to unfollow." : "Follow \(athlete.name)")
     }
 
-    private var statsCard: some View {
-        HStack(spacing: 0) {
-            stat("\(athlete.totalWorkouts)", "Workouts")
-            divider
-            stat("\(athlete.dayStreak)", "Day streak")
-            divider
-            stat(Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit), "Distance")
-        }
-        .padding(.vertical, Theme.Space.lg).frame(maxWidth: .infinity)
-        .background(card)
-    }
-
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 3) {
-            Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-    private var divider: some View { Rectangle().fill(Theme.hairline).frame(width: 1, height: 32) }
-
     private var communityBadge: some View {
         Text("Momentum").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4).foregroundStyle(Theme.ink)
             .padding(.horizontal, 6).padding(.vertical, 2)
@@ -123,10 +133,17 @@ struct AthleteProfileView: View {
             .accessibilityLabel("Momentum community")
     }
 
-    private var card: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            sectionTitle(title)
+            content()
         }
+    }
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+    }
+    private var card: some View {
+        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
     }
 }

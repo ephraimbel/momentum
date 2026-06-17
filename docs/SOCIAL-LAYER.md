@@ -45,6 +45,27 @@ Public projection of the athlete: avatar (iridescent orb/initials v1), name, @ha
 city, bio, lifetime totals + streak + consistency heatmap + PR shelf (reuses `ProfileStats`), recent
 public activities. Own profile shows Edit + privacy; others' show Follow + public content only.
 
+## 2026-06-17 — Profile becomes a tab; editorial-feed redesign
+A push to make the social surface feel Substack/Strava-grade (clean, editorial, enterprise):
+- **Navigation:** the immersive **Coach chat tab was removed** and **Profile is now its own tab**
+  (Today · Plan · Progress · World · Profile). The coaching *chat* still exists, reachable from
+  **Settings → Coach**; the coaching *intelligence* lives on as the Progress **"Coach"** segment
+  (formerly "You" — the athlete-model read). `AppTab` (Route.swift) + `RootView` drive this.
+- **Profile page (`ProfileScreen`)** is the body-of-work home: identity → headline counts
+  (Workouts / Day streak / Following) → lifetime totals → discipline breakdown → consistency grid →
+  trophy/PR shelf → your shared activities → privacy. Built from reusable components in
+  `Features/Profile/`: `StatGrid`, `ConsistencyHeatmap`, `PRShelf`, `DisciplineBreakdown`.
+  `AthleteProfileView` reuses the same scaffold (community body-of-work is deterministically
+  synthesized in `CommunityAthleteProfile`, clearly badged). The old `ProfileView` was deleted.
+- **Progress** no longer carries totals/heatmap/PRs (moved to Profile) — it stays the analytical brain
+  (status, recovery, trend charts, weekly muscle, the Coach/athlete-model segment).
+- **Feed:** editorial Substack rows — quiet byline, bold headline, a **Strava-style metric strip**
+  (`FeedItem.metrics`, derived from `statLine`), lean chrome (whitespace + one hairline, no boxes), a
+  **featured lead** (`FeaturedFeedCard`, full-bleed hero for the top photo/route post), a **discipline
+  filter rail**, and gentle entrance choreography. Tapping a post opens the **reading view**
+  (`PostDetailView`): full caption + the optional **Momentum read** (public AI narration via
+  `FeedItem.aiRead` ← `Workout.aiSummary`; community seeded). Shared media via `FeedMediaView`.
+
 ## Privacy matrix (defaults conservative)
 | Control | Default | Options |
 |---|---|---|

@@ -16,13 +16,12 @@ struct ProgressScreen: View {
     @State private var correcting: LearnedItem?
 
     enum Segment: String, CaseIterable, Identifiable {
-        case trends = "Trends", history = "History", you = "You"
+        case trends = "Trends", history = "History", you = "Coach"
         var id: Self { self }
     }
 
     private var plan: TrainingPlan? { profiles.first?.plan }
 
-    private var weightUnit: WeightUnit { .default() }
     private var distanceUnit: DistanceUnit { .auto }
     private var stats: ProfileStats { ProfileStats(workouts: workouts) }
     private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
@@ -50,11 +49,6 @@ struct ProgressScreen: View {
             Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
             StreakChip(days: stats.currentStreak)
-            NavigationLink { ProfileView() } label: {
-                Image(systemName: "person.crop.circle").font(.system(size: 19, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 32, height: 32)
-            }
-            .accessibilityLabel("Profile")
             NavigationLink { SettingsView() } label: {
                 Image(systemName: "gearshape.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                     .frame(width: 32, height: 32)
@@ -88,19 +82,17 @@ struct ProgressScreen: View {
                 statusHero(insights).reveal(0)
                 coachCard(insights).reveal(0.06)
                 // Advanced analytics — Pro (PRD §10): training load, pace/distance trends, weekly
-                // sets-per-muscle, e1RM PRs. Free keeps the status read, consistency heatmap & totals.
+                // sets-per-muscle. The body-of-work (totals, consistency grid, PR shelf) now lives on
+                // the Profile tab; Progress stays the analytical/coaching brain.
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     recoveryCard(recovery)
                     loadChart(insights)
                     distanceChart(insights)
                     if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                     if !weeklyMuscleActivation.isEmpty { muscleWeek }
-                    if !stats.strengthPRs.isEmpty { prShelf(stats) }
                 }
                 .reveal(0.12)
                 .proLocked(.advancedAnalytics)
-                heatmap(stats).reveal(0.24)
-                totals(stats).reveal(0.36)
             }
             .padding(Theme.Space.lg)
             .padding(.bottom, Theme.Space.xxl)
@@ -356,38 +348,6 @@ struct ProgressScreen: View {
         .background(card)
     }
 
-    // MARK: Heatmap / PRs / totals (from ProfileStats)
-
-    private func heatmap(_ stats: ProfileStats) -> some View {
-        let today = StreakCalculator.localDay(Date())
-        let weeks = 16
-        let windowDays = weeks * 7
-        // Active days within the displayed window — drives a single VoiceOver summary instead of
-        // 112 unreadable color-only cells (PRD §13.4: iridescence is never the sole carrier).
-        let activeDays = (0..<windowDays).filter { stats.countingDays.contains(today - $0) }.count
-        return VStack(alignment: .leading, spacing: Theme.Space.md) {
-            sectionTitle("Consistency")
-            HStack(spacing: 3) {
-                ForEach(0..<weeks, id: \.self) { col in
-                    VStack(spacing: 3) {
-                        ForEach(0..<7, id: \.self) { row in
-                            let day = today - ((weeks - 1 - col) * 7) - (6 - row)
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(stats.countingDays.contains(day) ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.hairline))
-                                .frame(width: 13, height: 13)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Consistency")
-            .accessibilityValue("\(activeDays) of \(windowDays) days active in the last \(weeks) weeks")
-        }
-        .padding(Theme.Space.lg)
-        .background(card)
-    }
-
     // MARK: Weekly muscle coverage
 
     /// Trailing-7-day working-sets-by-muscle (PRD §22) across strength sessions.
@@ -415,47 +375,6 @@ struct ProgressScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.lg)
         .background(card)
-    }
-
-    private func prShelf(_ stats: ProfileStats) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            sectionTitle("Personal records")
-            ForEach(stats.strengthPRs, id: \.name) { pr in
-                NavigationLink {
-                    ExerciseDetailView(exerciseName: pr.name, weightUnit: weightUnit)
-                } label: {
-                    HStack {
-                        Text(pr.name).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                        Spacer()
-                        Text(Formatters.weight(kg: pr.e1RMKg, unit: weightUnit)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
-                        Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
-        .background(card)
-    }
-
-    private func totals(_ stats: ProfileStats) -> some View {
-        HStack(spacing: Theme.Space.xl) {
-            stat("\(stats.totalWorkouts)", "Workouts")
-            stat(Formatters.distance(meters: stats.totalDistanceM, unit: distanceUnit), "Distance")
-            stat(Formatters.duration(s: stats.totalDurationS), "Time")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
-        .background(card)
-    }
-
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
-        }
     }
 
     private func sectionTitle(_ text: String) -> some View {

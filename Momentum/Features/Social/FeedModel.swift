@@ -30,11 +30,40 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var photoData: Data? = nil
     /// The author's profile photo (the user's own posts); nil → initials avatar (community).
     var avatarData: Data? = nil
+    /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
+    /// post's reading view. The user's own posts carry their `aiSummary`; community posts are seeded.
+    var aiRead: String? = nil
 
     /// Route as map coordinates for `RouteMapView`.
     var routeCoordinates: [CLLocationCoordinate2D]? {
         routeLatLon.map { $0.map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) } }
     }
+
+    /// The stat line split into the Strava-style metric strip (value + label). Derived from `statLine`
+    /// so the user's own posts and seeded community posts (same format) both render structured.
+    var metrics: [FeedMetric] {
+        statLine.components(separatedBy: " · ").compactMap { token in
+            let t = token.trimmingCharacters(in: .whitespaces)
+            guard !t.isEmpty else { return nil }
+            let lower = t.lowercased()
+            if lower.contains("/mi") || lower.contains("/km") { return FeedMetric(value: t, label: "Pace") }
+            if lower.contains("mi") || lower.contains("km")   { return FeedMetric(value: t, label: "Distance") }
+            if lower.contains("lb") || lower.contains("kg")   { return FeedMetric(value: t, label: "Volume") }
+            if lower.contains("set") {
+                let num = t.split(separator: " ").first.map(String.init) ?? t
+                return FeedMetric(value: num, label: "Sets")
+            }
+            if t.contains(":") { return FeedMetric(value: t, label: "Time") }
+            return FeedMetric(value: t, label: "")
+        }
+    }
+}
+
+/// One cell of a feed post's metric strip — a value over a quiet label (Strava's signature stat row).
+struct FeedMetric: Identifiable, Sendable, Hashable {
+    let value: String
+    let label: String
+    var id: String { label + value }
 }
 
 /// Pure, testable feed assembly (docs/SOCIAL-LAYER.md). Merges the athlete's **shared** workouts with
@@ -72,7 +101,8 @@ enum FeedAssembler {
             routeLatLon: route,
             mapStyle: .standard,
             photoData: w.photoData,
-            avatarData: profile?.avatarData)
+            avatarData: profile?.avatarData,
+            aiRead: w.aiSummary)
     }
 
     static func displayName(_ profile: UserProfile?) -> String {

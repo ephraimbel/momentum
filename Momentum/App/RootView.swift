@@ -7,7 +7,15 @@ struct RootView: View {
     @Query private var profiles: [UserProfile]
     @Environment(PaywallController.self) private var paywall
     @Environment(AuthController.self) private var auth
-    @State private var selection: AppTab = .today
+    @State private var selection: AppTab = {
+        #if DEBUG
+        // Deterministic deep-links for sim verification (tab-bar taps are unreliable in the sim).
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--profile-tab") { return .profile }
+        if args.contains("--world-feed") || args.contains("--social-globe") { return .world }
+        #endif
+        return .today
+    }()
     @State private var showOnboarding = false
 
     var body: some View {
@@ -33,9 +41,6 @@ struct RootView: View {
         }
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--social-globe") { selection = .world }
-            #endif
         }
         // Just signed in (new athlete) → straight into onboarding.
         .onChange(of: auth.isSignedIn) { _, signedIn in if signedIn && profiles.isEmpty { showOnboarding = true } }
@@ -56,14 +61,7 @@ struct RootView: View {
 
     @ViewBuilder
     private func tabContent(_ tab: AppTab) -> some View {
-        switch tab {
-        case .coach:
-            // The Coach is its own immersive chat (own NavigationStack), with the tab bar hidden so it
-            // reads as a dedicated AI surface; its back arrow returns to the app.
-            CoachChatView { selection = .today }
-        default:
-            NavigationStack { screen(for: tab) }
-        }
+        NavigationStack { screen(for: tab) }
     }
 
     @ViewBuilder
@@ -73,7 +71,7 @@ struct RootView: View {
         case .plan: PlanView()
         case .progress: ProgressScreen()
         case .world: WorldView()
-        case .coach: EmptyView()   // routed by tabContent
+        case .profile: ProfileScreen()
         }
     }
 }

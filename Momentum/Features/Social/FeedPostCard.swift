@@ -1,10 +1,11 @@
 import SwiftUI
 import UIKit
 
-/// One post in the feed — a Substack-style editorial row, not a boxed card (PRD §7.11): author byline,
-/// a bold headline, the workout's numbers as a subtitle, optional photo/route media, a caption
-/// excerpt, and a quiet reaction footer, separated by a hairline. Reads like a feed of athletes
-/// posting their workouts. Community posts carry a clear "Momentum community" badge.
+/// One post in the feed — a Substack-style editorial row, not a boxed card (PRD §7.11): a quiet
+/// author byline, a bold headline, the workout's numbers as a Strava-style metric strip, optional
+/// photo/route/muscle media, a caption excerpt, and a restrained reaction footer, separated by a
+/// hairline. Lean by design — whitespace and one hairline carry the structure, no chrome. Community
+/// posts carry a clear "Momentum community" badge.
 struct FeedPostCard: View {
     let item: FeedItem
     /// Where tapping the author byline navigates (nil = not tappable, e.g. on a profile's own list).
@@ -15,32 +16,36 @@ struct FeedPostCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var confirmingReport = false
     @State private var showingComments = false
+    @State private var showingDetail = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             authorRow
-            VStack(alignment: .leading, spacing: 6) {
-                Text(item.title)
-                    .font(.display(23, weight: .bold)).foregroundStyle(Theme.ink)
-                    .lineSpacing(1).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: Theme.Space.sm) {
-                    Text(item.statLine).font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                        .monospacedDigit().foregroundStyle(Theme.inkSecondary)
-                    if let pr = item.prBadge { PRBadge(text: pr) }
+            // Tapping the post body opens the full reading view; the byline (above) and footer (below)
+            // keep their own targets (profile / reactions).
+            Button { showingDetail = true } label: {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        Text(item.title)
+                            .font(.display(24, weight: .bold)).foregroundStyle(Theme.ink)
+                            .multilineTextAlignment(.leading)
+                            .lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+                        if let pr = item.prBadge { PRBadge(text: pr) }
+                    }
+                    statStrip
+                    media.padding(.top, 2)
+                    caption
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            media.padding(.top, 2)
-            if let caption = item.caption {
-                Text(caption).font(.rounded(Theme.FontSize.body, weight: .regular))
-                    .foregroundStyle(Theme.inkSecondary).lineSpacing(2)
-                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-            }
+            .buttonStyle(.plain)
             footer.padding(.top, 2)
         }
         .padding(.vertical, Theme.Space.lg)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-        .contentShape(Rectangle())
         .contextMenu { moderationMenu }
+        .sheet(isPresented: $showingDetail) { PostDetailView(item: item) }
         .confirmationDialog("Report this post?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
                 Button(reason.rawValue) { moderation.report(item.id); Haptics.success() }
@@ -68,16 +73,16 @@ struct FeedPostCard: View {
                 authorIdentity
             }
             Spacer(minLength: 0)
-            Image(systemName: item.type.systemImage).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            Image(systemName: item.type.systemImage).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
         }
     }
 
     private var authorIdentity: some View {
         HStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: item.avatarData, name: item.authorName, size: 38)
+            AvatarView(photo: item.avatarData, name: item.authorName, size: 36)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(item.authorName).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
+                    Text(item.authorName).font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
                     if item.isCommunity { communityBadge }
                 }
                 Text(byline).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary).lineLimit(1)
@@ -93,83 +98,32 @@ struct FeedPostCard: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: Media (photo > muscle map > route map > timed discipline card)
+    // MARK: Metric strip (Strava-style)
 
     @ViewBuilder
-    private var media: some View {
-        if let data = item.photoData, let ui = UIImage(data: data) {
-            Image(uiImage: ui).resizable().scaledToFill()
-                .frame(maxWidth: .infinity).frame(height: 220).clipped()
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-        } else if item.type.isStrengthStyle, let muscles = item.muscles, !muscles.isEmpty {
-            // The lift counterpart to the route map: the body, with worked muscles glowing iridescent.
-            muscleMedia(muscles)
-        } else if let coords = item.routeCoordinates, coords.count > 1 {
-            // The actual map behind the route trace; the basemap varies per post (Strava-style).
-            RouteMapView(coordinates: coords, style: item.mapStyle, interactive: false)
-                .frame(height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                .allowsHitTesting(false)   // never steal the feed's scroll
-        } else if item.type.isTimed {
-            // Timed sports (pool swim, erg, yoga…) have no route or muscle map — a discipline card
-            // gives the post a visual anchor so the feed reads consistently, not text-only.
-            timedMedia
+    private var statStrip: some View {
+        let cells = item.metrics.map { StatGrid.Cell(value: $0.value, label: $0.label) }
+        if !cells.isEmpty {
+            StatGrid(cells: cells, valueSize: 17, leading: true)
+                .padding(.top, 2)
         }
     }
 
-    /// Stopwatch-sport media — the sport's glyph as a faint watermark with a quiet label, monochrome
-    /// (no earned-iridescence — there's no progress to mark here, just identity).
-    private var timedMedia: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            Image(systemName: item.type.systemImage)
-                .font(.system(size: 130, weight: .regular))
-                .foregroundStyle(Theme.inkTertiary.opacity(0.10))
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .offset(x: 34)
-                .clipped()
-            VStack(alignment: .leading, spacing: 6) {
-                Image(systemName: item.type.systemImage)
-                    .font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                Text(item.type.title.uppercased())
-                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.6)
-                    .foregroundStyle(Theme.inkTertiary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            .padding(Theme.Space.md)
+    // MARK: Caption
+
+    @ViewBuilder
+    private var caption: some View {
+        if let caption = item.caption {
+            Text(caption).font(.rounded(Theme.FontSize.body, weight: .regular))
+                .foregroundStyle(Theme.inkSecondary).lineSpacing(3)
+                .lineLimit(2).multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(height: 150)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .allowsHitTesting(false)
     }
 
-    /// Strength media — front/back body on a faint card, worked muscles lit, with a small caption of
-    /// the top muscles so the post reads at a glance like a route map shows the route.
-    private func muscleMedia(_ muscles: [MuscleGroup: Double]) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            MuscleMapView(activation: muscles)
-                .padding(.vertical, Theme.Space.md)
-            Text(workedSummary(muscles))
-                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.3)
-                .foregroundStyle(Theme.inkSecondary)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Capsule().fill(Theme.background.opacity(0.7)))
-                .overlay(Capsule().stroke(Theme.hairline))
-                .padding(Theme.Space.sm)
-        }
-        .frame(height: 220)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .allowsHitTesting(false)
-    }
+    // MARK: Media (photo > muscle map > route map > timed discipline card)
 
-    /// "Chest · Shoulders · Triceps" — the most-worked muscles, for the media caption + a11y.
-    private func workedSummary(_ muscles: [MuscleGroup: Double]) -> String {
-        muscles.filter { $0.value > 0 }.sorted { $0.value > $1.value }
-            .prefix(3).map { $0.key.displayName }.joined(separator: " · ")
-    }
+    private var media: some View { FeedMediaView(item: item, height: 200) }
 
     // MARK: Footer (reaction)
 

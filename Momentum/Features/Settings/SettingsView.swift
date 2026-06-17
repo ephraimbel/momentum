@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var confirmDelete = false
     @State private var healthConnected = false
     @State private var connectingHealth = false
+    @State private var showCoachChat = false
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
     private let manageURL = URL(string: "https://apps.apple.com/account/subscriptions")!
@@ -24,6 +25,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 section("SUBSCRIPTION") { paywall.isPro ? AnyView(proCard) : AnyView(freeCard) }
+                section("COACH") { AnyView(coachCard) }
                 section("APPLE HEALTH") { AnyView(healthCard) }
                 section("DATA & PRIVACY") { AnyView(dataCard) }
                 section("ACCOUNT") { AnyView(accountCard) }
@@ -36,6 +38,9 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .onAppear { healthConnected = services.health.isAuthorized }
+        .fullScreenCover(isPresented: $showCoachChat) {
+            CoachChatView { showCoachChat = false }
+        }
         .fileExporter(isPresented: $showExporter, document: exportFile,
                       contentType: .json, defaultFilename: "momentum-data") { _ in }
         .confirmationDialog("Delete all data?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -46,6 +51,21 @@ struct SettingsView: View {
         } message: {
             Text("This permanently removes your profile, plan, and every workout from this device. This can’t be undone.")
         }
+    }
+
+    // MARK: Coach chat
+
+    /// The immersive AI coach chat. It no longer occupies a tab (Profile took that slot); it lives
+    /// here as an on-demand surface so the feature stays reachable without a permanent tab.
+    private var coachCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("Ask your coach anything — pace, programming, or how a session felt.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            actionRow("Open coach chat", icon: "sparkles") { showCoachChat = true }
+        }
+        .padding(Theme.Space.lg)
+        .background(card)
     }
 
     // MARK: Apple Health

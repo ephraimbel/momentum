@@ -82,4 +82,19 @@ enum Formatters {
     static func clock(date: Date) -> String {
         date.formatted(date: .omitted, time: .shortened)
     }
+
+    // MARK: Compact number — "12.4k", "1.2M", or an integer below 1,000 (no unit)
+    static func compact(_ value: Double) -> String {
+        let v = abs(value)
+        switch v {
+        case 1_000_000...:
+            return String(format: "%.1fM", value / 1_000_000)
+        case 10_000...:
+            return "\(Int((value / 1_000).rounded()))k"
+        case 1_000...:
+            return String(format: "%.1fk", value / 1_000)
+        default:
+            return String(Int(value.rounded()))
+        }
+    }
 }

@@ -50,10 +50,11 @@ enum CommunityGenerator {
         let route: [[Double]]? = discipline.isGPS ? loopRoute(lat: lat, lon: lon, rng: &rng) : nil
         let (title, stat, pr) = content(for: discipline, rng: &rng)
         let muscles = discipline.isStrengthStyle ? StrengthFeedMuscles.activation(forTitle: title, type: discipline) : nil
+        let ai = rng.int(0...2) == 0 ? rng.pick(aiReads) : nil
         return FeedItem(id: id, authorName: name, authorHandle: handle, location: city,
                         isCommunity: true, type: discipline, date: date, title: title, caption: caption,
                         statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: route, mapStyle: style,
-                        baseReactions: reactions)
+                        baseReactions: reactions, aiRead: ai)
     }
 
     /// A short, realistic-looking loop (~0.4–0.8 km) anchored on the city center (downtown = land), so
@@ -135,6 +136,15 @@ enum CommunityGenerator {
     private static let liftTitles = ["Push day","Pull day","Lower power","Upper hypertrophy","Full body","Leg day","Conditioning"]
     private static let otherTitles = ["Session","Flow","Pool intervals","Steady state","Open mat","Mobility"]
     private static let prLabels = ["5K PR","e1RM PR","Longest run","Fastest mile","Most volume","Longest ride"]
+    /// Sample "Momentum read" lines — the public AI read shown in a post's reading view (clearly
+    /// community/sample content, never presented as analysis of a real stranger).
+    private static let aiReads = [
+        "A controlled effort — heart rate stayed in the aerobic band the whole way, so this builds the engine without adding fatigue.",
+        "Strong finish: the last third was the fastest, which is exactly how you want a steady session to end.",
+        "Volume landed right in the productive range. Pair it with an easy day tomorrow and the adaptation sticks.",
+        "Consistent splits and a relaxed cadence — this is the kind of repeatable session that compounds over months.",
+        "Effort matched the plan. Nothing flashy, just another deposit in the consistency account.",
+        "Good intensity discipline — you held back early and had something left to give late."]
     /// Variety of basemaps across the feed (Strava-style "people use different maps").
     static let feedStyles: [MapStyleOption] = [.standard, .realistic, .streets, .outdoors, .dark, .satellite]
     private static let disciplines: [WorkoutType] = [.run,.run,.ride,.walk,.trailRun,.strength,.strength,.hiit,.swimming,.rowing,.yoga]

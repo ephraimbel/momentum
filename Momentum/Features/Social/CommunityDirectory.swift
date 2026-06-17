@@ -31,14 +31,15 @@ enum CommunityDirectory {
         func ago(_ h: Double) -> Date { now.addingTimeInterval(-h * 3600) }
         func post(_ n: Int, _ a: CommunityAuthor, _ type: WorkoutType, _ when: Date, _ title: String,
                   _ caption: String?, _ stat: String, lat: Double, lon: Double,
-                  pr: String? = nil, reactions: Int = 0) -> FeedItem {
+                  pr: String? = nil, reactions: Int = 0, ai: String? = nil) -> FeedItem {
             var rng = SeededRNG(n &* 99_173)
             let route = type.isGPS ? CommunityGenerator.loopRoute(lat: lat, lon: lon, rng: &rng) : nil
             let muscles = type.isStrengthStyle ? StrengthFeedMuscles.activation(forTitle: title, type: type) : nil
             let style = CommunityGenerator.feedStyles[n % CommunityGenerator.feedStyles.count]
             return FeedItem(id: pid(n), authorName: a.name, authorHandle: a.handle, location: a.location,
                             isCommunity: true, type: type, date: when, title: title, caption: caption,
-                            statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: route, mapStyle: style, baseReactions: reactions)
+                            statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: route, mapStyle: style,
+                            baseReactions: reactions, aiRead: ai)
         }
 
         let maya = CommunityAuthor("mayaruns", "Maya Rivera", "Austin, TX")
@@ -54,11 +55,11 @@ enum CommunityDirectory {
             CommunityAthlete(handle: maya.handle, name: maya.name, location: maya.location,
                 bio: "Marathoner chasing a sub-3. Coffee, then miles.",
                 totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000, lat: 30.27, lon: -97.74,
-                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", "6.2 mi · 48:10", lat: 30.27, lon: -97.74, pr: "5K PR", reactions: 42)]),
+                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", "6.2 mi · 48:10", lat: 30.27, lon: -97.74, pr: "5K PR", reactions: 42, ai: "A textbook negative split — the back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
             CommunityAthlete(handle: theo.handle, name: theo.name, location: theo.location,
                 bio: "Strength coach. Big believer in boring consistency.",
                 totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000, lat: 40.78, lon: -73.97,
-                posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02", lat: 40.78, lon: -73.97, pr: "Squat e1RM PR", reactions: 67)]),
+                posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02", lat: 40.78, lon: -73.97, pr: "Squat e1RM PR", reactions: 67, ai: "Tonnage up with the same RPE — the new e1RM is earned, not a fluke. Hold this volume for a week before pushing load again.")]),
             CommunityAthlete(handle: lin.handle, name: lin.name, location: lin.location,
                 bio: "Cyclist. Hills are just downhills in waiting.",
                 totalWorkouts: 268, dayStreak: 5, totalDistanceM: 9_800_000, lat: 45.52, lon: -122.64,

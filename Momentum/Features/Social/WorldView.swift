@@ -9,11 +9,28 @@ struct WorldView: View {
     /// Pushed destinations within the World tab's NavigationStack.
     enum WorldRoute: Hashable { case athlete(String), me }
 
+    /// A coarse discipline filter for the feed (the design doc's discipline filters).
+    enum DisciplineFilter: String, CaseIterable, Identifiable {
+        case all = "All", run = "Run", ride = "Ride", lift = "Lift", swim = "Swim", walk = "Walk"
+        var id: String { rawValue }
+        func matches(_ type: WorkoutType) -> Bool {
+            switch self {
+            case .all:  true
+            case .run:  type == .run || type == .trailRun
+            case .ride: type == .ride || type == .mountainBikeRide || type == .gravelRide || type == .eBikeRide
+            case .lift: type.isStrengthStyle
+            case .swim: type == .swimming
+            case .walk: type == .walk || type == .hike
+            }
+        }
+    }
+
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
     @Environment(FollowStore.self) private var follows
     @Environment(ModerationStore.self) private var moderation
     @State private var segment: Segment = .discover
+    @State private var filter: DisciplineFilter = .all
     #if DEBUG
     @State private var debugGlobe = ProcessInfo.processInfo.arguments.contains("--social-globe")
     #endif
@@ -22,11 +39,13 @@ struct WorldView: View {
     private var discoverFeed: [FeedItem] {
         FeedAssembler.feed(userWorkouts: workouts, profile: profile, community: CommunityFeed.seed())
             .filter(moderation.isVisible)
+            .filter { filter.matches($0.type) }
     }
     /// Posts from athletes the user follows, newest first.
     private var followingFeed: [FeedItem] {
         CommunityFeed.seed()
             .filter { follows.isFollowing($0.authorHandle ?? "") && moderation.isVisible($0) }
+            .filter { filter.matches($0.type) }
             .sorted { $0.date > $1.date }
     }
 
@@ -38,6 +57,8 @@ struct WorldView: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, Theme.Space.lg).padding(.bottom, Theme.Space.sm)
+
+            filterRail
 
             ScrollView {
                 LazyVStack(spacing: 0) {       // editorial feed — rows carry their own padding + divider
@@ -61,7 +82,7 @@ struct WorldView: View {
                     AthleteProfileView(athlete: athlete)
                 }
             case .me:
-                ProfileView()
+                ProfileScreen(showsBackButton: true)
             }
         }
         #if DEBUG
@@ -76,16 +97,54 @@ struct WorldView: View {
         #endif
     }
 
-    /// A list of feed cards; community authors are tappable through to their profile.
+    /// A list of feed cards; the lead story (first photo/route post) gets the full-bleed featured
+    /// treatment, the rest are editorial rows. Community authors are tappable through to their profile;
+    /// entrance is gently staggered (Reduce-Motion-safe via `reveal`).
     @ViewBuilder
     private func feedList(_ items: [FeedItem]) -> some View {
-        ForEach(items) { item in
-            if item.isCommunity, let handle = item.authorHandle {
-                FeedPostCard(item: item, navValue: .athlete(handle))
-            } else {
-                FeedPostCard(item: item, navValue: .me)
-            }
+        let lead = items.first(where: FeaturedFeedCard.canFeature)
+        let rest = items.filter { $0.id != lead?.id }
+        if let lead {
+            FeaturedFeedCard(item: lead, navValue: navValue(for: lead)).reveal(0)
         }
+        ForEach(Array(rest.enumerated()), id: \.element.id) { index, item in
+            FeedPostCard(item: item, navValue: navValue(for: item))
+                .reveal(min(0.3, Double(index) * 0.04))
+        }
+    }
+
+    /// Tapping a community author opens their profile; the user's own posts open their profile tab view.
+    private func navValue(for item: FeedItem) -> WorldRoute {
+        if item.isCommunity, let handle = item.authorHandle { return .athlete(handle) }
+        return .me
+    }
+
+    /// Horizontal discipline filter — quiet pills, single accent on the selected one.
+    private var filterRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Space.sm) {
+                ForEach(DisciplineFilter.allCases) { option in
+                    let selected = filter == option
+                    Button {
+                        Haptics.selection()
+                        withAnimation(.easeOut(duration: 0.2)) { filter = option }
+                    } label: {
+                        Text(option.rawValue)
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                            .foregroundStyle(selected ? Theme.background : Theme.ink)
+                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
+                            .background {
+                                Capsule().fill(selected ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                                if !selected { Capsule().stroke(Theme.hairline) }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? [.isSelected] : [])
+                }
+            }
+            .padding(.horizontal, Theme.Space.lg)
+        }
+        .padding(.bottom, Theme.Space.sm)
     }
 
     private var header: some View {
