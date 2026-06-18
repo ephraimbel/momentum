@@ -127,9 +127,12 @@ struct EditProfileView: View {
             Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
             Spacer()
             Button { Haptics.light(); dec() } label: { stepGlyph("minus") }.buttonStyle(.plain)
+                .accessibilityLabel("Decrease \(label)")
             Text(value).font(.display(18, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                 .frame(minWidth: 78).contentTransition(.numericText())
+                .accessibilityLabel("\(label), \(value)")
             Button { Haptics.light(); inc() } label: { stepGlyph("plus") }.buttonStyle(.plain)
+                .accessibilityLabel("Increase \(label)")
         }
         .padding(.vertical, 6)
         .animation(.snappy(duration: 0.2), value: value)

@@ -582,9 +582,12 @@ struct OnboardingFlow: View {
             Text(label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
             Spacer()
             Button { Haptics.light(); minus() } label: { metricStep("minus") }.buttonStyle(.plain)
+                .accessibilityLabel("Decrease \(label)")
             Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                 .frame(minWidth: 76).contentTransition(.numericText())
+                .accessibilityLabel("\(label), \(value)")
             Button { Haptics.light(); plus() } label: { metricStep("plus") }.buttonStyle(.plain)
+                .accessibilityLabel("Increase \(label)")
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))

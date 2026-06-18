@@ -437,6 +437,13 @@ struct ProgressScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
         .background(card)
+        // Collapse the chart into one clean spoken summary (the plot itself is hard to navigate aurally).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(subtitle
+            .replacingOccurrences(of: "↑", with: "up ")
+            .replacingOccurrences(of: "↓", with: "down ")
+            .replacingOccurrences(of: " · ", with: ", "))
     }
 
     // MARK: Weekly muscle coverage
