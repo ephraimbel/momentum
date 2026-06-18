@@ -73,7 +73,7 @@ struct ProfileScreen: View {
             }
             .accessibilityLabel("Settings")
         }
-        .padding(.horizontal, Theme.Space.lg)
+        .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm).padding(.bottom, Theme.Space.sm)
         .background(Theme.background)
     }

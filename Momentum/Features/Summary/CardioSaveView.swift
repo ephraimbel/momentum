@@ -34,7 +34,7 @@ struct CardioSaveView: View {
             ScrollView {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
-                    VStack(spacing: Theme.Space.xl) {
+                    VStack(spacing: Theme.Space.lg) {
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit, showsHeader: false)
                         editor
                     }
@@ -96,7 +96,7 @@ struct CardioSaveView: View {
             Divider().overlay(Theme.hairline)
             effortRow
         }
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
     }
 

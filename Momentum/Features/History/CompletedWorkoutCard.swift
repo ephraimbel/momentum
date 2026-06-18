@@ -11,7 +11,7 @@ struct CompletedWorkoutCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            banner.frame(height: 150).frame(maxWidth: .infinity).clipped()
+            banner.frame(height: 132).frame(maxWidth: .infinity).clipped()
             statsRow
         }
         .background(Theme.surface)

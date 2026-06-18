@@ -28,7 +28,7 @@ struct HistoryView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                         HeatmapHistoryCard(workouts: allWorkouts, distanceUnit: distanceUnit)
                         let entitled = paywall.isEntitled(to: .fullHistory)
                         let shown = entitled ? weeks : Array(weeks.prefix(Self.freeWeeks))
@@ -52,7 +52,7 @@ struct HistoryView: View {
                         let hidden = entitled ? 0 : weeks.dropFirst(Self.freeWeeks).reduce(0) { $0 + $1.items.count }
                         if hidden > 0 { lockedFooter(hidden) }
                     }
-                    .padding(Theme.Space.lg)
+                    .padding(Theme.Space.md)
                     .padding(.bottom, Theme.Space.xxl)
                 }
             }

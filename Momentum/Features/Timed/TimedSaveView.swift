@@ -26,7 +26,7 @@ struct TimedSaveView: View {
         NavigationStack {
             ScrollView {
                 if let workout {
-                    VStack(spacing: Theme.Space.xl) {
+                    VStack(spacing: Theme.Space.lg) {
                         TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true)
                         editor
                     }
@@ -85,7 +85,7 @@ struct TimedSaveView: View {
             Divider().overlay(Theme.hairline)
             effortRow
         }
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
     }
 

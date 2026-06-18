@@ -78,7 +78,7 @@ struct CardioSummaryContent: View {
         if let gps = workout.gps {
             // Reveal-first: lead with the mastery payoff (hero distance + any "you got better" win),
             // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
-            VStack(spacing: Theme.Space.xl) {
+            VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, gps).reveal(0)
                 if !hits.isEmpty {

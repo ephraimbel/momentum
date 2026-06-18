@@ -31,7 +31,7 @@ struct ProgressScreen: View {
         VStack(spacing: 0) {
             header
             segmentControl
-                .padding(.horizontal, Theme.Space.lg)
+                .padding(.horizontal, Theme.Space.md)
                 .padding(.top, Theme.Space.md)
                 .padding(.bottom, Theme.Space.md)
             switch segment {
@@ -55,7 +55,7 @@ struct ProgressScreen: View {
             }
             .accessibilityLabel("Settings")
         }
-        .padding(.horizontal, Theme.Space.lg)
+        .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
     }
 
@@ -431,7 +431,7 @@ struct ProgressScreen: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 
@@ -460,7 +460,7 @@ struct ProgressScreen: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 
@@ -490,7 +490,7 @@ struct ProgressScreen: View {
         let model = profiles.first?.athlete
         let items = learnedItems(facts, model)
         return ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
                 identityHero(model, facts).reveal(0)
                 let nudges = AthleteNudges.generate(facts)
                 if !nudges.isEmpty { weeklyDigest(nudges).reveal(0.08) }
@@ -500,7 +500,7 @@ struct ProgressScreen: View {
                 }
                 if let model, model.snapshots.count >= 2 { trajectory(model).reveal(0.2) }
             }
-            .padding(Theme.Space.lg)
+            .padding(Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .sheet(item: $correcting) { item in
@@ -535,7 +535,7 @@ struct ProgressScreen: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.32)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
@@ -565,7 +565,7 @@ struct ProgressScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 
@@ -589,7 +589,7 @@ struct ProgressScreen: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 
@@ -606,7 +606,7 @@ struct ProgressScreen: View {
                 .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 

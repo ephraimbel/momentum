@@ -53,7 +53,7 @@ struct PlanProposalCard: View {
             .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(cardBackground)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Coach suggestion: \(p.headline). \(p.detail)")
@@ -70,7 +70,7 @@ struct PlanProposalCard: View {
             .foregroundStyle(Theme.inkSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(cardBackground)
         .accessibilityElement(children: .combine)
     }

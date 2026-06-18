@@ -31,7 +31,7 @@ struct StrengthSaveView: View {
             ScrollView {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
-                    VStack(spacing: Theme.Space.xl) {
+                    VStack(spacing: Theme.Space.lg) {
                         StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
                                                celebratePRs: true, showsHeader: false)
                         editor
@@ -81,7 +81,7 @@ struct StrengthSaveView: View {
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
         }
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
     }
 

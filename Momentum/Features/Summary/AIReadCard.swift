@@ -51,7 +51,7 @@ struct AIReadCard: View {
                 Image(systemName: "lock.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Space.lg)
+            .padding(Theme.Space.md)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(IridescentMaterial(), lineWidth: 1)
@@ -94,7 +94,7 @@ struct AIReadCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)

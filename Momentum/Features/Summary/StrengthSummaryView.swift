@@ -73,7 +73,7 @@ struct StrengthSummaryContent: View {
         if let session = workout.strength {
             // Reveal-first: lead with the mastery payoff (hero + competence line), promote PRs ABOVE
             // the AI read, then the supporting detail. Naming lives at the bottom of the save flow.
-            VStack(spacing: Theme.Space.xl) {
+            VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, session).reveal(0)
                 if !prs.isEmpty {
