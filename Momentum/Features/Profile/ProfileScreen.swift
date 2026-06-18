@@ -28,7 +28,7 @@ struct ProfileScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            VStack(alignment: .leading, spacing: Theme.Space.lg) {
                 identity
                 headlineStats
                 if let profile, !profile.bio.isEmpty {
@@ -43,7 +43,7 @@ struct ProfileScreen: View {
                 recentSection
                 if let profile { privacyCard(profile) }
             }
-            .padding(Theme.Space.lg)
+            .padding(Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
@@ -82,9 +82,9 @@ struct ProfileScreen: View {
 
     private var identity: some View {
         VStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: profile?.avatarData, name: displayName, size: 88)
+            AvatarView(photo: profile?.avatarData, name: displayName, size: 72)
             VStack(spacing: 3) {
-                Text(displayName).font(.display(28, weight: .black)).foregroundStyle(Theme.ink)
+                Text(displayName).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
                 if let handle = handleText {
                     Text(handle).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
@@ -113,8 +113,8 @@ struct ProfileScreen: View {
             .init(value: "\(stats.totalWorkouts)", label: "Workouts"),
             .init(value: "\(stats.currentStreak)", label: "Day streak"),
             .init(value: "\(follows.count)", label: "Following"),
-        ], valueSize: 22)
-        .padding(.vertical, Theme.Space.lg)
+        ], valueSize: 20)
+        .padding(.vertical, Theme.Space.md)
         .background(card)
     }
 
@@ -141,7 +141,7 @@ struct ProfileScreen: View {
     private var breakdownSection: some View {
         section("How you train") {
             DisciplineBreakdown(counts: stats.countsByType)
-                .padding(Theme.Space.lg)
+                .padding(Theme.Space.md)
                 .background(card)
         }
     }
@@ -151,7 +151,7 @@ struct ProfileScreen: View {
     private var consistencySection: some View {
         section("Consistency") {
             ConsistencyHeatmap(countingDays: stats.countingDays)
-                .padding(Theme.Space.lg)
+                .padding(Theme.Space.md)
                 .background(card)
         }
     }

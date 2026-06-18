@@ -78,13 +78,13 @@ struct ProgressScreen: View {
 
     private var trends: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
                 statusHero(insights).reveal(0)
                 coachCard(insights).reveal(0.06)
                 // Advanced analytics — Pro (PRD §10): training load, pace/distance trends, weekly
                 // sets-per-muscle. The body-of-work (totals, consistency grid, PR shelf) now lives on
                 // the Profile tab; Progress stays the analytical/coaching brain.
-                VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                VStack(alignment: .leading, spacing: Theme.Space.md) {
                     recoveryCard(recovery)
                     loadChart(insights)
                     distanceChart(insights)
@@ -94,7 +94,7 @@ struct ProgressScreen: View {
                 .reveal(0.12)
                 .proLocked(.advancedAnalytics)
             }
-            .padding(Theme.Space.lg)
+            .padding(Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .onAppear { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
@@ -105,12 +105,12 @@ struct ProgressScreen: View {
     private func statusHero(_ insights: ProgressInsights) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             Text("TRAINING STATUS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-            Text(insights.status.rawValue).font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
+            Text(insights.status.rawValue).font(.display(28, weight: .black)).foregroundStyle(Theme.ink)
             acwrGauge(insights.acwr)
             Text(gaugeCaption(insights)).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 
@@ -159,7 +159,7 @@ struct ProgressScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Space.lg)
+            .padding(Theme.Space.md)
             .background(card)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Recovery, \(r.readiness.rawValue)")
@@ -200,7 +200,7 @@ struct ProgressScreen: View {
             recommendationChip(insights.recommendation)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(card)
     }
 
