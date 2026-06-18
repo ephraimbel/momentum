@@ -54,24 +54,120 @@ actor RouteSuggestionEngine {
     init(directions: DirectionsProviding) { self.directions = directions }
 
     enum Const {
-        static let waypoints = 3          // + the start = a 4-vertex polygon ≈ a circle
+        static let waypoints = 4          // + the start = a 5-vertex polygon ≈ a circle (rounder loops)
         static let tolerance = 0.10       // accept within ±10% of target
         static let maxIterations = 4      // request budget per loop
+        // Loops routing at once. Legs within a loop already route in parallel (~5 calls), so we route
+        // candidates one at a time: the first loop gets MapKit's full bandwidth (fast), the rest stream
+        // in right after, and we never exceed ~5 concurrent calls — staying well under MapKit's throttle.
+        static let maxConcurrent = 1
         static let earthRadiusM = 6_371_000.0
+        /// Reject loops below this roundness (isoperimetric) — degenerate out-and-backs (PRD §6).
+        static let minRoundness = 0.12
+        /// Two loops whose centroids sit within `targetM · this` read as the "same" route — dedupe them.
+        static let distinctCentroidFraction = 0.12
     }
 
-    /// Generate up to `count` distinct loops by seeding evenly-spaced start bearings. `seedOffset`
-    /// rotates the whole set — the UI bumps it to "shuffle" a fresh batch of loops.
+    /// Suggest `count` **distinct, well-shaped** loops. Oversamples seed bearings (routed in parallel),
+    /// then keeps the roundest, most distance-accurate, visibly-different loops — so a lopsided or
+    /// out-and-back candidate loses to a rounder one instead of being shown. `seedOffset` rotates the
+    /// whole set so the UI can "shuffle" a fresh batch.
     func suggestLoops(from start: GeoPoint, targetM: Double, count: Int = 3, seedOffset: Double = 0) async -> [SuggestedLoop] {
-        var out: [SuggestedLoop] = []
-        let n = max(1, count)
-        for i in 0..<n {
-            let seed = seedOffset + 2 * .pi * Double(i) / Double(n)
-            if let loop = await suggestLoop(from: start, targetM: targetM, bearingSeed: seed) {
-                out.append(loop)
+        guard count > 0 else { return [] }
+        let samples = max(count + 2, 5)                 // oversample, then pick the best `count`
+        let seeds = (0..<samples).map { seedOffset + 2 * .pi * Double($0) / Double(samples) }
+        // Route candidates concurrently but **bounded** — MapKit throttles bursts of directions calls,
+        // so we keep at most `maxConcurrent` loops routing at once (fast, without tripping the throttle).
+        var built: [SuggestedLoop] = []
+        await withTaskGroup(of: SuggestedLoop?.self) { group in
+            var next = 0
+            func enqueue() {
+                guard next < seeds.count else { return }
+                let seed = seeds[next]; next += 1
+                group.addTask { await self.suggestLoop(from: start, targetM: targetM, bearingSeed: seed) }
+            }
+            for _ in 0..<min(Const.maxConcurrent, seeds.count) { enqueue() }
+            while let loop = await group.next() {
+                if let loop { built.append(loop) }
+                enqueue()                               // backfill as each finishes
             }
         }
-        return out
+        return Self.pickBest(built, targetM: targetM, count: count)
+    }
+
+    /// Streaming variant — **yields each distinct, well-shaped loop the moment it routes**, so the UI
+    /// can show the first loop immediately and fill the rest in (no waiting for the whole batch). Skips
+    /// degenerate out-and-backs and near-duplicates, stops after `count` distinct loops, and uses the
+    /// same bounded concurrency (MapKit throttle). If the quality gate rejects everything but loops did
+    /// route, it falls back to `pickBest` so a routable area never shows "no loop".
+    nonisolated func suggestLoopsStream(from start: GeoPoint, targetM: Double, count: Int = 3, seedOffset: Double = 0) -> AsyncStream<SuggestedLoop> {
+        AsyncStream { continuation in
+            let task = Task {
+                guard count > 0 else { continuation.finish(); return }
+                let samples = max(count + 2, 5)
+                let seeds = (0..<samples).map { seedOffset + 2 * .pi * Double($0) / Double(samples) }
+                var shown: [SuggestedLoop] = []
+                var routed: [SuggestedLoop] = []
+                await withTaskGroup(of: SuggestedLoop?.self) { group in
+                    var next = 0
+                    func enqueue() {
+                        guard next < seeds.count else { return }
+                        let seed = seeds[next]; next += 1
+                        group.addTask { await self.suggestLoop(from: start, targetM: targetM, bearingSeed: seed) }
+                    }
+                    for _ in 0..<min(Const.maxConcurrent, seeds.count) { enqueue() }
+                    while let result = await group.next() {
+                        if let loop = result {
+                            routed.append(loop)
+                            if LoopQuality.roundness(loop.polyline) >= Const.minRoundness,
+                               shown.allSatisfy({ Self.centroidDistance($0, loop) > targetM * Const.distinctCentroidFraction }) {
+                                shown.append(loop)
+                                continuation.yield(loop)        // show it right away
+                                if shown.count >= count { break }
+                            }
+                        }
+                        enqueue()
+                    }
+                    group.cancelAll()
+                }
+                if shown.isEmpty {                                  // gate rejected all — best effort
+                    for loop in Self.pickBest(routed, targetM: targetM, count: count) { continuation.yield(loop) }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Rank candidates by roundness (lead) and distance accuracy, drop degenerate out-and-backs, and
+    /// keep only visibly-distinct loops. Pure + deterministic, so it's unit-testable without routing.
+    static func pickBest(_ loops: [SuggestedLoop], targetM: Double, count: Int) -> [SuggestedLoop] {
+        let ranked = loops.sorted { score($0, targetM: targetM) > score($1, targetM: targetM) }
+        func takeDistinct(from pool: [SuggestedLoop]) -> [SuggestedLoop] {
+            var kept: [SuggestedLoop] = []
+            for loop in pool where kept.allSatisfy({ centroidDistance($0, loop) > targetM * Const.distinctCentroidFraction }) {
+                kept.append(loop)
+                if kept.count == count { break }
+            }
+            return kept
+        }
+        // Prefer real loops; if every candidate is weak, still return the best distinct ones (never
+        // show "no loops" when routing actually succeeded).
+        let good = ranked.filter { LoopQuality.roundness($0.polyline) >= Const.minRoundness }
+        let kept = takeDistinct(from: good)
+        return kept.isEmpty ? takeDistinct(from: ranked) : kept
+    }
+
+    /// Higher = better. Roundness leads; backtracking and distance error subtract.
+    static func score(_ loop: SuggestedLoop, targetM: Double) -> Double {
+        let roundness = LoopQuality.roundness(loop.polyline)
+        let backtrack = LoopQuality.backtrackFraction(loop.polyline)
+        let distErr = targetM > 0 ? abs(loop.distanceM - targetM) / targetM : 1
+        return roundness - 0.6 * backtrack - 0.4 * distErr
+    }
+
+    static func centroidDistance(_ a: SuggestedLoop, _ b: SuggestedLoop) -> Double {
+        LoopQuality.centroid(a.polyline).distance(to: LoopQuality.centroid(b.polyline))
     }
 
     /// One loop for a seed bearing. Returns the best attempt within the request budget, or nil if the
@@ -123,21 +219,33 @@ actor RouteSuggestionEngine {
 
     // MARK: Routing
 
+    /// Route a ring's legs **in parallel** (they're independent), so one loop comes back in ~a single
+    /// round-trip instead of N sequential ones — this is what makes the *first* loop appear fast. Cache
+    /// hits are taken first; only the misses hit the network, and throttled calls retry in the provider.
     private func routeLegs(_ stops: [GeoPoint]) async -> [RouteLeg]? {
-        var legs: [RouteLeg] = []
+        var results = [RouteLeg?](repeating: nil, count: stops.count - 1)
+        var misses: [(idx: Int, from: GeoPoint, to: GeoPoint)] = []
         for i in 0..<(stops.count - 1) {
-            guard let leg = await cachedLeg(from: stops[i], to: stops[i + 1]) else { return nil }
-            legs.append(leg)
+            if let hit = legCache[LegKey(from: stops[i], to: stops[i + 1])] { results[i] = hit }
+            else { misses.append((i, stops[i], stops[i + 1])) }
         }
-        return legs
-    }
-
-    private func cachedLeg(from: GeoPoint, to: GeoPoint) async -> RouteLeg? {
-        let key = LegKey(from: from, to: to)
-        if let hit = legCache[key] { return hit }
-        guard let leg = try? await directions.walkingLeg(from: from, to: to) else { return nil }
-        legCache[key] = leg
-        return leg
+        if !misses.isEmpty {
+            let dir = directions
+            let fetched = await withTaskGroup(of: (Int, RouteLeg?).self) { group in
+                for m in misses {
+                    group.addTask { (m.idx, try? await dir.walkingLeg(from: m.from, to: m.to)) }
+                }
+                var acc: [(Int, RouteLeg?)] = []
+                for await pair in group { acc.append(pair) }
+                return acc
+            }
+            for (idx, leg) in fetched {
+                guard let leg else { return nil }                  // any unroutable leg → abandon the ring
+                results[idx] = leg
+                legCache[LegKey(from: stops[idx], to: stops[idx + 1])] = leg
+            }
+        }
+        return results.contains(where: { $0 == nil }) ? nil : results.map { $0! }
     }
 
     private func assemble(legs: [RouteLeg], waypoints: [GeoPoint], distanceM: Double, seed: Double) -> SuggestedLoop {

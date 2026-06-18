@@ -6,7 +6,22 @@ import MapKit
 /// from the non-`Sendable` `MKRoute` before returning, so it crosses the engine's actor boundary
 /// cleanly. Throttle/transient/no-route errors surface as a throw; `RouteSuggestionEngine` degrades.
 struct MapKitDirectionsProvider: DirectionsProviding {
+    /// MapKit throttles bursts of directions requests (`MKError.loadingThrottled`) — generating several
+    /// loops at once routinely trips it. Retry those with a short backoff so a busy moment doesn't drop
+    /// a whole candidate loop; other errors (no route) propagate so the engine can degrade.
     func walkingLeg(from: GeoPoint, to: GeoPoint) async throws -> RouteLeg {
+        var attempt = 0
+        while true {
+            do {
+                return try await route(from: from, to: to)
+            } catch let error as MKError where error.code == .loadingThrottled && attempt < 5 {
+                attempt += 1
+                try? await Task.sleep(for: .milliseconds(200 * attempt))   // 200, 400, … back off
+            }
+        }
+    }
+
+    private func route(from: GeoPoint, to: GeoPoint) async throws -> RouteLeg {
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: from.clCoordinate))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: to.clCoordinate))

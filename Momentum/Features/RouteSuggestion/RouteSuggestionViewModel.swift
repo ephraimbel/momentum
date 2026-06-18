@@ -19,6 +19,7 @@ final class RouteSuggestionViewModel {
 
     private let engine: RouteSuggestionEngine
     private var shuffleRound = 0
+    private var loadTask: Task<Void, Never>?
 
     init(start: GeoPoint, targetM: Double = 5000, distanceUnit: DistanceUnit = .auto,
          directions: DirectionsProviding = MapKitDirectionsProvider()) {
@@ -47,13 +48,33 @@ final class RouteSuggestionViewModel {
         await load(seedOffset: 0)
     }
 
+    /// Stream loops in and surface each the moment it routes — the first one ends the loading state and
+    /// becomes the selection immediately, so the map shows a loop fast instead of waiting for the batch.
+    /// A new search cancels the previous stream so rapid shuffles/distance changes never interleave.
     private func load(seedOffset: Double) async {
+        loadTask?.cancel()
+        let task = Task { await stream(seedOffset: seedOffset) }
+        loadTask = task
+        await task.value
+    }
+
+    private func stream(seedOffset: Double) async {
         isLoading = true
         didFail = false
-        let loops = await engine.suggestLoops(from: start, targetM: targetM, count: 3, seedOffset: seedOffset)
-        candidates = loops
-        selectedID = loops.first?.id
-        didFail = loops.isEmpty
+        candidates = []
+        selectedID = nil
+        var collected: [SuggestedLoop] = []
+        for await loop in engine.suggestLoopsStream(from: start, targetM: targetM, count: 3, seedOffset: seedOffset) {
+            if Task.isCancelled { return }
+            collected.append(loop)
+            candidates = collected
+            if selectedID == nil {
+                selectedID = loop.id     // first loop → select it and drop the loading state
+                isLoading = false
+            }
+        }
+        guard !Task.isCancelled else { return }
         isLoading = false
+        didFail = candidates.isEmpty
     }
 }

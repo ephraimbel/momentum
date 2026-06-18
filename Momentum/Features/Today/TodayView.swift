@@ -24,11 +24,14 @@ struct TodayView: View {
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
     @State private var mapStyle: MapStyleOption = .standard
-    // One sheet slot for the discover surfaces (loop suggester + spots), so they never fight over the
-    // same present/dismiss tick. `pendingSheet` re-presents after the current one fully dismisses —
-    // the only reliable way to swap sheet→sheet in SwiftUI (spots → "Loop here" → suggester).
-    @State private var activeSheet: TodaySheet?
-    @State private var pendingSheet: TodaySheet?
+    // Inline loop suggester — runs ON the Today map (no separate page), like world mode. `loopVM` holds
+    // the candidates; the selected loop draws in brand purple beneath the live purple puck.
+    @State private var loopMode = false
+    @State private var loopVM: RouteSuggestionViewModel?
+    // Spots is hidden for now; reachable only via the `--spots` deep link. "Loop here" from it enters
+    // inline loop mode after the sheet dismisses (presenting/transitioning on one tick misbehaves).
+    @State private var showSpots = false
+    @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
     @Environment(ModerationStore.self) private var moderation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -42,13 +45,6 @@ struct TodayView: View {
     @State private var selectedAthlete: CommunityAthlete?
 
     enum GoalKind { case open, distance }
-
-    /// The two discover sheets, behind one `.sheet(item:)` slot so they can't collide on present/dismiss.
-    enum TodaySheet: Identifiable {
-        case suggest(start: GeoPoint?)   // loop suggester, optionally seeded at a chosen spot
-        case spots                        // "Spots near you"
-        var id: String { if case .suggest = self { "suggest" } else { "spots" } }
-    }
 
     private let distanceUnit: DistanceUnit = .auto
     private var plan: TrainingPlan? { profiles.first?.plan }
@@ -66,10 +62,13 @@ struct TodayView: View {
             // Discipline-adaptive backdrop: a live map for cardio, a strength home for lifting — and
             // the *same* map for the world globe, so it zooms out continuously instead of being a
             // separate screen. So Strength isn't a second-class citizen staring at a meaningless map.
-            if isCardio || worldMode { mapLayer } else { strengthHome }
+            if isCardio || worldMode || loopMode { mapLayer } else { strengthHome }
             if worldMode {
                 worldTopChrome.transition(.opacity)
                 worldBottomChrome.transition(.opacity)
+            } else if loopMode {
+                loopTopChrome.transition(.opacity)
+                loopBottomPanel.transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 topBar.transition(.opacity)
                 bottomPanel.transition(.opacity)
@@ -107,7 +106,11 @@ struct TodayView: View {
             }
             // --spots deep link: open "Spots near you" straight away for deterministic sim verification.
             if ProcessInfo.processInfo.arguments.contains("--spots") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { activeSheet = .spots }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSpots = true }
+            }
+            // --loop deep link: open the inline loop suggester straight away (deterministic verification).
+            if ProcessInfo.processInfo.arguments.contains("--loop") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
             }
             #endif
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
@@ -126,6 +129,8 @@ struct TodayView: View {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
+        // Frame the loop as soon as the first candidate streams in (and whenever the selection changes).
+        .onChange(of: loopVM?.selectedID) { if loopMode { frameLoop() } }
         .workoutRunner(launch: $launch)
         .sheet(item: $confirmingPlan, onDismiss: {
             if let session = pendingPlanStart { pendingPlanStart = nil; startPlanned(session) }
@@ -135,35 +140,17 @@ struct TodayView: View {
         .sheet(isPresented: $showSportPicker) {
             SportPicker(selection: $activity) { showSportPicker = false }
         }
-        // One sheet for the discover surfaces; `pendingSheet` swaps spots → suggester after dismissal.
-        .sheet(item: $activeSheet, onDismiss: {
-            if let next = pendingSheet { pendingSheet = nil; activeSheet = next }
-        }) { sheet in
-            switch sheet {
-            case .suggest(let start): suggestSheet(start: start)
-            case .spots: spotsSheet
-            }
+        // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
+        // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
+        .sheet(isPresented: $showSpots, onDismiss: {
+            if let point = pendingLoopStart { pendingLoopStart = nil; enterLoopMode(start: point) }
+        }) {
+            spotsSheet
         }
     }
 
-    /// The distance-targeted loop suggester — from the athlete's spot, or a chosen park/trailhead.
-    @ViewBuilder
-    private func suggestSheet(start: GeoPoint?) -> some View {
-        if let start = start ?? spotsOrigin {
-            RouteSuggestionView(
-                start: start,
-                targetM: goalMeters ?? 5000,
-                distanceUnit: distanceUnit,
-                onUse: { loop in
-                    activeSheet = nil
-                    locator.requestAuthorization()
-                    launch = .cardio(type: activity, goalMeters: loop.distanceM, planned: nil, guideRoute: loop.polyline)
-                },
-                onClose: { activeSheet = nil })
-        }
-    }
-
-    /// Real running/hiking spots nearby; "Loop here" hands a spot to the suggester (after dismissal).
+    /// Real running/hiking spots nearby (hidden for now); "Loop here" hands a spot to the inline loop
+    /// suggester once this sheet dismisses.
     @ViewBuilder
     private var spotsSheet: some View {
         if let origin = spotsOrigin {
@@ -173,11 +160,8 @@ struct TodayView: View {
                 distanceUnit: distanceUnit,
                 activity: activity.discipline == .walking ? .hike : .run,
                 analytics: services.analytics,
-                onLoopHere: { point in
-                    pendingSheet = .suggest(start: point)   // present after spots dismisses
-                    activeSheet = nil
-                },
-                onClose: { activeSheet = nil })
+                onLoopHere: { point in pendingLoopStart = point; showSpots = false },
+                onClose: { showSpots = false })
         }
     }
 
@@ -276,6 +260,24 @@ struct TodayView: View {
                         .circleStrokeColor(StyleColor(UIColor.white.withAlphaComponent(0.85)))
                         .circleStrokeWidth(1)
                         .onTapGesture { selectedAthlete = athlete }
+                }
+            }
+            // Inline loop suggester — draw the candidates right on the Today map. The unselected loops
+            // are a faint hairline; the selected one wears the brand purple (matching the live puck),
+            // over a white casing so it reads on any basemap.
+            if loopMode, let vm = loopVM {
+                PolylineAnnotationGroup(vm.candidates.filter { $0.id != vm.selectedID }) { loop in
+                    PolylineAnnotation(lineCoordinates: loop.polyline.map(\.clCoordinate))
+                        .lineColor(StyleColor(UIColor(Theme.inkTertiary.opacity(0.45))))
+                        .lineWidth(4).lineJoin(.round)
+                }
+                if let sel = vm.selected {
+                    PolylineAnnotation(lineCoordinates: sel.polyline.map(\.clCoordinate))
+                        .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.7)))
+                        .lineWidth(11).lineJoin(.round)
+                    PolylineAnnotation(lineCoordinates: sel.polyline.map(\.clCoordinate))
+                        .lineColor(StyleColor(UIColor(Theme.route)))
+                        .lineWidth(6).lineJoin(.round)
                 }
             }
         }
@@ -458,7 +460,7 @@ struct TodayView: View {
                 // (Spots is built but hidden for now — re-enable its chip when that feature ships.)
                 if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
                     discoverChip("Suggest a loop", icon: "arrow.triangle.capsulepath",
-                                 a11y: "Suggest a running loop") { activeSheet = .suggest(start: nil) }
+                                 a11y: "Suggest a running loop") { enterLoopMode(start: nil) }
                 }
             }
             .padding(Theme.Space.md)
@@ -517,6 +519,179 @@ struct TodayView: View {
         let me: Viewport = .followPuck(zoom: 16, pitch: mapStyle.explorePitch)
         if reduceMotion { viewport = me }
         else { withViewportAnimation(.easeInOut(duration: 0.55)) { viewport = me } }
+    }
+
+    // MARK: Inline loop suggester (on the Today map)
+
+    /// Enter loop mode right on the Today map — no separate page. Spins up a `RouteSuggestionViewModel`
+    /// at the athlete's location (or a chosen spot), shows the controls immediately with a loading state,
+    /// and fills the loops in as they route (fast: candidates route in parallel).
+    private func enterLoopMode(start: GeoPoint?) {
+        guard let origin = start ?? spotsOrigin else { locator.requestAuthorization(); return }
+        Haptics.light()
+        let vm = RouteSuggestionViewModel(start: origin, targetM: goalMeters ?? 5000, distanceUnit: distanceUnit)
+        loopVM = vm
+        withAnimation(Motion.standard) { loopMode = true }
+        Task { await vm.suggest() }   // the map frames the loop when the first candidate arrives (onChange)
+    }
+
+    /// Leave loop mode and fly the camera back to the athlete.
+    private func exitLoopMode() {
+        Haptics.light()
+        withAnimation(Motion.standard) { loopMode = false }
+        let me = locator.lastLocation ?? lastKnownCoordinate
+        let home: Viewport = me.map { .camera(center: $0, zoom: 15, pitch: mapStyle.explorePitch) }
+            ?? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
+        if reduceMotion { viewport = home }
+        else { withViewportAnimation(.easeInOut(duration: 0.6)) { viewport = home } }
+    }
+
+    /// Frame the selected loop in view (leaving room for the bottom controls).
+    private func frameLoop() {
+        guard let loop = loopVM?.selected, loop.polyline.count > 1 else { return }
+        let coords = loop.polyline.map(\.clCoordinate)
+        let overview = Viewport.overview(geometry: LineString(coords),
+                                         geometryPadding: EdgeInsets(top: 120, leading: 48, bottom: 300, trailing: 48))
+        if reduceMotion { viewport = overview }
+        else { withViewportAnimation(.easeInOut(duration: 0.6)) { viewport = overview } }
+    }
+
+    private func selectLoop(_ loop: SuggestedLoop) {
+        Haptics.light()
+        loopVM?.selectedID = loop.id   // frameLoop() runs via onChange(selectedID)
+    }
+
+    /// Floating top control: a back chip to leave loop mode (claims the tap over the live map).
+    private var loopTopChrome: some View {
+        VStack {
+            HStack {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 44, height: 44).momentumGlass(in: Circle())
+                    .contentShape(Circle())
+                    .highPriorityGesture(TapGesture().onEnded { exitLoopMode() })
+                    .accessibilityElement()
+                    .accessibilityLabel("Close loop suggestions")
+                    .accessibilityAddTraits(.isButton)
+                Spacer()
+                Text("Suggest a loop").font(.display(17, weight: .bold)).foregroundStyle(Theme.ink)
+                    .shadow(color: Theme.background.opacity(0.8), radius: 6)
+                Spacer()
+                Color.clear.frame(width: 44, height: 44)
+            }
+            .padding(Theme.Space.md)
+            Spacer()
+        }
+    }
+
+    /// The loop controls, floating over the Today map: distance segmented control, then the candidate
+    /// picker + stats + actions (or a loading / empty state).
+    private var loopBottomPanel: some View {
+        VStack(spacing: Theme.Space.md) {
+            loopDistancePicker
+            loopContent
+        }
+        .padding(Theme.Space.md)
+        .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.bottom, Theme.Space.sm)
+    }
+
+    private var loopDistancePicker: some View {
+        HStack(spacing: 4) {
+            ForEach([3000.0, 5000.0, 10000.0], id: \.self) { meters in
+                let on = loopVM?.targetM == meters
+                Button {
+                    Haptics.selection()
+                    Task { await loopVM?.setDistance(meters) }
+                } label: {
+                    Text("\(Int(meters / 1000))K")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
+                        .frame(maxWidth: .infinity).frame(height: 34)
+                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Color.clear)))
+                }
+                .buttonStyle(.plain)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(Theme.surface))
+    }
+
+    @ViewBuilder
+    private var loopContent: some View {
+        if let vm = loopVM {
+            if vm.isLoading {
+                HStack(spacing: Theme.Space.sm) {
+                    ProgressView()
+                    Text("Finding loops near you…")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                }
+                .frame(maxWidth: .infinity).frame(height: 72)
+            } else if vm.didFail {
+                VStack(spacing: 4) {
+                    Text("No loop found here").font(.display(16, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Try a different distance, or move to a more connected area.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity).frame(height: 72)
+            } else if let sel = vm.selected {
+                loopCandidatePicker(vm)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(Formatters.distance(meters: sel.distanceM, unit: distanceUnit))
+                        .font(.display(22, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                    Text("DISTANCE").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
+                    Spacer()
+                }
+                HStack(spacing: Theme.Space.sm) {
+                    Button {
+                        Haptics.light(); Task { await vm.shuffle() }
+                    } label: {
+                        Label("Shuffle", systemImage: "shuffle")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(maxWidth: .infinity).frame(height: 50)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                    Button { useLoop(sel) } label: {
+                        Label("Use this route", systemImage: "figure.run")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
+                            .frame(maxWidth: .infinity).frame(height: 50)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// One pill per candidate loop — tap to highlight it on the map.
+    private func loopCandidatePicker(_ vm: RouteSuggestionViewModel) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach(Array(vm.candidates.enumerated()), id: \.element.id) { idx, loop in
+                let on = loop.id == vm.selectedID
+                Button { selectLoop(loop) } label: {
+                    Text("Loop \(idx + 1)")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .padding(.horizontal, Theme.Space.md).frame(height: 34)
+                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface)))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func useLoop(_ loop: SuggestedLoop) {
+        Haptics.light()
+        let route = loop.polyline
+        let dist = loop.distanceM
+        exitLoopMode()
+        locator.requestAuthorization()
+        launch = .cardio(type: activity, goalMeters: dist, planned: nil, guideRoute: route)
     }
 
     private var startTitle: String {

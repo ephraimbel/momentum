@@ -31,9 +31,23 @@ final class TodayMapUITests: XCTestCase {
         let opened = app.buttons["5K"].waitForExistence(timeout: 12) || app.staticTexts["5K"].exists
         XCTAssertTrue(opened, "'Loop' didn't open the loop suggester.")
 
+        // The candidates route (real MapKit, throttle-resilient) and the loop renders inline on the
+        // Today map — "Use this route" appears once loops finish loading.
+        let use = app.buttons["Use this route"]
+        XCTAssertTrue(use.waitForExistence(timeout: 30), "Loop candidates never finished routing.")
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "today-suggested-loop"; shot.lifetime = .keepAlways
         add(shot)
+
+        // The distance picker and shuffle are present and interactive (re-routing itself is exercised
+        // by the initial load; whether a given distance/spot yields a loop is location-dependent and
+        // degrades gracefully to an empty state, so we don't hard-assert it here).
+        XCTAssertTrue(app.buttons["10K"].exists && app.buttons["Shuffle"].exists,
+                      "Loop controls (distance / shuffle) missing.")
+
+        // The back control leaves loop mode (returns to the normal Today start card).
+        app.buttons["Close loop suggestions"].tap()
+        XCTAssertTrue(app.buttons["Start run"].waitForExistence(timeout: 5), "Didn't return to Today.")
     }
 
     /// The redesigned start card: compact goal segmented control + Distance stepper layout holds.
