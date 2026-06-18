@@ -176,6 +176,9 @@ struct PlanRevealView: View {
                             HStack {
                                 Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
                                 Spacer(minLength: Theme.Space.sm)
+                                if let w = StrengthSuggest.label(for: ex, profile: profile) {
+                                    Text(w).font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
+                                }
                                 Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
                                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
                             }

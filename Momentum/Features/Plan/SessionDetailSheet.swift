@@ -7,6 +7,7 @@ import SwiftData
 struct SessionDetailSheet: View {
     @Bindable var session: PlannedSession
     var distanceUnit: DistanceUnit = .auto
+    var profile: UserProfile? = nil
     var onRemove: () -> Void
     var onStart: (PlannedSession) -> Void = { _ in }
 
@@ -150,8 +151,13 @@ struct SessionDetailSheet: View {
 
     private func exerciseRow(_ ex: PlannedExercise) -> some View {
         HStack {
-            Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-            Spacer()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                if let w = StrengthSuggest.label(for: ex, profile: profile) {
+                    Text("Start \(w)").font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
+                }
+            }
+            Spacer(minLength: Theme.Space.sm)
             Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
         }

@@ -73,7 +73,7 @@ struct PlanView: View {
         .sheet(item: $editing, onDismiss: {
             if let s = pendingStart { pendingStart = nil; start(s) }
         }) { item in
-            SessionDetailSheet(session: item.session, distanceUnit: distanceUnit,
+            SessionDetailSheet(session: item.session, distanceUnit: distanceUnit, profile: profiles.first,
                                onRemove: { delete(item.session) },
                                onStart: { pendingStart = $0 })
         }
