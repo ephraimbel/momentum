@@ -428,32 +428,39 @@ struct TodayView: View {
             if isCardio {
                 HStack(spacing: Theme.Space.sm) { Spacer(); MapLayersButton(style: $mapStyle); recenterButton }
             }
-            if let session = pendingToday { plannedBanner(session) }
-            startCard
+            deck
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.bottom, Theme.Space.sm)     // sit closer to the tab bar so more map shows
     }
 
-    /// One clean card with a clear hierarchy: a compact goal *setting*, the primary *action* (Start),
-    /// then quiet *discovery* chips. Distance is opt-in, so the calm default is just the segmented goal
-    /// and Start.
-    private var startCard: some View {
-        VStack(spacing: Theme.Space.sm + 2) {       // tighter than `md` so more map shows, still airy
-            if isCardio { goalControl }
-            OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-            // Discovery — secondary, lighter than Start. Shown whenever we can place the athlete (a live
-            // fix or their last-known neighborhood), so the loop suggester isn't hidden waiting on a fix.
-            if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
-                HStack(spacing: Theme.Space.sm) {
-                    discoverChip("Loop", icon: "arrow.triangle.capsulepath",
-                                 a11y: "Suggest a running loop") { activeSheet = .suggest(start: nil) }
-                    discoverChip("Spots", icon: "mappin.and.ellipse",
-                                 a11y: "Find running and hiking spots near you") { activeSheet = .spots }
+    /// The control deck — ONE glass surface, not a stack of cards. Reads top-to-bottom as a single
+    /// thought: today's plan (coaching) → goal (setting) → Start (the one hero) → discovery (explore).
+    /// A single hairline divides the coaching context from the action zone; Start is the only filled
+    /// element so the hierarchy never competes.
+    private var deck: some View {
+        VStack(spacing: 0) {
+            if let session = pendingToday {
+                planRow(session)
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                    .padding(.horizontal, Theme.Space.md)
+            }
+            VStack(spacing: Theme.Space.md) {
+                if isCardio { goalControl }
+                OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+                // Discovery — quiet footer, lighter than Start. Shown whenever we can place the athlete
+                // (a live fix or last-known neighborhood), so the loop suggester isn't hidden waiting.
+                if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
+                    HStack(spacing: Theme.Space.sm) {
+                        discoverChip("Loop", icon: "arrow.triangle.capsulepath",
+                                     a11y: "Suggest a running loop") { activeSheet = .suggest(start: nil) }
+                        discoverChip("Spots", icon: "mappin.and.ellipse",
+                                     a11y: "Find running and hiking spots near you") { activeSheet = .spots }
+                    }
                 }
             }
+            .padding(Theme.Space.md)
         }
-        .padding(Theme.Space.md)
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
     }
 
@@ -514,47 +521,54 @@ struct TodayView: View {
         activity.isStrengthStyle ? "Start workout" : "Start \(activity.title.lowercased())"
     }
 
-    /// A slim, proactive line of what Momentum has learned (ATHLETE-MODEL.md §8 — Today teaser).
-    /// Reads the already-persisted `AthleteModel` — no recompute on the map-heavy Today screen.
-    @ViewBuilder
-    private func plannedBanner(_ session: PlannedSession) -> some View {
+    /// The coaching row at the top of the deck — what's prescribed today. The iridescent dot is the
+    /// *earned* accent (this is the plan/progress). Tapping it opens the confirm-and-start sheet for
+    /// the planned session; it's a slim row, not a competing CTA, so the Start hero below stays primary.
+    private func planRow(_ session: PlannedSession) -> some View {
         Button { Haptics.light(); confirmingPlan = session } label: {
-            HStack(spacing: Theme.Space.sm + 4) {
-                Image(systemName: disciplineIcon(session.discipline))
-                    .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
-                    .frame(width: 32, height: 32).background(Circle().fill(IridescentMaterial()).opacity(0.3))
+            HStack(spacing: Theme.Space.sm + 2) {
+                ZStack {
+                    Circle().fill(IridescentMaterial()).opacity(0.32).frame(width: 36, height: 36)
+                    Image(systemName: disciplineIcon(session.discipline))
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("TODAY'S PLAN").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                    Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                    Text("TODAY'S PLAN").font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                    Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.ink).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "play.circle.fill").font(.system(size: 24)).foregroundStyle(Theme.ink)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
-            .padding(.horizontal, Theme.Space.md)
-            .padding(.vertical, Theme.Space.sm + 2)
-            .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+            .padding(Theme.Space.md)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private var goalControl: some View {
         VStack(spacing: Theme.Space.md) {
-            // Compact segmented control — a quiet setting above the Start hero, not two big buttons.
-            HStack(spacing: 4) {
+            // iOS-native segmented look: a light track with a white "thumb" on the selected option.
+            // Deliberately NOT a black fill — Start is the only filled element, so it stays the hero.
+            HStack(spacing: 0) {
                 goalSegment(.open, "Open")
                 goalSegment(.distance, "Distance")
             }
-            .padding(4)
+            .padding(3)
             .background(Capsule().fill(Theme.surface))
             if goalKind == .distance {
+                // Compact, confident stepper — big tabular numeral with the unit set inline beside it.
                 HStack(spacing: Theme.Space.lg) {
                     stepperButton("minus") { goalValue = max(0.5, goalValue - 0.5) }
-                    VStack(spacing: -2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(goalValue.formatted(.number.precision(.fractionLength(goalValue == goalValue.rounded() ? 0 : 1))))
-                            .font(.display(34, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                            .font(.display(30, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                             .contentTransition(.numericText())
-                        Text(unitLabel.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                    }.frame(minWidth: 90)
+                        Text(unitLabel.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .tracking(1).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .frame(minWidth: 104)
                     stepperButton("plus") { goalValue += 0.5 }
                 }
                 .animation(.snappy(duration: 0.2), value: goalValue)
@@ -567,18 +581,23 @@ struct TodayView: View {
         return Button { Haptics.selection(); goalKind = kind } label: {
             Text(title)
                 .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                .frame(maxWidth: .infinity).frame(height: 34)
-                .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
-                .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Color.clear)))
+                .frame(maxWidth: .infinity).frame(height: 32)
+                .foregroundStyle(on ? Theme.ink : Theme.inkSecondary)
+                .background {
+                    if on {
+                        Capsule().fill(Theme.background)
+                            .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+                    }
+                }
         }
         .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: on)
     }
 
     private func stepperButton(_ system: String, _ action: @escaping () -> Void) -> some View {
         Button { Haptics.light(); action() } label: {
-            Image(systemName: system).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 50, height: 50).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+            Image(systemName: system).font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44).background(Circle().fill(Theme.surface))
         }.buttonStyle(.plain)
     }
 
