@@ -36,11 +36,15 @@ struct ProfileScreen: View {
                         .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
-                lifetimeTotals
-                if !stats.countsByType.isEmpty { breakdownSection }
-                consistencySection
-                if !trophyShelf.isEmpty { trophySection }
-                recentSection
+                if stats.totalWorkouts == 0 {
+                    firstRunCard
+                } else {
+                    lifetimeTotals
+                    if !stats.countsByType.isEmpty { breakdownSection }
+                    consistencySection
+                    if !trophyShelf.isEmpty { trophySection }
+                    recentSection
+                }
                 if let profile { privacyCard(profile) }
             }
             .padding(Theme.Space.md)
@@ -211,6 +215,20 @@ struct ProfileScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Edit your sharing and privacy settings")
+    }
+
+    // MARK: First-run (no workouts yet)
+
+    private var firstRunCard: some View {
+        VStack(spacing: Theme.Space.sm) {
+            Image(systemName: "figure.run.circle").font(.system(size: 34, weight: .light)).foregroundStyle(Theme.inkTertiary)
+            Text("Your story starts here").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+            Text("Log your first workout and your distance, streak, muscle map, and records fill in.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, Theme.Space.xl).padding(.horizontal, Theme.Space.lg)
+        .background(card)
     }
 
     // MARK: Building blocks

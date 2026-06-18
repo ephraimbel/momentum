@@ -448,15 +448,12 @@ struct TodayView: View {
             VStack(spacing: Theme.Space.md) {
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-                // Discovery — quiet footer, lighter than Start. Shown whenever we can place the athlete
+                // Discovery — a quiet footer, lighter than Start. Shown whenever we can place the athlete
                 // (a live fix or last-known neighborhood), so the loop suggester isn't hidden waiting.
+                // (Spots is built but hidden for now — re-enable its chip when that feature ships.)
                 if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
-                    HStack(spacing: Theme.Space.sm) {
-                        discoverChip("Loop", icon: "arrow.triangle.capsulepath",
-                                     a11y: "Suggest a running loop") { activeSheet = .suggest(start: nil) }
-                        discoverChip("Spots", icon: "mappin.and.ellipse",
-                                     a11y: "Find running and hiking spots near you") { activeSheet = .spots }
-                    }
+                    discoverChip("Suggest a loop", icon: "arrow.triangle.capsulepath",
+                                 a11y: "Suggest a running loop") { activeSheet = .suggest(start: nil) }
                 }
             }
             .padding(Theme.Space.md)

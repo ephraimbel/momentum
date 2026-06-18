@@ -14,6 +14,7 @@ struct ProgressScreen: View {
     @State private var adjustedPlan = false
     @State private var segment: Segment = .trends
     @State private var correcting: LearnedItem?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
         case trends = "Trends", history = "History", you = "Coach"
@@ -97,7 +98,10 @@ struct ProgressScreen: View {
             .padding(Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
-        .onAppear { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
+        .onAppear {
+            if reduceMotion { animateCharts = true }                               // no chart build-in
+            else { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
+        }
     }
 
     // MARK: Status hero
