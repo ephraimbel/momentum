@@ -24,7 +24,11 @@ struct TodayView: View {
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
     @State private var mapStyle: MapStyleOption = .standard
-    @State private var showSuggest = false
+    // One sheet slot for the discover surfaces (loop suggester + spots), so they never fight over the
+    // same present/dismiss tick. `pendingSheet` re-presents after the current one fully dismisses —
+    // the only reliable way to swap sheet→sheet in SwiftUI (spots → "Loop here" → suggester).
+    @State private var activeSheet: TodaySheet?
+    @State private var pendingSheet: TodaySheet?
     @State private var showSportPicker = false
     @Environment(ModerationStore.self) private var moderation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -38,6 +42,13 @@ struct TodayView: View {
     @State private var selectedAthlete: CommunityAthlete?
 
     enum GoalKind { case open, distance }
+
+    /// The two discover sheets, behind one `.sheet(item:)` slot so they can't collide on present/dismiss.
+    enum TodaySheet: Identifiable {
+        case suggest(start: GeoPoint?)   // loop suggester, optionally seeded at a chosen spot
+        case spots                        // "Spots near you"
+        var id: String { if case .suggest = self { "suggest" } else { "spots" } }
+    }
 
     private let distanceUnit: DistanceUnit = .auto
     private var plan: TrainingPlan? { profiles.first?.plan }
@@ -94,6 +105,10 @@ struct TodayView: View {
                 worldMode = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { enterWorld() }
             }
+            // --spots deep link: open "Spots near you" straight away for deterministic sim verification.
+            if ProcessInfo.processInfo.arguments.contains("--spots") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { activeSheet = .spots }
+            }
             #endif
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
             // usually settled this); requesting also pulls a one-shot fix to center the map on them.
@@ -120,20 +135,49 @@ struct TodayView: View {
         .sheet(isPresented: $showSportPicker) {
             SportPicker(selection: $activity) { showSportPicker = false }
         }
-        // Suggest a distance-targeted loop from the athlete's current spot.
-        .sheet(isPresented: $showSuggest) {
-            if let loc = locator.lastLocation {
-                RouteSuggestionView(
-                    start: GeoPoint(lat: loc.latitude, lon: loc.longitude),
-                    targetM: goalMeters ?? 5000,
-                    distanceUnit: distanceUnit,
-                    onUse: { loop in
-                        showSuggest = false
-                        locator.requestAuthorization()
-                        launch = .cardio(type: activity, goalMeters: loop.distanceM, planned: nil, guideRoute: loop.polyline)
-                    },
-                    onClose: { showSuggest = false })
+        // One sheet for the discover surfaces; `pendingSheet` swaps spots → suggester after dismissal.
+        .sheet(item: $activeSheet, onDismiss: {
+            if let next = pendingSheet { pendingSheet = nil; activeSheet = next }
+        }) { sheet in
+            switch sheet {
+            case .suggest(let start): suggestSheet(start: start)
+            case .spots: spotsSheet
             }
+        }
+    }
+
+    /// The distance-targeted loop suggester — from the athlete's spot, or a chosen park/trailhead.
+    @ViewBuilder
+    private func suggestSheet(start: GeoPoint?) -> some View {
+        if let start = start ?? spotsOrigin {
+            RouteSuggestionView(
+                start: start,
+                targetM: goalMeters ?? 5000,
+                distanceUnit: distanceUnit,
+                onUse: { loop in
+                    activeSheet = nil
+                    locator.requestAuthorization()
+                    launch = .cardio(type: activity, goalMeters: loop.distanceM, planned: nil, guideRoute: loop.polyline)
+                },
+                onClose: { activeSheet = nil })
+        }
+    }
+
+    /// Real running/hiking spots nearby; "Loop here" hands a spot to the suggester (after dismissal).
+    @ViewBuilder
+    private var spotsSheet: some View {
+        if let origin = spotsOrigin {
+            SpotsView(
+                origin: origin,
+                provider: services.spots,
+                distanceUnit: distanceUnit,
+                activity: activity.discipline == .walking ? .hike : .run,
+                analytics: services.analytics,
+                onLoopHere: { point in
+                    pendingSheet = .suggest(start: point)   // present after spots dismisses
+                    activeSheet = nil
+                },
+                onClose: { activeSheet = nil })
         }
     }
 
@@ -387,45 +431,61 @@ struct TodayView: View {
             if let session = pendingToday { plannedBanner(session) }
             startCard
         }
-        .padding(Theme.Space.md)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.bottom, Theme.Space.sm)     // sit closer to the tab bar so more map shows
     }
 
-    /// One clean card: an optional goal, then the single primary action. Distance is opt-in, so the
-    /// default state is just "Start" — calm and obvious.
+    /// One clean card with a clear hierarchy: a compact goal *setting*, the primary *action* (Start),
+    /// then quiet *discovery* chips. Distance is opt-in, so the calm default is just the segmented goal
+    /// and Start.
     private var startCard: some View {
-        VStack(spacing: Theme.Space.md) {
+        VStack(spacing: Theme.Space.sm + 2) {       // tighter than `md` so more map shows, still airy
             if isCardio { goalControl }
             OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-            if isCardio, activity.discipline != .cycling, locator.lastLocation != nil { suggestLoopButton }
+            // Discovery — secondary, lighter than Start. Shown whenever we can place the athlete (a live
+            // fix or their last-known neighborhood), so the loop suggester isn't hidden waiting on a fix.
+            if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
+                HStack(spacing: Theme.Space.sm) {
+                    discoverChip("Loop", icon: "arrow.triangle.capsulepath",
+                                 a11y: "Suggest a running loop") { activeSheet = .suggest(start: nil) }
+                    discoverChip("Spots", icon: "mappin.and.ellipse",
+                                 a11y: "Find running and hiking spots near you") { activeSheet = .spots }
+                }
+            }
         }
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
     }
 
-    /// Secondary action: get a distance-targeted loop to run from here (MapKit-native).
-    private var suggestLoopButton: some View {
-        Button { Haptics.light(); showSuggest = true } label: {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: "arrow.triangle.capsulepath")
-                Text("Suggest a loop")
+    /// A small, soft secondary action — icon + short label, capsule, muted ink. Deliberately lighter
+    /// than the Start hero so discovery reads as "or, explore…", not a competing primary button.
+    private func discoverChip(_ title: String, icon: String, a11y: String, action: @escaping () -> Void) -> some View {
+        Button { Haptics.light(); action() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 13, weight: .bold))
+                Text(title).font(.rounded(Theme.FontSize.caption, weight: .semibold))
             }
-            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-            .frame(maxWidth: .infinity).frame(height: 46)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline, lineWidth: 1.5))
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(maxWidth: .infinity).frame(height: 38)
+            .background(Capsule().fill(Theme.surface))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(a11y)
     }
 
+    /// Where to look for spots: the live fix, else the athlete's last-known neighborhood. In DEBUG,
+    /// `--spots` falls back to a fixed location so the sheet can be verified on the sim deterministically.
+    private var spotsOrigin: GeoPoint? {
+        if let loc = locator.lastLocation { return GeoPoint(lat: loc.latitude, lon: loc.longitude) }
+        if let last = lastKnownCoordinate { return GeoPoint(lat: last.latitude, lon: last.longitude) }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--spots") { return GeoPoint(lat: 30.2672, lon: -97.7431) }
+        #endif
+        return nil
+    }
 
     private var recenterButton: some View {
-        Button {
-            Haptics.light()
-            locator.refreshLocation()
-            withAnimation(Motion.standard) {
-                if let loc = locator.lastLocation { viewport = .camera(center: loc, zoom: 15, pitch: mapStyle.explorePitch) }
-                else { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
-            }
-        } label: {
+        Button { recenterOnMe() } label: {
             Image(systemName: "location.fill")
                 .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
                 .frame(width: 44, height: 44)
@@ -433,6 +493,21 @@ struct TodayView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Recenter on my location")
+    }
+
+    /// Snap the camera back to the **live** location puck and resume following it — even after the
+    /// athlete has panned the map away. Always prefers the live puck (where you actually are *now*),
+    /// not the stale one-shot fix; if location isn't granted yet, ask and let the incoming fix center.
+    private func recenterOnMe() {
+        Haptics.light()
+        locator.refreshLocation()
+        guard locator.isAuthorized || locator.lastLocation != nil else {
+            locator.requestAuthorization()   // not granted — prompt; the fix recenters via onChange
+            return
+        }
+        let me: Viewport = .followPuck(zoom: 16, pitch: mapStyle.explorePitch)
+        if reduceMotion { viewport = me }
+        else { withViewportAnimation(.easeInOut(duration: 0.55)) { viewport = me } }
     }
 
     private var startTitle: String {
@@ -444,18 +519,19 @@ struct TodayView: View {
     @ViewBuilder
     private func plannedBanner(_ session: PlannedSession) -> some View {
         Button { Haptics.light(); confirmingPlan = session } label: {
-            HStack(spacing: Theme.Space.md) {
+            HStack(spacing: Theme.Space.sm + 4) {
                 Image(systemName: disciplineIcon(session.discipline))
-                    .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                    .frame(width: 36, height: 36).background(Circle().fill(IridescentMaterial()).opacity(0.3))
+                    .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 32, height: 32).background(Circle().fill(IridescentMaterial()).opacity(0.3))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("TODAY'S PLAN").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
                     Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "play.circle.fill").font(.system(size: 26)).foregroundStyle(Theme.ink)
+                Image(systemName: "play.circle.fill").font(.system(size: 24)).foregroundStyle(Theme.ink)
             }
-            .padding(Theme.Space.md)
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.vertical, Theme.Space.sm + 2)
             .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -463,10 +539,13 @@ struct TodayView: View {
 
     private var goalControl: some View {
         VStack(spacing: Theme.Space.md) {
-            HStack(spacing: Theme.Space.sm) {
-                goalToggle(.open, "Open")
-                goalToggle(.distance, "Distance")
+            // Compact segmented control — a quiet setting above the Start hero, not two big buttons.
+            HStack(spacing: 4) {
+                goalSegment(.open, "Open")
+                goalSegment(.distance, "Distance")
             }
+            .padding(4)
+            .background(Capsule().fill(Theme.surface))
             if goalKind == .distance {
                 HStack(spacing: Theme.Space.lg) {
                     stepperButton("minus") { goalValue = max(0.5, goalValue - 0.5) }
@@ -483,17 +562,14 @@ struct TodayView: View {
         }
     }
 
-    private func goalToggle(_ kind: GoalKind, _ title: String) -> some View {
+    private func goalSegment(_ kind: GoalKind, _ title: String) -> some View {
         let on = goalKind == kind
         return Button { Haptics.selection(); goalKind = kind } label: {
             Text(title)
-                .font(.rounded(Theme.FontSize.body, weight: .bold))
-                .frame(maxWidth: .infinity).frame(height: 46)
-                .foregroundStyle(on ? Theme.background : Theme.ink)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Color.clear)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline, lineWidth: 1.5)
-                }
+                .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                .frame(maxWidth: .infinity).frame(height: 34)
+                .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Color.clear)))
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)

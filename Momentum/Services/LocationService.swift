@@ -57,6 +57,14 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         manager.requestLocation()
     }
 
+    /// The system's most-recent cached fix — its accuracy and age — if iOS already knows where we are.
+    /// Lets a run **warm-start**: skip the "Acquiring GPS" gate when the location is already good (the
+    /// home map was just showing the puck). nil if there's no usable cached fix yet.
+    var cachedFix: (accuracyM: Double, ageS: TimeInterval)? {
+        guard let loc = manager.location, loc.horizontalAccuracy > 0 else { return nil }
+        return (loc.horizontalAccuracy, Date().timeIntervalSince(loc.timestamp))
+    }
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
         Task { @MainActor in

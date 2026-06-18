@@ -18,6 +18,8 @@ enum AnalyticsEvent: Equatable {
     case prHit(type: String)
     case planSessionAdapted
     case shareCreated(style: String)
+    case spotsViewed(count: Int)
+    case spotSelected(kind: String)
 
     /// The canonical event name (PRD §13.5).
     var name: String {
@@ -34,6 +36,8 @@ enum AnalyticsEvent: Equatable {
         case .prHit:             "pr_hit"
         case .planSessionAdapted:"plan_session_adapted"
         case .shareCreated:      "share_created"
+        case .spotsViewed:       "spots_viewed"
+        case .spotSelected:      "spot_selected"
         }
     }
 
@@ -52,6 +56,8 @@ enum AnalyticsEvent: Equatable {
         case .prHit(let t):                    ["type": t]
         case .planSessionAdapted:              [:]
         case .shareCreated(let s):             ["style": s]
+        case .spotsViewed(let n):              ["count": String(n)]
+        case .spotSelected(let k):             ["kind": k]
         }
     }
 }

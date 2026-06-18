@@ -63,6 +63,13 @@ final class CardioViewModel {
     /// accuracy (driving the strength meter + `hasGPSLock`) but are not ingested until `arm()`.
     func beginAcquiring() {
         location.requestAuthorization()
+        // Warm start: if iOS already has a fresh, accurate fix (the home map was just showing the
+        // user's puck), don't make them watch "Acquiring GPS" — lock immediately and go straight to
+        // the countdown, which itself gives the live stream a few seconds to warm up before recording.
+        if let fix = location.cachedFix, fix.accuracyM <= Self.lockAccuracyM, fix.ageS < 30 {
+            lastAccuracyM = fix.accuracyM
+            hasGPSLock = true
+        }
         pumpTask = Task { [weak self] in
             guard let self else { return }
             for await fix in self.location.fixes() {
