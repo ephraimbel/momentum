@@ -19,6 +19,8 @@ final class UserProfile {
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.
     var preferredDays: [Int] = []
+    /// Tracked add-on activities the engine doesn't program (WorkoutType raws) — re-added on rebuild.
+    var crossTraining: [String] = []
     /// Optional biological sex + height for load / HR / calorie tailoring.
     var sex: String?
     var heightCm: Double?

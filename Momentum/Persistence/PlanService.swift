@@ -56,6 +56,27 @@ enum PlanService {
         try? context.save()
     }
 
+    /// Rebuild the whole plan from `profile` — the one path used by both onboarding and the
+    /// "edit plan settings" sheet. Shares the day budget between structured work and tracked add-ons
+    /// (total distinct days ≤ daysPerWeek), preserves the calibrated 5k pace unless a fresh calibration
+    /// is supplied, and re-adds the athlete's cross-training. Starts the plan from `startDate`.
+    static func rebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
+                        startDate: Date = Date(), in context: ModelContext) {
+        let extras = profile.crossTraining.compactMap(WorkoutType.init(rawValue:))
+        let disciplines = profile.disciplines.compactMap(Discipline.init(rawValue:))
+        let userDays = profile.daysPerWeek
+        let structuredDays = max(1, min(userDays, max(disciplines.count, userDays - extras.count)))
+        // Preserve the existing calibrated pace across a rebuild unless a new calibration is given.
+        let seed = calibration ?? (profile.plan.map { CalibrationSeed(estimatedP5kSPerKm: $0.p5kSPerKm) } ?? .none)
+
+        profile.daysPerWeek = structuredDays
+        regenerate(for: profile, calibration: seed, startDate: startDate, in: context)
+        profile.daysPerWeek = userDays   // restore the athlete's actual choice (plan + display)
+        if let plan = profile.plan, !extras.isEmpty {
+            addCrossTraining(extras, to: plan, startDate: startDate, in: context, totalDaysPerWeek: userDays)
+        }
+    }
+
     /// Snapshot the exercise library for the engine.
     static func catalog(in context: ModelContext) -> [ExerciseCatalogItem] {
         let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []

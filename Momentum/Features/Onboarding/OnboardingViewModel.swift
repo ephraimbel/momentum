@@ -231,6 +231,7 @@ final class OnboardingViewModel {
         profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
+        profile.crossTraining = extraActivities.map { $0.workoutType.rawValue }
         // Default display units to the athlete's locale (lb + miles in the US/UK) so the whole app
         // matches the imperial figures they just entered. Distance stays `auto` (locale-resolved).
         profile.weightUnit = WeightUnit.default().rawValue
@@ -245,20 +246,8 @@ final class OnboardingViewModel {
         }
         profile.reason = reason
         context.insert(profile)
-        let startDate = Date()
-        // Honor the chosen number of training days: the day budget is SHARED between the structured
-        // plan and the tracked add-ons, so total distinct workout days never exceeds daysPerWeek.
-        // Structured work keeps at least one day per discipline; add-ons fill the days left over.
-        let extras = extraActivities.map(\.workoutType)
-        let userDays = daysPerWeek
-        let structuredDays = max(1, min(userDays, max(disciplines.count, userDays - extras.count)))
-        profile.daysPerWeek = structuredDays
-        PlanService.regenerate(for: profile, calibration: calibration, startDate: startDate, in: context)
-        profile.daysPerWeek = userDays   // restore the athlete's actual choice (for the plan + display)
-        if let plan = profile.plan, !extras.isEmpty {
-            PlanService.addCrossTraining(extras, to: plan, startDate: startDate, in: context,
-                                         totalDaysPerWeek: userDays)
-        }
+        // Build the plan (shared day budget + cross-training) — same path as the edit-settings rebuild.
+        PlanService.rebuild(for: profile, calibration: calibration, in: context)
         // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).
         AthleteModelService().seedOnboarding(for: profile, in: context)
         return profile

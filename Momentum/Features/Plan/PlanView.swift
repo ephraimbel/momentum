@@ -18,6 +18,7 @@ struct PlanView: View {
     @State private var launch: TodayLaunch?
     @State private var pendingStart: PlannedSession?     // start after the detail sheet dismisses
     @State private var locator = LocationService()
+    @State private var showSettings = false
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
@@ -77,6 +78,9 @@ struct PlanView: View {
                                onStart: { pendingStart = $0 })
         }
         .workoutRunner(launch: $launch)
+        .sheet(isPresented: $showSettings) {
+            if let p = profiles.first { PlanSettingsSheet(profile: p) { showSettings = false } }
+        }
     }
 
     /// Launch the right recorder for a planned session (uses its precise sport; requests GPS for cardio).
@@ -110,6 +114,13 @@ struct PlanView: View {
         HStack(alignment: .firstTextBaseline) {
             Text("Plan").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
+            if plan != nil {
+                Button { showSettings = true } label: {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .frame(width: 40, height: 40).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).accessibilityLabel("Plan settings")
+            }
             addButton
         }
         .padding(.top, Theme.Space.sm)
