@@ -46,18 +46,18 @@ struct PlanView: View {
                 emptyState
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    VStack(alignment: .leading, spacing: Theme.Space.md) {
                         header
                         weekHero
                         if isCurrentWeek { tuneSection }
-                        VStack(spacing: Theme.Space.md) {
+                        VStack(spacing: Theme.Space.sm) {
                             ForEach(Array(days.enumerated()), id: \.element) { i, day in
                                 dayRow(day).reveal(min(Double(i) * 0.04, 0.28))
                             }
                         }
                         .proLocked(.fullPlan, active: !isCurrentWeek)
                     }
-                    .padding(Theme.Space.lg)
+                    .padding(Theme.Space.md)
                     .padding(.bottom, Theme.Space.xxl)
                 }
                 .scrollIndicators(.hidden)
@@ -247,11 +247,11 @@ struct PlanView: View {
                 .font(.rounded(Theme.FontSize.label, weight: .bold))
                 .tracking(0.5)
             Text(day.formatted(.dateTime.day()))
-                .font(.display(20, weight: .heavy)).monospacedDigit()
+                .font(.display(18, weight: .heavy)).monospacedDigit()
         }
         // Hierarchy: today fills ink; days with sessions read full-ink; rest days recede.
         .foregroundStyle(isToday ? Theme.background : (hasSessions ? Theme.ink : Theme.inkTertiary))
-        .frame(width: 52, height: 62)
+        .frame(width: 46, height: 54)
         .background {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(isToday ? Theme.ink : Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(isToday ? Color.clear : Theme.hairline)
@@ -263,10 +263,10 @@ struct PlanView: View {
         return HStack(spacing: Theme.Space.md) {
             // The card body opens the detail/adjust sheet…
             Button { editing = EditingSession(session: session) } label: {
-                HStack(spacing: Theme.Space.md) {
+                HStack(spacing: Theme.Space.sm + 2) {
                     Image(systemName: PlanCoaching.icon(for: session))
-                        .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 40, height: 40)
+                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 36, height: 36)
                         .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(PlanCoaching.brief(for: session, distanceUnit: distanceUnit))
@@ -285,7 +285,7 @@ struct PlanView: View {
             // …and the trailing circle is a quick check-off.
             checkButton(session, done: done)
         }
-        .padding(Theme.Space.md)
+        .padding(Theme.Space.sm + 2)
         .background {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             if done { RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.16) }
@@ -300,9 +300,9 @@ struct PlanView: View {
             withAnimation(Motion.standard) { PlanCoaching.setCompletion(session, done: !done, in: context) }
         } label: {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(done ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkTertiary))
-                .frame(width: 36, height: 36)
+                .frame(width: 34, height: 34)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -318,7 +318,7 @@ struct PlanView: View {
                 Image(systemName: "plus").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
             .padding(.horizontal, Theme.Space.md)
-            .frame(height: 48)
+            .frame(height: 42)
             .frame(maxWidth: .infinity)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface.opacity(0.55))
