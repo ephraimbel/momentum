@@ -189,7 +189,7 @@ struct TodayView: View {
             Spacer(minLength: 0)
             ZStack {
                 Circle().fill(IridescentMaterial()).opacity(0.3).frame(width: 72, height: 72)
-                Image(systemName: disciplineIcon(session.discipline))
+                Image(systemName: PlanCoaching.icon(for: session))
                     .font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
             }
             VStack(spacing: Theme.Space.xs) {
@@ -224,11 +224,16 @@ struct TodayView: View {
     }
 
     private func planTitle(_ s: PlannedSession) -> String {
+        if s.discipline == .strength { return s.strengthTargets.count >= 5 ? "Full Body" : "Strength" }
+        // Precise sport when set (swim/yoga/hike/ride…); a plain run keeps its quality label.
+        if let wt = s.workoutType {
+            return wt == .run ? "\(s.runType?.rawValue.capitalized ?? "Easy") Run" : wt.title
+        }
         switch s.discipline {
-        case .strength: s.strengthTargets.count >= 5 ? "Full Body" : "Strength"
-        case .running: "\(s.runType?.rawValue.capitalized ?? "Easy") Run"
-        case .cycling: "Ride"
-        case .walking: "Walk"
+        case .running: return "\(s.runType?.rawValue.capitalized ?? "Easy") Run"
+        case .cycling: return "Ride"
+        case .walking: return "Walk"
+        case .strength: return "Strength"
         }
     }
 
@@ -526,7 +531,7 @@ struct TodayView: View {
             HStack(spacing: Theme.Space.sm + 2) {
                 ZStack {
                     Circle().fill(IridescentMaterial()).opacity(0.32).frame(width: 36, height: 36)
-                    Image(systemName: disciplineIcon(session.discipline))
+                    Image(systemName: PlanCoaching.icon(for: session))
                         .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -761,9 +766,6 @@ struct TodayView: View {
         switch d { case .strength: .strength; case .cycling: .ride; case .walking: .walk; case .running: .run }
     }
 
-    private func disciplineIcon(_ d: Discipline) -> String {
-        switch d { case .running: "figure.run"; case .cycling: "bicycle"; case .walking: "figure.walk"; case .strength: "dumbbell.fill" }
-    }
 }
 
 // MARK: - Launch + presentation wrappers
