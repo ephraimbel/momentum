@@ -116,7 +116,75 @@ struct SessionDetailSheet: View {
                     }
                 }
             }
+            // Guided quality sessions (intervals/tempo/run-walk) expand into a step breakdown so the
+            // athlete sees the shape of the session before starting the guided run.
+            if let workout = StructuredWorkoutBuilder.build(from: session) {
+                structuredSection(workout)
+            }
         }
+    }
+
+    /// A compact, grouped preview of a structured session — rep blocks collapse to one line
+    /// ("6 × 400 m @ pace") with the recovery shown once, warm-up/cool-down as their own rows.
+    private func structuredSection(_ w: StructuredWorkout) -> some View {
+        section("Workout") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(Array(structuredLines(w).enumerated()), id: \.offset) { _, line in
+                    HStack {
+                        Text(line.label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Spacer(minLength: Theme.Space.sm)
+                        Text(line.detail).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                            .monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                    }
+                    .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
+                        RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+                    }
+                }
+            }
+        }
+    }
+
+    private func structuredLines(_ w: StructuredWorkout) -> [(label: String, detail: String)] {
+        // Repeating run/walk sessions collapse to a single summary line.
+        if w.workStepCount > 0, w.steps.allSatisfy({ $0.repTotal == nil }),
+           w.title.lowercased().contains("run/walk") {
+            return [("\(w.workStepCount) × run / walk", "alternating")]
+        }
+        var lines: [(String, String)] = []
+        var i = 0
+        let steps = w.steps
+        while i < steps.count {
+            let s = steps[i]
+            if s.kind == .work, let total = s.repTotal {
+                let d = s.target.distanceM
+                let distStr = d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
+                let pace = s.paceSPerKm.map { "@ \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? ""
+                lines.append(("\(total) × \(distStr)", pace))
+                if i + 1 < steps.count, steps[i + 1].kind == .recovery,
+                   case let .duration(rs) = steps[i + 1].target {
+                    lines.append(("Recovery", "\(Int(rs)) s easy"))
+                }
+                while i < steps.count, steps[i].kind == .work || steps[i].kind == .recovery { i += 1 }
+            } else {
+                lines.append((s.kindLabel, stepDetail(s)))
+                i += 1
+            }
+        }
+        return lines
+    }
+
+    private func stepDetail(_ s: WorkoutStep) -> String {
+        let base: String
+        switch s.target {
+        case let .distance(d): base = d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
+        case let .duration(t): base = "\(Int(t)) s"
+        }
+        if s.kind == .work, let p = s.paceSPerKm {
+            return "\(base) @ \(Formatters.pace(secPerKm: p, unit: distanceUnit))"
+        }
+        return base
     }
 
     private var exercisesSection: some View {
@@ -135,7 +203,9 @@ struct SessionDetailSheet: View {
         if let d = session.targetDistanceM, d > 0 { out.append(Formatters.distance(meters: d, unit: distanceUnit)) }
         if let p = session.targetPaceSPerKm, p > 0 { out.append("~\(Formatters.pace(secPerKm: p, unit: distanceUnit))") }
         if let dur = session.targetDurationS, dur > 0 { out.append(Formatters.duration(s: dur)) }
-        if let iv = session.intervals { out.append(iv) }
+        // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
+        // for guided sessions; only show it as a chip when no structured breakdown will render.
+        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session) == nil { out.append(iv) }
         return out
     }
 

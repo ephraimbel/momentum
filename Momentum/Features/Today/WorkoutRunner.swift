@@ -35,7 +35,11 @@ struct WorkoutRunner: ViewModifier {
     private func liveScreen(_ launch: TodayLaunch) -> some View {
         switch launch {
         case let .cardio(type, goal, planned, guide):
-            CardioTrackingView(type: type, goalMeters: goal, container: context.container, guideRoute: guide) { id in
+            // Expand a prescribed quality session (intervals/tempo/run-walk) into a guided structured
+            // run; a plain free/easy run passes nil and shows just the hero metrics.
+            let structured = planned.flatMap(StructuredWorkoutBuilder.build)
+            CardioTrackingView(type: type, goalMeters: goal, container: context.container,
+                               guideRoute: guide, structured: structured) { id in
                 finish(id, type: type, planned: planned)
             }
         case let .strength(type, planned):

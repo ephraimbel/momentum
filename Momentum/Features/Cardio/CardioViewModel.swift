@@ -13,6 +13,9 @@ final class CardioViewModel {
     let distanceUnit: DistanceUnit
     /// Optional distance goal (m) — drives the Live Activity goal ring.
     let goalMeters: Double?
+    /// Optional structured session (warm-up → reps → cool-down) to guide in real time (R1). nil → a
+    /// plain free/easy run with just the hero metrics.
+    let structured: StructuredWorkout?
     /// When recording actually began (set in `start()`, i.e. right after the countdown).
     private(set) var startedAt = Date()
 
@@ -42,28 +45,46 @@ final class CardioViewModel {
 
     // Voice coach (PRD §4.10, Pro). nil when not entitled/disabled, so the loop never depends on it.
     private let voice: (any VoiceCoachServing)?
+
+    // Cadence source (CoreMotion, R3). Live steps/min on the run screen + an averaged value stored at
+    // finish. Hardware-only — nil in the simulator, so the run never depends on it.
+    private let motion: any MotionServing
+    private var cadenceReadings: [Int] = []
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var lastUnitCount = 0
     private var lastBoundaryElapsedS: TimeInterval = 0
     private var lastAnnouncedPaused = false
     private var goalAnnounced = false
 
+    // Structured-workout guidance (R1). The tracker is pure; a 1 Hz task advances it and voices the
+    // transitions. nil for a plain run.
+    private(set) var tracker: StructuredRunTracker?
+    private var structuredTask: Task<Void, Never>?
+    private var structuredCompleteAnnounced = false
+    private var lastPaceNudgeAt: TimeInterval = 0
+    private var recoveryReadyBuzzed = false
+
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
-         goalMeters: Double? = nil, voice: (any VoiceCoachServing)? = nil) {
+         goalMeters: Double? = nil, structured: StructuredWorkout? = nil,
+         voice: (any VoiceCoachServing)? = nil, motion: (any MotionServing)? = nil) {
         self.type = type
         self.distanceUnit = distanceUnit
         self.goalMeters = goalMeters
+        self.structured = structured
         self.voice = voice
+        self.motion = motion ?? MotionService()
         self.location = LocationService()
         let store = GPSWorkoutStore(modelContainer: container)
         self.store = store
         self.engine = GPSTrackingEngine(type: type, sink: store)
+        self.tracker = structured.map { StructuredRunTracker(steps: $0.steps) }
     }
 
     /// Open the location stream and watch signal quality without recording yet. Fixes report
     /// accuracy (driving the strength meter + `hasGPSLock`) but are not ingested until `arm()`.
     func beginAcquiring() {
         location.requestAuthorization()
+        motion.requestAuthorization()   // prime the CoreMotion prompt now, alongside location
         // Warm start: if iOS already has a fresh, accurate fix (the home map was just showing the
         // user's puck), don't make them watch "Acquiring GPS" — lock immediately and go straight to
         // the countdown, which itself gives the live stream a few seconds to warm up before recording.
@@ -82,6 +103,7 @@ final class CardioViewModel {
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
                 self.syncPauseClock()
+                self.sampleCadence()
                 self.liveActivity.update(self.liveState())
                 self.announceMilestonesIfNeeded()
                 self.announcePauseIfChanged()
@@ -89,9 +111,10 @@ final class CardioViewModel {
         }
     }
 
-    /// Speak each completed km/mi with its split pace, and the goal once (voice coach).
+    /// Speak each completed km/mi with its split pace, and the goal once (voice coach). Suppressed for
+    /// structured sessions — those get their own per-step rep/recovery cues instead of mile splits.
     private func announceMilestonesIfNeeded() {
-        guard voice != nil else { return }
+        guard voice != nil, structured == nil else { return }
         let count = Int(distanceM / unitMeters)
         if count > lastUnitCount {
             lastUnitCount = count
@@ -120,19 +143,102 @@ final class CardioViewModel {
     func arm() async {
         startedAt = Date()
         await engine.begin(now: startedAt)
+        motion.start()   // begin cadence updates now that recording is live
         workoutId = ActiveWorkoutMarker.pendingID
         snapshot = await engine.snapshot()
         armed = true
         // Light up the lock screen / Dynamic Island for the live run (PRD §23).
         liveActivity.start(title: type.title, symbol: type.systemImage, state: liveState())
+        // Kick off guided-workout tracking: announce the first step and advance it once a second,
+        // independent of GPS-fix cadence so timed recoveries count down while you stand still.
+        if let step = tracker?.current {
+            voice?.announce(CoachingCueBuilder.stepStart(step))
+            structuredTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { break }
+                    self.tickStructured()
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        }
+    }
+
+    // MARK: Structured-workout tracking (R1)
+
+    /// Advance the guided step against the latest distance/elapsed and voice any transition. Called
+    /// once a second while recording.
+    private func tickStructured() {
+        guard var t = tracker, !t.isComplete else { return }
+        let d = distanceM, e = elapsed()
+        if t.advance(distanceM: d, elapsedS: e) {
+            tracker = t
+            recoveryReadyBuzzed = false              // fresh step — re-arm the recovery countdown buzz
+            if t.isComplete { announceStructuredComplete() }
+            else if let step = t.current {
+                Haptics.medium()
+                voice?.announce(CoachingCueBuilder.stepStart(step))
+            }
+            return
+        }
+        tracker = t
+        // Don't coach a paused athlete: pace reads are stale and time isn't advancing.
+        guard !isPaused else { return }
+        // A single "get ready" buzz as a timed recovery is about to end, so the next rep doesn't
+        // start by surprise.
+        if let step = t.current, step.kind == .recovery, step.target.isTime, !recoveryReadyBuzzed,
+           t.remaining(distanceM: d, elapsedS: e) <= 3 {
+            recoveryReadyBuzzed = true
+            Haptics.medium()
+        }
+        maybeNudgePace(at: e)
+    }
+
+    /// End the current step now (the athlete's Lap / Skip control).
+    func skipStep() {
+        guard var t = tracker, !t.isComplete else { return }
+        t.skip(distanceM: distanceM, elapsedS: elapsed())
+        tracker = t
+        Haptics.medium()
+        if t.isComplete { announceStructuredComplete() }
+        else if let step = t.current { voice?.announce(CoachingCueBuilder.stepStart(step)) }
+    }
+
+    private func announceStructuredComplete() {
+        guard !structuredCompleteAnnounced else { return }
+        structuredCompleteAnnounced = true
+        Haptics.celebration()
+        voice?.announce(CoachingCueBuilder.workoutComplete())
+    }
+
+    /// A throttled pace nudge inside a work step when you drift outside the target band. Held off for
+    /// the first ~10 s of a step so the smoothed pace (EMA) has caught up from the previous step's
+    /// effort — otherwise a rep would open with a spurious "pick it up".
+    private func maybeNudgePace(at now: TimeInterval) {
+        guard voice != nil, now - lastPaceNudgeAt > 25,
+              let t = tracker, now - t.anchorElapsedS > 10 else { return }
+        let a = stepAdherence
+        guard a == .tooFast || a == .tooSlow else { return }
+        lastPaceNudgeAt = now
+        voice?.announce(CoachingCueBuilder.paceNudge(a))
     }
 
     /// Tear down the stream when the user backs out before arming (no workout was ever created).
     func cancelAcquiring() {
         pumpTask?.cancel()
+        structuredTask?.cancel()
         location.stop()
+        motion.stop()
         liveActivity.end()
     }
+
+    /// Record the current cadence reading (steps/min) for the run's average — skipped while paused.
+    private func sampleCadence() {
+        guard !isPaused, let c = motion.cadenceStepsPerMin, c > 0 else { return }
+        cadenceReadings.append(c)
+    }
+
+    /// Live cadence (steps/min) for the run screen; nil until CoreMotion reports (never in the sim).
+    var cadence: Int? { motion.cadenceStepsPerMin }
 
     func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
     func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
@@ -156,10 +262,14 @@ final class CardioViewModel {
 
     func finish() async -> UUID? {
         pumpTask?.cancel()
+        structuredTask?.cancel()
         location.stop()
+        motion.stop()
         liveActivity.end()
         voice?.stop()
         await engine.finish(durationOverrideS: elapsed())
+        // Persist the run's average cadence (steps/min) when CoreMotion produced readings.
+        if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
         // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5) — do
         // this synchronously so the summary always opens with a route image.
         let coords = coordinates
@@ -232,6 +342,63 @@ final class CardioViewModel {
     var secondaryDistance: String { Formatters.distance(meters: distanceM, unit: distanceUnit) }
 
     var isPaused: Bool { state == .paused || state == .autoPaused }
+
+    // MARK: Structured-workout display
+
+    var currentStep: WorkoutStep? { tracker?.current }
+    var structuredComplete: Bool { tracker?.isComplete ?? false }
+
+    /// Banner title: "Rep 3 / 6" for reps, else the kind ("Warm up", "Recovery", "Cool down").
+    var stepTitle: String { currentStep.map(Self.stepLabel) ?? "" }
+
+    /// The current step's remaining amount as a big value + caption ("240" / "M LEFT", "1:30" / "LEFT").
+    var stepRemaining: (value: String, caption: String) {
+        guard let t = tracker, let step = t.current else { return ("", "") }
+        let rem = t.remaining(distanceM: distanceM, elapsedS: elapsed())
+        switch step.target {
+        case let .distance(d):
+            return d < 1000
+                ? ("\(Int(rem.rounded()))", "M LEFT")
+                : (Formatters.distance(meters: rem, unit: distanceUnit).components(separatedBy: " ").first ?? "0",
+                   "\(unitLabelUpper) LEFT")
+        case .duration:
+            return (Formatters.duration(s: rem), "LEFT")
+        }
+    }
+
+    /// 0…1 of the current step completed — drives the step progress ring.
+    var stepProgress: Double {
+        tracker?.progress(distanceM: distanceM, elapsedS: elapsed()) ?? 0
+    }
+
+    /// Pace-adherence verdict for the current work step (drives the on-pace iridescent glow).
+    var stepAdherence: StructuredRunTracker.Adherence {
+        tracker?.adherence(currentPaceSPerKm: snapshot?.smoothedPaceSPerKm ?? 0) ?? .noTarget
+    }
+
+    /// The current step's target pace, when it has one.
+    var stepTargetPaceText: String? {
+        guard let p = currentStep?.paceSPerKm, p > 0 else { return nil }
+        return Formatters.pace(secPerKm: p, unit: distanceUnit)
+    }
+
+    /// "Next · Recovery" preview, or nil on the last step.
+    var stepNextText: String? { tracker?.next.map { "Next · \(Self.stepLabel($0))" } }
+
+    /// Rep progress across the session's work steps, for the dot row. nil for non-rep sessions.
+    var repProgress: (done: Int, total: Int)? {
+        guard let total = structured?.steps.first(where: { $0.repTotal != nil })?.repTotal,
+              let idx = tracker?.index else { return nil }
+        let done = (structured?.steps.prefix(idx).filter { $0.kind == .work }.count) ?? 0
+        return (min(done, total), total)
+    }
+
+    private var unitLabelUpper: String { distanceUnit.resolved() == .imperial ? "MI" : "KM" }
+
+    private static func stepLabel(_ step: WorkoutStep) -> String {
+        if let i = step.repIndex, let n = step.repTotal { return "Rep \(i) / \(n)" }
+        return step.kindLabel
+    }
 
     /// True once the user has declined location — the route can't be tracked until they re-enable
     /// it in Settings. Drives the in-recording banner.

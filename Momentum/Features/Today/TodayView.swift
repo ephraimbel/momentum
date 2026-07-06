@@ -112,6 +112,21 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--loop") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
             }
+            // --ui-test-structured-run: launch straight into a guided 6×400 m interval session so the
+            // structured-workout flow (step banner + Skip advancement + cues) is drivable deterministically.
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-structured-run") {
+                let session = PlannedSession()
+                session.discipline = .running
+                session.runType = .intervals
+                session.targetDistanceM = 3000
+                session.targetPaceSPerKm = 300
+                session.intervals = "6×400m @ 5K pace"
+                session.date = Date()
+                context.insert(session)   // inserted so post-run crediting behaves like a real plan session
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    launch = .cardio(type: .run, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+                }
+            }
             #endif
             // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
             // usually settled this); requesting also pulls a one-shot fix to center the map on them.

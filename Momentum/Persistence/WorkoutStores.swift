@@ -78,6 +78,14 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         detail.matchedRouteData = data
         try? modelContext.save()
     }
+
+    /// Attach the run's average cadence (steps/min) captured from CoreMotion (R3). Written at finish;
+    /// nil/zero is simply not stored so imported or motion-less runs stay blank.
+    func attachCadence(_ stepsPerMin: Int) {
+        guard stepsPerMin > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.avgCadence = stepsPerMin
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row
