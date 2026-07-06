@@ -18,17 +18,22 @@ final class RealRouteRunUITest: XCTestCase {
         XCTAssertTrue(startRun.waitForExistence(timeout: 25), "Start run button never appeared.")
         startRun.tap()
 
-        // Acquiring gate → skip the wait with "Start now" if it's shown.
+        // Acquiring gate — capture it, then skip the wait with "Start now" if it's shown.
         let startNow = app.buttons["Start now"]
-        if startNow.waitForExistence(timeout: 20) { startNow.tap() }
+        if startNow.waitForExistence(timeout: 20) {
+            attach(app.screenshot(), "1-acquiring")
+            startNow.tap()
+        }
 
         // Countdown → tracking. The Finish button is only present once recording.
         let finish = app.buttons["Finish"]
         XCTAssertTrue(finish.waitForExistence(timeout: 25), "Never reached the tracking state.")
 
-        // Let the trace grow as the simulated route moves.
-        sleep(45)
-        attach(app.screenshot(), "live-trace")
+        // Let the trace grow as the simulated route moves — capture early and later.
+        sleep(20)
+        attach(app.screenshot(), "2-tracking-early")
+        sleep(40)
+        attach(app.screenshot(), "3-tracking-late")
 
         // Finish → confirm in the dialog.
         finish.tap()
@@ -38,8 +43,8 @@ final class RealRouteRunUITest: XCTestCase {
 
         // Summary appears immediately with the raw trace; wait for map matching to swap in the snapped
         // route (a background network call).
-        sleep(12)
-        attach(app.screenshot(), "summary-route")
+        sleep(14)
+        attach(app.screenshot(), "4-summary-route")
     }
 
     private func attach(_ shot: XCUIScreenshot, _ name: String) {

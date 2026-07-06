@@ -29,6 +29,9 @@ struct CardioTrackingView: View {
     @State private var acquireTimedOut = false
     @State private var mapStyle: MapStyleOption = .standard
     @State private var offRoute = false        // drifted off the guide loop (hysteresis-gated)
+    /// Cached smoothed trace — recomputed only when a route point is added (see the map's onChange),
+    /// never on incidental body re-evaluations like the 1 Hz elapsed-time tick.
+    @State private var smoothedTrace: [CLLocationCoordinate2D] = []
     @State private var deviationM = 0.0
     @State private var rejoinBearing = 0.0     // compass bearing to the nearest loop point (north-up)
     /// While true the camera stays locked on the athlete (zoomed in, north-up). A pan/pinch drops it;
@@ -116,8 +119,9 @@ struct CardioTrackingView: View {
         // North-up (rotation disabled) so the rejoin arrow's compass bearing reads as screen rotation.
         MapReader { proxy in
             Map(viewport: $viewport) {
-                // A green dot where the run began (one stable annotation — no churn).
-                if let start = smoothedRoute.first {
+                // A green dot where the run began (one stable annotation — no churn). Uses the raw first
+                // fix so it never triggers a spline recompute.
+                if let start = routeCoords.first {
                     MapViewAnnotation(coordinate: start) { startDot }.allowOverlap(true)
                 }
                 // The athlete's purple location puck ("you") is configured imperatively in
@@ -127,8 +131,15 @@ struct CardioTrackingView: View {
             .mapStyle(mapStyle.mapboxStyle)
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
-            .onStyleLoaded { _ in BrandPuck.apply(to: proxy); syncRouteLayers(proxy.map) }   // puck first, then layers under it
-            .onChange(of: routeCoords.count) { syncRouteLayers(proxy.map) }
+            .onStyleLoaded { _ in BrandPuck.apply(to: proxy); syncRouteLayers(proxy.map, trace: smoothedTrace) }
+            // Re-smooth only when a point is actually added (not on every body eval / 1 Hz timer tick),
+            // cache it, and hand it to the layer sync — so a long run doesn't re-spline thousands of
+            // points every frame.
+            .onChange(of: routeCoords.count) {
+                let smoothed = RouteSmoothing.smooth(routeCoords)
+                smoothedTrace = smoothed
+                syncRouteLayers(proxy.map, trace: smoothed)
+            }
             .ignoresSafeArea()
             // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
             // manual pan or pinch drops the lock; the recenter arrow re-engages it.
@@ -142,7 +153,7 @@ struct CardioTrackingView: View {
     /// solid purple). The trace is solid, not a gradient — Mapbox's `line-gradient` crashes when its
     /// source is updated live, so the gradient lives on the completed-route maps (`RouteMapView`).
     /// Sources update efficiently as the run grows; layers are re-added whenever the style reloads.
-    private func syncRouteLayers(_ map: MapboxMap?) {
+    private func syncRouteLayers(_ map: MapboxMap?, trace: [CLLocationCoordinate2D]) {
         guard let map, map.isStyleLoaded else { return }
 
         // Insert route layers *below* the location puck so the athlete's purple dot always sits on top
@@ -168,8 +179,8 @@ struct CardioTrackingView: View {
         }
 
         // Live trace: a white casing + a solid purple line on top — both below the puck.
-        guard smoothedRoute.count > 1 else { return }
-        let traceData = GeoJSONSourceData.geometry(.lineString(LineString(smoothedRoute)))
+        guard trace.count > 1 else { return }
+        let traceData = GeoJSONSourceData.geometry(.lineString(LineString(trace)))
         if map.sourceExists(withId: "trace-src") {
             try? map.updateGeoJSONSource(withId: "trace-src", data: traceData)
         } else {
@@ -185,9 +196,6 @@ struct CardioTrackingView: View {
             try? map.addLayer(trace, layerPosition: belowPuck)
         }
     }
-
-    /// The live trace, corner-rounded so the sparse (≥2m) accepted points read as a fluid GPS track.
-    private var smoothedRoute: [CLLocationCoordinate2D] { RouteSmoothing.smooth(routeCoords) }
 
     /// The guide line reads as a quiet dashed path — lighter over satellite imagery for contrast.
     private var guideColor: Color { mapStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
