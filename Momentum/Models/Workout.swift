@@ -37,6 +37,10 @@ final class GPSDetail {
     var avgHR: Int?
     var avgCadence: Int?            // steps/min (run) or rpm (ride)
     var mapSnapshotData: Data?      // true-B/W PNG
+    /// Route snapped to the road/path network by Mapbox Map Matching (§8.5), stored as JSON
+    /// `[[lat, lon]]`. Present only when matching succeeded above the confidence gate; display falls
+    /// back to the Kalman-filtered raw trace when nil. The raw `samples` are always retained.
+    var matchedRouteData: Data?
     var isManualTrim: Bool = false
 
     @Relationship(deleteRule: .cascade) var samples: [LocationSample] = []

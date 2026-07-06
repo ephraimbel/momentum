@@ -120,14 +120,14 @@ struct CardioTrackingView: View {
                 if let start = smoothedRoute.first {
                     MapViewAnnotation(coordinate: start) { startDot }.allowOverlap(true)
                 }
-                // The athlete's purple location puck — its pulse marks the live trace head. The trace
-                // and dashed guide are LineLayers managed below (efficient source updates, no churn).
-                Puck2D(bearing: .heading).brandStyled()
+                // The athlete's purple location puck ("you") is configured imperatively in
+                // `.onStyleLoaded` (BrandPuck.apply) — the SwiftUI `Puck2D` crashes on devices where
+                // Mapbox's default puck asset won't load.
             }
             .mapStyle(mapStyle.mapboxStyle)
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
-            .onStyleLoaded { _ in syncRouteLayers(proxy.map) }    // re-add layers on every style (re)load
+            .onStyleLoaded { _ in BrandPuck.apply(to: proxy); syncRouteLayers(proxy.map) }   // puck first, then layers under it
             .onChange(of: routeCoords.count) { syncRouteLayers(proxy.map) }
             .ignoresSafeArea()
             // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
@@ -145,6 +145,12 @@ struct CardioTrackingView: View {
     private func syncRouteLayers(_ map: MapboxMap?) {
         guard let map, map.isStyleLoaded else { return }
 
+        // Insert route layers *below* the location puck so the athlete's purple dot always sits on top
+        // of the forming trace (rather than the growing line painting over "you"). The puck renders on
+        // a `location-indicator` layer; find it by type so we don't depend on Mapbox's internal id.
+        let belowPuck = map.allLayerIdentifiers.first { $0.type == "location-indicator" }
+            .map { LayerPosition.below($0.id) }
+
         // Dashed guide loop (the static suggested route), under the trace.
         if guideRoute.count > 1 {
             let data = GeoJSONSourceData.geometry(.lineString(LineString(guideRoute.map(\.clCoordinate))))
@@ -157,11 +163,11 @@ struct CardioTrackingView: View {
                     .lineColor(StyleColor(UIColor(guideColor)))
                     .lineWidth(4).lineCap(.round).lineJoin(.round)
                 layer.lineDasharray = .constant([1.6, 2.4])
-                try? map.addLayer(layer)
+                try? map.addLayer(layer, layerPosition: belowPuck)
             }
         }
 
-        // Live trace: a white casing + a solid purple line on top.
+        // Live trace: a white casing + a solid purple line on top — both below the puck.
         guard smoothedRoute.count > 1 else { return }
         let traceData = GeoJSONSourceData.geometry(.lineString(LineString(smoothedRoute)))
         if map.sourceExists(withId: "trace-src") {
@@ -172,11 +178,11 @@ struct CardioTrackingView: View {
             let casing = LineLayer(id: "trace-casing", source: "trace-src")
                 .lineColor(StyleColor(UIColor.white))
                 .lineWidth(8.5).lineCap(.round).lineJoin(.round)
-            try? map.addLayer(casing)
+            try? map.addLayer(casing, layerPosition: belowPuck)
             let trace = LineLayer(id: "trace-line", source: "trace-src")
                 .lineColor(StyleColor(UIColor(Theme.route)))
                 .lineWidth(5.5).lineCap(.round).lineJoin(.round)
-            try? map.addLayer(trace)
+            try? map.addLayer(trace, layerPosition: belowPuck)
         }
     }
 

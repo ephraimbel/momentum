@@ -103,9 +103,10 @@ actor GPSTrackingEngine {
 
         let result = processor.ingest(fix)
         let accepted = result != .rejected
-        // Build the route: the first accepted fix (anchor) plus every real move.
+        // Build the route from the Kalman-corrected position (not the raw fix): the first accepted
+        // fix (anchor) plus every real move.
         if case .accepted(let added) = result, added > 0 || route.isEmpty {
-            route.append(Coordinate(lat: fix.lat, lon: fix.lon))
+            route.append(Coordinate(lat: processor.filteredLat, lon: processor.filteredLon))
         }
         await sink.persistSample(fix, accepted: accepted)
 

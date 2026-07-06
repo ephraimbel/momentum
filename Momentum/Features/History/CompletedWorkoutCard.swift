@@ -46,8 +46,7 @@ struct CompletedWorkoutCard: View {
 
     @ViewBuilder
     private var routeSilhouette: some View {
-        let coords = (workout.gps?.samples ?? []).filter(\.accepted).sorted { $0.t < $1.t }
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let coords = workout.gps?.routeCoordinates(type: workout.type) ?? []
         if coords.count > 1 {
             RouteSilhouette(coords: coords)
                 .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))

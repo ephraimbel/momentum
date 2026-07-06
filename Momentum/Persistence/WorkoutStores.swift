@@ -70,6 +70,14 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         detail.mapSnapshotData = data
         try? modelContext.save()
     }
+
+    /// Attach the Mapbox map-matched route (JSON `[[lat, lon]]`) once matching lands post-finish
+    /// (§8.5). Display surfaces prefer it over the raw trace; the raw `samples` are untouched.
+    func attachMatchedRoute(_ data: Data) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.matchedRouteData = data
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row

@@ -97,8 +97,7 @@ struct ShareCardContent: View {
 
     @ViewBuilder
     private func routeSilhouette(_ gps: GPSDetail) -> some View {
-        let coords = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let coords = gps.routeCoordinates(type: workout.type)
         if coords.count > 1 {
             RouteSilhouette(coords: coords)
                 .stroke(.white, style: StrokeStyle(lineWidth: size.width * 0.012, lineCap: .round, lineJoin: .round))

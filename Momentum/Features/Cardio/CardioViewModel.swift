@@ -2,6 +2,7 @@ import Foundation
 import SwiftData
 import CoreLocation
 import Observation
+import OSLog
 
 /// Bridges `GPSTrackingEngine` to SwiftUI (PRD §4.3, §8.3). Pumps `LocationService.fixes()` into
 /// the engine and republishes a snapshot for the live map + hero metric.
@@ -159,10 +160,38 @@ final class CardioViewModel {
         liveActivity.end()
         voice?.stop()
         await engine.finish(durationOverrideS: elapsed())
-        // Render the Strava-style route snapshot from accepted coordinates (PRD §8.5).
+        // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5) — do
+        // this synchronously so the summary always opens with a route image.
         let coords = coordinates
         if coords.count > 1, let data = await RouteSnapshotter.snapshot(coordinates: coords) {
             await store.attachSnapshot(data)
+        }
+        // Stage 3 (§8.5): snap the finished route to the road/path network in the background, then
+        // upgrade the stored route + snapshot. Not awaited — the summary shows the raw trace instantly
+        // and the cleaner matched route swaps in via SwiftData observation a moment later. Self-gates
+        // on confidence, so trail/off-network runs simply keep the raw trace.
+        if MapMatchingService.isEnabled, coords.count > 1 {
+            let store = self.store
+            let type = self.type
+            let log = Logger(subsystem: "com.momentum.app", category: "map-matching")
+            Task.detached(priority: .utility) {
+                guard let match = await MapMatchingService().match(coordinates: coords,
+                                                                   profile: MapMatchingService.profile(for: type)) else {
+                    log.notice("map-match: no match (nil) — kept raw trace, input=\(coords.count) pts")
+                    return
+                }
+                guard match.confidence >= MapMatchingService.minConfidence else {
+                    log.notice("map-match: rejected confidence=\(match.confidence, format: .fixed(precision: 3)) < gate — kept raw trace")
+                    return
+                }
+                log.notice("map-match: applied confidence=\(match.confidence, format: .fixed(precision: 3)) input=\(coords.count) → matched=\(match.coordinates.count) pts")
+                let pairs = match.coordinates.map { [$0.latitude, $0.longitude] }
+                guard let routeData = try? JSONEncoder().encode(pairs) else { return }
+                await store.attachMatchedRoute(routeData)
+                if let snapshot = await RouteSnapshotter.snapshot(coordinates: match.coordinates) {
+                    await store.attachSnapshot(snapshot)
+                }
+            }
         }
         return workoutId
     }

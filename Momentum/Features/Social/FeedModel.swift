@@ -134,8 +134,8 @@ enum FeedAssembler {
 
     /// A workout's accepted GPS samples as real [[lat, lon]] coordinates for the feed map.
     static func routeLatLon(_ w: Workout) -> [[Double]]? {
-        let pts = (w.gps?.samples ?? []).filter(\.accepted).sorted { $0.t < $1.t }
+        let pts = w.gps?.routeCoordinates(type: w.type) ?? []
         guard pts.count > 1 else { return nil }
-        return pts.map { [$0.lat, $0.lon] }
+        return pts.map { [$0.latitude, $0.longitude] }
     }
 }

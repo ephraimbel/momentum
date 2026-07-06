@@ -127,12 +127,17 @@ struct CardioSummaryContent: View {
 
     @ViewBuilder
     private func routeMap(_ gps: GPSDetail) -> some View {
-        let coords = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let coords = gps.routeCoordinates(type: workout.type)
         if coords.count > 1 {
             RouteMapView(coordinates: RouteSmoothing.smooth(coords))
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                // When the map-matched route lands post-finish (nil→present), the coordinates change
+                // underneath RouteMapView. Its route line is added imperatively once on style-load (a
+                // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
+                // identity on match-presence forces one clean remount, re-running style-load with the
+                // snapped route.
+                .id(gps.matchedRouteData != nil)
         }
     }
 
