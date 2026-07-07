@@ -41,6 +41,13 @@ final class OnboardingViewModel {
     var weeklyRunVolumeM: Double? = nil
     var longestRunM: Double? = nil
 
+    // Hybrid emphasis (run + lift athletes) — biases the run/lift day split.
+    var hybridPriority: HybridPriority = .balanced
+    // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
+    var goalHours = 0
+    var goalMinutes = 0
+    var goalFinishTimeS: Double? { (goalHours == 0 && goalMinutes == 0) ? nil : Double(goalHours * 3600 + goalMinutes * 60) }
+
     // Calibration — how we seed running paces (works for total beginners, not just 5K racers)
     var calibrationMode: CalibrationMode = .none
     var paceFeel: PaceFeel? = nil
@@ -80,8 +87,9 @@ final class OnboardingViewModel {
     enum Step: Int, CaseIterable {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
-        case coldOpen, name, goal, disciplines, metrics, race, muscleFocus, experience, runVolume, days,
-             preferredDays, session, equipment, why, calibration, commitment, building, reveal, primers
+        case coldOpen, name, goal, disciplines, metrics, race, raceGoalTime, muscleFocus, experience,
+             runVolume, days, preferredDays, session, equipment, hybridFocus, why, calibration,
+             building, reveal, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -93,8 +101,10 @@ final class OnboardingViewModel {
         Step.allCases.filter { step in
             switch step {
             case .race:        return goal == .raceDistance && running
+            case .raceGoalTime: return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
+            case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
             case .calibration: return running
             // Current mileage only makes sense once you have some — beginners keep the gentle default.
             case .runVolume:   return running && experience != .new
@@ -105,13 +115,13 @@ final class OnboardingViewModel {
 
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
-        steps.filter { ![.coldOpen, .commitment, .building, .reveal, .primers].contains($0) }
+        steps.filter { ![.coldOpen, .building, .reveal, .primers].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 
     var progress: Double {
         guard let qIdx = questionSteps.firstIndex(of: step) else {
-            return step.rawValue < Step.commitment.rawValue ? 0 : 1
+            return step.rawValue < Step.building.rawValue ? 0 : 1
         }
         return Double(qIdx + 1) / Double(max(1, questionSteps.count))
     }
@@ -175,10 +185,19 @@ final class OnboardingViewModel {
     func reflections() -> [String] {
         var chips = ["\(daysPerWeek) days / week"]
         if goal == .raceDistance, let r = raceDistance { chips.append(r.label) } else { chips.append(goalLabel) }
+        if let g = goalTimeLabel { chips.append("Goal \(g)") }
+        if hybrid, hybridPriority != .balanced { chips.append(hybridPriority == .running ? "Run-focused" : "Lift-focused") }
         if !muscleFocus.isEmpty { chips.append("Focus: \(muscleFocus.count) area\(muscleFocus.count == 1 ? "" : "s")") }
         if disciplines.contains(.strength) { chips.append(equipmentLabel) }
         chips.append("\(sessionMinutes) min")
         return chips
+    }
+
+    /// The race goal time as "h:mm" (or "mm min"), nil when no target was set.
+    var goalTimeLabel: String? {
+        guard let t = goalFinishTimeS else { return nil }
+        let h = Int(t) / 3600, m = (Int(t) % 3600) / 60
+        return h > 0 ? "\(h):\(String(format: "%02d", m))" : "\(m) min"
     }
 
     private var goalLabel: String {
@@ -196,10 +215,11 @@ final class OnboardingViewModel {
 
     /// Projected outcome copy for the reveal (PRD §4.1).
     func projectedOutcome() -> String {
-        // Race goals lead with the race itself — the clearest promise.
+        // Race goals lead with the race itself — the clearest promise, with the goal time when set.
         if goal == .raceDistance, let r = raceDistance {
-            if hasRace { return "\(r.label)-ready by \(raceDate.formatted(.dateTime.month().day()))" }
-            return "Built for your \(r.label) — whenever you toe the line"
+            let subject = goalTimeLabel.map { "\($0) \(r.label.lowercased())" } ?? "\(r.label)-ready"
+            if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
+            return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label) — whenever you toe the line"
         }
         var bits: [String] = []
         if disciplines.contains(.strength) { bits.append(goal == .getStronger ? "Stronger" : "Leaner & stronger") }
@@ -242,6 +262,8 @@ final class OnboardingViewModel {
             profile.weeklyRunVolumeM = weeklyRunVolumeM
             profile.longestRunM = longestRunM
         }
+        if hybrid { profile.hybridPriority = hybridPriority.rawValue }
+        if goal == .raceDistance { profile.goalFinishTimeS = goalFinishTimeS }
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
         profile.crossTraining = extraActivities.map { $0.workoutType.rawValue }

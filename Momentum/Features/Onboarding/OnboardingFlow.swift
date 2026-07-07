@@ -35,8 +35,6 @@ struct OnboardingFlow: View {
                     .transition(.opacity)
             } else if vm.step == .coldOpen {
                 coldOpen.transition(.opacity)   // full-bleed welcome map
-            } else if vm.step == .commitment {
-                commitmentStep.transition(.opacity)   // full-bleed hold-to-commit beat
             } else {
                 VStack(spacing: Theme.Space.lg) {
                     if isQuestion { header }
@@ -59,8 +57,11 @@ struct OnboardingFlow: View {
         .onAppear {
             if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n }
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--onboarding-volume") {
-                vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("--onboarding-volume") { vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume }
+            if args.contains("--onboarding-hybrid") { vm.activities = [.run, .strength]; vm.step = .hybridFocus }
+            if args.contains("--onboarding-goaltime") {
+                vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.step = .raceGoalTime
             }
             #endif
         }
@@ -143,6 +144,7 @@ struct OnboardingFlow: View {
         case .goal: goalStep
         case .disciplines: disciplinesStep
         case .race: raceStep
+        case .raceGoalTime: raceGoalTimeStep
         case .muscleFocus: muscleFocusStep
         case .experience: experienceStep
         case .runVolume: runVolumeStep
@@ -150,10 +152,10 @@ struct OnboardingFlow: View {
         case .preferredDays: preferredDaysStep
         case .session: sessionStep
         case .equipment: equipmentStep
+        case .hybridFocus: hybridFocusStep
         case .metrics: metricsStep
         case .why: whyStep
         case .calibration: calibrationStep
-        case .commitment: EmptyView()   // rendered full-bleed in `body`
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
         case .primers: primersStep
@@ -582,27 +584,19 @@ struct OnboardingFlow: View {
 
     private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
     private var ageDisplay: Int { vm.birthYear.map { currentYear - $0 } ?? 30 }
-    // Height/weight are entered imperial (ft/in, lb) but stored SI (cm/kg) per the units rule.
-    private var heightInches: Double { (vm.heightCm ?? 172.72) / 2.54 }              // default 5'8"
+    // Weight is entered imperial (lb) but stored SI (kg) per the units rule.
     private var weightLb: Double { (vm.bodyMassKg ?? 72.5748) * Formatters.lbPerKg } // default 160 lb
 
     private var metricsStep: some View {
-        questionScaffold("A bit about you", subtitle: "Optional — sharpens your starting loads and targets.") {
+        questionScaffold("A bit about you", subtitle: "Optional — sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
             sexSelector.reveal(cascade(0))
             metricRow("Age", "\(ageDisplay)", { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
-            metricRow("Height", feetInchesLabel(heightInches),
-                      { setHeight(inches: heightInches - 1) }, { setHeight(inches: heightInches + 1) }).reveal(cascade(2))
             metricRow("Weight", "\(Int(weightLb.rounded())) lb",
-                      { setWeight(lb: weightLb - 5) }, { setWeight(lb: weightLb + 5) }).reveal(cascade(3))
+                      { setWeight(lb: weightLb - 5) }, { setWeight(lb: weightLb + 5) }).reveal(cascade(2))
         }
     }
 
     private func setAge(_ a: Int) { vm.birthYear = currentYear - min(90, max(13, a)) }
-    /// "5'8\"" from inches.
-    private func feetInchesLabel(_ inches: Double) -> String {
-        let t = Int(inches.rounded()); return "\(t / 12)'\(t % 12)\""
-    }
-    private func setHeight(inches: Double) { vm.heightCm = min(84, max(48, inches.rounded())) * 2.54 }
     private func setWeight(lb: Double) { vm.bodyMassKg = min(400, max(80, lb.rounded())) * Formatters.kgPerLb }
 
     private var sexSelector: some View {
@@ -648,37 +642,39 @@ struct OnboardingFlow: View {
 
     // MARK: Commitment (the investment beat — hold the iridescent ring to commit)
 
-    private var commitmentStep: some View {
-        VStack(spacing: Theme.Space.xl) {
-            Spacer()
-            VStack(spacing: Theme.Space.sm) {
-                Text("Commit to keep moving")
-                    .font(.display(30, weight: .black))
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                Text("Press and hold. This is the part that makes it stick.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .reveal(0.1)
-            HoldToCommitRing(size: 224) {
-                // Let the checkmark land, then move on to building the plan.
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(0.55))
-                    goNext()
+    /// Hybrid athletes: where the week's emphasis sits (biases the run/lift day split) — the question
+    /// that makes momentum understand a run-*and*-lift athlete instead of guessing from the goal.
+    private var hybridFocusStep: some View {
+        let opts: [(HybridPriority, String, String, String)] = [
+            (.running, "Running comes first", "Lift to support the miles", "figure.run"),
+            (.balanced, "Balanced", "Both matter, side by side", "figure.run.circle"),
+            (.lifting, "Lifting comes first", "Run to stay conditioned", "dumbbell.fill")]
+        return questionScaffold("Run and lift — where's your focus?",
+                                subtitle: "We'll weight your week toward it. Change it anytime.") {
+            ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
+                SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.hybridPriority == o.0) {
+                    pick { vm.hybridPriority = o.0 }
                 }
+                .reveal(cascade(i))
             }
-            .reveal(0.26)
-            Text("Hold to commit")
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                .foregroundStyle(Theme.inkTertiary)
-                .reveal(0.36)
-            Spacer()
         }
-        .padding(.horizontal, Theme.Space.lg)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Race goal time — the target the athlete is chasing (drives the reveal + the race outlook).
+    private var raceGoalTimeStep: some View {
+        let raceLabel = vm.raceDistance?.label ?? "race"
+        return questionScaffold("Chasing a time?",
+                                subtitle: "Optional — your goal for the \(raceLabel). We'll point the plan at it.") {
+            metricRow("Hours", "\(vm.goalHours)",
+                      { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(8, vm.goalHours + 1) }).reveal(cascade(0))
+            metricRow("Minutes", String(format: "%02d", vm.goalMinutes),
+                      { vm.goalMinutes = (vm.goalMinutes + 55) % 60 }, { vm.goalMinutes = (vm.goalMinutes + 5) % 60 }).reveal(cascade(1))
+            if let t = vm.goalFinishTimeS, let m = vm.raceDistance?.meters, m > 0 {
+                Text("That's about \(Formatters.pace(secPerKm: t / (m / 1000), unit: .auto)) — a strong target.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading).reveal(cascade(2))
+            }
+        }
     }
 
     private var primersStep: some View {

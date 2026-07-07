@@ -2,6 +2,20 @@ import Foundation
 
 // Unified domain enums (PRD §8.7). Stored as raw strings for SwiftData/Supabase portability.
 
+/// For a hybrid (run + lift) athlete, where the emphasis sits — biases the run/lift day split so the
+/// plan matches how they actually think of themselves, rather than being inferred from the goal alone.
+enum HybridPriority: String, Codable, Sendable, CaseIterable {
+    case running, balanced, lifting
+    /// Fraction of the week's training days given to lifting.
+    var liftFraction: Double {
+        switch self {
+        case .running: 0.35
+        case .balanced: 0.5
+        case .lifting: 0.6
+        }
+    }
+}
+
 enum WorkoutType: String, Codable, Sendable, CaseIterable {
     // Foot (GPS)
     case run, trailRun, walk, hike

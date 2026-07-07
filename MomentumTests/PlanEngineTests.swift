@@ -213,6 +213,18 @@ struct PlanEngineTests {
         #expect(half.paceOverride == 320)
     }
 
+    @Test func hybridPriorityShiftsRunLiftSplit() {
+        func runDays(_ priority: HybridPriority?) -> Int {
+            var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: 5)
+            inp.hybridPriority = priority
+            let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+            return plan.weeks[0].sessions.filter { $0.discipline == .running }.count
+        }
+        // Running-priority weights the week toward runs; lifting-priority away from them.
+        #expect(runDays(.running) > runDays(.lifting))
+        #expect(runDays(.balanced) >= runDays(.lifting))
+    }
+
     @Test func hybridWeekAttachesSequencingRationale() {
         // A running + strength week places a leg day and a hard run — the hard run should carry a
         // cross-discipline "fresh legs" rationale (our differentiator, made visible).

@@ -19,6 +19,12 @@ final class UserProfile {
     /// athlete where they are (not an experience-tier default). Both in meters (SI); nil until answered.
     var weeklyRunVolumeM: Double?
     var longestRunM: Double?
+    /// Hybrid (run + lift) emphasis — biases the run/lift day split. `HybridPriority` raw value; nil →
+    /// inferred from the goal.
+    var hybridPriority: String?
+    /// Target race finish time in seconds (race goals) — the athlete's aim, surfaced on the reveal and
+    /// compared against the race predictor. nil → no explicit target.
+    var goalFinishTimeS: Double?
     /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.

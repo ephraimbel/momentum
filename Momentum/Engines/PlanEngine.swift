@@ -55,8 +55,14 @@ enum PlanEngine {
         let days = max(1, min(7, profile.daysPerWeek))
         var liftDays = 0, runDays = 0
         if hasLift && hasCardio {
-            let strengthLeaning = profile.goal == .buildMuscle || profile.goal == .getStronger
-            liftDays = max(1, strengthLeaning ? Int((Double(days) * 0.6).rounded()) : Int(Double(days) * 0.4))
+            // The athlete's stated hybrid emphasis wins; otherwise infer from the goal.
+            let liftFraction: Double
+            if let priority = profile.hybridPriority {
+                liftFraction = priority.liftFraction
+            } else {
+                liftFraction = (profile.goal == .buildMuscle || profile.goal == .getStronger) ? 0.6 : 0.4
+            }
+            liftDays = max(1, Int((Double(days) * liftFraction).rounded()))
             liftDays = min(liftDays, days - 1)
             runDays = days - liftDays
         } else if hasLift {
@@ -456,6 +462,8 @@ struct PlanInputs: Sendable {
     /// Current running load (meters) captured at onboarding — seeds starting volume when present.
     var currentWeeklyVolumeM: Double? = nil
     var longestRunM: Double? = nil
+    /// Hybrid emphasis — biases the run/lift day split. nil → inferred from the goal.
+    var hybridPriority: HybridPriority? = nil
     /// Muscles to emphasize — adds a working set to matching strength exercises.
     var muscleFocus: [MuscleGroup] = []
     /// Preferred in-week day offsets (0…6 from the plan's start day). Empty → even auto-spread.

@@ -106,6 +106,7 @@ enum PlanService {
             liftingExperience: level(Discipline.strength.rawValue),
             raceDistanceM: p.raceDistanceM,
             currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
+            hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets)
     }
