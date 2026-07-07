@@ -76,6 +76,17 @@ enum DemoSeed {
             let date = cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
             context.insert(CoachingEvent(kind: kind, headline: h, detail: d, date: date))
         }
+        // A few inbox notifications so the bell has real content.
+        let demoNotifs: [(AppNotification.Kind, String, String, Int)] = [
+            (.reminder, "Today's session is ready", "Long run · 6.2 mi at an easy pace.", 0),
+            (.streak, "3-day streak going", "Keep it alive — a session today makes it four.", 1),
+            (.coaching, "Your paces got faster", "That tempo showed real fitness, so I sharpened your target paces by about 6 s/km.", 2),
+            (.achievement, "New longest run", "You just logged your longest run yet. Nice work.", 4),
+        ]
+        for (kind, title, body, daysAgo) in demoNotifs {
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+            context.insert(AppNotification(kind: kind, title: title, body: body, date: date))
+        }
         try? context.save()
 
         // Render a real Mapbox route snapshot for every run so each grid tile shows the actual map +

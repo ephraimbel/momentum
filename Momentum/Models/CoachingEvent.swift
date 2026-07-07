@@ -46,5 +46,7 @@ final class CoachingEvent {
         let dup = existing.contains { $0.kindRaw == kind.rawValue && calendar.isDate($0.date, inSameDayAs: dayStart) }
         guard !dup else { return }
         context.insert(CoachingEvent(kind: kind, headline: headline, detail: detail, date: date))
+        // A coaching decision is also a notification the athlete gets — mirror it into the bell inbox.
+        AppNotification.post(kind: .coaching, title: headline, body: detail, on: date, in: context)
     }
 }

@@ -11,6 +11,7 @@ struct TodayView: View {
     @Environment(Services.self) private var services
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
+    @Query private var appNotifications: [AppNotification]
 
     // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
@@ -31,6 +32,7 @@ struct TodayView: View {
     // Spots is hidden for now; reachable only via the `--spots` deep link. "Loop here" from it enters
     // inline loop mode after the sheet dismisses (presenting/transitioning on one tick misbehaves).
     @State private var showSpots = false
+    @State private var showNotifications = false
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
     @Environment(ModerationStore.self) private var moderation
@@ -90,6 +92,14 @@ struct TodayView: View {
             services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
                                                        isPlannedDayToday: plannedToday,
                                                        hasWorkedOutToday: workedOutToday)
+            // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
+            if let s = PlanCoaching.todaySessions(plan, on: Date()).first {
+                AppNotification.post(kind: .reminder, title: "Today's session is ready",
+                                     body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
+            }
+            AppNotification.post(kind: .system, title: "Welcome to momentum",
+                                 body: "Your plan is set. Tap Start whenever you're ready to move.",
+                                 in: context, dedupeToken: "welcome", daily: false)
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
             // Open over the athlete's last-known neighborhood (never the whole world); once a live
@@ -107,6 +117,10 @@ struct TodayView: View {
             // --spots deep link: open "Spots near you" straight away for deterministic sim verification.
             if ProcessInfo.processInfo.arguments.contains("--spots") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSpots = true }
+            }
+            // --notifications: open the bell inbox for verification.
+            if ProcessInfo.processInfo.arguments.contains("--notifications") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showNotifications = true }
             }
             // --loop deep link: open the inline loop suggester straight away (deterministic verification).
             if ProcessInfo.processInfo.arguments.contains("--loop") {
@@ -156,6 +170,7 @@ struct TodayView: View {
         .sheet(isPresented: $showSportPicker) {
             SportPicker(selection: $activity) { showSportPicker = false }
         }
+        .sheet(isPresented: $showNotifications) { NotificationsView() }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
         .sheet(isPresented: $showSpots, onDismiss: {
@@ -437,13 +452,25 @@ struct TodayView: View {
         .padding(.top, Theme.Space.sm)
     }
 
+    private var unreadCount: Int { appNotifications.filter { !$0.read }.count }
+
     private var bellButton: some View {
-        Button { Haptics.light(); services.notifications.requestAuthorization() } label: {
+        Button { Haptics.light(); showNotifications = true } label: {
             Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
                 .frame(width: 44, height: 44).momentumGlass(in: Circle())
+                .overlay(alignment: .topTrailing) {
+                    if unreadCount > 0 {
+                        Text("\(min(unreadCount, 9))")
+                            .font(.rounded(9, weight: .black)).foregroundStyle(Theme.background)
+                            .frame(width: 17, height: 17)
+                            .background(Circle().fill(Theme.ink))
+                            .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                            .offset(x: 3, y: -3)
+                    }
+                }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Notifications")
+        .accessibilityLabel("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")")
     }
 
     /// Mon–Sun of the current week: weekday, date, today ringed, and an iridescent dot on days you train.
@@ -459,9 +486,7 @@ struct TodayView: View {
                         .foregroundStyle(isToday ? Theme.background : Theme.ink)
                         .frame(width: 32, height: 32)
                         .background { if isToday { Circle().fill(Theme.ink) } }
-                    Circle()
-                        .fill(hasPlannedWorkout(day) ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Color.clear))
-                        .frame(width: 5, height: 5)
+                    dayMarker(day)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -477,8 +502,20 @@ struct TodayView: View {
         return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
     }
 
-    private func hasPlannedWorkout(_ day: Date) -> Bool {
-        plan?.sessions.contains { Calendar.current.isDate($0.date, inSameDayAs: day) } ?? false
+    /// A day's training state for the week strip: filled dot = you trained, hollow ring = planned but
+    /// not done, nothing = rest. Monochrome and legible — the dot means something now.
+    @ViewBuilder
+    private func dayMarker(_ day: Date) -> some View {
+        let cal = Calendar.current
+        let onDay = plan?.sessions.filter { cal.isDate($0.date, inSameDayAs: day) } ?? []
+        let done = onDay.contains { $0.status == .completed || $0.completedWorkout != nil }
+        if done {
+            Circle().fill(Theme.ink).frame(width: 6, height: 6)
+        } else if !onDay.isEmpty {
+            Circle().stroke(Theme.inkTertiary, lineWidth: 1.5).frame(width: 6, height: 6)
+        } else {
+            Color.clear.frame(width: 6, height: 6)
+        }
     }
 
     /// Opens the world: the Today map zooms all the way out to the globe of everyone on Momentum.
@@ -1060,19 +1097,22 @@ struct TrainingLoadChip: View {
     }
 }
 
-/// A streak chip — flame + count; lights up iridescent when the streak is alive. Static (no breathe or
-/// pop) — the earned celebration lives on the finish/summary screen, not this passive header chip.
+/// A streak chip — a clean monochrome pill: flame glyph + day count. Static and restrained (the earned
+/// celebration lives on the finish/summary screen, not this passive header chip).
 struct StreakChip: View {
     let days: Int
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text("🔥").font(.system(size: Theme.FontSize.body))
+        HStack(spacing: 5) {
+            Image(systemName: "flame.fill").font(.system(size: 13, weight: .semibold))
             Text("\(days)").font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
         }
         .foregroundStyle(Theme.ink)
-        .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
-        .momentumGlass(iridescent: days > 0 ? .chip : nil)
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
+        .background {
+            Capsule().fill(Theme.surface)
+            Capsule().stroke(Theme.hairline)
+        }
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
     }
