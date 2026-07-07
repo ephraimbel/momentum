@@ -33,6 +33,8 @@ struct TodayView: View {
     // inline loop mode after the sheet dismisses (presenting/transitioning on one tick misbehaves).
     @State private var showSpots = false
     @State private var showNotifications = false
+    @State private var showProfile = false
+    @State private var selectedDaySession: PlannedSession?
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
     @Environment(ModerationStore.self) private var moderation
@@ -122,6 +124,14 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--notifications") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showNotifications = true }
             }
+            if ProcessInfo.processInfo.arguments.contains("--today-profile") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showProfile = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--today-day") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    selectedDaySession = plan?.sessions.sorted { $0.date < $1.date }.first
+                }
+            }
             // --loop deep link: open the inline loop suggester straight away (deterministic verification).
             if ProcessInfo.processInfo.arguments.contains("--loop") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
@@ -171,6 +181,24 @@ struct TodayView: View {
             SportPicker(selection: $activity) { showSportPicker = false }
         }
         .sheet(isPresented: $showNotifications) { NotificationsView() }
+        .sheet(isPresented: $showProfile) {
+            NavigationStack {
+                ProfileScreen()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showProfile = false }.fontWeight(.semibold)
+                        }
+                    }
+            }
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $selectedDaySession) { session in
+            NavigationStack {
+                SessionDetailSheet(session: session, distanceUnit: .auto, profile: profiles.first,
+                                   onRemove: { context.delete(session); try? context.save() })
+            }
+            .presentationDetents([.medium, .large])
+        }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
         .sheet(isPresented: $showSpots, onDismiss: {
@@ -433,7 +461,11 @@ struct TodayView: View {
     private var headerCard: some View {
         VStack(spacing: Theme.Space.md) {
             HStack(spacing: Theme.Space.sm) {
-                AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
+                Button { Haptics.light(); showProfile = true } label: {
+                    AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Your profile")
                 bellButton
                 Spacer(minLength: Theme.Space.xs)
                 activitySelector
@@ -473,25 +505,42 @@ struct TodayView: View {
         .accessibilityLabel("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")")
     }
 
-    /// Mon–Sun of the current week: weekday, date, today ringed, and an iridescent dot on days you train.
+    /// Mon–Sun of the current week — tap a day to open that day's session. Today glows in the brand
+    /// iridescent; a filled iridescent dot marks days you trained, a hollow ring marks planned days.
     private var weekStrip: some View {
         HStack(spacing: 0) {
             ForEach(weekDays, id: \.self) { day in
                 let isToday = Calendar.current.isDateInToday(day)
-                VStack(spacing: 5) {
-                    Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
-                        .font(.rounded(Theme.FontSize.label, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                    Text("\(Calendar.current.component(.day, from: day))")
-                        .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                        .foregroundStyle(isToday ? Theme.background : Theme.ink)
-                        .frame(width: 32, height: 32)
-                        .background { if isToday { Circle().fill(Theme.ink) } }
-                    dayMarker(day)
+                Button {
+                    Haptics.light()
+                    if let s = plannedSession(on: day) { selectedDaySession = s }
+                } label: {
+                    VStack(spacing: 5) {
+                        Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                            .font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .foregroundStyle(isToday ? Theme.ink : Theme.inkTertiary)
+                        Text("\(Calendar.current.component(.day, from: day))")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(Theme.ink)
+                            .frame(width: 34, height: 34)
+                            .background {
+                                if isToday {
+                                    Circle().fill(LinearGradient(colors: Theme.iridescent, startPoint: .topLeading, endPoint: .bottomTrailing))
+                                    Circle().stroke(Theme.ink.opacity(0.08))
+                                }
+                            }
+                        dayMarker(day)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
             }
         }
-        .accessibilityHidden(true)
+    }
+
+    private func plannedSession(on day: Date) -> PlannedSession? {
+        plan?.sessions.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
     }
 
     private var weekDays: [Date] {
@@ -510,7 +559,9 @@ struct TodayView: View {
         let onDay = plan?.sessions.filter { cal.isDate($0.date, inSameDayAs: day) } ?? []
         let done = onDay.contains { $0.status == .completed || $0.completedWorkout != nil }
         if done {
-            Circle().fill(Theme.ink).frame(width: 6, height: 6)
+            // Trained — the earned iridescent accent.
+            Circle().fill(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
+                .frame(width: 6, height: 6)
         } else if !onDay.isEmpty {
             Circle().stroke(Theme.inkTertiary, lineWidth: 1.5).frame(width: 6, height: 6)
         } else {
