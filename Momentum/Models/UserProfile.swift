@@ -15,6 +15,10 @@ final class UserProfile {
     var raceDate: Date?
     /// Target race distance in meters (for "run a race" goals) — drives long-run progression + taper.
     var raceDistanceM: Double?
+    /// Current running load, captured at onboarding — seeds the plan's starting volume so it meets the
+    /// athlete where they are (not an experience-tier default). Both in meters (SI); nil until answered.
+    var weeklyRunVolumeM: Double?
+    var longestRunM: Double?
     /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.

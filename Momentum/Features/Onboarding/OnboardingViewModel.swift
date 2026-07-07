@@ -36,6 +36,11 @@ final class OnboardingViewModel {
     var birthYear: Int? = nil
     var bodyMassKg: Double? = nil
 
+    // Current running load (meters) — seeds the plan's starting volume so it meets the athlete where
+    // they are. nil until the `runVolume` step sets it (shown only to non-beginner runners).
+    var weeklyRunVolumeM: Double? = nil
+    var longestRunM: Double? = nil
+
     // Calibration — how we seed running paces (works for total beginners, not just 5K racers)
     var calibrationMode: CalibrationMode = .none
     var paceFeel: PaceFeel? = nil
@@ -75,7 +80,7 @@ final class OnboardingViewModel {
     enum Step: Int, CaseIterable {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
-        case coldOpen, name, goal, disciplines, metrics, race, muscleFocus, experience, days,
+        case coldOpen, name, goal, disciplines, metrics, race, muscleFocus, experience, runVolume, days,
              preferredDays, session, equipment, why, calibration, commitment, building, reveal, primers
     }
 
@@ -91,6 +96,8 @@ final class OnboardingViewModel {
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
             case .calibration: return running
+            // Current mileage only makes sense once you have some — beginners keep the gentle default.
+            case .runVolume:   return running && experience != .new
             default:           return true
             }
         }
@@ -229,6 +236,12 @@ final class OnboardingViewModel {
         profile.sessionMinutes = sessionMinutes
         profile.raceDate = hasRace ? raceDate : nil
         profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
+        // Only carried when the runVolume step applies (running, non-beginner); otherwise nil → the
+        // engine's experience-tier defaults. Guarded so flipping back to "new" can't leak a seeded value.
+        if running, experience != .new {
+            profile.weeklyRunVolumeM = weeklyRunVolumeM
+            profile.longestRunM = longestRunM
+        }
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
         profile.crossTraining = extraActivities.map { $0.workoutType.rawValue }

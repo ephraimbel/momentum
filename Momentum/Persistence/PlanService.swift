@@ -105,6 +105,7 @@ enum PlanService {
             runningExperience: level(Discipline.running.rawValue),
             liftingExperience: level(Discipline.strength.rawValue),
             raceDistanceM: p.raceDistanceM,
+            currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets)
     }

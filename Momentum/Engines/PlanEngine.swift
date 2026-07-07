@@ -90,7 +90,8 @@ enum PlanEngine {
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
                                  goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload || isTaper,
-                                 raceDistanceM: profile.raceDistanceM, weekIndex: w)
+                                 raceDistanceM: profile.raceDistanceM, weekIndex: w,
+                                 currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM)
                 : []
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
@@ -114,13 +115,25 @@ enum PlanEngine {
 
     static func cardioSessions(discipline: Discipline, runDays: Int, level: ExperienceLevel,
                                goal: Goal, p5k: Double, volumeMult: Double, isDeload: Bool,
-                               raceDistanceM: Double? = nil, weekIndex: Int = 0) -> [GeneratedSession] {
+                               raceDistanceM: Double? = nil, weekIndex: Int = 0,
+                               currentWeeklyVolumeM: Double? = nil, longestRunM: Double? = nil) -> [GeneratedSession] {
         guard runDays > 0 else { return [] }
         var (easyBase, longBase, qualityBase): (Double, Double, Double)
-        switch level {
-        case .new: (easyBase, longBase, qualityBase) = (3000, 5000, 3000)
-        case .some: (easyBase, longBase, qualityBase) = (6000, 10000, 5000)
-        case .experienced: (easyBase, longBase, qualityBase) = (9000, 16000, 8000)
+        // Seed the starting week from the athlete's actual current load when they gave it — so the plan
+        // meets them where they are instead of an experience-tier average (fixes "too aggressive" plans).
+        if let weekly = currentWeeklyVolumeM, weekly > 0 {
+            let hasLong = runDays >= 2, hasQuality = runDays >= 3
+            longBase = min(max(longestRunM ?? weekly * 0.35, weekly * 0.22), weekly * 0.45)
+            qualityBase = weekly * 0.18
+            let easyDays = max(1, runDays - (hasLong ? 1 : 0) - (hasQuality ? 1 : 0))
+            let used = (hasLong ? longBase : 0) + (hasQuality ? qualityBase : 0)
+            easyBase = max(weekly * 0.12, (weekly - used) / Double(easyDays))
+        } else {
+            switch level {
+            case .new: (easyBase, longBase, qualityBase) = (3000, 5000, 3000)
+            case .some: (easyBase, longBase, qualityBase) = (6000, 10000, 5000)
+            case .experienced: (easyBase, longBase, qualityBase) = (9000, 16000, 8000)
+            }
         }
         let isRunning = discipline == .running
 
@@ -129,7 +142,9 @@ enum PlanEngine {
         // gets long). Short races sharpen with intervals; long races build threshold with tempo.
         let longCap = raceDistanceM.map { longRunPeak(forRaceM: $0) }
         if let cap = longCap {
-            longBase = min(max(longBase, cap * 0.5), cap)   // start ~half-peak, grow toward the cap
+            // Seeded athletes start from their own longest run (never forced up to half-peak); everyone
+            // else uses the race-appropriate default. Both cap at the race peak.
+            longBase = currentWeeklyVolumeM != nil ? min(longBase, cap) : min(max(longBase, cap * 0.5), cap)
         }
         let useIntervals: Bool = {
             if let r = raceDistanceM { return r <= 12_000 }     // 5K/10K → speed; half/marathon → tempo
@@ -438,6 +453,9 @@ struct PlanInputs: Sendable {
     var liftingExperience: ExperienceLevel
     /// Target race distance (meters) — shapes the long run + quality work. nil → general fitness.
     var raceDistanceM: Double? = nil
+    /// Current running load (meters) captured at onboarding — seeds starting volume when present.
+    var currentWeeklyVolumeM: Double? = nil
+    var longestRunM: Double? = nil
     /// Muscles to emphasize — adds a working set to matching strength exercises.
     var muscleFocus: [MuscleGroup] = []
     /// Preferred in-week day offsets (0…6 from the plan's start day). Empty → even auto-spread.

@@ -56,7 +56,14 @@ struct OnboardingFlow: View {
         }
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
-        .onAppear { if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n } }
+        .onAppear {
+            if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--onboarding-volume") {
+                vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume
+            }
+            #endif
+        }
         .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
@@ -138,6 +145,7 @@ struct OnboardingFlow: View {
         case .race: raceStep
         case .muscleFocus: muscleFocusStep
         case .experience: experienceStep
+        case .runVolume: runVolumeStep
         case .days: daysStep
         case .preferredDays: preferredDaysStep
         case .session: sessionStep
@@ -276,6 +284,36 @@ struct OnboardingFlow: View {
                 }
             }
         }
+    }
+
+    /// Current running load — seeds the plan's starting volume so it meets the athlete where they are.
+    private var runVolumeStep: some View {
+        questionScaffold("How much are you running now?",
+                         subtitle: "So your plan starts where you are — challenging, not crushing.") {
+            metricRow("Per week", volumeLabel(vm.weeklyRunVolumeM),
+                      { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) - 5) },
+                      { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) + 5) }).reveal(cascade(0))
+            metricRow("Longest run", volumeLabel(vm.longestRunM),
+                      { setLongest(volumeDisplay(vm.longestRunM) - 1) },
+                      { setLongest(volumeDisplay(vm.longestRunM) + 1) }).reveal(cascade(1))
+        }
+        .onAppear(perform: seedVolumeDefaultsIfNeeded)
+    }
+
+    // Volume is entered in the athlete's locale unit (mi in the US/UK, km elsewhere) but stored in meters.
+    private var useMetricDistance: Bool { Locale.current.measurementSystem != .us }
+    private var metersPerUnit: Double { useMetricDistance ? 1000 : 1609.344 }
+    private var distanceUnitLabel: String { useMetricDistance ? "km" : "mi" }
+    private func volumeDisplay(_ meters: Double?) -> Double { (meters ?? 0) / metersPerUnit }
+    private func volumeLabel(_ meters: Double?) -> String { "\(Int(volumeDisplay(meters).rounded())) \(distanceUnitLabel)" }
+    private func setWeekly(_ d: Double) { Haptics.light(); vm.weeklyRunVolumeM = min(200, max(0, d.rounded())) * metersPerUnit }
+    private func setLongest(_ d: Double) { Haptics.light(); vm.longestRunM = min(60, max(1, d.rounded())) * metersPerUnit }
+    /// Anchor the steppers on a sensible starting guess by experience (the athlete adjusts from there).
+    private func seedVolumeDefaultsIfNeeded() {
+        guard vm.weeklyRunVolumeM == nil else { return }
+        let (weekly, longest): (Double, Double) = vm.experience == .experienced ? (40_000, 16_000) : (20_000, 8_000)
+        vm.weeklyRunVolumeM = weekly
+        vm.longestRunM = longest
     }
 
     /// A compact labelled 3-way experience selector (used per-discipline for hybrids).

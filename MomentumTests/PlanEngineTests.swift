@@ -223,6 +223,28 @@ struct PlanEngineTests {
         #expect(hardRuns.contains { ($0.rationale?.lowercased().contains("leg")) == true })
     }
 
+    @Test func seedsStartingVolumeFromStatedLoad() {
+        // An athlete running 30 km/week with a 10 km long run should start near that — not the
+        // experience-tier default (fixes plans that open too aggressively).
+        var inp = inputs(disciplines: [.running], goal: .generalFitness, days: 4)
+        inp.currentWeeklyVolumeM = 30_000
+        inp.longestRunM = 10_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let week0 = plan.weeks[0].sessions.filter { $0.discipline == .running }
+        let weekly = week0.compactMap(\.targetDistanceM).reduce(0, +)
+        #expect(weekly >= 24_000 && weekly <= 36_000)                 // starting week within ~20% of stated
+        let longRun = week0.first { $0.runType == .long }?.targetDistanceM ?? 0
+        #expect(longRun >= 9_000 && longRun <= 14_000)               // reflects their 10 km, not the 16 km default
+    }
+
+    @Test func startingVolumeUnchangedWithoutStatedLoad() {
+        // No stated volume → the experience-tier default still governs (regression guard).
+        let inp = inputs(disciplines: [.running], goal: .generalFitness, days: 4)   // helper defaults to .experienced
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let longRun = plan.weeks[0].sessions.first { $0.discipline == .running && $0.runType == .long }?.targetDistanceM ?? 0
+        #expect(longRun >= 15_000)                                    // experienced default long base ≈ 16 km
+    }
+
     @Test func generatedPlanHasRealVariety() {
         let race = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date(timeIntervalSinceReferenceDate: 0))
         let ins = PlanInputs(disciplines: [.running], goal: .raceDistance, daysPerWeek: 4, equipment: .fullGym,
