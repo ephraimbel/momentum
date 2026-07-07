@@ -27,6 +27,15 @@ struct EffortAdaptationTests {
         #expect(EffortAdaptation.note(for: .none) == nil)
     }
 
+    @Test func noteNamesTheSessionAndEffort() {
+        let ease = EffortAdaptation.note(for: .ease, runType: .tempo, rpe: 9)
+        #expect(ease?.detail.contains("tempo") == true && ease?.detail.contains("9/10") == true)
+        let recover = EffortAdaptation.note(for: .recover, runType: .easy, rpe: 8)
+        #expect(recover?.detail.contains("easy run") == true && recover?.detail.contains("8/10") == true)
+        // Without context it still reads naturally (generic fallback).
+        #expect(EffortAdaptation.note(for: .ease)?.detail.contains("session") == true)
+    }
+
     @Test func expectedEffortRisesWithIntensity() {
         #expect(EffortAdaptation.expectedRPE(.recovery) < EffortAdaptation.expectedRPE(.easy))
         #expect(EffortAdaptation.expectedRPE(.easy) < EffortAdaptation.expectedRPE(.tempo))

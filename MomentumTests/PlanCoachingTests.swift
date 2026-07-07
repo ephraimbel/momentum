@@ -351,10 +351,25 @@ struct PlanCoachingTests {
 
         let note = PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx)
         #expect(note != nil)                          // it changed the plan and narrated it
+        #expect(note?.detail.contains("easy run") == true)   // names the session that felt hard
         #expect(future.runType == .recovery)          // the next hard session became a recovery day
         #expect(plan.lastAdaptedAt != nil)
+        // A coaching event is recorded for the adaptation-history timeline.
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 1 && events.first?.kind == .recover)
         // The ≤1/week gate blocks a second adaptation.
         #expect(PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx) == nil)
+    }
+
+    @Test func coachingEventRecordDedupesSameKindSameDay() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let today = Date(timeIntervalSince1970: 1_000_000)
+        CoachingEvent.record(kind: .ease, headline: "A", detail: "a", on: today, in: ctx)
+        CoachingEvent.record(kind: .ease, headline: "B", detail: "b", on: today, in: ctx)      // same kind+day → skipped
+        CoachingEvent.record(kind: .recover, headline: "C", detail: "c", on: today, in: ctx)   // different kind → kept
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 2)
     }
 
     @Test func rpeAdaptationNoOpWhenEffortMatchesPrescription() throws {

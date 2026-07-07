@@ -64,6 +64,17 @@ enum DemoSeed {
             ps.status = .completed; ps.intervals = "6×400m @ 5K"
             context.insert(ps); recent.plannedSession = ps
         }
+        // A few coaching-history entries so the "How your plan adapted" timeline populates.
+        let cal = Calendar.current
+        let demoEvents: [(CoachingEvent.Kind, String, String, Int)] = [
+            (.recalibrate, "Your paces got faster", "That tempo showed real fitness, so I sharpened your target paces by about 6 s/km. You've earned it.", 2),
+            (.recover, "Banking some recovery", "Your easy run felt like an honest 8/10 — that's your body asking for rest, so your next session is now a recovery day.", 9),
+            (.ease, "Eased your week", "Your recent load spiked, so I trimmed this week's volume to keep you fresh and healthy.", 16),
+        ]
+        for (kind, h, d, daysAgo) in demoEvents {
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+            context.insert(CoachingEvent(kind: kind, headline: h, detail: d, date: date))
+        }
         try? context.save()
 
         // Render a real Mapbox route snapshot for every run so each grid tile shows the actual map +

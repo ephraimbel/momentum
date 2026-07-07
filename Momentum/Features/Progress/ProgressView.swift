@@ -11,6 +11,7 @@ struct ProgressScreen: View {
     @Environment(Services.self) private var services
     @Query private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
+    @Query(sort: \CoachingEvent.date, order: .reverse) private var coachingEvents: [CoachingEvent]
     @State private var animateCharts = false
     @State private var adjustedPlan = false
     @State private var segment: Segment = {
@@ -908,6 +909,7 @@ struct ProgressScreen: View {
                 identityHero(model, facts).reveal(0)
                 let nudges = AthleteNudges.generate(facts)
                 if !nudges.isEmpty { weeklyDigest(nudges).reveal(0.08) }
+                if !coachingEvents.isEmpty { adaptationHistory.reveal(0.10) }
                 if confidentCount(facts) < 3 { learningState(facts).reveal(0.12) }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
                     learnedCard(item).reveal(0.14 + Double(i) * 0.05)
@@ -929,6 +931,56 @@ struct ProgressScreen: View {
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
         }
+    }
+
+    /// The coaching timeline — every plan adaptation with its *why*, so the closed loop is legible: the
+    /// plan doesn't quietly shift, it keeps the receipt. Monochrome (informational, not an earned accent).
+    private var adaptationHistory: some View {
+        let events = Array(coachingEvents.prefix(8))
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("HOW YOUR PLAN ADAPTED").font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            VStack(spacing: 0) {
+                ForEach(Array(events.enumerated()), id: \.element.id) { i, event in
+                    HStack(alignment: .top, spacing: Theme.Space.md) {
+                        VStack(spacing: 0) {
+                            Image(systemName: event.kind.systemImage)
+                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+                                .frame(width: 34, height: 34)
+                                .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+                            if i < events.count - 1 {
+                                Rectangle().fill(Theme.hairline).frame(width: 1.5).frame(maxHeight: .infinity)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(event.headline).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                                Spacer(minLength: Theme.Space.sm)
+                                Text(eventRelativeDay(event.date)).font(.rounded(Theme.FontSize.label, weight: .semibold))
+                                    .foregroundStyle(Theme.inkTertiary)
+                            }
+                            Text(event.detail).font(.rounded(Theme.FontSize.caption, weight: .medium))
+                                .foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.bottom, i < events.count - 1 ? Theme.Space.md : 0)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    private func eventRelativeDay(_ date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInYesterday(date) { return "Yesterday" }
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: Date())).day ?? 0
+        return days < 7 ? "\(days)d ago" : date.formatted(.dateTime.month().day())
     }
 
     private func identityHero(_ model: AthleteModel?, _ facts: AthleteFacts) -> some View {

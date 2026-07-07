@@ -35,15 +35,36 @@ enum EffortAdaptation {
         return .none
     }
 
-    /// No-shame narration for an applied adaptation (nil for none/headroom, which change nothing).
-    static func note(for outcome: Outcome) -> (headline: String, detail: String)? {
+    /// A natural noun for a run type, for coaching copy ("your easy run felt tough").
+    static func sessionNoun(_ rt: RunType) -> String {
+        switch rt {
+        case .easy: "easy run"
+        case .recovery: "recovery run"
+        case .long: "long run"
+        case .tempo: "tempo"
+        case .intervals: "speed session"
+        case .fartlek: "fartlek"
+        case .hills: "hill session"
+        case .strides: "strides session"
+        case .progression: "progression run"
+        case .race: "race"
+        case .freeRun: "run"
+        }
+    }
+
+    /// No-shame narration for an applied adaptation, naming the session that triggered it (nil for
+    /// none/headroom, which change nothing).
+    static func note(for outcome: Outcome, runType: RunType? = nil, rpe: Int? = nil) -> (headline: String, detail: String)? {
+        let session = runType.map(sessionNoun) ?? "session"
         switch outcome {
         case .ease:
+            let effort = rpe.map { " (you rated it \($0)/10)" } ?? ""
             return ("That one took it out of you",
-                    "It felt harder than it should have, so I eased your next few sessions to let you absorb it. No streak lost.")
+                    "Your \(session) felt harder than it should have\(effort), so I eased your next few sessions to let you absorb it. No streak lost.")
         case .recover:
+            let effort = rpe.map { "an honest \($0)/10" } ?? "tough"
             return ("Banking some recovery",
-                    "An easy day that feels tough is your body asking for rest — your next session is now a recovery day.")
+                    "Your \(session) felt like \(effort) today — that's your body asking for rest, so your next session is now a recovery day.")
         case .none, .headroom:
             return nil
         }

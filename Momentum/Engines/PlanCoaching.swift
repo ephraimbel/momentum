@@ -220,6 +220,12 @@ enum PlanCoaching {
             updated += 1
         }
         try? context.save()
+        if updated > 0 {
+            let delta = Int((current - bounded).rounded())
+            CoachingEvent.record(kind: .recalibrate, headline: "Your paces got faster",
+                                 detail: "That run showed real fitness, so I sharpened your target paces by about \(delta) s/km. You've earned it.",
+                                 on: today, in: context, calendar: calendar)
+        }
         return Recalibration(oldP5kSPerKm: current, newP5kSPerKm: bounded, sessionsUpdated: updated)
     }
 
@@ -241,6 +247,11 @@ enum PlanCoaching {
         let rec = ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation
         guard rec == .ease || rec == .rest else { return nil }   // protective directions only
         guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
+        let (headline, detail): (String, String) = rec == .rest
+            ? ("Recovery inserted", "Your training load's been climbing, so your next session is now a recovery day. Rest is where it sticks.")
+            : ("Eased your week", "Your recent load spiked, so I trimmed this week's volume to keep you fresh and healthy.")
+        CoachingEvent.record(kind: rec == .rest ? .recover : .ease, headline: headline, detail: detail,
+                             on: today, in: context, calendar: calendar)
         return rec   // `apply` already recorded `lastAdaptedAt` + saved
     }
 
@@ -263,7 +274,11 @@ enum PlanCoaching {
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
         guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
-        return EffortAdaptation.note(for: outcome)
+        let note = EffortAdaptation.note(for: outcome, runType: workout.plannedSession?.runType,
+                                         rpe: workout.perceivedEffort)
+        if let note { CoachingEvent.record(kind: outcome == .recover ? .recover : .ease,
+                                           headline: note.headline, detail: note.detail, on: today, in: context) }
+        return note
     }
 
     /// A bounded plan change the athlete can opt into on confirm — the consent-required half of the
