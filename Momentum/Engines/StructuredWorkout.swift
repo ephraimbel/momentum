@@ -336,6 +336,34 @@ enum StructuredWorkoutBuilder {
 /// Pure progress logic for a structured run. Given cumulative distance + elapsed time it decides which
 /// step you're in, how much remains, and whether you're on pace. No timers, no I/O — the view model
 /// drives it once a second and voices the transitions it reports.
+/// A completed work rep, captured live for the post-run adherence breakdown (running-excellence polish).
+/// Codable so it persists on the workout and shows in history, not just the immediate summary.
+struct RepResult: Codable, Sendable, Equatable {
+    var repIndex: Int?
+    var repTotal: Int?
+    var title: String?
+    var targetPaceSPerKm: Double?
+    var toleranceSPerKm: Double = 12
+    var achievedPaceSPerKm: Double
+    var distanceM: Double
+    var durationS: Double
+
+    enum Verdict: String, Codable, Sendable { case onPace, tooFast, tooSlow, noTarget }
+    /// Did the rep land in its target pace band? (Lower s/km = faster.)
+    var verdict: Verdict {
+        guard let t = targetPaceSPerKm, achievedPaceSPerKm > 0 else { return .noTarget }
+        if achievedPaceSPerKm < t - toleranceSPerKm { return .tooFast }
+        if achievedPaceSPerKm > t + toleranceSPerKm { return .tooSlow }
+        return .onPace
+    }
+    /// A readable name for the rep ("Rep 3/6", "Hill 2/8", "Tempo").
+    var label: String {
+        let noun = title ?? "Rep"
+        if let i = repIndex, let n = repTotal { return "\(noun) \(i)/\(n)" }
+        return noun
+    }
+}
+
 struct StructuredRunTracker: Equatable, Sendable {
     enum Adherence: Equatable, Sendable { case onPace, tooFast, tooSlow, noTarget }
 
@@ -344,8 +372,21 @@ struct StructuredRunTracker: Equatable, Sendable {
     /// Cumulative distance / elapsed captured when the current step began.
     private(set) var anchorDistanceM = 0.0
     private(set) var anchorElapsedS = 0.0
+    /// Per-rep results, appended as each work step is crossed — feeds the post-run breakdown.
+    private(set) var completedReps: [RepResult] = []
 
     init(steps: [WorkoutStep]) { self.steps = steps }
+
+    /// Capture the just-finished step as a rep result (work steps only). Called before the index advances,
+    /// so `current`/anchors still describe the completing step.
+    private mutating func recordRep(distanceM: Double, elapsedS: Double) {
+        guard let step = current, step.kind.isWork else { return }
+        let dist = distanceM - anchorDistanceM, dur = elapsedS - anchorElapsedS
+        guard dist > 0, dur > 0 else { return }
+        completedReps.append(RepResult(repIndex: step.repIndex, repTotal: step.repTotal, title: step.title,
+                                       targetPaceSPerKm: step.paceSPerKm, toleranceSPerKm: step.toleranceSPerKm,
+                                       achievedPaceSPerKm: dur / (dist / 1000), distanceM: dist, durationS: dur))
+    }
 
     var isComplete: Bool { index >= steps.count }
     var current: WorkoutStep? { steps.indices.contains(index) ? steps[index] : nil }
@@ -375,6 +416,7 @@ struct StructuredRunTracker: Equatable, Sendable {
     mutating func advance(distanceM: Double, elapsedS: Double) -> Bool {
         var changed = false
         while let step = current, targetMet(step, distanceM: distanceM, elapsedS: elapsedS) {
+            recordRep(distanceM: distanceM, elapsedS: elapsedS)
             index += 1
             anchorDistanceM = distanceM
             anchorElapsedS = elapsedS
@@ -387,6 +429,7 @@ struct StructuredRunTracker: Equatable, Sendable {
     @discardableResult
     mutating func skip(distanceM: Double, elapsedS: Double) -> Bool {
         guard !isComplete else { return false }
+        recordRep(distanceM: distanceM, elapsedS: elapsedS)   // partial rep still counts toward the breakdown
         index += 1
         anchorDistanceM = distanceM
         anchorElapsedS = elapsedS

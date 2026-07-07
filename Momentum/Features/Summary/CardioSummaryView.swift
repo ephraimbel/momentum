@@ -89,7 +89,8 @@ struct CardioSummaryContent: View {
                 routeMap(gps).reveal(0.22)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
                 PlanProposalCard().reveal(0.34)
-                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit).reveal(0.36)
+                repsSection(gps).reveal(0.35)   // a structured run's headline: how each rep landed
+                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit).reveal(0.38)
                 splitsSection(gps).reveal(0.40)
             }
             .task {
@@ -189,6 +190,53 @@ struct CardioSummaryContent: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Per-rep adherence breakdown for a guided structured run — how each rep landed vs its target pace.
+    @ViewBuilder
+    private func repsSection(_ gps: GPSDetail) -> some View {
+        let reps = gps.structuredReps
+        if !reps.isEmpty {
+            let paced = reps.filter { $0.verdict != .noTarget }
+            let onPace = paced.filter { $0.verdict == .onPace }.count
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack {
+                    Text("REPS").font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                    Spacer()
+                    if !paced.isEmpty {
+                        Text("\(onPace)/\(paced.count) on pace").font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                ForEach(Array(reps.enumerated()), id: \.offset) { _, rep in
+                    HStack(spacing: Theme.Space.sm) {
+                        Text(rep.label).foregroundStyle(Theme.ink).frame(width: 92, alignment: .leading)
+                        Spacer()
+                        Text(Formatters.pace(secPerKm: rep.achievedPaceSPerKm, unit: distanceUnit))
+                            .monospacedDigit().foregroundStyle(Theme.ink)
+                        repVerdictChip(rep.verdict)
+                    }
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func repVerdictChip(_ v: RepResult.Verdict) -> some View {
+        let label: String
+        switch v {
+        case .onPace: label = "on"; case .tooFast: label = "fast"; case .tooSlow: label = "slow"; case .noTarget: label = "—"
+        }
+        let filled = v == .onPace
+        return Text(label).font(.rounded(Theme.FontSize.label, weight: .bold))
+            .foregroundStyle(filled ? Theme.background : Theme.inkSecondary)
+            .frame(width: 48, height: 24)
+            .background {
+                Capsule().fill(filled ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                if !filled { Capsule().stroke(Theme.hairline) }
+            }
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

@@ -94,6 +94,12 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         detail.avgHR = bpm
         try? modelContext.save()
     }
+
+    func attachStructuredReps(_ data: Data) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.structuredRepsData = data
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row

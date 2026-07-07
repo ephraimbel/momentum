@@ -48,6 +48,17 @@ enum DemoSeed {
                 runIndex += 1
             }
         }
+        // Give the most recent run a guided-session rep breakdown so the summary's Reps section shows.
+        if let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
+            .filter({ $0.type == .run && $0.gps != nil })
+            .sorted(by: { $0.startedAt > $1.startedAt }).first, let gps = recent.gps {
+            let achieved: [Double] = [296, 302, 291, 315, 305, 288]   // 6×400 @ 5K pace (300); one slow rep
+            let reps = achieved.enumerated().map { i, a in
+                RepResult(repIndex: i + 1, repTotal: achieved.count, title: nil, targetPaceSPerKm: 300,
+                          achievedPaceSPerKm: a, distanceM: 400, durationS: a * 0.4)
+            }
+            gps.structuredRepsData = try? JSONEncoder().encode(reps)
+        }
         try? context.save()
 
         // Render a real Mapbox route snapshot for every run so each grid tile shows the actual map +

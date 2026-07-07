@@ -74,7 +74,7 @@ final class CardioViewModel {
     private var structuredTask: Task<Void, Never>?
     private var structuredCompleteAnnounced = false
     private var lastPaceNudgeAt: TimeInterval = 0
-    private var recoveryReadyBuzzed = false
+    private var lastCountdownSecond = 0   // last whole-second countdown tick fired for the current step
 
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
          goalMeters: Double? = nil, structured: StructuredWorkout? = nil,
@@ -191,7 +191,7 @@ final class CardioViewModel {
         let d = distanceM, e = structuredElapsed()
         if t.advance(distanceM: d, elapsedS: e) {
             tracker = t
-            recoveryReadyBuzzed = false              // fresh step — re-arm the recovery countdown buzz
+            lastCountdownSecond = 0                   // fresh step — re-arm the 3-2-1 countdown
             if t.isComplete { announceStructuredComplete() }
             else if let step = t.current {
                 Haptics.medium()
@@ -202,12 +202,14 @@ final class CardioViewModel {
         tracker = t
         // Don't coach a paused athlete: pace reads are stale and time isn't advancing.
         guard !isPaused else { return }
-        // A single "get ready" buzz as a timed recovery is about to end, so the next rep doesn't
-        // start by surprise.
-        if let step = t.current, step.kind == .recovery, step.target.isTime, !recoveryReadyBuzzed,
-           t.remaining(distanceM: d, elapsedS: e) <= 3 {
-            recoveryReadyBuzzed = true
-            Haptics.medium()
+        // A 3-2-1 haptic countdown as any *timed* step (a rep or a recovery) nears its end, so the
+        // transition never catches the athlete by surprise. Light ticks; the transition itself buzzes.
+        if let step = t.current, step.target.isTime {
+            let sec = Int(t.remaining(distanceM: d, elapsedS: e).rounded())
+            if (1...3).contains(sec), sec != lastCountdownSecond {
+                lastCountdownSecond = sec
+                Haptics.light()
+            }
         }
         maybeNudgePace(at: e)
     }
@@ -318,6 +320,10 @@ final class CardioViewModel {
         // Persist the run's average cadence + heart rate when the sensors produced readings.
         if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
         if let avgHR = RunSignals.mean(hrReadings) { await store.attachHR(avgHR) }
+        // Persist the per-rep breakdown from a guided run for the summary + history.
+        if let reps = tracker?.completedReps, !reps.isEmpty, let data = try? JSONEncoder().encode(reps) {
+            await store.attachStructuredReps(data)
+        }
         // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5) — do
         // this synchronously so the summary always opens with a route image.
         let coords = coordinates

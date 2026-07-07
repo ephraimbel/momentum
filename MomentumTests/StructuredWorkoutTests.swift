@@ -119,6 +119,34 @@ struct StructuredWorkoutTests {
         #expect(prog?.steps.last?.paceSPerKm == 315)          // strong = P5k + 15
     }
 
+    // MARK: Per-rep capture (post-run breakdown)
+
+    @Test func trackerCapturesRepResultsWithVerdict() {
+        let w = iv(2, 400, pace: 300)   // warm-up, rep1(400@300), recovery(90s), rep2(400@300), cool-down
+        var t = StructuredRunTracker(steps: w.steps)
+        t.advance(distanceM: 1000, elapsedS: 300)          // finish warm-up → into rep 1
+        t.advance(distanceM: 1400, elapsedS: 400)          // rep 1: 400 m in 100 s = 250 s/km (fast)
+        #expect(t.completedReps.count == 1)
+        let r1 = t.completedReps[0]
+        #expect(abs(r1.achievedPaceSPerKm - 250) < 1)
+        #expect(r1.targetPaceSPerKm == 300 && r1.repIndex == 1 && r1.repTotal == 2)
+        #expect(r1.verdict == .tooFast)                    // 250 < 300 − 12
+
+        t.advance(distanceM: 1400, elapsedS: 490)          // recovery (90 s) — NOT a rep
+        t.advance(distanceM: 1800, elapsedS: 610)          // rep 2: 400 m in 120 s = 300 s/km (on pace)
+        #expect(t.completedReps.count == 2)                // recovery added nothing
+        #expect(t.completedReps[1].verdict == .onPace)
+    }
+
+    @Test func repResultVerdictAndLabel() {
+        let fast = RepResult(repIndex: 3, repTotal: 6, title: nil, targetPaceSPerKm: 300,
+                             achievedPaceSPerKm: 280, distanceM: 400, durationS: 112)
+        #expect(fast.verdict == .tooFast && fast.label == "Rep 3/6")
+        let hill = RepResult(repIndex: 2, repTotal: 8, title: "Hill", targetPaceSPerKm: nil,
+                             achievedPaceSPerKm: 320, distanceM: 0, durationS: 45)
+        #expect(hill.verdict == .noTarget && hill.label == "Hill 2/8")   // effort reps have no pace target
+    }
+
     // MARK: build(from:)
 
     @Test func buildsIntervalSessionAndSkipsPlainRuns() {
