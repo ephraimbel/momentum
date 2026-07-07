@@ -86,31 +86,38 @@ struct ProgressScreen: View {
     }
 
     private var trends: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
-                // Lead with the fitness read (are you getting fitter?), then the trend graphs up top —
-                // the "how I'm progressing" section sits near the top, not buried at the bottom.
-                fitnessHero().reveal(0)
-                trendMetrics().reveal(0.05)
+        ScrollViewReader { proxy in
+            ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
-                    distanceChart(insights)
-                    loadChart(insights)
-                    if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
-                    if !weeklyMuscleActivation.isEmpty { muscleWeek }
+                    // Lead with the fitness read (are you getting fitter?), then the trend graphs up top —
+                    // the "how I'm progressing" section sits near the top, not buried at the bottom.
+                    fitnessHero().reveal(0)
+                    trendMetrics().reveal(0.05)
+                    VStack(alignment: .leading, spacing: Theme.Space.md) {
+                        distanceChart(insights)
+                        loadChart(insights)
+                        if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
+                        if !weeklyMuscleActivation.isEmpty { muscleWeek }
+                    }
+                    .reveal(0.09)
+                    .proLocked(.advancedAnalytics)
+                    // Then "how am I right now" and "what can I run" — the coaching read.
+                    formCard(recovery).reveal(0.14).id("formRace")
+                    raceOutlook().reveal(0.18)
+                    coachCard(insights).reveal(0.22)
                 }
-                .reveal(0.09)
-                .proLocked(.advancedAnalytics)
-                // Then "how am I right now" and "what can I run" — the coaching read.
-                formCard(recovery).reveal(0.14)
-                raceOutlook().reveal(0.18)
-                coachCard(insights).reveal(0.22)
+                .padding(Theme.Space.md)
+                .padding(.bottom, Theme.Space.xxl)
             }
-            .padding(Theme.Space.md)
-            .padding(.bottom, Theme.Space.xxl)
-        }
-        .onAppear {
-            if reduceMotion { animateCharts = true }                               // no chart build-in
-            else { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
+            .onAppear {
+                if reduceMotion { animateCharts = true }                               // no chart build-in
+                else { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
+                #if DEBUG   // deterministic scroll to Form/Race for sim verification
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
+                }
+                #endif
+            }
         }
     }
 
@@ -226,11 +233,18 @@ struct ProgressScreen: View {
         }
     }
 
+    /// CTL/ATL Form only reads true after ~6 weeks of training — on a fresh account CTL sits near 0 and
+    /// TSB pegs deeply negative even when you're rested. Require enough history before showing Form.
+    private var hasFormHistory: Bool {
+        let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -5, to: Date()) ?? Date()
+        return workouts.count >= 10 && workouts.contains { $0.startedAt <= cutoff }
+    }
+
     /// FORM & READINESS — Form (CTL−ATL) on a Buried→Peaked scale, next to the readiness ring. Falls
-    /// back to the plain recovery card when there isn't enough load history for a Form read.
+    /// back to the plain recovery card until there's enough load history for a trustworthy Form read.
     @ViewBuilder
     private func formCard(_ r: RecoveryModel) -> some View {
-        if r.hasData, let form = formPoint {
+        if r.hasData, hasFormHistory, let form = formPoint {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 sectionTitle("Form & readiness — now")
                 HStack(spacing: Theme.Space.md) {
