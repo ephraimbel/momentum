@@ -59,6 +59,13 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-volume") { vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume }
             if args.contains("--onboarding-hybrid") { vm.activities = [.run, .strength]; vm.step = .hybridFocus }
             if args.contains("--onboarding-disciplines") { vm.step = .disciplines }
+            if args.contains("--onboarding-reveal"), let demo = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
+                profile = demo
+                // --onboarding-reveal-runs hides the anatomy block so the first-week dropdowns sit higher.
+                vm.activities = args.contains("--reveal-runs") ? [.run] : [.run, .strength]
+                vm.daysPerWeek = demo.daysPerWeek; vm.goal = demo.goal
+                vm.name = "Maya"; vm.step = .reveal
+            }
             if args.contains("--onboarding-goaltime") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.step = .raceGoalTime
             }
