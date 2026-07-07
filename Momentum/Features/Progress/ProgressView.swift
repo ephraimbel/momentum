@@ -23,6 +23,7 @@ struct ProgressScreen: View {
         return .trends
     }()
     @State private var correcting: LearnedItem?
+    @State private var showVO2Info = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
@@ -52,6 +53,7 @@ struct ProgressScreen: View {
         }
         .background(Theme.background)
         .navigationBarHidden(true)
+        .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
     }
 
     private var header: some View {
@@ -185,7 +187,15 @@ struct ProgressScreen: View {
     private func fitnessHero() -> some View {
         if let vo2 = currentVO2 {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                sectionTitle("Running fitness")
+                HStack {
+                    sectionTitle("Running fitness")
+                    Spacer()
+                    Button { showVO2Info = true } label: {
+                        Image(systemName: "info.circle").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("How VO₂max is estimated")
+                }
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(String(format: "%.1f", vo2)).font(.display(42, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
@@ -203,11 +213,80 @@ struct ProgressScreen: View {
                         .background(Capsule().fill(up ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.hairline)))
                     }
                 }
+                vo2RangeBar(vo2)
                 vo2Sparkline()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md).background(card)
         }
+    }
+
+    private var athleteAge: Int {
+        (profiles.first?.birthYear).map { max(14, Calendar.current.component(.year, from: Date()) - $0) } ?? 35
+    }
+    private var athleteMale: Bool { BiologicalSex(rawValue: profiles.first?.sex ?? "") != .female }
+
+    /// A good-vs-bad range for VO₂max: the athlete's rating for their age + sex, and where they sit on a
+    /// muted→iridescent track (higher = fitter = the earned accent).
+    @ViewBuilder
+    private func vo2RangeBar(_ vo2: Double) -> some View {
+        let age = athleteAge, male = athleteMale
+        let rating = VO2maxNorms.rating(vo2: vo2, age: age, male: male)
+        let pos = VO2maxNorms.position(vo2: vo2, age: age, male: male)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Text(rating.rawValue).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                Text("· \(VO2maxNorms.blurb(rating))").font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(LinearGradient(colors: [Theme.inkTertiary.opacity(0.22), Theme.inkTertiary.opacity(0.35)] + Theme.iridescent,
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(height: 8)
+                    Circle().fill(Theme.background).frame(width: 16, height: 16)
+                        .overlay(Circle().stroke(Theme.ink, lineWidth: 2.5))
+                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                        .offset(x: pos * (w - 16))
+                }
+            }
+            .frame(height: 16)
+            HStack {
+                Text("Below average").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                Spacer()
+                Text("Superior").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var vo2InfoSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.md) {
+                    Text("How we estimate your VO₂max")
+                        .font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    infoParagraph("VO₂max is how much oxygen your body can use at full effort — the single best number for aerobic fitness. Higher is fitter.")
+                    infoParagraph("We estimate it from your running — specifically your recent 5K-equivalent pace, using Daniels' VDOT model, the same science behind most GPS-watch estimates. It sharpens as you log faster, harder efforts.")
+                    infoParagraph("It's an estimate, not a lab test — expect it within a few points of a treadmill measurement. Read the trend over weeks, not any single number.")
+                    infoParagraph("Your rating compares your estimate to population norms for your age and sex (Cooper Institute / ACSM).")
+                    Text("Not medical advice.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        .padding(.top, Theme.Space.xs)
+                }
+                .padding(Theme.Space.lg)
+            }
+            .navigationTitle("VO₂max").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { showVO2Info = false }.fontWeight(.semibold) } }
+        }
+    }
+
+    private func infoParagraph(_ text: String) -> some View {
+        Text(text).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
