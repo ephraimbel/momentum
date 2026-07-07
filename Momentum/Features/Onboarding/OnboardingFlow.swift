@@ -41,6 +41,7 @@ struct OnboardingFlow: View {
                         .transition(stepTransition)
                         .id(vm.step)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
             }
@@ -57,6 +58,7 @@ struct OnboardingFlow: View {
             let args = ProcessInfo.processInfo.arguments
             if args.contains("--onboarding-volume") { vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume }
             if args.contains("--onboarding-hybrid") { vm.activities = [.run, .strength]; vm.step = .hybridFocus }
+            if args.contains("--onboarding-disciplines") { vm.step = .disciplines }
             if args.contains("--onboarding-goaltime") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.step = .raceGoalTime
             }
@@ -666,8 +668,11 @@ struct OnboardingFlow: View {
                     .padding(.bottom, Theme.Space.md)
             }
             .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)   // only rubber-bands when there's actually overflow
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Fill the available height so the ScrollView above is height-bounded and can actually scroll
+        // on tall steps (e.g. the disciplines picker) instead of overflowing off-screen.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     /// Staggered entrance delay for the i-th element on a screen — the assemble cascade.
