@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import Charts
+import UIKit
 
 /// Progress — the coaching brain (PRD §4.7, §4.8). A training-status hero (ACWR), an AI coach card
 /// that says how you're trending and how to tweak the plan, beautifully animated trend charts, a
@@ -12,12 +13,19 @@ struct ProgressScreen: View {
     @Query private var profiles: [UserProfile]
     @State private var animateCharts = false
     @State private var adjustedPlan = false
-    @State private var segment: Segment = .trends
+    @State private var segment: Segment = {
+        #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
+        let a = ProcessInfo.processInfo.arguments
+        if a.contains("--progress-history") { return .history }
+        if a.contains("--progress-you") { return .you }
+        #endif
+        return .trends
+    }()
     @State private var correcting: LearnedItem?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
-        case trends = "Trends", history = "History", you = "Coach"
+        case trends = "Trends", history = "History", you = "You"
         var id: Self { self }
     }
 
@@ -37,7 +45,7 @@ struct ProgressScreen: View {
                 .padding(.bottom, Theme.Space.md)
             switch segment {
             case .trends: trends
-            case .history: HistoryView()
+            case .history: history
             case .you: you
             }
         }
@@ -80,20 +88,22 @@ struct ProgressScreen: View {
     private var trends: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                statusHero(insights).reveal(0)
-                coachCard(insights).reveal(0.06)
-                // Advanced analytics — Pro (PRD §10): training load, pace/distance trends, weekly
-                // sets-per-muscle. The body-of-work (totals, consistency grid, PR shelf) now lives on
-                // the Profile tab; Progress stays the analytical/coaching brain.
+                // Lead with the fitness read (are you getting fitter?), then the trend graphs up top —
+                // the "how I'm progressing" section sits near the top, not buried at the bottom.
+                fitnessHero().reveal(0)
+                trendMetrics().reveal(0.05)
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
-                    recoveryCard(recovery)
-                    loadChart(insights)
                     distanceChart(insights)
+                    loadChart(insights)
                     if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                     if !weeklyMuscleActivation.isEmpty { muscleWeek }
                 }
-                .reveal(0.12)
+                .reveal(0.09)
                 .proLocked(.advancedAnalytics)
+                // Then "how am I right now" and "what can I run" — the coaching read.
+                formCard(recovery).reveal(0.14)
+                raceOutlook().reveal(0.18)
+                coachCard(insights).reveal(0.22)
             }
             .padding(Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
@@ -102,6 +112,385 @@ struct ProgressScreen: View {
             if reduceMotion { animateCharts = true }                               // no chart build-in
             else { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
         }
+    }
+
+    // MARK: - Fitness · Form · Race (running-excellence R4/R5 surfaced)
+
+    private var latestSnapshot: FitnessSnapshot? {
+        profiles.first?.athlete?.snapshots.max(by: { $0.weekStart < $1.weekStart })
+    }
+    /// Best current running-fitness proxy: the athlete-model's Riegel-normalized 5k pace, else the plan's.
+    private var currentP5k: Double? {
+        if let p = latestSnapshot?.p5kEquivSPerKm, p > 0 { return p }
+        if let p = plan?.p5kSPerKm, p > 0 { return p }
+        return nil
+    }
+    /// VO₂max estimate from current fitness (P5k treated as a 5k effort — Daniels' VDOT).
+    private var currentVO2: Double? {
+        currentP5k.flatMap { VO2maxEstimator.fromRace(distanceM: 5000, timeS: $0 * 5) }
+    }
+    private var vo2EightWeeksAgo: Double? {
+        guard let athlete = profiles.first?.athlete,
+              let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -8, to: Date()) else { return nil }
+        let old = athlete.snapshots
+            .filter { $0.weekStart <= cutoff && ($0.p5kEquivSPerKm ?? 0) > 0 }
+            .max(by: { $0.weekStart < $1.weekStart })
+        return old?.p5kEquivSPerKm.flatMap { VO2maxEstimator.fromRace(distanceM: 5000, timeS: $0 * 5) }
+    }
+    /// VO₂max over the weekly snapshots, for the hero sparkline.
+    private var vo2Series: [(date: Date, vo2: Double)] {
+        (profiles.first?.athlete?.snapshots ?? [])
+            .sorted { $0.weekStart < $1.weekStart }
+            .compactMap { s in
+                guard let p = s.p5kEquivSPerKm, p > 0, let v = VO2maxEstimator.fromRace(distanceM: 5000, timeS: p * 5)
+                else { return nil }
+                return (s.weekStart, v)
+            }
+    }
+    /// Daily training load over the last 9 weeks → CTL/ATL/Form (Fitness/Fatigue/Form).
+    private var formPoint: FitnessFreshness.Point? {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard let start = cal.date(byAdding: .day, value: -62, to: today) else { return nil }
+        var buckets: [Date: Double] = [:]
+        for w in workouts where w.startedAt >= start {
+            buckets[cal.startOfDay(for: w.startedAt), default: 0] += TrainingLoad.session(w)
+        }
+        let loads = (0...62).map { i -> Double in
+            let day = cal.date(byAdding: .day, value: i - 62, to: today) ?? today
+            return buckets[cal.startOfDay(for: day)] ?? 0
+        }
+        return FitnessFreshness.current(dailyLoads: loads)
+    }
+    private var goalRace: RaceDistance? { profiles.first?.raceDistanceM.map { RaceDistance.nearest(toMeters: $0) } }
+    private var racePredictions: [(race: RaceDistance, timeS: Double, paceSPerKm: Double)] {
+        guard let p5k = currentP5k else { return [] }
+        return RaceDistance.allCases.compactMap { r in
+            guard let t = RacePredictor.finishTimeS(raceDistanceM: r.meters, p5kSPerKm: p5k),
+                  let pace = RacePredictor.projectedPaceSPerKm(raceDistanceM: r.meters, p5kSPerKm: p5k) else { return nil }
+            return (r, t, pace)
+        }
+    }
+
+    /// FITNESS — the headline: VO₂max, an earned-iridescent trend chip, and a fitness sparkline.
+    @ViewBuilder
+    private func fitnessHero() -> some View {
+        if let vo2 = currentVO2 {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                sectionTitle("Running fitness")
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(String(format: "%.1f", vo2)).font(.display(42, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                        Text("VO₂ MAX · EST.").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer()
+                    if let old = vo2EightWeeksAgo, abs(vo2 - old) >= 0.3 {
+                        let up = vo2 >= old
+                        HStack(spacing: 4) {
+                            Image(systemName: up ? "arrow.up" : "arrow.down").font(.system(size: 10, weight: .heavy))
+                            Text("\(up ? "+" : "")\(String(format: "%.1f", vo2 - old)) / 8 wks").monospacedDigit()
+                        }
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Capsule().fill(up ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.hairline)))
+                    }
+                }
+                vo2Sparkline()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md).background(card)
+        }
+    }
+
+    @ViewBuilder
+    private func vo2Sparkline() -> some View {
+        let series = vo2Series
+        if series.count >= 3 {
+            let last = series.last?.date
+            let lo = series.map(\.vo2).min() ?? 0, hi = series.map(\.vo2).max() ?? 1
+            Chart(series, id: \.date) { pt in
+                AreaMark(x: .value("W", pt.date, unit: .weekOfYear), y: .value("VO2", animateCharts ? pt.vo2 : lo))
+                    .foregroundStyle(LinearGradient(colors: [Theme.ink.opacity(0.08), .clear], startPoint: .top, endPoint: .bottom))
+                    .interpolationMethod(.monotone)
+                LineMark(x: .value("W", pt.date, unit: .weekOfYear), y: .value("VO2", animateCharts ? pt.vo2 : lo))
+                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.monotone)
+                if pt.date == last {
+                    PointMark(x: .value("W", pt.date, unit: .weekOfYear), y: .value("VO2", animateCharts ? pt.vo2 : lo))
+                        .foregroundStyle(IridescentMaterial()).symbolSize(80)
+                }
+            }
+            .chartXAxis(.hidden).chartYAxis(.hidden)
+            .chartYScale(domain: (lo * 0.97)...(hi * 1.03))
+            .frame(height: 50)
+        }
+    }
+
+    /// FORM & READINESS — Form (CTL−ATL) on a Buried→Peaked scale, next to the readiness ring. Falls
+    /// back to the plain recovery card when there isn't enough load history for a Form read.
+    @ViewBuilder
+    private func formCard(_ r: RecoveryModel) -> some View {
+        if r.hasData, let form = formPoint {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                sectionTitle("Form & readiness — now")
+                HStack(spacing: Theme.Space.md) {
+                    readinessRing(score: r.score)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(r.readiness.rawValue).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
+                        Text(r.guidance).font(.rounded(Theme.FontSize.label, weight: .medium))
+                            .foregroundStyle(Theme.inkTertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: Theme.Space.sm)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(form.tsb >= 0 ? "+" : "")\(Int(form.tsb.rounded()))")
+                            .font(.display(24, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                        Text(FitnessFreshness.formLabel(form.tsb)).font(.rounded(Theme.FontSize.label, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                formBar(tsb: form.tsb)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md).background(card)
+        } else {
+            recoveryCard(r)
+        }
+    }
+
+    private func formBar(tsb: Double) -> some View {
+        let frac = max(0, min(1, (tsb + 40) / 70))   // −40 (buried) … +30 (peaked)
+        return VStack(spacing: 6) {
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.hairline)
+                    Capsule().fill(IridescentMaterial()).opacity(0.5).frame(width: w * 0.22).offset(x: w * 0.46)
+                    Circle().fill(Theme.ink).frame(width: 14, height: 14)
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 3))
+                        .offset(x: max(0, min(w - 14, w * frac - 7)))
+                }
+            }
+            .frame(height: 12)
+            HStack {
+                Text("Buried"); Spacer(); Text("Balanced"); Spacer(); Text("Peaked")
+            }
+            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// RACE OUTLOOK — Riegel projections for every distance; your goal earns the iridescent row.
+    @ViewBuilder
+    private func raceOutlook() -> some View {
+        let preds = racePredictions
+        if !preds.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack {
+                    sectionTitle("Race outlook")
+                    Spacer()
+                    if let days = RacePredictor.daysUntil(raceDate: profiles.first?.raceDate, from: Date()), let g = goalRace {
+                        Text(days == 0 ? "Race day" : "\(days) days · \(RacePredictor.label(forRaceM: g.meters))")
+                            .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background { Capsule().fill(Theme.background); Capsule().stroke(Theme.hairline) }
+                    }
+                }
+                VStack(spacing: 0) {
+                    ForEach(Array(preds.enumerated()), id: \.offset) { i, p in
+                        if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                        raceRow(p.race, p.timeS, p.paceSPerKm, isGoal: p.race == goalRace)
+                    }
+                }
+                Text("Flat-course estimate — terrain and weather shift race day. Paces update as you train.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary).fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md).background(card)
+        }
+    }
+
+    private func raceRow(_ race: RaceDistance, _ timeS: Double, _ pace: Double, isGoal: Bool) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text(RacePredictor.label(forRaceM: race.meters)).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+            if isGoal {
+                Text("GOAL").font(.rounded(9, weight: .bold)).tracking(0.6).foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(IridescentMaterial()).opacity(0.85))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(Formatters.duration(s: timeS)).font(.display(19, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                Text(Formatters.pace(secPerKm: pace, unit: distanceUnit)).font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
+            }
+        }
+        .padding(.vertical, Theme.Space.sm).padding(.horizontal, isGoal ? Theme.Space.sm : 0)
+        .background { if isGoal { RoundedRectangle(cornerRadius: 11).fill(IridescentMaterial()).opacity(0.10) } }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(RacePredictor.label(forRaceM: race.meters))\(isGoal ? ", your goal" : ""): projected \(Formatters.duration(s: timeS))")
+    }
+
+    /// The at-a-glance trend row — free + up top, so "how I'm trending" reads before the Pro charts.
+    private func trendMetrics() -> some View {
+        let paceFaster = insights.paceTrendPct < -1
+        let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -12, to: Date()) ?? Date()
+        let km = Int((workouts.filter { $0.startedAt >= cutoff }.compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
+        return HStack(spacing: Theme.Space.sm) {
+            metricTile(paceFaster ? "▲ \(Int(abs(insights.paceTrendPct).rounded()))%" : "—", "Pace", iris: paceFaster)
+            metricTile("\(km)", "km · 12 wk", iris: false)
+            metricTile("\(profiles.first?.prs.count ?? 0)", "PRs", iris: false)
+        }
+    }
+
+    private func metricTile(_ value: String, _ label: String, iris: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.display(19, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(iris ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.5).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 12).padding(.horizontal, Theme.Space.md)
+        .background(card)
+    }
+
+    // MARK: - History (clean session feed)
+
+    private var history: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                historySummary().reveal(0)
+                ForEach(Array(monthGroups.enumerated()), id: \.element.key) { gi, group in
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        Text(group.key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .tracking(0.8).foregroundStyle(Theme.inkSecondary).padding(.leading, 2)
+                        VStack(spacing: 0) {
+                            ForEach(Array(group.items.enumerated()), id: \.element.id) { i, w in
+                                if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                                workoutFeedRow(w)
+                            }
+                        }
+                        .padding(.horizontal, Theme.Space.md)
+                        .background(card)
+                    }
+                    .reveal(min(0.28, 0.06 + Double(gi) * 0.05))
+                }
+                if workouts.isEmpty {
+                    Text("Your sessions land here as you train.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .frame(maxWidth: .infinity).padding(.top, Theme.Space.xl)
+                }
+            }
+            .padding(Theme.Space.md)
+            .padding(.bottom, Theme.Space.xxl)
+        }
+    }
+
+    /// This-month summary strip: sessions, distance, PRs.
+    private func historySummary() -> some View {
+        let cal = Calendar.current
+        let month = cal.dateInterval(of: .month, for: Date())
+        let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
+        let km = Int((mine.compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
+        return HStack(spacing: 0) {
+            summaryCell("\(mine.count)", "Sessions")
+            Divider().frame(height: 34).overlay(Theme.hairline)
+            summaryCell("\(km)", "km this month")
+            Divider().frame(height: 34).overlay(Theme.hairline)
+            summaryCell("\(profiles.first?.prs.count ?? 0)", "PRs")
+        }
+        .padding(.vertical, Theme.Space.sm)
+        .frame(maxWidth: .infinity)
+        .background(card)
+    }
+
+    private func summaryCell(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(.display(19, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Workouts grouped by month, newest first.
+    private var monthGroups: [(key: String, items: [Workout])] {
+        let sorted = workouts.sorted { $0.startedAt > $1.startedAt }
+        let fmt = Date.FormatStyle.dateTime.month(.wide).year()
+        var order: [String] = []
+        var map: [String: [Workout]] = [:]
+        for w in sorted {
+            let key = w.startedAt.formatted(fmt)
+            if map[key] == nil { order.append(key) }
+            map[key, default: []].append(w)
+        }
+        return order.map { ($0, map[$0] ?? []) }
+    }
+
+    private func workoutFeedRow(_ w: Workout) -> some View {
+        NavigationLink { WorkoutDetailView(workout: w) } label: {
+            HStack(spacing: Theme.Space.md) {
+                feedThumb(w)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: Theme.Space.xs) {
+                        Text(feedTitle(w)).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
+                        Spacer(minLength: Theme.Space.xs)
+                        if feedIsPR(w) {
+                            Text("PR").font(.rounded(9, weight: .bold)).tracking(0.4).foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(IridescentMaterial()).opacity(0.85))
+                        }
+                    }
+                    Text(feedSubtitle(w)).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    HStack(spacing: Theme.Space.md) {
+                        ForEach(feedStats(w), id: \.self) { s in
+                            Text(s).font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
+                        }
+                    }
+                    .padding(.top, 3)
+                }
+            }
+            .padding(.vertical, Theme.Space.sm)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func feedThumb(_ w: Workout) -> some View {
+        if let data = w.gps?.mapSnapshotData, let img = UIImage(data: data) {
+            Image(uiImage: img).resizable().scaledToFill()
+                .frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 13))
+        } else {
+            RoundedRectangle(cornerRadius: 13).fill(Theme.surface)
+                .frame(width: 52, height: 52)
+                .overlay {
+                    Image(systemName: w.type.systemImage).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                }
+                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
+        }
+    }
+
+    private func feedTitle(_ w: Workout) -> String {
+        if !w.title.isEmpty { return w.title }
+        if w.type.discipline == .running, let rt = w.plannedSession?.runType { return "\(rt.rawValue.capitalized) run" }
+        return w.type.title
+    }
+    private func feedSubtitle(_ w: Workout) -> String {
+        let day = w.startedAt.formatted(.dateTime.weekday(.abbreviated).day())
+        let kind = w.plannedSession?.runType?.rawValue.capitalized ?? w.type.title
+        return "\(day) · \(kind)"
+    }
+    private func feedStats(_ w: Workout) -> [String] {
+        if let gps = w.gps, gps.distanceM > 0 {
+            let dist = Formatters.distance(meters: gps.distanceM, unit: distanceUnit)
+            let pace = w.type == .ride
+                ? Formatters.speed(ms: w.durationS > 0 ? gps.distanceM / w.durationS : 0, unit: distanceUnit)
+                : Formatters.pace(secPerKm: w.durationS > 0 ? w.durationS / (gps.distanceM / 1000) : 0, unit: distanceUnit)
+            return [dist, pace, Formatters.duration(s: w.durationS)]
+        }
+        if let s = w.strength {
+            return ["\(s.exercises.count) exercises", Formatters.duration(s: w.durationS)]
+        }
+        return [Formatters.duration(s: w.durationS)]
+    }
+    private func feedIsPR(_ w: Workout) -> Bool {
+        !CardioAchievements.detect(for: w, distanceUnit: distanceUnit, in: context).isEmpty
     }
 
     // MARK: Status hero
