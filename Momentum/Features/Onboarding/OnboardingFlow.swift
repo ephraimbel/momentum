@@ -59,6 +59,7 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-volume") { vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume }
             if args.contains("--onboarding-hybrid") { vm.activities = [.run, .strength]; vm.step = .hybridFocus }
             if args.contains("--onboarding-disciplines") { vm.step = .disciplines }
+            if args.contains("--onboarding-notifications") { vm.step = .notifications }
             if args.contains("--onboarding-reveal"), let demo = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
                 profile = demo
                 // --onboarding-reveal-runs hides the anatomy block so the first-week dropdowns sit higher.
@@ -163,6 +164,7 @@ struct OnboardingFlow: View {
         case .calibration: calibrationStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
+        case .notifications: notificationsStep
         case .primers: primersStep
         }
     }
@@ -634,13 +636,99 @@ struct OnboardingFlow: View {
         }
     }
 
+    /// Notification opt-in — a Runna-style beat: an iPhone showing a real momentum workout reminder,
+    /// the retention hook, and a single "Turn on reminders" that asks for permission.
+    private var notificationsStep: some View {
+        VStack(spacing: Theme.Space.lg) {
+            Spacer(minLength: 0)
+            phoneNotificationMockup.reveal(0.05)
+            VStack(spacing: Theme.Space.sm) {
+                (Text("You're ") + Text("2× more likely").fontWeight(.bold) + Text(" to finish your plan with reminders"))
+                    .font(.serif(27, weight: .medium))
+                    .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("A quiet nudge before each session keeps you on track. No spam — just your plan.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .reveal(0.18)
+            Spacer(minLength: 0)
+            VStack(spacing: Theme.Space.sm) {
+                OversizedButton(title: "Turn on reminders") {
+                    services.notifications.requestAuthorization()
+                    goNext()
+                }
+                Button { Haptics.light(); goNext() } label: {
+                    Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            .reveal(0.3)
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// A tilted iPhone showing a momentum workout-reminder notification on a soft lock screen — reads as
+    /// a real device, not a flat card.
+    private var phoneNotificationMockup: some View {
+        VStack(spacing: 0) {
+            // Notification banner (frosted, like a real iOS lock-screen alert).
+            HStack(spacing: 10) {
+                Image("BrandIcon").resizable().scaledToFit().frame(width: 34, height: 34)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack {
+                        Text("MOMENTUM").font(.rounded(10, weight: .bold)).tracking(0.4).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("now").font(.rounded(10, weight: .medium)).foregroundStyle(.secondary)
+                    }
+                    Text("Time for today's run").font(.rounded(13, weight: .semibold)).foregroundStyle(.primary)
+                    Text("Easy run · 5 km, ~30 min").font(.rounded(12, weight: .regular)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(11)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.top, 44)
+            // Faint app-grid placeholders so the screen reads as a home/lock screen.
+            VStack(spacing: 14) {
+                ForEach(0..<3) { _ in
+                    HStack(spacing: 14) {
+                        ForEach(0..<4) { _ in
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .fill(Color.white.opacity(0.16)).frame(width: 42, height: 42)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 22)
+            Spacer(minLength: 0)
+        }
+        .frame(width: 236, height: 340)
+        .background(
+            LinearGradient(colors: [Color(white: 0.34), Color(white: 0.14)], startPoint: .top, endPoint: .bottom)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
+        .overlay(alignment: .top) {
+            Capsule().fill(.black).frame(width: 82, height: 22).padding(.top, 11)   // dynamic island
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 46, style: .continuous).fill(.black))   // bezel
+        .shadow(color: .black.opacity(0.22), radius: 26, y: 14)
+        .rotationEffect(.degrees(-2.5))
+        .accessibilityHidden(true)
+    }
+
     private var primersStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
             IridescentOrb(size: 96)
             VStack(spacing: Theme.Space.sm) {
                 Text("You're all set")
-                    .font(.display(Theme.FontSize.title, weight: .black)).foregroundStyle(Theme.ink)
+                    .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
                 Text("We use your location to map your runs and rides. Allow it and your map opens right where you are.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -660,25 +748,28 @@ struct OnboardingFlow: View {
     @ViewBuilder
     private func questionScaffold<C: View>(_ title: String, subtitle: String? = nil,
                                            @ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                Text(title)
-                    .font(.display(32, weight: .black))
-                    .foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let subtitle {
-                    Text(subtitle).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+        // One scroll for the whole question (title + options together) — the reliable pattern that
+        // always scrolls when the content overflows (the disciplines picker etc.). The serif title
+        // carries the welcome page's editorial voice through the flow; options stay in the clean UI face.
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    Text(title)
+                        .font(.serif(33, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let subtitle {
+                        Text(subtitle).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-            }
-            ScrollView {
                 VStack(spacing: Theme.Space.sm) { content() }
-                    .padding(.bottom, Theme.Space.md)
             }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize)   // only rubber-bands when there's actually overflow
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, Theme.Space.md)
         }
-        // Fill the available height so the ScrollView above is height-bounded and can actually scroll
-        // on tall steps (e.g. the disciplines picker) instead of overflowing off-screen.
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 

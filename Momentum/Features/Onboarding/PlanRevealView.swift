@@ -100,9 +100,10 @@ struct PlanRevealView: View {
             }
             VStack(spacing: Theme.Space.xs) {
                 Text(planReadyTitle)
-                    .font(.display(30, weight: .black))
+                    .font(.serif(31, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(vm.projectedOutcome())
                     .font(.rounded(Theme.FontSize.body, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)

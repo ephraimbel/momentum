@@ -88,10 +88,13 @@ final class OnboardingViewModel {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
         // No cold-open — the welcome page (SignInView) is the brand entry; onboarding opens on the
-        // first question.
-        case name, goal, disciplines, metrics, race, raceGoalTime, muscleFocus, experience,
+        // first question. Order flows broad→specific: who → goal → what you do → experience → about you
+        // → race specifics → schedule → equipment/focus → motivation → pace → build → reveal → opt-ins.
+        // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
+        // right body everywhere it appears.
+        case name, goal, disciplines, experience, metrics, race, raceGoalTime, muscleFocus,
              runVolume, days, preferredDays, session, equipment, hybridFocus, why, calibration,
-             building, reveal, primers
+             building, reveal, notifications, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -117,7 +120,7 @@ final class OnboardingViewModel {
 
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
-        steps.filter { ![.building, .reveal, .primers].contains($0) }
+        steps.filter { ![.building, .reveal, .notifications, .primers].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 
