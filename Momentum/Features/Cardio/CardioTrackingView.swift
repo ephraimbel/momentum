@@ -509,7 +509,7 @@ struct CardioTrackingView: View {
                 Capsule()
                     .fill(onPace ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
                     .frame(width: max(6, geo.size.width * min(1, max(0, progress))))
-                    .animation(.easeOut(duration: 0.4), value: progress)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: progress)
             }
         }
         .frame(height: 6)
@@ -558,7 +558,7 @@ struct CardioTrackingView: View {
                     Capsule()
                         .fill(goalReached ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
                         .frame(width: max(6, geo.size.width * progress))
-                        .animation(.easeOut(duration: 0.4), value: progress)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: progress)
                 }
             }
             .frame(height: 6)

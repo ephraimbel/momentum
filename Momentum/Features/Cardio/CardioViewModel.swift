@@ -42,6 +42,10 @@ final class CardioViewModel {
     // Independent of GPS-fix cadence so the timer always advances every second.
     private var pausedTotalS: TimeInterval = 0
     private var pauseStartedAt: Date?
+    // Manual-only pause clock for structured guidance: a timed recovery must keep counting down through
+    // GPS *auto*-pause (you slow to a walk or stop during the recovery), freezing only when *you* tap Pause.
+    private var manualPausedTotalS: TimeInterval = 0
+    private var manualPauseStartedAt: Date?
 
     // Voice coach (PRD §4.10, Pro). nil when not entitled/disabled, so the loop never depends on it.
     private let voice: (any VoiceCoachServing)?
@@ -57,6 +61,7 @@ final class CardioViewModel {
     /// The athlete's max HR (Tanaka estimate or measured) — used to band live BPM into a zone.
     let maxHR: Int?
     private var hrReadings: [Int] = []
+
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var lastUnitCount = 0
     private var lastBoundaryElapsedS: TimeInterval = 0
@@ -113,7 +118,7 @@ final class CardioViewModel {
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
                 self.syncPauseClock()
-                self.sampleSensors()
+                self.sampleCadence()
                 self.liveActivity.update(self.liveState())
                 self.announceMilestonesIfNeeded()
                 self.announcePauseIfChanged()
@@ -163,6 +168,7 @@ final class CardioViewModel {
         // Kick off guided-workout tracking: announce the first step and advance it once a second,
         // independent of GPS-fix cadence so timed recoveries count down while you stand still.
         if let step = tracker?.current {
+            Haptics.medium()   // the "go" cue at step one, matching every later transition
             voice?.announce(CoachingCueBuilder.stepStart(step))
             structuredTask = Task { [weak self] in
                 while !Task.isCancelled {
@@ -180,7 +186,9 @@ final class CardioViewModel {
     /// once a second while recording.
     private func tickStructured() {
         guard var t = tracker, !t.isComplete else { return }
-        let d = distanceM, e = elapsed()
+        // Timed steps advance on the manual-only clock so a recovery counts down through GPS auto-pause;
+        // distance steps ignore the clock entirely (they key off `d`).
+        let d = distanceM, e = structuredElapsed()
         if t.advance(distanceM: d, elapsedS: e) {
             tracker = t
             recoveryReadyBuzzed = false              // fresh step — re-arm the recovery countdown buzz
@@ -207,7 +215,7 @@ final class CardioViewModel {
     /// End the current step now (the athlete's Lap / Skip control).
     func skipStep() {
         guard var t = tracker, !t.isComplete else { return }
-        t.skip(distanceM: distanceM, elapsedS: elapsed())
+        t.skip(distanceM: distanceM, elapsedS: structuredElapsed())
         tracker = t
         Haptics.medium()
         if t.isComplete { announceStructuredComplete() }
@@ -244,7 +252,7 @@ final class CardioViewModel {
     }
 
     /// Record the current cadence + heart-rate readings for the run's averages — skipped while paused.
-    private func sampleSensors() {
+    private func sampleCadence() {
         guard !isPaused else { return }
         if let c = motion.cadenceStepsPerMin, c > 0 { cadenceReadings.append(c) }
         if let b = heartRate.bpm, b > 0 { hrReadings.append(b) }
@@ -272,13 +280,29 @@ final class CardioViewModel {
         return max(0, end.timeIntervalSince(startedAt) - pausedTotalS)
     }
 
-    /// Open/close a paused span when the recording state changes (manual pause or GPS auto-pause).
+    /// Elapsed time for structured timed steps — freezes only on MANUAL pause. A timed recovery keeps
+    /// counting through GPS auto-pause (when you slow to a walk or stop during the recovery), so a guided
+    /// interval never stalls waiting for movement.
+    func structuredElapsed(at now: Date = Date()) -> TimeInterval {
+        let end = manualPauseStartedAt ?? now
+        return max(0, end.timeIntervalSince(startedAt) - manualPausedTotalS)
+    }
+
+    /// Open/close a paused span when the recording state changes. Tracks two spans: the moving-time
+    /// clock (any pause, manual or auto) and a manual-only clock for structured guidance.
     private func syncPauseClock() {
         if isPaused {
             if pauseStartedAt == nil { pauseStartedAt = Date() }
         } else if let started = pauseStartedAt {
             pausedTotalS += Date().timeIntervalSince(started)
             pauseStartedAt = nil
+        }
+        // Manual-only span (state == .paused, i.e. the user tapped Pause) for the structured-step clock.
+        if state == .paused {
+            if manualPauseStartedAt == nil { manualPauseStartedAt = Date() }
+        } else if let started = manualPauseStartedAt {
+            manualPausedTotalS += Date().timeIntervalSince(started)
+            manualPauseStartedAt = nil
         }
     }
 
@@ -378,7 +402,7 @@ final class CardioViewModel {
     /// The current step's remaining amount as a big value + caption ("240" / "M LEFT", "1:30" / "LEFT").
     var stepRemaining: (value: String, caption: String) {
         guard let t = tracker, let step = t.current else { return ("", "") }
-        let rem = t.remaining(distanceM: distanceM, elapsedS: elapsed())
+        let rem = t.remaining(distanceM: distanceM, elapsedS: structuredElapsed())
         switch step.target {
         case let .distance(d):
             return d < 1000
@@ -392,7 +416,7 @@ final class CardioViewModel {
 
     /// 0…1 of the current step completed — drives the step progress ring.
     var stepProgress: Double {
-        tracker?.progress(distanceM: distanceM, elapsedS: elapsed()) ?? 0
+        tracker?.progress(distanceM: distanceM, elapsedS: structuredElapsed()) ?? 0
     }
 
     /// Pace-adherence verdict for the current work step (drives the on-pace iridescent glow).

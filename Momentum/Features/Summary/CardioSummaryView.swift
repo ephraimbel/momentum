@@ -89,7 +89,8 @@ struct CardioSummaryContent: View {
                 routeMap(gps).reveal(0.22)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
                 PlanProposalCard().reveal(0.34)
-                splitsSection(gps).reveal(0.38)
+                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit).reveal(0.36)
+                splitsSection(gps).reveal(0.40)
             }
             .task {
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)

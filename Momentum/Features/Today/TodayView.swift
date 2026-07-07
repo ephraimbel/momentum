@@ -260,8 +260,11 @@ struct TodayView: View {
     }
 
     private var mapLayer: some View {
+        MapReader { proxy in
         Map(viewport: $viewport) {
-            Puck2D(bearing: .heading).brandStyled()   // the athlete's purple location puck (this is you)
+            // The purple location puck ("you") is configured imperatively in `.onStyleLoaded` below —
+            // the SwiftUI `Puck2D` content force-unwraps a Mapbox bundled asset that fails to load on
+            // some devices and hard-crashes (PuckType.makeDefault).
             // Zoomed out to the world: every athlete on Momentum as a glowing iridescent dot at their
             // (city-level, fuzzed) location. Tap one to open that athlete. Honest presence — the real
             // community only, no fabricated crowd. Gated on `mapShowsGlobe` (not `worldMode`) so the dots
@@ -298,7 +301,9 @@ struct TodayView: View {
         }
         .mapStyle(activeMapboxStyle)
         .ornamentOptions(MapChrome.hidden)
+        .onStyleLoaded { _ in BrandPuck.apply(to: proxy) }
         .ignoresSafeArea()
+        }
     }
 
     /// The globe wears Mapbox Standard — a vivid, *living* vector Earth: bright blue oceans, green/tan
@@ -470,13 +475,10 @@ struct TodayView: View {
             VStack(spacing: Theme.Space.md) {
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-                // Discovery — a quiet footer, lighter than Start. Shown whenever we can place the athlete
-                // (a live fix or last-known neighborhood), so the loop suggester isn't hidden waiting.
-                // (Spots is built but hidden for now — re-enable its chip when that feature ships.)
-                if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
-                    discoverChip("Suggest a loop", icon: "arrow.triangle.capsulepath",
-                                 a11y: "Suggest a running loop") { enterLoopMode(start: nil) }
-                }
+                // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
+                // good enough yet (lopsided, backtracking) and Spots is parked. All the code stays
+                // (inline loop mode + `discoverChip` + `--loop`/`--spots` deep links); re-add a chip
+                // here to bring either back once it's ready.
             }
             .padding(Theme.Space.md)
         }
@@ -994,17 +996,44 @@ struct TrainingLoadChip: View {
     }
 }
 
-/// A streak chip — flame + count; lights up iridescent when the streak is alive.
+/// A streak chip — flame + count; lights up iridescent when the streak is alive. The 🔥 gently
+/// breathes/flickers while a streak is running, and pops when it ticks up — a small "alive" accent
+/// that stays within the earned-motion rule (progress only) and goes fully static under Reduce Motion.
 struct StreakChip: View {
     let days: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var flicker = false   // continuous breathe/wobble while the streak is alive
+    @State private var pop = false       // one-shot enlarge when the streak increments
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "flame.fill")
+            Text("🔥")
+                .font(.system(size: Theme.FontSize.body))
+                // Inner layer: a slow asymmetric breathe + tiny wobble (oscillates forever once
+                // `flicker` flips, via the autoreversing repeat).
+                .scaleEffect(flicker ? 1.07 : 0.95)
+                .rotationEffect(.degrees(flicker ? 3 : -3))
+                .animation(reduceMotion || days == 0 ? nil
+                           : .easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: flicker)
+                // Outer layer: a springy pop on increment, scoped to its own driver so it never
+                // fights the breathe loop.
+                .scaleEffect(pop ? 1.4 : 1.0)
+                .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.4), value: pop)
             Text("\(days)").font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
         }
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
         .momentumGlass(iridescent: days > 0 ? .chip : nil)
+        .onAppear { if days > 0 { flicker = true } }
+        .onChange(of: days) { old, new in
+            if new > 0 { flicker = true }           // start breathing if the streak just came alive
+            // Pop only on genuine growth from an existing streak — never on the 0→N settle when the
+            // query first loads (that's data, not an achievement). No haptic here: the earned
+            // celebration lives on the finish/summary screen, not this passive view.
+            guard new > old, old > 0, !reduceMotion else { return }
+            pop = true
+            Task { try? await Task.sleep(for: .milliseconds(180)); pop = false }   // release → springs back
+        }
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
     }

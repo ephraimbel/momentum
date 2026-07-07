@@ -10,9 +10,20 @@ struct SignInView: View {
     var body: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            IridescentOrb(size: 132)
+            Image("BrandIcon")
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 132, height: 132)
+                .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
+                .accessibilityHidden(true)
             VStack(spacing: Theme.Space.sm) {
-                Text("momentum").font(.display(40, weight: .bold)).foregroundStyle(Theme.ink)
+                Image("WordmarkBlack")
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 210)
+                    .accessibilityLabel("momentum")
                 Text("keep moving").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
             }
             Spacer()

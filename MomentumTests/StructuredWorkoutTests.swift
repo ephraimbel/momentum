@@ -15,6 +15,9 @@ struct StructuredWorkoutTests {
         #expect(b?.reps == 5 && b?.distanceM == 800)
         // Accepts a plain 'x' separator too.
         #expect(StructuredWorkoutBuilder.parseIntervals("10x200m")?.reps == 10)
+        // Unit-aware: a km/k suffix scales to meters (regression: "1km" must be 1000 m, not 1 m).
+        #expect(StructuredWorkoutBuilder.parseIntervals("4×1km")?.distanceM == 1000)
+        #expect(StructuredWorkoutBuilder.parseIntervals("3×1.5km @ threshold")?.distanceM == 1500)
         #expect(StructuredWorkoutBuilder.parseIntervals(nil) == nil)
         #expect(StructuredWorkoutBuilder.parseIntervals("Run/walk 1:1") == nil)
     }

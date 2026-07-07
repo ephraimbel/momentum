@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>MBXAccessToken</key>
 	<string>$(MBX_ACCESS_TOKEN)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>momentum reads heart rate, body weight, and workout data to personalize your stats and coaching.</string>
 	<key>NSHealthUpdateUsageDescription</key>

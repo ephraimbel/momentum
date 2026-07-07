@@ -156,7 +156,8 @@ enum StructuredWorkoutBuilder {
 
     // MARK: Parsing
 
-    /// "6×400m @ 5K pace" / "5x800m" → (reps, distanceM). Accepts the × sign or x/X as the separator.
+    /// "6×400m @ 5K pace" / "5x800m" / "4×1km" / "3×1.5km" → (reps, distanceM). Accepts × / x / X as the
+    /// separator and honors the unit: a `km`/`k` suffix scales to meters (so "1km" is 1000 m, not 1 m).
     static func parseIntervals(_ s: String?) -> (reps: Int, distanceM: Double)? {
         guard let s else { return nil }
         let normalized = s.replacingOccurrences(of: "×", with: "x")
@@ -164,10 +165,14 @@ enum StructuredWorkoutBuilder {
         let parts = normalized.split(separator: "x", maxSplits: 1)
         guard parts.count == 2,
               let reps = Int(parts[0].trimmingCharacters(in: .whitespaces)), reps > 0 else { return nil }
-        // Leading number of the second part (before the unit), e.g. "400m @ 5K pace" → 400.
-        let digits = parts[1].drop { !$0.isNumber }.prefix { $0.isNumber }
-        guard let dist = Double(digits), dist > 0 else { return nil }
-        return (reps, dist)
+        // The rep distance + unit from the second part: skip to the first digit, read the number
+        // (allowing a decimal), then look at the unit that immediately follows.
+        let tail = parts[1].drop { !$0.isNumber }
+        let numStr = tail.prefix { $0.isNumber || $0 == "." }
+        guard let value = Double(numStr), value > 0 else { return nil }
+        let unit = tail.dropFirst(numStr.count).trimmingCharacters(in: .whitespaces).lowercased()
+        let meters = unit.hasPrefix("k") ? value * 1000 : value   // "km"/"k" → meters; default is meters
+        return (reps, meters)
     }
 
     /// "Run/walk 1:1" → run/walk seconds (the ratio is read as minutes). Defaults to 1:1 minutes.
