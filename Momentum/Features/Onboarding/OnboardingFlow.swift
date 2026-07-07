@@ -11,7 +11,6 @@ struct OnboardingFlow: View {
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(Services.self) private var services
-    @Environment(AuthController.self) private var auth
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
     @State private var goingBack = false
@@ -52,7 +51,8 @@ struct OnboardingFlow: View {
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
         .onAppear {
-            if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n }
+            // No name prefill — onboarding is guest-first now (Sign in with Apple comes later), so the
+            // athlete types their own name on a clean field instead of inheriting a placeholder.
             #if DEBUG
             let args = ProcessInfo.processInfo.arguments
             if args.contains("--onboarding-volume") { vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume }
