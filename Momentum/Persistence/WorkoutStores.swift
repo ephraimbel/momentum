@@ -86,6 +86,14 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         detail.avgCadence = stepsPerMin
         try? modelContext.save()
     }
+
+    /// Attach the run's average heart rate (bpm) captured from a BLE monitor (R3). Written at finish;
+    /// not stored when no strap fed readings, so strapless runs stay blank.
+    func attachHR(_ bpm: Int) {
+        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.avgHR = bpm
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row

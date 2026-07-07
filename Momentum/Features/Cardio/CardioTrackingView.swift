@@ -21,6 +21,7 @@ struct CardioTrackingView: View {
     enum Phase { case acquiring, countdown, tracking }
 
     @Query private var workouts: [Workout]
+    @Query private var profiles: [UserProfile]   // for max HR → live zone banding
     @State private var phase: Phase = .acquiring
     @State private var countdown = 3
     @State private var viewport: Viewport = .idle
@@ -88,7 +89,7 @@ struct CardioTrackingView: View {
                 let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
                 let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit,
                                             goalMeters: goalMeters, structured: structured, voice: voice,
-                                            motion: services.motion)
+                                            motion: services.motion, maxHR: profiles.first?.maxHR)
                 model.beginAcquiring()
                 vm = model
             }
@@ -411,6 +412,10 @@ struct CardioTrackingView: View {
                         // Cadence (steps/min) from CoreMotion — run/walk only, once the hardware reports.
                         if type.discipline != .cycling, let cad = vm.cadence {
                             stat("\(cad)", "spm")
+                        }
+                        // Live heart rate + zone from a paired BLE strap, once it reports.
+                        if let hr = vm.bpm {
+                            stat("\(hr)", vm.hrZone ?? "bpm")
                         }
                     }
                 }

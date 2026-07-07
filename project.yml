@@ -62,6 +62,7 @@ targets:
           - location
         NSLocationWhenInUseUsageDescription: "momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed."
         NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
+        NSBluetoothAlwaysUsageDescription: "momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run."
         NSHealthShareUsageDescription: "momentum reads heart rate, body weight, and workout data to personalize your stats and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)

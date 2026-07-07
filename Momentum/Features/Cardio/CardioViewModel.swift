@@ -50,6 +50,13 @@ final class CardioViewModel {
     // finish. Hardware-only — nil in the simulator, so the run never depends on it.
     private let motion: any MotionServing
     private var cadenceReadings: [Int] = []
+
+    // Heart-rate source (BLE monitor, R3). Live BPM + zone on the run screen and an averaged value
+    // stored at finish. Needs a paired strap; nil-safe so the run never depends on it.
+    private let heartRate: any HeartRateServing
+    /// The athlete's max HR (Tanaka estimate or measured) — used to band live BPM into a zone.
+    let maxHR: Int?
+    private var hrReadings: [Int] = []
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var lastUnitCount = 0
     private var lastBoundaryElapsedS: TimeInterval = 0
@@ -66,13 +73,16 @@ final class CardioViewModel {
 
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
          goalMeters: Double? = nil, structured: StructuredWorkout? = nil,
-         voice: (any VoiceCoachServing)? = nil, motion: (any MotionServing)? = nil) {
+         voice: (any VoiceCoachServing)? = nil, motion: (any MotionServing)? = nil,
+         heartRate: (any HeartRateServing)? = nil, maxHR: Int? = nil) {
         self.type = type
         self.distanceUnit = distanceUnit
         self.goalMeters = goalMeters
         self.structured = structured
         self.voice = voice
         self.motion = motion ?? MotionService()
+        self.heartRate = heartRate ?? HeartRateMonitor()
+        self.maxHR = maxHR
         self.location = LocationService()
         let store = GPSWorkoutStore(modelContainer: container)
         self.store = store
@@ -103,7 +113,7 @@ final class CardioViewModel {
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
                 self.syncPauseClock()
-                self.sampleCadence()
+                self.sampleSensors()
                 self.liveActivity.update(self.liveState())
                 self.announceMilestonesIfNeeded()
                 self.announcePauseIfChanged()
@@ -143,7 +153,8 @@ final class CardioViewModel {
     func arm() async {
         startedAt = Date()
         await engine.begin(now: startedAt)
-        motion.start()   // begin cadence updates now that recording is live
+        motion.start()      // begin cadence updates now that recording is live
+        heartRate.start()   // scan for a BLE HR strap (no-op without one)
         workoutId = ActiveWorkoutMarker.pendingID
         snapshot = await engine.snapshot()
         armed = true
@@ -228,17 +239,28 @@ final class CardioViewModel {
         structuredTask?.cancel()
         location.stop()
         motion.stop()
+        heartRate.stop()
         liveActivity.end()
     }
 
-    /// Record the current cadence reading (steps/min) for the run's average — skipped while paused.
-    private func sampleCadence() {
-        guard !isPaused, let c = motion.cadenceStepsPerMin, c > 0 else { return }
-        cadenceReadings.append(c)
+    /// Record the current cadence + heart-rate readings for the run's averages — skipped while paused.
+    private func sampleSensors() {
+        guard !isPaused else { return }
+        if let c = motion.cadenceStepsPerMin, c > 0 { cadenceReadings.append(c) }
+        if let b = heartRate.bpm, b > 0 { hrReadings.append(b) }
     }
 
     /// Live cadence (steps/min) for the run screen; nil until CoreMotion reports (never in the sim).
     var cadence: Int? { motion.cadenceStepsPerMin }
+
+    /// Live heart rate (bpm) from the paired BLE monitor; nil without a strap.
+    var bpm: Int? { heartRate.bpm }
+
+    /// Current HR zone label ("Z1"…"Z5") when both a live BPM and a max HR are known.
+    var hrZone: String? {
+        guard let b = heartRate.bpm, b > 0, let m = maxHR, m > 0 else { return nil }
+        return "Z\(HeartRateZones.zone(forBpm: b, maxHR: m))"
+    }
 
     func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
     func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
@@ -265,11 +287,13 @@ final class CardioViewModel {
         structuredTask?.cancel()
         location.stop()
         motion.stop()
+        heartRate.stop()
         liveActivity.end()
         voice?.stop()
         await engine.finish(durationOverrideS: elapsed())
-        // Persist the run's average cadence (steps/min) when CoreMotion produced readings.
+        // Persist the run's average cadence + heart rate when the sensors produced readings.
         if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
+        if let avgHR = RunSignals.mean(hrReadings) { await store.attachHR(avgHR) }
         // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5) — do
         // this synchronously so the summary always opens with a route image.
         let coords = coordinates
