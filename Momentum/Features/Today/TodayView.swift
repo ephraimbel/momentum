@@ -407,15 +407,78 @@ struct TodayView: View {
 
     private var topBar: some View {
         VStack {
-            HStack(spacing: Theme.Space.sm) {
-                activitySelector
-                Spacer()
-                worldButton
-                StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
-            }
-            .padding(Theme.Space.md)
+            headerCard
             Spacer()
         }
+    }
+
+    /// A clean header card floating over the map (Runna-style): profile + notifications on the left, the
+    /// live streak centered, the world on the right — and a week strip below that dots the days you
+    /// train and marks today. The map shows through everywhere else.
+    private var headerCard: some View {
+        VStack(spacing: Theme.Space.md) {
+            HStack(spacing: Theme.Space.sm) {
+                AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
+                bellButton
+                Spacer(minLength: Theme.Space.xs)
+                StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
+                Spacer(minLength: Theme.Space.xs)
+                worldButton
+            }
+            weekStrip
+        }
+        .padding(Theme.Space.md)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous).fill(Theme.background)
+            RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous).stroke(Theme.hairline)
+        }
+        .shadow(color: .black.opacity(0.06), radius: 18, y: 6)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.top, Theme.Space.sm)
+    }
+
+    private var bellButton: some View {
+        Button { Haptics.light(); services.notifications.requestAuthorization() } label: {
+            Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44).momentumGlass(in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Notifications")
+    }
+
+    /// Mon–Sun of the current week: weekday, date, today ringed, and an iridescent dot on days you train.
+    private var weekStrip: some View {
+        HStack(spacing: 0) {
+            ForEach(weekDays, id: \.self) { day in
+                let isToday = Calendar.current.isDateInToday(day)
+                VStack(spacing: 5) {
+                    Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                        .font(.rounded(Theme.FontSize.label, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    Text("\(Calendar.current.component(.day, from: day))")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(isToday ? Theme.background : Theme.ink)
+                        .frame(width: 32, height: 32)
+                        .background { if isToday { Circle().fill(Theme.ink) } }
+                    Circle()
+                        .fill(hasPlannedWorkout(day) ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Color.clear))
+                        .frame(width: 5, height: 5)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var weekDays: [Date] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let weekday = cal.component(.weekday, from: today)          // 1 = Sun … 7 = Sat
+        let monday = cal.date(byAdding: .day, value: -((weekday + 5) % 7), to: today) ?? today
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+    }
+
+    private func hasPlannedWorkout(_ day: Date) -> Bool {
+        plan?.sessions.contains { Calendar.current.isDate($0.date, inSameDayAs: day) } ?? false
     }
 
     /// Opens the world: the Today map zooms all the way out to the globe of everyone on Momentum.
@@ -474,6 +537,8 @@ struct TodayView: View {
                     .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
+                // Sport picker sits with the start action now (it moved out of the header).
+                HStack { activitySelector; Spacer(minLength: 0) }
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
                 // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't

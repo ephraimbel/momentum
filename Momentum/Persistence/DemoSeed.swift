@@ -13,6 +13,7 @@ enum DemoSeed {
         guard existing.isEmpty else { return }
 
         let profile = UserProfile()
+        profile.displayName = "Alex Rivera"
         profile.disciplines = ["running", "strength"]
         profile.goal = .buildMuscle
         profile.daysPerWeek = 4
