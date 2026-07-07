@@ -6,6 +6,13 @@ import Foundation
 /// a prescribed session becomes an ordered step list the recorder guides you through.
 struct StructuredWorkoutTests {
 
+    /// Distance intervals with easy/recovery derived from the rep pace (P5k) — for the tracker tests.
+    private func iv(_ reps: Int, _ distM: Double, pace: Double) -> StructuredWorkout {
+        StructuredWorkoutBuilder.intervals(reps: reps, repTarget: .distance(distM), repPace: pace,
+                                           easyPace: pace + 80, recoveryPace: pace + 110,
+                                           unitLabel: distM < 1000 ? "\(Int(distM))m" : "\(Int(distM / 1000))km")
+    }
+
     // MARK: Parsing
 
     @Test func parsesIntervalStrings() {
@@ -33,7 +40,7 @@ struct StructuredWorkoutTests {
     // MARK: Interval expansion
 
     @Test func intervalsExpandToWarmupRepsRecoveriesCooldown() {
-        let w = StructuredWorkoutBuilder.intervals(reps: 6, repDistanceM: 400, intervalPaceSPerKm: 300)
+        let w = iv(6, 400, pace: 300)
         // warm-up + 6 reps + 5 recoveries + cool-down = 13 steps.
         #expect(w.steps.count == 13)
         #expect(w.workStepCount == 6)
@@ -54,7 +61,7 @@ struct StructuredWorkoutTests {
     }
 
     @Test func longerRepsGetLongerRecoveries() {
-        let w = StructuredWorkoutBuilder.intervals(reps: 5, repDistanceM: 800, intervalPaceSPerKm: 300)
+        let w = iv(5, 800, pace: 300)
         let rec = w.steps.first { $0.kind == .recovery }
         #expect(rec?.target == .duration(120))
     }
@@ -62,12 +69,54 @@ struct StructuredWorkoutTests {
     // MARK: Tempo expansion
 
     @Test func tempoPreservesTotalDistance() {
-        let w = StructuredWorkoutBuilder.tempo(totalDistanceM: 5000, tempoPaceSPerKm: 320)
+        let w = StructuredWorkoutBuilder.tempo(totalDistanceM: 5000, tempoPaceSPerKm: 320, easyPace: 380)
         #expect(w?.steps.count == 3)
         #expect(w?.steps[1].kind == .work && w?.steps[1].paceSPerKm == 320)
         // 1 km warm-up + 3 km block + 1 km cool-down = the prescribed 5 km.
         #expect(w?.plannedDistanceM == 5000)
-        #expect(StructuredWorkoutBuilder.tempo(totalDistanceM: 0, tempoPaceSPerKm: 320) == nil)
+        #expect(StructuredWorkoutBuilder.tempo(totalDistanceM: 0, tempoPaceSPerKm: 320, easyPace: 380) == nil)
+    }
+
+    // MARK: Workout variety
+
+    @Test func parsesTimeAndSpecialtyFormats() {
+        #expect(StructuredWorkoutBuilder.parseTimeReps("5×3min @ VO2")?.seconds == 180)
+        #expect(StructuredWorkoutBuilder.parseIntervals("5×3min @ VO2") == nil)   // time rejected as distance
+        #expect(StructuredWorkoutBuilder.parseTimedReps("8×45sec hills", keyword: "hill")?.reps == 8)
+        #expect(StructuredWorkoutBuilder.parseTimedReps("6×20sec strides", keyword: "stride")?.seconds == 20)
+        let f = StructuredWorkoutBuilder.parseFartlek("8×(1min hard / 1min float)")
+        #expect(f?.reps == 8 && f?.onS == 60 && f?.floatS == 60)
+    }
+
+    private func session(_ rt: RunType, pace: Double, iv: String?, dist: Double? = 8000) -> PlannedSession {
+        let s = PlannedSession(); s.discipline = .running; s.runType = rt
+        s.targetPaceSPerKm = pace; s.intervals = iv; s.targetDistanceM = dist
+        return s
+    }
+
+    @Test func buildsEachVarietyType() {
+        // VO₂ intervals: rep pace = the session's (faster than easy); recovery derives from P5k (300),
+        // NOT the rep pace — the whole point of passing p5kSPerKm.
+        let vo2 = StructuredWorkoutBuilder.build(from: session(.intervals, pace: 294, iv: "5×3min @ VO2"), p5kSPerKm: 300)
+        #expect(vo2?.workStepCount == 5)
+        #expect(vo2?.steps.first { $0.kind == .work }?.paceSPerKm == 294)
+        #expect(vo2?.steps.first { $0.kind == .recovery }?.paceSPerKm == 410)   // 300 + 110
+
+        let hills = StructuredWorkoutBuilder.build(from: session(.hills, pace: 380, iv: "8×45sec hills"), p5kSPerKm: 300)
+        #expect(hills?.workStepCount == 8)
+        #expect(hills?.steps.first { $0.kind == .work }?.title == "Hill")
+        #expect(hills?.steps.first { $0.kind == .work }?.paceSPerKm == nil)     // effort-based
+
+        let fartlek = StructuredWorkoutBuilder.build(from: session(.fartlek, pace: 380, iv: "8×(1min hard / 1min float)"), p5kSPerKm: 300)
+        #expect(fartlek?.workStepCount == 8)
+        #expect(fartlek?.steps.first { $0.kind == .work }?.title == "Surge")
+
+        let strides = StructuredWorkoutBuilder.build(from: session(.strides, pace: 380, iv: "6×20sec strides"), p5kSPerKm: 300)
+        #expect(strides?.workStepCount == 6)
+
+        let prog = StructuredWorkoutBuilder.build(from: session(.progression, pace: 390, iv: nil, dist: 9000), p5kSPerKm: 300)
+        #expect(prog?.steps.count == 3)                       // easy → moderate → strong thirds
+        #expect(prog?.steps.last?.paceSPerKm == 315)          // strong = P5k + 15
     }
 
     // MARK: build(from:)
@@ -90,7 +139,7 @@ struct StructuredWorkoutTests {
     // MARK: Live tracker
 
     @Test func trackerAdvancesThroughStepsAndReAnchors() {
-        let w = StructuredWorkoutBuilder.intervals(reps: 2, repDistanceM: 400, intervalPaceSPerKm: 300)
+        let w = iv(2, 400, pace: 300)
         var t = StructuredRunTracker(steps: w.steps)   // warm-up, rep1, recovery, rep2, cool-down
         #expect(t.current?.kind == .warmup)
         #expect(t.remaining(distanceM: 0, elapsedS: 0) == 1000)
@@ -114,7 +163,7 @@ struct StructuredWorkoutTests {
     }
 
     @Test func trackerAdherenceRespectsBand() {
-        let w = StructuredWorkoutBuilder.intervals(reps: 1, repDistanceM: 400, intervalPaceSPerKm: 300)
+        let w = iv(1, 400, pace: 300)
         var t = StructuredRunTracker(steps: w.steps)
         t.advance(distanceM: 1000, elapsedS: 300)          // into the rep (target 300 ±12)
         #expect(t.adherence(currentPaceSPerKm: 300) == .onPace)
@@ -124,7 +173,7 @@ struct StructuredWorkoutTests {
     }
 
     @Test func trackerSkipAndCompletion() {
-        let w = StructuredWorkoutBuilder.intervals(reps: 1, repDistanceM: 400, intervalPaceSPerKm: 300)
+        let w = iv(1, 400, pace: 300)
         var t = StructuredRunTracker(steps: w.steps)       // warm-up, rep1, cool-down
         let skippedWarmup = t.skip(distanceM: 200, elapsedS: 60)
         #expect(skippedWarmup)

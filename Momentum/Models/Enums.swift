@@ -74,6 +74,17 @@ enum TrackingMode: String, Codable, Sendable, CaseIterable { case weightReps, re
 enum SetType: String, Codable, Sendable, CaseIterable { case working, warmup, drop, failure, amrap }
 enum RunType: String, Codable, Sendable, CaseIterable {
     case easy, long, tempo, intervals, recovery, race, freeRun
+    // Workout variety (running-excellence): speed play, hill reps, neuromuscular strides, and a
+    // progression run that finishes fast. Single-word raw values display cleanly via `.capitalized`.
+    case fartlek, hills, strides, progression
+
+    /// The quality (hard) sessions — used for recovery scheduling, pace recalibration, and Pace Insights.
+    var isQuality: Bool {
+        switch self {
+        case .tempo, .intervals, .race, .fartlek, .hills, .progression: true
+        case .easy, .long, .recovery, .freeRun, .strides: false
+        }
+    }
 }
 enum SessionStatus: String, Codable, Sendable, CaseIterable { case planned, completed, missed, moved }
 enum PRType: String, Codable, Sendable, CaseIterable {

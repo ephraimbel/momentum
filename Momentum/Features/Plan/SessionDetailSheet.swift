@@ -118,7 +118,7 @@ struct SessionDetailSheet: View {
             }
             // Guided quality sessions (intervals/tempo/run-walk) expand into a step breakdown so the
             // athlete sees the shape of the session before starting the guided run.
-            if let workout = StructuredWorkoutBuilder.build(from: session) {
+            if let workout = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) {
                 structuredSection(workout)
             }
         }
@@ -158,29 +158,37 @@ struct SessionDetailSheet: View {
         while i < steps.count {
             let s = steps[i]
             if s.kind == .work, let total = s.repTotal {
-                let d = s.target.distanceM
-                let distStr = d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
-                let pace = s.paceSPerKm.map { "@ \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? ""
-                lines.append(("\(total) × \(distStr)", pace))
-                if i + 1 < steps.count, steps[i + 1].kind == .recovery,
-                   case let .duration(rs) = steps[i + 1].target {
-                    lines.append(("Recovery", "\(Int(rs)) s easy"))
+                // A rep group (intervals / hills / strides / fartlek surges) → one collapsed line, named
+                // by the step's noun, then the recovery once.
+                let noun = s.title.map { " \($0.lowercased())s" } ?? ""   // "8 × 45 s hills"
+                let pace = s.paceSPerKm.map { "@ \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? "by feel"
+                lines.append(("\(total) × \(targetLabel(s.target))\(noun)", pace))
+                if i + 1 < steps.count, steps[i + 1].kind == .recovery {
+                    let r = steps[i + 1]
+                    lines.append((r.title ?? "Recovery", targetLabel(r.target)))
                 }
-                while i < steps.count, steps[i].kind == .work || steps[i].kind == .recovery { i += 1 }
+                // Skip the whole rep block (this group's work + recovery steps).
+                while i < steps.count, steps[i].kind == .work, steps[i].repTotal != nil { i += 1
+                    if i < steps.count, steps[i].kind == .recovery { i += 1 }
+                }
             } else {
-                lines.append((s.kindLabel, stepDetail(s)))
+                // A standalone block (warm-up, cool-down, tempo, progression thirds).
+                lines.append((s.displayNoun, stepDetail(s)))
                 i += 1
             }
         }
         return lines
     }
 
-    private func stepDetail(_ s: WorkoutStep) -> String {
-        let base: String
-        switch s.target {
-        case let .distance(d): base = d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
-        case let .duration(t): base = "\(Int(t)) s"
+    private func targetLabel(_ t: WorkoutStep.Target) -> String {
+        switch t {
+        case let .distance(d): return d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
+        case let .duration(s): return s >= 60 ? "\(Int((s / 60).rounded())) min" : "\(Int(s)) s"
         }
+    }
+
+    private func stepDetail(_ s: WorkoutStep) -> String {
+        let base = targetLabel(s.target)
         if s.kind == .work, let p = s.paceSPerKm {
             return "\(base) @ \(Formatters.pace(secPerKm: p, unit: distanceUnit))"
         }
@@ -205,7 +213,7 @@ struct SessionDetailSheet: View {
         if let dur = session.targetDurationS, dur > 0 { out.append(Formatters.duration(s: dur)) }
         // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
         // for guided sessions; only show it as a chip when no structured breakdown will render.
-        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session) == nil { out.append(iv) }
+        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) == nil { out.append(iv) }
         return out
     }
 

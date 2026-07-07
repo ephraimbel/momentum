@@ -22,19 +22,24 @@ enum CoachingCueBuilder {
     // MARK: Structured workout (R1)
 
     /// Spoken when a guided step begins — e.g. "Rep 3 of 6. 400 meters at your target. Go.",
-    /// "Recover. 90 seconds easy.", "Warm up. Ease in.", "Cool down. Nice and easy."
+    /// "Hill 2 of 8. 45 seconds hard. Go.", "Float. 1 minute easy.", "Cool down. Nice and easy."
     static func stepStart(_ step: WorkoutStep) -> String {
         switch step.kind {
         case .warmup: return "Warm up. Ease in."
         case .cooldown: return "Cool down. Nice and easy."
         case .recovery:
-            if case let .duration(s) = step.target { return "Recover. \(spokenPace(secPerUnit: s)) easy." }
-            return "Recover. Easy now."
+            let noun = step.title ?? "Recover"
+            if case let .duration(s) = step.target { return "\(noun). \(spokenPace(secPerUnit: s)) easy." }
+            return "\(noun). Easy now."
         case .work:
+            // Effort-based reps (hills / strides / surges) have no pace target → "hard"; paced reps → target.
+            let effort = step.paceSPerKm == nil ? "hard" : "at your target"
             if let i = step.repIndex, let n = step.repTotal {
-                return "Rep \(i) of \(n). \(spokenTarget(step.target)) at your target. Go."
+                return "\(step.displayNoun) \(i) of \(n). \(spokenTarget(step.target)) \(effort). Go."
             }
-            return "\(spokenTarget(step.target)) at tempo. Hold your effort."
+            // A continuous block (tempo, or a progression segment) named by its title.
+            let name = step.title.map { "\($0)." } ?? ""
+            return "\(name) \(spokenTarget(step.target)) — hold your effort.".trimmingCharacters(in: .whitespaces)
         }
     }
 

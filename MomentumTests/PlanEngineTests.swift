@@ -150,16 +150,18 @@ struct PlanEngineTests {
         #expect(fiveK <= PlanEngine.longRunPeak(forRaceM: 5_000) + 1)
     }
 
-    @Test func shortRaceUsesIntervalsLongRaceUsesTempo() {
-        func qualityTypes(_ raceM: Double) -> Set<RunType> {
+    @Test func shortRaceUsesSpeedLongRaceUsesThreshold() {
+        // Both prescribe reps, but the *pace* differs: short races sharpen at ~5K pace (P5k), long races
+        // build threshold (P5k + 20). (Default experience → P5k = 300 s/km.)
+        func week0QualityPace(_ raceM: Double) -> Double? {
             var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
             inp.raceDistanceM = raceM
             let plan = PlanEngine.generate(profile: inp, catalog: catalog,
                                            startDate: Date(timeIntervalSinceReferenceDate: 0))
-            return Set(plan.weeks[0].sessions.compactMap(\.runType))
+            return plan.weeks[0].sessions.first { $0.discipline == .running && $0.isHardRun }?.targetPaceSPerKm
         }
-        #expect(qualityTypes(5_000).contains(.intervals))
-        #expect(qualityTypes(42_195).contains(.tempo))
+        #expect(week0QualityPace(5_000) == 300)     // 5K → speed reps at P5k
+        #expect(week0QualityPace(42_195) == 320)    // marathon → threshold reps (P5k + 20)
     }
 
     // MARK: Muscle focus
@@ -195,5 +197,30 @@ struct PlanEngineTests {
         let week0 = plan.weeks[0]
         #expect(week0.sessions.count == 6)
         #expect(Set(week0.sessions.map(\.dayOffset)).count == 6)
+    }
+
+    // MARK: Workout variety
+
+    @Test func qualityWorkoutRotatesAndCarriesRepPace() {
+        // Two consecutive weeks produce different quality work — no "6×400 @ 5K" every week.
+        let w0 = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 5000, level: .some, p5k: 300)
+        let w1 = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 5000, level: .some, p5k: 300)
+        #expect(w0.type != w1.type || w0.intervals != w1.intervals)
+        // The VO₂ week carries a faster-than-5K rep pace (P5k − 6).
+        #expect(w1.paceOverride == 294)
+        // A half-marathon plan emphasizes threshold (P5k + 20), not raw speed.
+        let half = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 21_097, level: .some, p5k: 300)
+        #expect(half.paceOverride == 320)
+    }
+
+    @Test func generatedPlanHasRealVariety() {
+        let race = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date(timeIntervalSinceReferenceDate: 0))
+        let ins = PlanInputs(disciplines: [.running], goal: .raceDistance, daysPerWeek: 4, equipment: .fullGym,
+                             sessionMinutes: 45, raceDate: race, runningExperience: .some, liftingExperience: .some,
+                             raceDistanceM: 5000)
+        let plan = PlanEngine.generate(profile: ins, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let runTypes = Set(plan.weeks.flatMap { $0.sessions }.compactMap { $0.runType })
+        // Across the block we should see several distinct run types (intervals/fartlek/hills/strides/…).
+        #expect(runTypes.count >= 4)
     }
 }

@@ -125,7 +125,7 @@ enum PlanCoaching {
         func soften(_ s: PlannedSession, factor: Double, note: String) {
             if let d = s.targetDistanceM { s.targetDistanceM = (d * factor).rounded() }
             if let dur = s.targetDurationS { s.targetDurationS = (dur * factor).rounded() }
-            if s.runType == .intervals || s.runType == .tempo || s.runType == .long {
+            if let rt = s.runType, rt.isQuality || rt == .long {
                 s.runType = .easy
                 s.intervals = nil
                 s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)

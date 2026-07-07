@@ -444,8 +444,8 @@ final class CardioViewModel {
     private var unitLabelUpper: String { distanceUnit.resolved() == .imperial ? "MI" : "KM" }
 
     private static func stepLabel(_ step: WorkoutStep) -> String {
-        if let i = step.repIndex, let n = step.repTotal { return "Rep \(i) / \(n)" }
-        return step.kindLabel
+        if let i = step.repIndex, let n = step.repTotal { return "\(step.displayNoun) \(i) / \(n)" }
+        return step.displayNoun
     }
 
     /// True once the user has declined location — the route can't be tracked until they re-enable
