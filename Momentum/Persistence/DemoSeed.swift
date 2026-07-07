@@ -58,6 +58,11 @@ enum DemoSeed {
                           achievedPaceSPerKm: a, distanceM: 400, durationS: a * 0.4)
             }
             gps.structuredRepsData = try? JSONEncoder().encode(reps)
+            // Link a prescribed session so the post-run read names it ("your speed session done ✓").
+            let ps = PlannedSession()
+            ps.discipline = .running; ps.runType = .intervals; ps.date = recent.startedAt
+            ps.status = .completed; ps.intervals = "6×400m @ 5K"
+            context.insert(ps); recent.plannedSession = ps
         }
         try? context.save()
 
