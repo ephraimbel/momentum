@@ -64,6 +64,10 @@ actor GPSTrackingEngine {
     /// Accumulated *moving* time (excludes paused spans).
     private(set) var movingTimeS: TimeInterval = 0
     private var lastMovingMark: Date?
+    /// A manual Resume (from either a manual or an *auto* pause) suppresses auto-pause until the athlete
+    /// actually moves again — so Resume always works, even standing still, and never re-auto-pauses on
+    /// the very next stationary fix. Cleared the moment real movement is detected.
+    private var autoPauseSuppressed = false
 
     init(type: WorkoutType, sink: GPSWorkoutSink = NoopGPSWorkoutSink()) {
         self.type = type
@@ -119,13 +123,16 @@ actor GPSTrackingEngine {
         // Auto-pause / resume (manual pause is sticky and not overridden here).
         if state != .paused {
             let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now)
-            if pausedBySpeed, state == .tracking {
+            if !pausedBySpeed {
+                // Real movement → a manual-resume override is done its job; normal auto-pause resumes.
+                autoPauseSuppressed = false
+                if state == .autoPaused { state = .tracking }
+                else if state == .gpsLost, accepted { state = .tracking }
+            } else if state == .tracking, !autoPauseSuppressed {
+                // Stationary and not manually overridden → auto-pause.
                 state = .autoPaused
-            } else if !pausedBySpeed, state == .autoPaused {
-                state = .tracking
-            } else if state == .gpsLost, accepted {
-                state = .tracking
             }
+            // else: stationary but the athlete manually resumed → stay tracking (Resume always wins).
         }
 
         if let last = lastCheckpoint, now.timeIntervalSince(last) >= Const.checkpointIntervalS {
@@ -137,7 +144,15 @@ actor GPSTrackingEngine {
     }
 
     func pause() { if state == .tracking || state == .autoPaused { state = .paused } }
-    func resume() { if state == .paused { state = .tracking; lastMovingMark = Date() } }
+    /// Manual Resume — works from a manual *or* an auto pause, and holds off auto-pause until the athlete
+    /// moves again, so the button always responds even when they're standing still.
+    func resume() {
+        if state == .paused || state == .autoPaused {
+            state = .tracking
+            lastMovingMark = Date()
+            autoPauseSuppressed = true
+        }
+    }
     func markGPSLost() { if state == .tracking { state = .gpsLost } }
 
     /// `durationOverrideS` lets the view model supply its continuous elapsed-time clock (which
