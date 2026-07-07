@@ -159,29 +159,56 @@ struct RouteDrawMap: View {
     /// south bank, smoothed with Catmull-Rom so it flows like a real GPS trace. The overview viewport
     /// frames the lake automatically. No location needed; it's a brand visual.
     static func makeRoute() -> [CLLocationCoordinate2D] {
+        // Dense hand-trace of the trail (not the lake outline): the north bank west→east to Longhorn
+        // Dam, across the dam, then the south bank (Boardwalk, Auditorium Shores) back to MoPac. Enough
+        // points that the light Catmull-Rom rounds turns without collapsing the loop into an oval.
         let waypoints: [(lat: Double, lon: Double)] = [
-            (30.2745, -97.7800),  // Mopac / Pfluger bridge — west end
-            (30.2735, -97.7710),
-            (30.2720, -97.7625),
-            (30.2700, -97.7545),  // Lamar
-            (30.2668, -97.7480),  // South 1st St
-            (30.2634, -97.7435),  // Congress Ave
-            (30.2595, -97.7388),
-            (30.2545, -97.7312),
-            (30.2500, -97.7220),
-            (30.2466, -97.7150),  // Longhorn Dam — east end
-            (30.2444, -97.7152),  // cross to the south bank
-            (30.2452, -97.7235),  // south shore, heading back west
-            (30.2480, -97.7330),
-            (30.2510, -97.7430),  // Auditorium Shores
-            (30.2542, -97.7520),
-            (30.2576, -97.7615),
-            (30.2618, -97.7705),
-            (30.2680, -97.7778),
-            (30.2728, -97.7806),
-            (30.2745, -97.7800),  // close the loop
+            // North bank, west→east: MoPac, along the shore past the downtown bridges, then the lake
+            // bends south-east toward Longhorn Dam. The banks stay ~300 m apart (a thin ribbon), so this
+            // hugs the trail instead of ballooning into a loop around downtown.
+            (30.2655, -97.7856),  // MoPac (Loop 1) bridge — north, west end
+            (30.2650, -97.7818),
+            (30.2645, -97.7780),
+            (30.2640, -97.7740),
+            (30.2635, -97.7700),
+            (30.2632, -97.7660),
+            (30.2630, -97.7620),  // Lamar bridge
+            (30.2627, -97.7580),
+            (30.2624, -97.7542),  // Pfluger / South 1st
+            (30.2619, -97.7500),
+            (30.2614, -97.7470),  // Congress Ave bridge — north
+            (30.2606, -97.7440),
+            (30.2594, -97.7408),
+            (30.2578, -97.7376),
+            (30.2560, -97.7344),  // lake bends south-east
+            (30.2539, -97.7311),
+            (30.2517, -97.7278),
+            (30.2494, -97.7242),
+            (30.2474, -97.7202),
+            (30.2459, -97.7160),
+            (30.2450, -97.7124),  // Longhorn Dam — east end, north side
+            (30.2442, -97.7116),  // cross the dam to the south bank
+            // South bank, east→west back to MoPac.
+            (30.2446, -97.7152),
+            (30.2456, -97.7192),  // Boardwalk — the over-water SE stretch
+            (30.2472, -97.7232),
+            (30.2491, -97.7268),
+            (30.2512, -97.7302),
+            (30.2533, -97.7336),
+            (30.2553, -97.7370),
+            (30.2569, -97.7402),  // Congress Ave bridge — south
+            (30.2580, -97.7438),
+            (30.2585, -97.7478),  // Auditorium Shores
+            (30.2588, -97.7520),
+            (30.2591, -97.7562),
+            (30.2596, -97.7606),
+            (30.2604, -97.7652),  // Lou Neff Point
+            (30.2616, -97.7702),
+            (30.2632, -97.7754),
+            (30.2648, -97.7808),
+            (30.2655, -97.7856),  // close the loop at MoPac
         ]
-        let pts = catmullRom(waypoints.map { ($0.lat, $0.lon) }, subdivisions: 6)
+        let pts = catmullRom(waypoints.map { ($0.lat, $0.lon) }, subdivisions: 4)
         return pts.map { CLLocationCoordinate2D(latitude: $0.0, longitude: $0.1) }
     }
 
