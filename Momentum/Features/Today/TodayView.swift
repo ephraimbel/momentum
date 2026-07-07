@@ -605,7 +605,14 @@ struct TodayView: View {
     private var bottomPanel: some View {
         VStack(spacing: Theme.Space.sm) {
             if isCardio {
-                HStack(spacing: Theme.Space.sm) { Spacer(); worldButton; MapLayersButton(style: $mapStyle); recenterButton }
+                HStack {
+                    Spacer()
+                    VStack(spacing: Theme.Space.sm) {
+                        worldButton
+                        MapLayersButton(style: $mapStyle)
+                        recenterButton
+                    }
+                }
             }
             deck
         }

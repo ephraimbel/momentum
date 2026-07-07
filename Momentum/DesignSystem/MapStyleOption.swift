@@ -94,10 +94,9 @@ struct MapLayersButton: View {
                 }
             }
         } label: {
-            Image(systemName: "square.3.layers.3d").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 38, height: 38)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().stroke(Theme.hairline))
+            Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44)
+                .momentumGlass(in: Circle())
         }
         .accessibilityLabel("Map style")
     }
