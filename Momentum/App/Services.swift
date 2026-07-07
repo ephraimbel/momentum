@@ -110,6 +110,9 @@ protocol HealthServing: AnyObject {
     func save(_ workout: Workout) async
     /// Read the athlete's latest body mass + resting HR (for personalizing estimates). nils if N/A.
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
+    /// Read recovery signals wearables mirror into Health — HRV, resting HR, and last night's sleep,
+    /// each with a personal baseline (for the readiness card). `.empty` if unavailable/unauthorized.
+    func recoverySignals() async -> RecoverySignals
     /// Import workouts from other sources (Apple Watch, Garmin via Health, …) into our store.
     /// De-duplicated; skips our own writes. Returns the number newly imported.
     @discardableResult
@@ -244,6 +247,7 @@ final class StubHealthService: HealthServing {
     func requestAuthorization() async -> Bool { false }
     func save(_ workout: Workout) async {}
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) { (nil, nil) }
+    func recoverySignals() async -> RecoverySignals { .empty }
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int { 0 }
 }
 final class StubPlanEngine: PlanEngineServing {}

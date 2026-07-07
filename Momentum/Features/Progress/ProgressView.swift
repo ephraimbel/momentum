@@ -24,6 +24,7 @@ struct ProgressScreen: View {
     }()
     @State private var correcting: LearnedItem?
     @State private var showVO2Info = false
+    @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
@@ -121,6 +122,7 @@ struct ProgressScreen: View {
                 }
                 #endif
             }
+            .task { signals = await services.health.recoverySignals() }
         }
     }
 
@@ -325,13 +327,18 @@ struct ProgressScreen: View {
     @ViewBuilder
     private func formCard(_ r: RecoveryModel) -> some View {
         if r.hasData, hasFormHistory, let form = formPoint {
+            let score = signals.blendedReadiness(base: r.score)
+            let band = RecoveryModel.band(score)
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                sectionTitle("Form & readiness — now")
+                HStack {
+                    sectionTitle("Form & readiness — now")
+                    if signals.hasPhysio { Spacer(); fromDevicesChip }
+                }
                 HStack(spacing: Theme.Space.md) {
-                    readinessRing(score: r.score)
+                    readinessRing(score: score)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(r.readiness.rawValue).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
-                        Text(r.guidance).font(.rounded(Theme.FontSize.label, weight: .medium))
+                        Text(band.rawValue).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
+                        Text(RecoveryModel.guidance(band)).font(.rounded(Theme.FontSize.label, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: Theme.Space.sm)
@@ -342,6 +349,10 @@ struct ProgressScreen: View {
                     }
                 }
                 formBar(tsb: form.tsb)
+                if signals.hasPhysio {
+                    Divider().overlay(Theme.hairline)
+                    signalsRow
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md).background(card)
@@ -628,31 +639,75 @@ struct ProgressScreen: View {
     @ViewBuilder
     private func recoveryCard(_ r: RecoveryModel) -> some View {
         if r.hasData {
+            // Blend the load-derived readiness with device signals (HRV / resting HR / sleep) when present.
+            let score = signals.blendedReadiness(base: r.score)
+            let band = RecoveryModel.band(score)
+            let guidance = RecoveryModel.guidance(band)
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                Text("RECOVERY").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                HStack {
+                    Text("RECOVERY").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                    if signals.hasPhysio { fromDevicesChip }
+                }
                 HStack(spacing: Theme.Space.lg) {
-                    readinessRing(score: r.score)
+                    readinessRing(score: score)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(r.readiness.rawValue).font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
-                        Text(r.guidance).font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        Text(band.rawValue).font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
+                        Text(guidance).font(.rounded(Theme.FontSize.caption, weight: .medium))
                             .foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
                 Divider().overlay(Theme.hairline)
-                HStack(alignment: .top, spacing: Theme.Space.lg) {
-                    recoveryMetric(Formatters.compact(r.weeklyLoad), "Weekly load", loadVsUsual(r.acwr))
-                    recoveryMetric("\(r.restDays)", "Rest days", "of last 7")
-                    recoveryMetric(varietyWord(r.monotony), "Training mix", varietyNote(r.monotony))
+                // Device users get the physiological trio (HRV / resting HR / sleep, each vs their
+                // baseline); everyone else gets the load-derived readout.
+                if signals.hasPhysio {
+                    signalsRow
+                } else {
+                    HStack(alignment: .top, spacing: Theme.Space.lg) {
+                        recoveryMetric(Formatters.compact(r.weeklyLoad), "Weekly load", loadVsUsual(r.acwr))
+                        recoveryMetric("\(r.restDays)", "Rest days", "of last 7")
+                        recoveryMetric(varietyWord(r.monotony), "Training mix", varietyNote(r.monotony))
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md)
             .background(card)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Recovery, \(r.readiness.rawValue)")
-            .accessibilityValue("Readiness \(r.score) of 100. \(r.guidance)")
+            .accessibilityLabel("Recovery, \(band.rawValue)")
+            .accessibilityValue("Readiness \(score) of 100. \(guidance)\(signalsAXSummary)")
         }
+    }
+
+    /// The physiological trio read from Apple Health — HRV, resting HR, last night's sleep — each
+    /// anchored to the athlete's own baseline. Only the signals that are actually present render.
+    @ViewBuilder
+    private var signalsRow: some View {
+        // Units (ms for HRV, bpm for resting HR) are conventional enough to leave off — the note carries
+        // the meaning ("above your norm"), and appending "· ms" only forces an ugly wrap.
+        HStack(alignment: .top, spacing: Theme.Space.lg) {
+            if let v = signals.hrvValue { recoveryMetric(v, "HRV", signals.hrvNote) }
+            if let v = signals.restingHRValue { recoveryMetric(v, "Resting HR", signals.restingHRNote) }
+            if let v = signals.sleepValue { recoveryMetric(v, "Sleep", signals.sleepNote) }
+        }
+    }
+
+    /// Small "from your devices" attribution so users know the readiness is device-backed, not guessed.
+    private var fromDevicesChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "applewatch").font(.system(size: 9, weight: .bold))
+            Text("FROM YOUR DEVICES").font(.rounded(9, weight: .bold)).tracking(0.5)
+        }
+        .foregroundStyle(Theme.inkTertiary)
+    }
+
+    private var signalsAXSummary: String {
+        guard signals.hasPhysio else { return "" }
+        var parts: [String] = []
+        if let v = signals.hrvValue, let n = signals.hrvNote { parts.append("HRV \(v) milliseconds, \(n)") }
+        if let v = signals.restingHRValue, let n = signals.restingHRNote { parts.append("resting heart rate \(v), \(n)") }
+        if let v = signals.sleepValue, let n = signals.sleepNote { parts.append("sleep \(v), \(n)") }
+        return parts.isEmpty ? "" : ". From your devices: " + parts.joined(separator: ", ")
     }
 
     private func readinessRing(score: Int) -> some View {

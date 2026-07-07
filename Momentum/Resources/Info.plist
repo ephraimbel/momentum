@@ -25,7 +25,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>momentum reads heart rate, body weight, and workout data to personalize your stats and coaching.</string>
+	<string>momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>momentum saves your completed workouts to Apple Health.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

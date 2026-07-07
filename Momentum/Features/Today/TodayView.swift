@@ -127,6 +127,9 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--today-profile") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showProfile = true }
             }
+            if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
+            }
             if ProcessInfo.processInfo.arguments.contains("--today-day") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     selectedDaySession = plan?.sessions.sorted { $0.date < $1.date }.first

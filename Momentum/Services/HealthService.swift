@@ -23,6 +23,8 @@ final class HealthService: HealthServing {
         HKObjectType.workoutType(),               // import workouts from other apps/devices (Garmin, Watch)
         HKQuantityType(.heartRate),
         HKQuantityType(.restingHeartRate),
+        HKQuantityType(.heartRateVariabilitySDNN), // recovery: HRV (Watch / Garmin / Oura → Health)
+        HKCategoryType(.sleepAnalysis),            // recovery: last night's sleep
         HKQuantityType(.bodyMass),
         HKQuantityType(.stepCount),
         HKQuantityType(.activeEnergyBurned),       // workout calorie totals
@@ -90,6 +92,27 @@ final class HealthService: HealthServing {
         async let mass = latest(.bodyMass, unit: .gramUnit(with: .kilo))
         async let rhr = latest(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()))
         return (await mass, (await rhr).map { Int($0.rounded()) })
+    }
+
+    /// Read the recovery signals wearables mirror into Health — HRV (SDNN), resting HR, and last
+    /// night's sleep — each with a ~30-day baseline so the value reads against the athlete's own norm
+    /// (PRD §4.8, §8.6). Best-effort; every field is `nil` when unavailable/unauthorized.
+    func recoverySignals() async -> RecoverySignals {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return .demo }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return .empty }
+        let ms = HKUnit.secondUnit(with: .milli)
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        async let hrv = latest(.heartRateVariabilitySDNN, unit: ms)
+        async let hrvBase = average(.heartRateVariabilitySDNN, unit: ms, days: 30)
+        async let rhr = latest(.restingHeartRate, unit: bpm)
+        async let rhrBase = average(.restingHeartRate, unit: bpm, days: 30)
+        async let sleep = sleepHoursLastNight()
+        return RecoverySignals(
+            hrvMs: await hrv, hrvBaselineMs: await hrvBase,
+            restingHR: (await rhr).map { Int($0.rounded()) }, restingHRBaseline: await rhrBase,
+            sleepHours: await sleep)
     }
 
     // MARK: Import (Apple Watch / Garmin via Apple Health → our store)
@@ -240,6 +263,45 @@ final class HealthService: HealthServing {
             let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: nil,
                                       limit: 1, sortDescriptors: sort) { _, samples, _ in
                 continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
+    }
+
+    /// Discrete average of a quantity over the last `days` — the athlete's personal baseline for a
+    /// recovery signal (HRV, resting HR). `nil` when there are no samples in the window.
+    private func average(_ id: HKQuantityTypeIdentifier, unit: HKUnit, days: Int) async -> Double? {
+        await withCheckedContinuation { continuation in
+            let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
+            let query = HKStatisticsQuery(quantityType: HKQuantityType(id),
+                                          quantitySamplePredicate: predicate,
+                                          options: .discreteAverage) { _, stats, _ in
+                continuation.resume(returning: stats?.averageQuantity()?.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
+    }
+
+    /// Hours of actual sleep in the most recent night — sums `asleep*` category samples from the last
+    /// 18 hours (long enough to catch last night, short enough to exclude the night before). Naps fold
+    /// in; "in bed" (awake) time is excluded. `nil` when there's no sleep recorded.
+    private func sleepHoursLastNight() async -> Double? {
+        await withCheckedContinuation { continuation in
+            let start = Calendar.current.date(byAdding: .hour, value: -18, to: Date())
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
+            let query = HKSampleQuery(sampleType: HKCategoryType(.sleepAnalysis), predicate: predicate,
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
+                let asleep: Set<Int> = [
+                    HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                    HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                    HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+                    HKCategoryValueSleepAnalysis.asleepREM.rawValue,
+                ]
+                let seconds = (samples as? [HKCategorySample] ?? [])
+                    .filter { asleep.contains($0.value) }
+                    .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+                continuation.resume(returning: seconds > 0 ? seconds / 3600 : nil)
             }
             store.execute(query)
         }

@@ -7,6 +7,10 @@ struct SelectionCard: View {
     var subtitle: String? = nil
     var systemImage: String? = nil
     var isSelected: Bool = false
+    /// When non-nil, a star toggle appears on the trailing edge (used by the activity picker to let
+    /// users favorite activities). `onToggleFavorite` fires without selecting the card.
+    var isFavorite: Bool? = nil
+    var onToggleFavorite: (() -> Void)? = nil
     let action: () -> Void
 
     @State private var pressed = false
@@ -34,6 +38,19 @@ struct SelectionCard: View {
                     }
                 }
                 Spacer(minLength: 0)
+                if let isFavorite, let onToggleFavorite {
+                    Button { Haptics.selection(); onToggleFavorite() } label: {
+                        Image(systemName: isFavorite ? "star.fill" : "star")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(isFavorite ? Theme.purple
+                                             : (isSelected ? Theme.background.opacity(0.55) : Theme.inkTertiary))
+                            .frame(width: 34, height: 34)
+                            .contentShape(Rectangle())
+                            .symbolEffect(.bounce, value: isFavorite)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isFavorite ? "Unfavorite \(title)" : "Favorite \(title)")
+                }
                 // The selected state flips to a confident ink fill; a check-circle springs in (no
                 // empty indicator when unselected, so plain pickers like the activity chooser stay clean).
                 if isSelected {
