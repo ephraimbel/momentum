@@ -421,9 +421,9 @@ struct TodayView: View {
                 AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
                 bellButton
                 Spacer(minLength: Theme.Space.xs)
-                StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
+                activitySelector
                 Spacer(minLength: Theme.Space.xs)
-                worldButton
+                StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
             }
             weekStrip
         }
@@ -517,7 +517,7 @@ struct TodayView: View {
     private var bottomPanel: some View {
         VStack(spacing: Theme.Space.sm) {
             if isCardio {
-                HStack(spacing: Theme.Space.sm) { Spacer(); MapLayersButton(style: $mapStyle); recenterButton }
+                HStack(spacing: Theme.Space.sm) { Spacer(); worldButton; MapLayersButton(style: $mapStyle); recenterButton }
             }
             deck
         }
@@ -537,8 +537,6 @@ struct TodayView: View {
                     .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
-                // Sport picker sits with the start action now (it moved out of the header).
-                HStack { activitySelector; Spacer(minLength: 0) }
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
                 // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
@@ -1062,44 +1060,19 @@ struct TrainingLoadChip: View {
     }
 }
 
-/// A streak chip — flame + count; lights up iridescent when the streak is alive. The 🔥 gently
-/// breathes/flickers while a streak is running, and pops when it ticks up — a small "alive" accent
-/// that stays within the earned-motion rule (progress only) and goes fully static under Reduce Motion.
+/// A streak chip — flame + count; lights up iridescent when the streak is alive. Static (no breathe or
+/// pop) — the earned celebration lives on the finish/summary screen, not this passive header chip.
 struct StreakChip: View {
     let days: Int
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var flicker = false   // continuous breathe/wobble while the streak is alive
-    @State private var pop = false       // one-shot enlarge when the streak increments
 
     var body: some View {
         HStack(spacing: 6) {
-            Text("🔥")
-                .font(.system(size: Theme.FontSize.body))
-                // Inner layer: a slow asymmetric breathe + tiny wobble (oscillates forever once
-                // `flicker` flips, via the autoreversing repeat).
-                .scaleEffect(flicker ? 1.07 : 0.95)
-                .rotationEffect(.degrees(flicker ? 3 : -3))
-                .animation(reduceMotion || days == 0 ? nil
-                           : .easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: flicker)
-                // Outer layer: a springy pop on increment, scoped to its own driver so it never
-                // fights the breathe loop.
-                .scaleEffect(pop ? 1.4 : 1.0)
-                .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.4), value: pop)
+            Text("🔥").font(.system(size: Theme.FontSize.body))
             Text("\(days)").font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
         }
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
         .momentumGlass(iridescent: days > 0 ? .chip : nil)
-        .onAppear { if days > 0 { flicker = true } }
-        .onChange(of: days) { old, new in
-            if new > 0 { flicker = true }           // start breathing if the streak just came alive
-            // Pop only on genuine growth from an existing streak — never on the 0→N settle when the
-            // query first loads (that's data, not an achievement). No haptic here: the earned
-            // celebration lives on the finish/summary screen, not this passive view.
-            guard new > old, old > 0, !reduceMotion else { return }
-            pop = true
-            Task { try? await Task.sleep(for: .milliseconds(180)); pop = false }   // release → springs back
-        }
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
     }
