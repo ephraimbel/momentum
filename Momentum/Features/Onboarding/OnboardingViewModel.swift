@@ -81,13 +81,15 @@ final class OnboardingViewModel {
         }
     }
 
-    var step: Step = .coldOpen
+    var step: Step = .name
 
     /// Goal-first, branching order — each user only sees the steps relevant to their goal/disciplines.
     enum Step: Int, CaseIterable {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
-        case coldOpen, name, goal, disciplines, metrics, race, raceGoalTime, muscleFocus, experience,
+        // No cold-open — the welcome page (SignInView) is the brand entry; onboarding opens on the
+        // first question.
+        case name, goal, disciplines, metrics, race, raceGoalTime, muscleFocus, experience,
              runVolume, days, preferredDays, session, equipment, hybridFocus, why, calibration,
              building, reveal, primers
     }
@@ -115,7 +117,7 @@ final class OnboardingViewModel {
 
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
-        steps.filter { ![.coldOpen, .building, .reveal, .primers].contains($0) }
+        steps.filter { ![.building, .reveal, .primers].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 

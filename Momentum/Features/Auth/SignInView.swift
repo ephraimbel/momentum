@@ -1,75 +1,72 @@
 import SwiftUI
 import AuthenticationServices
 
-/// The login gate (PRD §8.11) — Sign in with Apple only, for now. Brand-forward and quiet: the
-/// glowing orb, the wordmark, the one-liner, and the system sign-in button.
+/// The welcome gate (PRD §8.11) — a full-bleed athletic photo with the white wordmark + tagline
+/// centered over it, and a single "Get started" that drops the athlete straight into onboarding
+/// (as a guest — Sign in with Apple is offered at the end of onboarding, once there's a plan to save).
 struct SignInView: View {
     @Environment(AuthController.self) private var auth
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer()
-            Image("BrandIcon")
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 132, height: 132)
-                .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
+        ZStack {
+            // Full-bleed black-and-white hero. Clipped to a screen-sized layer so `scaledToFill`'s
+            // overflow can't inflate the ZStack (which would push the button past the screen edges).
+            Color.clear
+                .overlay {
+                    Image("WelcomeBackground")
+                        .resizable()
+                        .scaledToFill()
+                }
+                .clipped()
+                .ignoresSafeArea()
                 .accessibilityHidden(true)
+
+            // Scrim — clear at top (dark status bar reads over the bright sky), darkening toward the
+            // bottom so the Get started button stays crisp.
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.0),
+                    .init(color: .clear, location: 0.35),
+                    .init(color: .black.opacity(0.35), location: 0.72),
+                    .init(color: .black.opacity(0.85), location: 1.0),
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            // Brand lockup, centered on the hero. A soft shadow keeps it legible over the photo.
             VStack(spacing: Theme.Space.sm) {
-                Image("WordmarkBlack")
+                Image("WordmarkWhite")
                     .resizable()
                     .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 210)
+                    .scaledToFit()
+                    .frame(height: 40)   // fixed height; width follows the wordmark's aspect ratio
                     .accessibilityLabel("momentum")
-                Text("keep moving").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-            }
-            Spacer()
-            VStack(spacing: Theme.Space.md) {
-                SignInWithAppleButton(.signIn) { request in
-                    request.requestedScopes = [.fullName, .email]
-                } onCompletion: { result in
-                    if case .success(let authResult) = result,
-                       let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
-                        auth.signIn(userID: credential.user, fullName: credential.fullName, email: credential.email)
-                    }
-                }
-                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                .frame(height: 54)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-
-                Text("No passwords. Private by default — your training stays yours.")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
+                Text("keep moving")
+                    .font(.serif(Theme.FontSize.body + 3, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.95))
                     .multilineTextAlignment(.center)
+            }
+            .shadow(color: .black.opacity(0.35), radius: 14, y: 2)
 
-                // Try it now, commit later — local-only until they sign in (back up / sync / social).
-                VStack(spacing: 4) {
-                    Button { auth.continueAsGuest() } label: {
-                        Text("Continue without an account")
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                            .frame(maxWidth: .infinity).frame(height: 50)
-                            .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    Text("Saved on this device. Sign in anytime to back up & sync.")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .multilineTextAlignment(.center)
+            // The only CTA — enters as a guest and goes straight into onboarding.
+            VStack {
+                Spacer()
+                Button {
+                    Haptics.light()
+                    auth.continueAsGuest()
+                } label: {
+                    Text("Get started")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity).frame(height: 56)
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(.white))
                 }
-                .padding(.top, Theme.Space.xs)
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, Theme.Space.xl)
             .padding(.bottom, Theme.Space.xxl)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background.ignoresSafeArea())
     }
 }
 

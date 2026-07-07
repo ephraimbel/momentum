@@ -16,7 +16,6 @@ struct OnboardingFlow: View {
     @State private var profile: UserProfile?
     @State private var goingBack = false
     @State private var locator = LocationService()   // request location on the final primer
-    @State private var brandRevealed = false         // cold open plays the route map, then dissolves to brand
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
@@ -33,8 +32,6 @@ struct OnboardingFlow: View {
                                  sex: vm.bodySex)
                     .task { await buildPlan() }
                     .transition(.opacity)
-            } else if vm.step == .coldOpen {
-                coldOpen.transition(.opacity)   // full-bleed welcome map
             } else {
                 VStack(spacing: Theme.Space.lg) {
                     if isQuestion { header }
@@ -139,7 +136,6 @@ struct OnboardingFlow: View {
     @ViewBuilder
     private var content: some View {
         switch vm.step {
-        case .coldOpen: EmptyView()   // rendered full-bleed in `body`
         case .name: nameStep
         case .goal: goalStep
         case .disciplines: disciplinesStep
@@ -162,54 +158,6 @@ struct OnboardingFlow: View {
         }
     }
 
-    // MARK: Cold open
-
-    private var coldOpen: some View {
-        ZStack {
-            // Phase 1: a real run path draws itself across the map — a cinematic intro. It signals when
-            // the draw + arrival lands, so the handoff is synced rather than guessed at on a timer.
-            RouteDrawMap(showsStats: true) {
-                guard !brandRevealed else { return }
-                withAnimation(.easeInOut(duration: 0.75)) { brandRevealed = true }
-            }
-            .ignoresSafeArea()
-            // Rack-focus depth dissolve: the map pushes back + blurs out as the brand rises in.
-            .scaleEffect(brandRevealed && !reduceMotion ? 1.08 : 1)
-            .blur(radius: brandRevealed && !reduceMotion ? 10 : 0)
-            .opacity(brandRevealed ? 0 : 1)
-
-            // Phase 2: the clean brand canvas — orb + wordmark + Start.
-            if brandRevealed {
-                VStack(spacing: Theme.Space.lg) {
-                    Spacer()
-                    Image("BrandIcon")
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 124, height: 124)
-                        .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
-                        .accessibilityHidden(true)
-                    VStack(spacing: Theme.Space.sm) {
-                        Image("WordmarkBlack")
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 220)
-                            .accessibilityLabel("momentum")
-                        Text("keep moving.")
-                            .font(.rounded(Theme.FontSize.headline, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
-                    .reveal(0.12)
-                    Spacer()
-                    OversizedButton(title: "Get started") { goNext() }
-                        .reveal(0.28)
-                }
-                .padding(.horizontal, Theme.Space.lg)
-                .transition(.opacity.combined(with: .scale(scale: 0.97)))
-            }
-        }
-    }
 
     // MARK: Question steps
 
