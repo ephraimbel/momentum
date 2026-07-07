@@ -49,6 +49,7 @@ struct PlanView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         header
                         weekHero
+                        hybridCard
                         raceInsightSection
                         if isCurrentWeek { tuneSection }
                         VStack(spacing: Theme.Space.sm) {
@@ -102,6 +103,54 @@ struct PlanView: View {
     private func presentAdd(for day: Date) { addDay = day; showingAdd = true }
 
     /// R4 coach intelligence: a race-day projection (when a race goal is set) + a Pace Insight reading
+    /// "Your week, sequenced" — surfaces the cross-discipline coaching moment: how the week's runs and
+    /// lifts are spaced so hard efforts land on fresh legs. Shown only on genuinely hybrid weeks.
+    @ViewBuilder
+    private var hybridCard: some View {
+        if let insight = hybridWeekInsight {
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+                Image(systemName: "figure.run.circle").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("YOUR WEEK, SEQUENCED").font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                    Text(insight).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(Theme.Space.md).frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Your week, sequenced. \(insight)")
+        }
+    }
+
+    /// The cross-discipline read for the displayed week — nil unless it pairs a leg day with a hard/long
+    /// run. Infers "leg day" from a strength session's lower-body primary muscles.
+    private var hybridWeekInsight: String? {
+        guard let plan else { return nil }
+        let cal = Calendar.current
+        let items: [HybridSequencing.Item] = plan.sessions.compactMap { s in
+            guard let dayIndex = cal.dateComponents([.day], from: weekStart, to: cal.startOfDay(for: s.date)).day,
+                  (0...6).contains(dayIndex) else { return nil }
+            if s.discipline == .running {
+                let hard = s.runType.map { $0.isQuality || $0 == .long } ?? false
+                return .init(dayIndex: dayIndex, runType: s.runType, isHardRun: hard, isLegDay: false)
+            }
+            if s.discipline == .strength {
+                let isLeg = s.strengthTargets.contains { pe in
+                    (pe.exercise?.primaryMuscles ?? []).contains { HybridSequencing.Item.legMuscles.contains($0) }
+                }
+                return .init(dayIndex: dayIndex, runType: nil, isHardRun: false, isLegDay: isLeg)
+            }
+            return nil
+        }
+        return HybridSequencing.weekInsight(items)
+    }
+
     /// the athlete's recent quality-session pacing. Both are quiet reads above the week.
     @ViewBuilder
     private var raceInsightSection: some View {

@@ -339,7 +339,12 @@ enum PlanEngine {
         // Hard runs first onto safe days; downgrade if none left.
         for i in runs.indices where runs[i].isHardRun {
             if !safe.isEmpty {
-                runs[i].dayOffset = safe.removeFirst()
+                let day = safe.removeFirst()
+                runs[i].dayOffset = day
+                // In a hybrid week, explain the cross-discipline placement (fresh legs) — our edge.
+                if let rt = runs[i].runType {
+                    runs[i].rationale = HybridSequencing.runRationale(dayIndex: day, runType: rt, legDays: lowerDays)
+                }
             } else {
                 runs[i].isHardRun = false
                 runs[i].runType = .easy

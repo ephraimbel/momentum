@@ -213,6 +213,16 @@ struct PlanEngineTests {
         #expect(half.paceOverride == 320)
     }
 
+    @Test func hybridWeekAttachesSequencingRationale() {
+        // A running + strength week places a leg day and a hard run — the hard run should carry a
+        // cross-discipline "fresh legs" rationale (our differentiator, made visible).
+        let plan = PlanEngine.generate(profile: inputs(disciplines: [.running, .strength], goal: .raceDistance, days: 6),
+                                       catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let hardRuns = plan.weeks[0].sessions.filter { $0.discipline == .running && $0.isHardRun }
+        #expect(!hardRuns.isEmpty)
+        #expect(hardRuns.contains { ($0.rationale?.lowercased().contains("leg")) == true })
+    }
+
     @Test func generatedPlanHasRealVariety() {
         let race = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date(timeIntervalSinceReferenceDate: 0))
         let ins = PlanInputs(disciplines: [.running], goal: .raceDistance, daysPerWeek: 4, equipment: .fullGym,
