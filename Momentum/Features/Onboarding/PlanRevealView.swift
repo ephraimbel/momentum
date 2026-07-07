@@ -9,11 +9,22 @@ struct PlanRevealView: View {
     let profile: UserProfile?
     var onContinue: () -> Void
 
-    @State private var ringProgress = 0.0
+    @State private var shownWeeks = 0.0
     @State private var shownDays = 0.0
-    @State private var bloom = 0.0          // iridescent celebration bloom behind the goal ring
+    @State private var shownSessions = 0.0
+    @State private var bloom = 0.0          // soft iridescent celebration bloom behind the headline
     @State private var barsIn = false       // weekly-volume bars grow up on appear
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
+    private var planWeekCount: Int {
+        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return 0 }
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
+        let maxW = sessions.map { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: $0.date)).day ?? 0) / 7) }.max() ?? 0
+        return maxW + 1
+    }
+    private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
 
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
 
@@ -78,40 +89,61 @@ struct PlanRevealView: View {
 
     private var hero: some View {
         VStack(spacing: Theme.Space.lg) {
+            // Editorial headline over a soft iridescent bloom — the earned brand accent, kept restrained.
             ZStack {
-                Circle()
+                Ellipse()
                     .fill(LinearGradient(colors: Theme.iridescent, startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 150, height: 150)
-                    .blur(radius: 30)
-                    .opacity(0.35 * bloom)
-                    .scaleEffect(0.8 + 0.2 * bloom)
-                ProgressRing(progress: ringProgress).frame(width: 132, height: 132)
-                VStack(spacing: -2) {
-                    AnimatedCounter(value: shownDays) { "\(Int($0.rounded()))" }
-                        .font(.display(46, weight: .black))
+                    .frame(width: 300, height: 170)
+                    .blur(radius: 60)
+                    .opacity(0.20 * bloom)
+                    .scaleEffect(0.9 + 0.1 * bloom)
+                VStack(spacing: Theme.Space.sm) {
+                    Text(planReadyTitle)
+                        .font(.serif(33, weight: .semibold))
                         .foregroundStyle(Theme.ink)
-                    Text("DAYS / WEEK")
-                        .font(.rounded(Theme.FontSize.label, weight: .bold))
-                        .tracking(1.4)
-                        .foregroundStyle(Theme.inkTertiary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(vm.projectedOutcome())
+                        .font(.rounded(Theme.FontSize.body, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(vm.daysPerWeek) days per week")
+                .padding(.horizontal, Theme.Space.md)
             }
-            VStack(spacing: Theme.Space.xs) {
-                Text(planReadyTitle)
-                    .font(.serif(31, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(vm.projectedOutcome())
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .reveal(0.18)
+            .padding(.top, Theme.Space.sm)
+            statStrip.reveal(0.16)
         }
+    }
+
+    /// The plan's shape as clean data — weeks, frequency, total sessions — with a count-up. Replaces the
+    /// arbitrary days/week dial; reads as a real plan summary, not a gauge.
+    private var statStrip: some View {
+        HStack(spacing: 0) {
+            statCell(shownWeeks, "WEEKS")
+            statDivider
+            statCell(shownDays, "DAYS / WK")
+            statDivider
+            statCell(shownSessions, "SESSIONS")
+        }
+        .padding(.vertical, Theme.Space.md)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(planWeekCount) weeks, \(vm.daysPerWeek) days per week, \(totalSessions) sessions")
+    }
+
+    private func statCell(_ value: Double, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            AnimatedCounter(value: value) { "\(Int($0.rounded()))" }
+                .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
+            Text(label).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.1).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var statDivider: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 1, height: 34)
     }
 
     /// "Your plan is ready, Maya" when we have a first name, else the generic version.
@@ -262,12 +294,16 @@ struct PlanRevealView: View {
 
     private func animateIn() {
         guard !reduceMotion else {
-            ringProgress = 1; shownDays = Double(vm.daysPerWeek); bloom = 1; barsIn = true
+            shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
+            shownSessions = Double(totalSessions); bloom = 1; barsIn = true
             return
         }
-        withAnimation(.easeOut(duration: 1.1)) { ringProgress = 1 }
         withAnimation(.easeOut(duration: 0.9).delay(0.15)) { bloom = 1 }
-        withAnimation(.easeOut(duration: 1.0).delay(0.1)) { shownDays = Double(vm.daysPerWeek) }
+        withAnimation(.easeOut(duration: 1.1).delay(0.2)) {
+            shownWeeks = Double(planWeekCount)
+            shownDays = Double(vm.daysPerWeek)
+            shownSessions = Double(totalSessions)
+        }
         withAnimation(.spring(response: 0.7, dampingFraction: 0.8).delay(0.45)) { barsIn = true }
         Haptics.celebration()   // the earned, sold moment
     }
