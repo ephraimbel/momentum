@@ -30,17 +30,17 @@ private struct ProLockModifier: ViewModifier {
 
     private var unlock: some View {
         Button { paywall.present(for: feature) } label: {
-            VStack(spacing: 6) {
-                Image(systemName: "lock.fill").font(.system(size: 15, weight: .bold))
-                Text("Unlock with Pro").font(.rounded(Theme.FontSize.caption, weight: .bold))
+            HStack(spacing: 7) {
+                Image(systemName: "sparkles").font(.system(size: 13, weight: .bold))
+                Text("Unlock with Pro").font(.rounded(Theme.FontSize.body, weight: .bold))
             }
-            .foregroundStyle(Theme.ink)
-            .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.md)
+            .foregroundStyle(.white)
+            .padding(.horizontal, Theme.Space.lg).padding(.vertical, 12)
             .background {
-                Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(IridescentMaterial()).opacity(0.3)
-                Capsule().stroke(Theme.hairline)
+                Capsule().fill(Theme.ink)
+                Capsule().stroke(Theme.purple, lineWidth: 1.5)
             }
+            .shadow(color: .black.opacity(0.2), radius: 12, y: 5)
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

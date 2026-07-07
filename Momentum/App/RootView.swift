@@ -68,6 +68,9 @@ struct RootView: View {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
+            if ProcessInfo.processInfo.arguments.contains("--paywall") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { paywall.present(for: .aiCoach) }
+            }
             #endif
         }
         // Just signed in (new athlete) → straight into onboarding.

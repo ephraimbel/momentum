@@ -427,7 +427,8 @@ struct ProgressScreen: View {
         let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -12, to: Date()) ?? Date()
         let km = Int((workouts.filter { $0.startedAt >= cutoff }.compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
         return HStack(spacing: Theme.Space.sm) {
-            metricTile(paceFaster ? "▲ \(Int(abs(insights.paceTrendPct).rounded()))%" : "—", "Pace", iris: paceFaster)
+            metricTile(paceFaster ? "▲ \(Int(abs(insights.paceTrendPct).rounded()))%" : "Steady",
+                       paceFaster ? "Faster / 8 wk" : "Pace", iris: paceFaster)
             metricTile("\(km)", "km · 12 wk", iris: false)
             metricTile("\(profiles.first?.prs.count ?? 0)", "PRs", iris: false)
         }
@@ -639,10 +640,10 @@ struct ProgressScreen: View {
                     Spacer(minLength: 0)
                 }
                 Divider().overlay(Theme.hairline)
-                HStack(spacing: Theme.Space.lg) {
-                    recoveryMetric(String(format: "%.1f", r.monotony), "Monotony")
-                    recoveryMetric("\(Int(r.weeklyLoad))", "Weekly load")
-                    recoveryMetric("\(r.restDays)", "Rest days")
+                HStack(alignment: .top, spacing: Theme.Space.lg) {
+                    recoveryMetric(Formatters.compact(r.weeklyLoad), "Weekly load", loadVsUsual(r.acwr))
+                    recoveryMetric("\(r.restDays)", "Rest days", "of last 7")
+                    recoveryMetric(varietyWord(r.monotony), "Training mix", varietyNote(r.monotony))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -665,12 +666,49 @@ struct ProgressScreen: View {
         .frame(width: 72, height: 72)
     }
 
-    private func recoveryMetric(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+    /// A recovery mini-stat: the number, its label, and a plain-language anchor so the value carries
+    /// meaning on its own — a bare "832" or "1.4" reads as noise without it (the Oura/Whoop rule:
+    /// never a naked metric).
+    private func recoveryMetric(_ value: String, _ label: String, _ note: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             Text(value).font(.rounded(Theme.FontSize.headline, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.7)
             Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.inkTertiary)
+            if let note {
+                Text(note).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Frames the week's load against the athlete's own recent norm (the acute:chronic ratio) so "832"
+    /// reads as "about your usual week" rather than a naked number.
+    private func loadVsUsual(_ acwr: Double) -> String? {
+        guard acwr > 0 else { return nil }
+        switch acwr {
+        case ..<0.8:     return "lighter week"
+        case 0.8..<1.15: return "on par"
+        case 1.15..<1.4: return "above usual"
+        default:         return "well up"
+        }
+    }
+
+    /// Monotony (how samey the daily load is) reframed as a plain "training mix" word — lower is better.
+    private func varietyWord(_ monotony: Double) -> String {
+        switch monotony {
+        case ..<1.5:    return "Varied"
+        case 1.5..<2.0: return "Steady"
+        default:        return "Samey"
+        }
+    }
+
+    private func varietyNote(_ monotony: Double) -> String? {
+        switch monotony {
+        case ..<1.5:    return "hard + easy"
+        case 1.5..<2.0: return "repetitive"
+        default:        return "one-note"
+        }
     }
 
     // MARK: AI coach card
@@ -773,26 +811,41 @@ struct ProgressScreen: View {
     private func loadChart(_ insights: ProgressInsights) -> some View {
         let maxLoad = insights.weeks.map(\.load).max() ?? 0
         let last = insights.weeks.last?.weekStart
-        return chartSection("Weekly training load", subtitle: "Last 8 weeks\(trendSuffix(insights.loadTrendPct))") {
+        let usual = insights.chronic   // 4-week average weekly load = the athlete's own baseline
+        return chartSection("Weekly training load", subtitle: "Effort × time, every sport\(trendSuffix(insights.loadTrendPct))") {
             if maxLoad <= 0 { notEnoughData } else {
-                Chart(insights.weeks) { wk in
-                    BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                            y: .value("Load", animateCharts ? wk.load : 0),
-                            width: 18)
-                        // Earned-iridescent only on the current week; prior weeks are clean ink.
-                        .foregroundStyle(wk.weekStart == last
-                                         ? AnyShapeStyle(IridescentMaterial())
-                                         : AnyShapeStyle(Theme.ink.opacity(0.85)))
-                        .cornerRadius(3)
-                        .annotation(position: .top, spacing: 5) {
-                            if animateCharts, wk.weekStart == last, wk.load > 0 { valuePill(Formatters.compact(wk.load)) }
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    Chart(insights.weeks) { wk in
+                        BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
+                                y: .value("Load", animateCharts ? wk.load : 0),
+                                width: 18)
+                            // Earned-iridescent only on the current week; prior weeks are clean ink.
+                            .foregroundStyle(wk.weekStart == last
+                                             ? AnyShapeStyle(IridescentMaterial())
+                                             : AnyShapeStyle(Theme.ink.opacity(0.85)))
+                            .cornerRadius(3)
+                            .annotation(position: .top, spacing: 5) {
+                                if animateCharts, wk.weekStart == last, wk.load > 0 { valuePill(Formatters.compact(wk.load)) }
+                            }
+                        // Your recent norm — each bar reads as above/below "usual" rather than a bare number.
+                        if usual > 0, animateCharts {
+                            RuleMark(y: .value("Usual", usual))
+                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                .foregroundStyle(Theme.inkTertiary.opacity(0.55))
+                                .annotation(position: .top, alignment: .leading, spacing: 1) {
+                                    Text("usual").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                                }
                         }
+                    }
+                    .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
+                    .chartYScale(domain: 0...max(1, maxLoad * 1.18))
+                    .chartXAxis { weekAxis }
+                    .chartYAxis { valueAxis }
+                    .frame(height: 172)
+                    Text("Runs and lifts on one scale — how hard × how long you trained. The line is your recent norm.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
-                .chartYScale(domain: 0...max(1, maxLoad * 1.18))
-                .chartXAxis { weekAxis }
-                .chartYAxis { valueAxis }
-                .frame(height: 172)
             }
         }
     }
@@ -802,7 +855,7 @@ struct ProgressScreen: View {
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
         let maxDist = insights.weeks.map { disp($0.distanceM) }.max() ?? 0
         let last = insights.weeks.last?.weekStart
-        return chartSection("Weekly distance", subtitle: "In \(unit)\(trendSuffix(insights.distanceTrendPct))") {
+        return chartSection("Weekly distance", subtitle: "\(unit == "mi" ? "Miles" : "Kilometres") per week\(trendSuffix(insights.distanceTrendPct))") {
             if maxDist <= 0 { notEnoughData } else {
                 Chart(insights.weeks) { wk in
                     AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),

@@ -28,17 +28,27 @@ struct PaywallView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: Theme.Space.xl) {
-                hero
-                benefitList
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: Theme.Space.xl) {
+                    hero
+                    benefitList
+                }
+                .padding(Theme.Space.lg)
+                .padding(.top, Theme.Space.xl)
+                .padding(.bottom, Theme.Space.md)
+            }
+            .scrollIndicators(.hidden)
+            // Pinned decision area — plans + CTA are always in view, never cut off below the fold.
+            VStack(spacing: Theme.Space.md) {
                 plans
                 cta
                 fineprint
             }
-            .padding(Theme.Space.lg)
-            .padding(.top, Theme.Space.xxl)
-            .padding(.bottom, Theme.Space.xl)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.md)
+            .padding(.bottom, Theme.Space.sm)
+            .background(Theme.background.shadow(color: .black.opacity(0.06), radius: 14, y: -6).ignoresSafeArea(edges: .bottom))
         }
         .background(Theme.background.ignoresSafeArea())
         .overlay(alignment: .topTrailing) { closeButton }
@@ -50,13 +60,21 @@ struct PaywallView: View {
 
     private var hero: some View {
         VStack(spacing: Theme.Space.md) {
-            IridescentOrb(size: 84)
-            VStack(spacing: 6) {
-                Text("Momentum Pro").font(.display(26, weight: .bold)).foregroundStyle(Theme.ink)
-                Text("Unlock \(feature.displayName) and everything below.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
+            // Brand lockup: the wordmark + an iridescent PRO badge — earned, premium, unmistakably ours.
+            HStack(spacing: 8) {
+                Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 20)
+                Text("PRO").font(.rounded(11, weight: .black)).tracking(1.5).foregroundStyle(.white)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.purple))
+            }
+            .accessibilityLabel("Momentum Pro")
+            VStack(spacing: 8) {
+                Text("Train smarter, every session.")
+                    .font(.serif(29, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                Text("Unlock \(feature.displayName) — and every Pro feature.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -66,10 +84,11 @@ struct PaywallView: View {
             ForEach(Self.benefits, id: \.0) { icon, text in
                 HStack(spacing: Theme.Space.md) {
                     Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                        .frame(width: 26)
-                    Text(text).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.purple)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Theme.purple.opacity(0.1)))
+                    Text(text).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
             }
@@ -82,9 +101,16 @@ struct PaywallView: View {
     private var plans: some View {
         VStack(spacing: Theme.Space.sm) {
             planCard(offering.annual, period: .annual,
-                     badge: "Save \(offering.annualSavingsPercent)% · 7-day free trial")
+                     badge: "7-day free trial, then save \(offering.annualSavingsPercent)%")
+                .overlay(alignment: .top) {
+                    Text("BEST VALUE").font(.rounded(10, weight: .black)).tracking(1.2).foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(Theme.purple))
+                        .offset(y: -9)
+                }
             planCard(offering.monthly, period: .monthly, badge: nil)
         }
+        .padding(.top, 6)   // room for the floating badge
     }
 
     private func planCard(_ p: PaywallProduct, period: PaywallProduct.Period, badge: String?) -> some View {
@@ -94,8 +120,8 @@ struct PaywallView: View {
         } label: {
             HStack(spacing: Theme.Space.md) {
                 ZStack {
-                    Circle().stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: 2).frame(width: 22, height: 22)
-                    if isSelected { Circle().fill(Theme.ink).frame(width: 12, height: 12) }
+                    Circle().stroke(isSelected ? Theme.purple : Theme.hairline, lineWidth: 2).frame(width: 22, height: 22)
+                    if isSelected { Circle().fill(Theme.purple).frame(width: 12, height: 12) }
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(p.isAnnual ? "Annual" : "Monthly")
@@ -115,12 +141,8 @@ struct PaywallView: View {
             .padding(Theme.Space.lg)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                shape.fill(Theme.surface)
-                if isSelected && p.isAnnual {
-                    shape.stroke(IridescentMaterial(), lineWidth: 2)   // earned iridescence on the hero plan
-                } else {
-                    shape.stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: isSelected ? 2 : 1)
-                }
+                shape.fill(isSelected ? Theme.purple.opacity(0.06) : Theme.surface)
+                shape.stroke(isSelected ? Theme.purple : Theme.hairline, lineWidth: isSelected ? 2 : 1)
             }
         }
         .buttonStyle(.plain)
