@@ -244,6 +244,28 @@ enum PlanCoaching {
         return rec   // `apply` already recorded `lastAdaptedAt` + saved
     }
 
+    /// Post-run RPE → adaptation — the *subjective* half of the closed loop (Runna's RPE prompt, but
+    /// automatic). Called once the athlete rates a run: if it felt far harder than prescribed, ease the
+    /// block; if an easy day felt brutal, insert recovery. Never auto-*raises* load (headroom is
+    /// informational). Shares `autoAdapt`'s ≤1/week gate so subjective + objective easing never stack.
+    /// Returns a no-shame note when it changed the plan.
+    @discardableResult
+    static func adaptToEffort(_ workout: Workout, plan: TrainingPlan?, today: Date = Date(),
+                              in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
+        guard let plan, workout.type.discipline == .running else { return nil }
+        let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort, runType: workout.plannedSession?.runType)
+        let rec: ProgressInsights.Recommendation
+        switch outcome {
+        case .ease: rec = .ease
+        case .recover: rec = .rest
+        case .none, .headroom: return nil
+        }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+        guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
+        return EffortAdaptation.note(for: outcome)
+    }
+
     /// A bounded plan change the athlete can opt into on confirm — the consent-required half of the
     /// adaptive loop (PRD §9.4). `autoAdapt` applies the *protective* directions (ease/rest) on its
     /// own; raising load is the one direction that must never happen without a tap, so it's surfaced
