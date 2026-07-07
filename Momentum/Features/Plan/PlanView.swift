@@ -49,6 +49,7 @@ struct PlanView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         header
                         weekHero
+                        raceInsightSection
                         if isCurrentWeek { tuneSection }
                         VStack(spacing: Theme.Space.sm) {
                             ForEach(Array(days.enumerated()), id: \.element) { i, day in
@@ -99,6 +100,23 @@ struct PlanView: View {
     }
 
     private func presentAdd(for day: Date) { addDay = day; showingAdd = true }
+
+    /// R4 coach intelligence: a race-day projection (when a race goal is set) + a Pace Insight reading
+    /// the athlete's recent quality-session pacing. Both are quiet reads above the week.
+    @ViewBuilder
+    private var raceInsightSection: some View {
+        if let plan {
+            if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
+                RacePredictionCard(raceDistanceM: raceM,
+                                   raceDate: profiles.first?.raceDate ?? plan.raceDate,
+                                   p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit)
+            }
+            let runs = PaceInsights.recentQualityRuns(plan)
+            if !runs.isEmpty {
+                PaceInsightCard(result: PaceInsights.evaluate(runs))
+            }
+        }
+    }
 
     private func delete(_ session: PlannedSession) {
         withAnimation(Motion.standard) {
