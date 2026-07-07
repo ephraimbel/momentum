@@ -34,7 +34,7 @@ One-liner: **keep moving.**
 ## Key numbers to never get wrong (PRD §§19–22)
 - e1RM (Epley): `weightKg · (1 + reps/30)`.
 - Streak: 2-day grace (one slipped day forgiven); rest days count; never surface "streak lost."
-- GPS accept gate: `horizontalAccuracy ∈ (0,25m]`, newer timestamp, implied speed ≤ 12 m/s.
+- GPS accept gate: `horizontalAccuracy ∈ (0,25m]`, newer timestamp; speed check is **Doppler-first** — accept any position jump consistent with the device-reported speed (real movement at *any* pace, so the trace never freezes on a fast descent), reject jumps far exceeding it (spikes); a discipline hard cap is the backstop only when there's no valid Doppler speed.
 - Volume = Σ weightKg·reps over **working** sets only. Weekly sets/muscle: primary 1.0, secondary 0.5, trailing 7 days.
 - Quality bars: GPS distance ±2%; log-a-set < 3s; cold-start-to-start < 2s; crash-free > 99.5%.
 

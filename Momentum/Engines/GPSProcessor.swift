@@ -16,9 +16,10 @@ struct GPSProcessor {
 
     struct Config: Sendable {
         var minAccuracyM = 25.0               // PRD §22 accept gate — documented, unchanged.
-        /// Hard ceiling on the speed implied by two consecutive accepted fixes. Discipline-specific:
-        /// a runner never sustains a cyclist's descent, so a foot-sport cap catches the ~8–15m
-        /// lateral spikes ("trace cuts across a building") that a generic 12 m/s cap let through.
+        /// Backstop ceiling on the speed implied by two consecutive fixes, used **only when the device
+        /// reports no valid Doppler speed** (cold start / tunnel). When Doppler is present the accept
+        /// gate trusts it instead (see `acceptable`), so real fast movement is never rejected — this cap
+        /// just bounds position-only jumps. Discipline-specific: a runner never sustains a bike descent.
         var maxImpliedSpeedMS: Double
         /// Doppler cross-check margin. A positional jump implying more than the device-reported speed
         /// (`Fix.speedMS`, carrier-phase derived and largely independent of position error) plus this
@@ -76,10 +77,15 @@ struct GPSProcessor {
     }
 
     /// Accept iff accuracy ∈ (0, minAccuracy], strictly newer than the anchor, and the implied speed
-    /// from the anchor clears **two** gates that together reject GPS jumps:
-    ///   1. a hard discipline cap (`maxImpliedSpeedMS`) — nobody on foot/bike sustains beyond it; and
-    ///   2. a Doppler cross-check — a jump implying far more than the device-reported speed is a spike
-    ///      even when it sneaks under the hard cap because fixes arrived seconds apart.
+    /// from the anchor is consistent with real movement (not a GPS jump).
+    ///
+    /// The speed test is **Doppler-first**. `Fix.speedMS` is carrier-phase derived and largely
+    /// independent of position error, so when it's valid we trust it: a position jump consistent with
+    /// how fast you're actually going is real movement *at any pace* — a fast descent, a sprint, the
+    /// user's car — and must be kept so the trace follows smoothly instead of freezing then bridging the
+    /// gap with a straight line. A jump that far exceeds the reported speed is a lateral spike, rejected.
+    /// The discipline hard cap (`maxImpliedSpeedMS`) only applies as a backstop when there's no valid
+    /// Doppler speed to check against (cold start, tunnel), where the position delta is all we have.
     static func acceptable(_ fix: Fix, previous: Fix?, config: Config) -> Bool {
         guard fix.accuracyM > 0, fix.accuracyM <= config.minAccuracyM else { return false }
         guard let prev = previous else { return true }
@@ -87,11 +93,10 @@ struct GPSProcessor {
         let dt = fix.t.timeIntervalSince(prev.t)
         let d = Geo.distance(lat1: prev.lat, lon1: prev.lon, lat2: fix.lat, lon2: fix.lon)
         let implied = dt > 0 ? d / dt : .infinity
-        guard implied <= config.maxImpliedSpeedMS else { return false }
-        // Doppler cross-check (only when the device reports a valid speed): the position moved far
-        // faster than the athlete is actually going → a lateral GPS spike, not real movement.
-        if fix.speedMS >= 0, implied > fix.speedMS + config.outlierSpeedMarginMS { return false }
-        return true
+        if fix.speedMS >= 0 {
+            return implied <= fix.speedMS + config.outlierSpeedMarginMS
+        }
+        return implied <= config.maxImpliedSpeedMS
     }
 
     /// Process a raw fix. Distance is measured from a stable anchor and only accrues once movement

@@ -61,6 +61,46 @@ struct GPSProcessorTests {
         #expect(GPSProcessor.acceptable(fast, previous: prev, config: cycleConfig))
     }
 
+    /// The reported freeze-then-straight-line bug: real movement ABOVE the discipline hard cap (a fast
+    /// descent / the car test) must be kept when the Doppler speed confirms it — otherwise the trace
+    /// stalls and bridges the gap with a straight line. ~28 m/s (100 km/h), above the 22 m/s bike cap.
+    @Test func acceptsRealMovementAboveHardCapWhenDopplerConfirms() {
+        let cycleConfig = GPSProcessor.Config.forType(.ride)
+        let prev = fix(0, 0, acc: 8, t: 0)
+        let fast = fix(0.000252, 0, acc: 8, speed: 28, t: 1)   // ~28 m over 1s, Doppler agrees
+        #expect(GPSProcessor.acceptable(fast, previous: prev, config: cycleConfig))
+    }
+
+    /// …but a jump that far exceeds the Doppler speed is still a lateral spike, even at high speed.
+    @Test func rejectsSpikeExceedingDopplerAtSpeed() {
+        let cycleConfig = GPSProcessor.Config.forType(.ride)
+        let prev = fix(0, 0, acc: 8, t: 0)
+        let spike = fix(0.000486, 0, acc: 8, speed: 20, t: 1)  // ~54 m/s implied, reported 20 ⇒ spike
+        #expect(!GPSProcessor.acceptable(spike, previous: prev, config: cycleConfig))
+    }
+
+    /// End-to-end: a fast ride (~25 m/s, one fix/second, Doppler agreeing) accrues the trace
+    /// continuously — every fix accepted, no rejection gap that would freeze then straight-line-bridge.
+    @Test func fastRideAccumulatesWithoutGaps() {
+        var p = GPSProcessor(config: .forType(.ride))
+        var accepted = 0
+        for i in 0...5 {
+            let r = p.ingest(fix(0.000225 * Double(i), 0, acc: 8, speed: 25, t: Double(i)))  // ~25 m/step
+            if case .accepted = r { accepted += 1 }
+        }
+        #expect(accepted == 6)          // every fix kept (no freeze)
+        #expect(p.distanceM > 100)      // ~125 m of trace accrued smoothly
+    }
+
+    /// With no valid Doppler speed (cold start / tunnel), the discipline hard cap is the only guard.
+    @Test func hardCapAppliesWhenNoDopplerSpeed() {
+        let prev = fix(0, 0, acc: 8, t: 0)
+        let overCap = fix(0.0001, 0, acc: 8, speed: -1, t: 1)   // ~11.1 m/s > 8 run cap ⇒ reject
+        #expect(!GPSProcessor.acceptable(overCap, previous: prev, config: runConfig))
+        let underCap = fix(0.00006, 0, acc: 8, speed: -1, t: 1) // ~6.7 m/s < 8 run cap ⇒ accept
+        #expect(GPSProcessor.acceptable(underCap, previous: prev, config: runConfig))
+    }
+
     @Test func accumulatesDistance() {
         var p = GPSProcessor(config: runConfig)
         _ = p.ingest(fix(0, 0, acc: 10, t: 0))
