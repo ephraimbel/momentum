@@ -24,6 +24,7 @@ struct ProgressScreen: View {
     }()
     @State private var correcting: LearnedItem?
     @State private var showVO2Info = false
+    @State private var showLogWorkout = false
     @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
@@ -57,6 +58,7 @@ struct ProgressScreen: View {
         .background(Theme.background)
         .navigationBarHidden(true)
         .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
+        .sheet(isPresented: $showLogWorkout) { LogWorkoutView() }
     }
 
     private var header: some View {
@@ -64,6 +66,13 @@ struct ProgressScreen: View {
             Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
             StreakChip(days: stats.currentStreak)
+            if segment == .history {
+                Button { Haptics.light(); showLogWorkout = true } label: {
+                    Image(systemName: "plus").font(.system(size: 19, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .accessibilityLabel("Add a past workout")
+            }
             NavigationLink { SettingsView() } label: {
                 Image(systemName: "gearshape.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                     .frame(width: 32, height: 32)
