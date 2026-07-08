@@ -25,6 +25,8 @@ struct LogWorkoutView: View {
     @State private var distanceText = ""
     @State private var indoor = false
     @State private var exercises: [DraftExercise] = [DraftExercise()]
+    @State private var effort: Int?
+    @State private var notes = ""
 
     private var distanceUnit: DistanceUnit { DistanceUnit.auto.resolved() }
     private var weightUnit: WeightUnit { .default() }
@@ -55,6 +57,7 @@ struct LogWorkoutView: View {
                 } else if type.isStrengthStyle {
                     strengthSection
                 }
+                detailsSection
             }
             .navigationTitle("Add a workout")
             .navigationBarTitleDisplayMode(.inline)
@@ -189,6 +192,47 @@ struct LogWorkoutView: View {
         }
     }
 
+    private var detailsSection: some View {
+        Section("Details — optional") {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack {
+                    Text("Effort").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    Spacer()
+                    Text(effortLabel).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                HStack(spacing: 6) {
+                    ForEach(1...10, id: \.self) { i in
+                        Capsule()
+                            .fill((effort ?? 0) >= i ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.hairline))
+                            .frame(height: 10)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.easeOut(duration: 0.15)) { effort = (effort == i ? nil : i) }
+                                Haptics.selection()
+                            }
+                    }
+                }
+                .accessibilityElement()
+                .accessibilityLabel("Perceived effort")
+                .accessibilityValue(effort.map { "\($0) of 10" } ?? "not rated")
+            }
+            .padding(.vertical, 4)
+            TextField("Notes — how did it feel?", text: $notes, axis: .vertical)
+                .font(.rounded(Theme.FontSize.body, weight: .medium)).lineLimit(1...4)
+        }
+    }
+
+    private var effortLabel: String {
+        guard let e = effort else { return "Tap to rate" }
+        switch e {
+        case 1...2: return "Easy"
+        case 3...4: return "Steady"
+        case 5...6: return "Moderate"
+        case 7...8: return "Hard"
+        default:    return "Max"
+        }
+    }
+
     private func exerciseIndex(_ ex: DraftExercise) -> Int { exercises.firstIndex { $0.id == ex.id } ?? 0 }
     private func setNumber(_ set: DraftSet, in ex: DraftExercise) -> Int { (ex.sets.firstIndex { $0.id == set.id } ?? 0) + 1 }
 
@@ -200,7 +244,12 @@ struct LogWorkoutView: View {
         w.startedAt = date
         w.durationS = durationS
         w.elapsedS = durationS
-        if indoor { w.note = isBike ? "Indoor ride" : "Treadmill" }
+        w.perceivedEffort = effort
+        var noteParts: [String] = []
+        if indoor, type.isGPS { noteParts.append(isBike ? "Indoor ride" : "Treadmill") }
+        let userNote = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userNote.isEmpty { noteParts.append(userNote) }
+        w.note = noteParts.joined(separator: " · ")
 
         if type.isGPS {
             let gps = GPSDetail()
