@@ -239,54 +239,14 @@ struct LogWorkoutView: View {
     // MARK: Save
 
     private func save() {
-        let w = Workout()
-        w.type = type
-        w.startedAt = date
-        w.durationS = durationS
-        w.elapsedS = durationS
-        w.perceivedEffort = effort
-        var noteParts: [String] = []
-        if indoor, type.isGPS { noteParts.append(isBike ? "Indoor ride" : "Treadmill") }
-        let userNote = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !userNote.isEmpty { noteParts.append(userNote) }
-        w.note = noteParts.joined(separator: " · ")
-
-        if type.isGPS {
-            let gps = GPSDetail()
-            gps.distanceM = distanceMeters
-            if durationS > 0, distanceMeters > 0 {
-                if isBike { gps.avgSpeedMS = distanceMeters / durationS }
-                else { gps.avgPaceSPerKm = durationS / (distanceMeters / 1000) }
-            }
-            w.gps = gps
-        } else if type.isStrengthStyle {
-            let s = StrengthSession()
-            var totalVol = 0.0, totalSets = 0
-            var order = 0
-            for draft in exercises {
-                let name = draft.name.trimmingCharacters(in: .whitespaces)
-                guard !name.isEmpty, !draft.sets.isEmpty else { continue }
-                let we = WorkoutExercise()
-                we.order = order; order += 1
-                we.exercise = exerciseRef(named: name)
-                for (j, ds) in draft.sets.enumerated() {
-                    let set = SetEntry()
-                    set.index = j
-                    set.reps = ds.reps
-                    set.weightKg = ds.weightKg(unit: weightUnit)
-                    set.type = .working
-                    set.isComplete = true
-                    we.sets.append(set)
-                    totalSets += 1
-                    totalVol += (set.weightKg ?? 0) * Double(ds.reps)
-                }
-                s.exercises.append(we)
-            }
-            s.totalSets = totalSets
-            s.totalVolumeKg = totalVol
-            w.strength = s
+        let inputs = exercises.map { draft in
+            LogWorkoutBuilder.ExerciseInput(
+                name: draft.name,
+                sets: draft.sets.map { LogWorkoutBuilder.SetInput(reps: $0.reps, weightKg: $0.weightKg(unit: weightUnit)) })
         }
-
+        let w = LogWorkoutBuilder.make(type: type, date: date, durationS: durationS, distanceM: distanceMeters,
+                                       indoor: indoor, effort: effort, note: notes,
+                                       exercises: inputs, resolveExercise: exerciseRef)
         context.insert(w)
         try? context.save()
         Haptics.success()
@@ -319,5 +279,65 @@ private struct DraftSet: Identifiable {
     func weightKg(unit: WeightUnit) -> Double? {
         guard let v = Double(weightText.replacingOccurrences(of: ",", with: ".")), v > 0 else { return nil }
         return unit == .lb ? v * Formatters.kgPerLb : v
+    }
+}
+
+/// Builds a `Workout` from manual-entry values, stored SI exactly like a captured session so it flows
+/// into history, streaks, and trends the same way. Pulled out of the view so it's unit-testable.
+enum LogWorkoutBuilder {
+    struct SetInput { var reps: Int; var weightKg: Double? }
+    struct ExerciseInput { var name: String; var sets: [SetInput] }
+
+    static func make(type: WorkoutType, date: Date, durationS: Double, distanceM: Double,
+                     indoor: Bool, effort: Int?, note: String,
+                     exercises: [ExerciseInput], resolveExercise: (String) -> Exercise) -> Workout {
+        let isBike: Bool = [.ride, .mountainBikeRide, .gravelRide, .eBikeRide].contains(type)
+        let w = Workout()
+        w.type = type
+        w.startedAt = date
+        w.durationS = durationS
+        w.elapsedS = durationS
+        w.perceivedEffort = effort
+        var noteParts: [String] = []
+        if indoor, type.isGPS { noteParts.append(isBike ? "Indoor ride" : "Treadmill") }
+        let userNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userNote.isEmpty { noteParts.append(userNote) }
+        w.note = noteParts.joined(separator: " · ")
+
+        if type.isGPS {
+            let gps = GPSDetail()
+            gps.distanceM = distanceM
+            if durationS > 0, distanceM > 0 {
+                if isBike { gps.avgSpeedMS = distanceM / durationS }
+                else { gps.avgPaceSPerKm = durationS / (distanceM / 1000) }
+            }
+            w.gps = gps
+        } else if type.isStrengthStyle {
+            let s = StrengthSession()
+            var totalVol = 0.0, totalSets = 0, order = 0
+            for ex in exercises {
+                let name = ex.name.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty, !ex.sets.isEmpty else { continue }
+                let we = WorkoutExercise()
+                we.order = order; order += 1
+                we.exercise = resolveExercise(name)
+                for (j, si) in ex.sets.enumerated() {
+                    let set = SetEntry()
+                    set.index = j
+                    set.reps = si.reps
+                    set.weightKg = si.weightKg
+                    set.type = .working
+                    set.isComplete = true
+                    we.sets.append(set)
+                    totalSets += 1
+                    totalVol += (si.weightKg ?? 0) * Double(si.reps)
+                }
+                s.exercises.append(we)
+            }
+            s.totalSets = totalSets
+            s.totalVolumeKg = totalVol
+            w.strength = s
+        }
+        return w
     }
 }
