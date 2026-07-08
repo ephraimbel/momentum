@@ -34,6 +34,7 @@ struct TodayView: View {
     @State private var showSpots = false
     @State private var showNotifications = false
     @State private var showProfile = false
+    @State private var showLogWorkout = false
     @State private var selectedDaySession: PlannedSession?
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
@@ -130,6 +131,9 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
             }
+            if ProcessInfo.processInfo.arguments.contains("--log-workout") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
+            }
             if ProcessInfo.processInfo.arguments.contains("--today-day") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     selectedDaySession = plan?.sessions.sorted { $0.date < $1.date }.first
@@ -184,6 +188,7 @@ struct TodayView: View {
             SportPicker(selection: $activity) { showSportPicker = false }
         }
         .sheet(isPresented: $showNotifications) { NotificationsView() }
+        .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
         .sheet(isPresented: $showProfile) {
             NavigationStack {
                 ProfileScreen()
@@ -657,6 +662,7 @@ struct TodayView: View {
             VStack(spacing: Theme.Space.md) {
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+                logPastButton
                 // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
                 // good enough yet (lopsided, backtracking) and Spots is parked. All the code stays
                 // (inline loop mode + `discoverChip` + `--loop`/`--spots` deep links); re-add a chip
@@ -665,6 +671,21 @@ struct TodayView: View {
             .padding(Theme.Space.md)
         }
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+    }
+
+    /// "Forgot to track it?" — log a past workout by hand (run, ride, treadmill/e-bike, or a lift).
+    /// A quiet secondary action beneath Start so it never competes with the hero.
+    private var logPastButton: some View {
+        Button { Haptics.light(); showLogWorkout = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.pencil").font(.system(size: 13, weight: .bold))
+                Text("Add a past workout").font(.rounded(Theme.FontSize.caption, weight: .semibold))
+            }
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(maxWidth: .infinity).frame(height: 38)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add a workout you forgot to track")
     }
 
     /// A small, soft secondary action — icon + short label, capsule, muted ink. Deliberately lighter
