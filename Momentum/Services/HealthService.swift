@@ -25,6 +25,7 @@ final class HealthService: HealthServing {
         HKQuantityType(.restingHeartRate),
         HKQuantityType(.heartRateVariabilitySDNN), // recovery: HRV (Watch / Garmin / Oura → Health)
         HKCategoryType(.sleepAnalysis),            // recovery: last night's sleep
+        HKQuantityType(.vo2Max),                   // fitness: device-measured VO₂max (Watch / Garmin)
         HKQuantityType(.bodyMass),
         HKQuantityType(.stepCount),
         HKQuantityType(.activeEnergyBurned),       // workout calorie totals
@@ -113,6 +114,16 @@ final class HealthService: HealthServing {
             hrvMs: await hrv, hrvBaselineMs: await hrvBase,
             restingHR: (await rhr).map { Int($0.rounded()) }, restingHRBaseline: await rhrBase,
             sleepHours: await sleep)
+    }
+
+    /// The device-measured VO₂max from Apple Health (Apple Watch outdoor runs, Garmin, etc.) — a real
+    /// cardiorespiratory measurement we prefer over our pace-derived estimate when present. `nil` if none.
+    func measuredVO2Max() async -> Double? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return 42.4 }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        return await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"))
     }
 
     // MARK: Import (Apple Watch / Garmin via Apple Health → our store)

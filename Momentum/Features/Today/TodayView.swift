@@ -364,21 +364,28 @@ struct TodayView: View {
     private var strengthHome: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
-            VStack(spacing: Theme.Space.lg) {
-                Spacer()
-                if activity.isStrengthStyle {
-                    // The lifting identity: a body map glowing with the muscles from your last session
-                    // (a quiet empty silhouette before your first lift), then the readout below.
-                    MuscleMapView(activation: lastStrengthActivation)
-                        .frame(height: 300)
-                        .frame(maxWidth: .infinity)
-                    lastStrengthReadout
-                } else {
-                    IridescentOrb(size: 132)   // timed sports (yoga, etc.) keep the brand orb
+            // A scroll view so the muscle map + last-session card always clear the floating header and
+            // deck — nothing gets cut off, and a tall session just scrolls. The insets reserve the
+            // space the header (top) and control deck (bottom) float over.
+            ScrollView {
+                VStack(spacing: Theme.Space.md) {
+                    if activity.isStrengthStyle {
+                        // The lifting identity: a body map glowing with the muscles from your last
+                        // session (a quiet empty silhouette before your first lift), then the readout.
+                        MuscleMapView(activation: lastStrengthActivation)
+                            .frame(height: 236)
+                            .frame(maxWidth: .infinity)
+                        lastStrengthReadout
+                    } else {
+                        IridescentOrb(size: 124).padding(.top, Theme.Space.xl)   // timed sports keep the orb
+                    }
                 }
-                Spacer(); Spacer()   // bias the figure to the upper-middle, clear of the bottom panel
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.top, 148)      // clear the floating header card
+                .padding(.bottom, 220)   // clear the floating control deck
             }
-            .padding(.horizontal, Theme.Space.xl)
+            .scrollIndicators(.hidden)
         }
     }
 
@@ -588,11 +595,24 @@ struct TodayView: View {
     }
 
 
+    /// A compact label for the header pill — the long enum titles ("Weight Training", "Mountain Bike
+    /// Ride") would push the streak off the row, so the pill uses short forms.
+    private var activityShortLabel: String {
+        switch activity {
+        case .strength: "Strength"
+        case .mountainBikeRide: "MTB"
+        case .eBikeRide: "E-Bike"
+        case .gravelRide: "Gravel"
+        case .trailRun: "Trail"
+        default: activity.title
+        }
+    }
+
     private var activitySelector: some View {
         Button { Haptics.light(); showSportPicker = true } label: {
-            HStack(spacing: Theme.Space.sm) {
+            HStack(spacing: 6) {
                 Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
-                Text(activity.title).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
+                Text(activityShortLabel).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
             }
             .fixedSize()

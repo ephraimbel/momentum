@@ -25,6 +25,8 @@ struct ProgressScreen: View {
     @State private var correcting: LearnedItem?
     @State private var showVO2Info = false
     @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
+    @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
+    @State private var connectingHealth = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
@@ -122,7 +124,12 @@ struct ProgressScreen: View {
                 }
                 #endif
             }
-            .task { signals = await services.health.recoverySignals() }
+            .task {
+                async let s = services.health.recoverySignals()
+                async let v = services.health.measuredVO2Max()
+                signals = await s
+                measuredVO2 = await v
+            }
         }
     }
 
@@ -184,10 +191,15 @@ struct ProgressScreen: View {
         }
     }
 
-    /// FITNESS — the headline: VO₂max, an earned-iridescent trend chip, and a fitness sparkline.
+    /// FITNESS — the headline: VO₂max, an earned-iridescent trend chip, and a fitness sparkline. Prefers
+    /// the device-measured VO₂max (Apple Watch / Garmin) when Health has one; otherwise our pace-derived
+    /// estimate. The 8-week trend stays estimate-based (our continuous weekly model) so it's internally
+    /// consistent even when the headline is a measurement.
     @ViewBuilder
     private func fitnessHero() -> some View {
-        if let vo2 = currentVO2 {
+        let estimated = currentVO2
+        if let vo2 = measuredVO2 ?? estimated {
+            let isMeasured = measuredVO2 != nil
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 HStack {
                     sectionTitle("Running fitness")
@@ -201,14 +213,16 @@ struct ProgressScreen: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(String(format: "%.1f", vo2)).font(.display(42, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                        Text("VO₂ MAX · EST.").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
+                        Text(isMeasured ? "VO₂ MAX · FROM YOUR DEVICE" : "VO₂ MAX · EST.")
+                            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
                     }
                     Spacer()
-                    if let old = vo2EightWeeksAgo, abs(vo2 - old) >= 0.3 {
-                        let up = vo2 >= old
+                    // Trend is estimate-to-estimate (our weekly model) regardless of the headline source.
+                    if let cur = estimated, let old = vo2EightWeeksAgo, abs(cur - old) >= 0.3 {
+                        let up = cur >= old
                         HStack(spacing: 4) {
                             Image(systemName: up ? "arrow.up" : "arrow.down").font(.system(size: 10, weight: .heavy))
-                            Text("\(up ? "+" : "")\(String(format: "%.1f", vo2 - old)) / 8 wks").monospacedDigit()
+                            Text("\(up ? "+" : "")\(String(format: "%.1f", cur - old)) / 8 wks").monospacedDigit()
                         }
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
                         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -272,7 +286,7 @@ struct ProgressScreen: View {
                         .font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                     infoParagraph("VO₂max is how much oxygen your body can use at full effort — the single best number for aerobic fitness. Higher is fitter.")
-                    infoParagraph("We estimate it from your running — specifically your recent 5K-equivalent pace, using Daniels' VDOT model, the same science behind most GPS-watch estimates. It sharpens as you log faster, harder efforts.")
+                    infoParagraph("If your Apple Watch or Garmin has recorded a VO₂max, we show that measured value (labelled \u{201C}from your device\u{201D}). Otherwise we estimate it from your recent 5K-equivalent pace using Daniels' VDOT model — the same science behind most GPS-watch estimates. The estimate sharpens as you log faster, harder efforts.")
                     infoParagraph("It's an estimate, not a lab test — expect it within a few points of a treadmill measurement. Read the trend over weeks, not any single number.")
                     infoParagraph("Your rating compares your estimate to population norms for your age and sex (Cooper Institute / ACSM).")
                     Text("Not medical advice.")
@@ -352,6 +366,9 @@ struct ProgressScreen: View {
                 if signals.hasPhysio {
                     Divider().overlay(Theme.hairline)
                     signalsRow
+                } else {
+                    Divider().overlay(Theme.hairline)
+                    recoveryUpsell
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -668,6 +685,7 @@ struct ProgressScreen: View {
                         recoveryMetric("\(r.restDays)", "Rest days", "of last 7")
                         recoveryMetric(varietyWord(r.monotony), "Training mix", varietyNote(r.monotony))
                     }
+                    recoveryUpsell.padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -689,6 +707,45 @@ struct ProgressScreen: View {
             if let v = signals.hrvValue { recoveryMetric(v, "HRV", signals.hrvNote) }
             if let v = signals.restingHRValue { recoveryMetric(v, "Resting HR", signals.restingHRNote) }
             if let v = signals.sleepValue { recoveryMetric(v, "Sleep", signals.sleepNote) }
+        }
+    }
+
+    /// The no-device state — honest, never a nagging popup. If Health isn't connected yet, a tappable
+    /// row opens the permission flow (and re-reads on grant); if it's connected but no wearable is
+    /// writing HRV/sleep, a quiet line explains why. Either way the readiness above stays valid — it's
+    /// load-based, not wrong.
+    @ViewBuilder
+    private var recoveryUpsell: some View {
+        if services.health.isAuthorized {
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: "applewatch").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                Text("Add an Apple Watch, Garmin, or Oura ring and your HRV & sleep will sharpen this automatically.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            Button {
+                connectingHealth = true
+                Task {
+                    _ = await services.health.requestAuthorization()
+                    async let s = services.health.recoverySignals()
+                    async let v = services.health.measuredVO2Max()
+                    signals = await s; measuredVO2 = await v
+                    connectingHealth = false
+                }
+            } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "applewatch").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Connect Apple Health for HRV & sleep-based readiness")
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(connectingHealth)
         }
     }
 
