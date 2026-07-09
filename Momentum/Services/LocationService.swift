@@ -97,21 +97,31 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         backgroundSession = CLBackgroundActivitySession()
         return AsyncStream { continuation in
             let task = Task {
-                do {
-                    for try await update in CLLocationUpdate.liveUpdates(.fitness) {
-                        if Task.isCancelled { break }
-                        guard let loc = update.location else { continue }
-                        continuation.yield(GPSProcessor.Fix(
-                            t: loc.timestamp,
-                            lat: loc.coordinate.latitude,
-                            lon: loc.coordinate.longitude,
-                            accuracyM: loc.horizontalAccuracy,
-                            speedMS: loc.speed,
-                            altitudeM: loc.altitude
-                        ))
+                // Re-subscribe on stream end: a transient CoreLocation error (or a system hiccup on
+                // background/foreground transitions) ends `liveUpdates` — without this loop that
+                // silently killed GPS for the rest of the run (trace + distance frozen forever,
+                // timer still counting). Only cancellation (stop()/finish) truly ends the stream;
+                // genuine denial just keeps erroring into the backoff while the UI shows the
+                // denied banner via `authorizationStatus`.
+                while !Task.isCancelled {
+                    do {
+                        for try await update in CLLocationUpdate.liveUpdates(.fitness) {
+                            if Task.isCancelled { break }
+                            guard let loc = update.location else { continue }
+                            continuation.yield(GPSProcessor.Fix(
+                                t: loc.timestamp,
+                                lat: loc.coordinate.latitude,
+                                lon: loc.coordinate.longitude,
+                                accuracyM: loc.horizontalAccuracy,
+                                speedMS: loc.speed,
+                                altitudeM: loc.altitude
+                            ))
+                        }
+                    } catch {
+                        // fall through to the backoff and re-subscribe
                     }
-                } catch {
-                    // Authorization denied / transient error: end the stream; UI reflects state.
+                    if Task.isCancelled { break }
+                    try? await Task.sleep(for: .seconds(1))
                 }
                 continuation.finish()
             }
