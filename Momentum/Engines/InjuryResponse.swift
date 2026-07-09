@@ -104,6 +104,10 @@ enum InjuryResponse {
         if !profile.injuryHistory.contains(area.rawValue) {
             profile.injuryHistory = (profile.injuryHistory + [area.rawValue]).sorted()
         }
+        // An injury response IS this week's structural change — joining the shared throttle keeps
+        // load-based auto-adaptation from re-shaping the same sessions days later. (The injury loop
+        // itself never *reads* the throttle: reporting pain must always work.)
+        profile.plan?.lastAdaptedAt = today
 
         let outcome = outcomeCopy(area: areaName, severity: severity, changed: changed)
         CoachingEvent.record(kind: .recover, headline: outcome.headline, detail: outcome.detail,
@@ -167,6 +171,9 @@ enum InjuryResponse {
         profile.activeInjuryArea = nil
         profile.activeInjurySeverity = nil
         profile.activeInjuryUntil = nil
+        // The restored return-to-run week is a structural change too — hold the shared throttle so
+        // recovery adaptation can't immediately re-ease the just-rebuilt gate sessions.
+        profile.plan?.lastAdaptedAt = today
 
         var detail = restored > 0
             ? "Eased you back in: a short recovery run first, easy miles after. Quality work returns once you're settled."

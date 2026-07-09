@@ -11,6 +11,9 @@ enum CardioAchievements {
         let id = UUID()
         let label: String    // e.g. "Longest run", "Fastest 5K"
         let detail: String   // e.g. "8.42 km", "24:18"
+        // Typed record info so the save flow can persist a PersonalRecord (nil = display-only).
+        var prType: PRType? = nil
+        var value: Double = 0
     }
 
     /// Returns achievements in headline priority order (the first is the competence line).
@@ -27,7 +30,8 @@ enum CardioAchievements {
         let priorMaxDist = prior.compactMap { $0.gps?.distanceM }.max() ?? 0
         if gps.distanceM > priorMaxDist + 1 {     // >1 m beyond the prior best
             hits.append(Hit(label: "Longest \(workout.type.title.lowercased())",
-                            detail: Formatters.distance(meters: gps.distanceM, unit: distanceUnit)))
+                            detail: Formatters.distance(meters: gps.distanceM, unit: distanceUnit),
+                            prType: workout.type == .run ? .longestRun : nil, value: gps.distanceM))
         }
 
         // Fastest benchmark windows — only meaningful for run/ride, and only distances actually covered.
@@ -40,7 +44,14 @@ enum CardioAchievements {
                     return CardioMetrics.fastestWindow(samplePoints(g), distanceM: meters)
                 }.min()
                 if let pb = priorBest, cur < pb - 0.5 {   // at least half a second faster
-                    hits.append(Hit(label: "Fastest \(name)", detail: Formatters.duration(s: cur)))
+                    let prType: PRType? = switch meters {
+                    case 1000: .fastest1k
+                    case 5000: .fastest5k
+                    case 10000: .fastest10k
+                    default: nil
+                    }
+                    hits.append(Hit(label: "Fastest \(name)", detail: Formatters.duration(s: cur),
+                                    prType: prType, value: cur))
                 }
             }
         }
@@ -48,7 +59,8 @@ enum CardioAchievements {
         // Longest time ever (last — least shareable of the wins).
         let priorMaxDur = prior.map(\.durationS).max() ?? 0
         if workout.durationS > priorMaxDur + 1 {
-            hits.append(Hit(label: "Longest time", detail: Formatters.duration(s: workout.durationS)))
+            hits.append(Hit(label: "Longest time", detail: Formatters.duration(s: workout.durationS),
+                            prType: .longestDuration, value: workout.durationS))
         }
         return hits
     }

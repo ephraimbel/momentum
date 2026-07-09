@@ -175,11 +175,25 @@ final class HealthService: HealthServing {
         var saved = savedSet(Self.savedKey)
         var count = 0
 
+        // Overlap dedupe: the same physical run often exists twice — tracked here AND logged
+        // independently by a Watch/Garmin whose copy syncs into Health under its own source bundle
+        // (so the same-bundle echo check can't catch it). Importing that copy double-counts weekly
+        // volume, ACWR, and every stat. Spans include this loop's own imports so two external
+        // copies of one run don't both land either.
+        var existingSpans: [(start: Date, end: Date)] =
+            ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
+                .map { ($0.startedAt, $0.startedAt.addingTimeInterval(max($0.elapsedS, $0.durationS))) }
+        let plan = ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? []).first?.plan
+
         for hk in hkWorkouts {
             guard Self.shouldImport(sourceBundle: hk.sourceRevision.source.bundleIdentifier,
                                     ownBundle: ownBundle, metadata: hk.metadata ?? [:],
                                     alreadyImported: imported, uuid: hk.uuid.uuidString)
             else { continue }
+            guard !Self.overlapsExisting(start: hk.startDate, end: hk.endDate, spans: existingSpans) else {
+                imported.insert(hk.uuid.uuidString)   // remember the verdict — don't re-evaluate every sync
+                continue
+            }
 
             let type = Self.workoutType(for: hk.workoutActivityType)
             let calories = hk.statistics(for: HKQuantityType(.activeEnergyBurned))?
@@ -197,8 +211,12 @@ final class HealthService: HealthServing {
                 elapsed: hk.endDate.timeIntervalSince(hk.startDate),
                 calories: calories, distanceM: distanceM, avgHR: avgHR)
             context.insert(workout)
+            existingSpans.append((hk.startDate, hk.endDate))
             imported.insert(hk.uuid.uuidString)
             saved.insert(workout.id.uuidString)
+            // A Garmin/Watch long run fulfills the plan exactly like a tracked one — credit it, so
+            // the athlete who recorded on their watch doesn't find today's session still "open".
+            PlanCoaching.creditWorkout(workout, to: plan, in: context)
             count += 1
         }
 
@@ -216,6 +234,22 @@ final class HealthService: HealthServing {
         // Our own write: same app bundle *and* carries the externalUUID we stamp on save().
         if sourceBundle == ownBundle, metadata[HKMetadataKeyExternalUUID] != nil { return false }
         return !alreadyImported.contains(uuid)
+    }
+
+    /// Pure overlap check (testable): an incoming Health workout that shares more than half of the
+    /// shorter recording with something we already have is the same physical session, not a new one.
+    /// Straddling midnight is irrelevant here — this is pure interval math.
+    nonisolated static func overlapsExisting(start: Date, end: Date,
+                                             spans: [(start: Date, end: Date)]) -> Bool {
+        let duration = end.timeIntervalSince(start)
+        guard duration > 0 else { return false }
+        for span in spans {
+            let overlap = min(end, span.end).timeIntervalSince(max(start, span.start))
+            guard overlap > 0 else { continue }
+            let shorter = min(duration, span.end.timeIntervalSince(span.start))
+            if shorter > 0, overlap / shorter > 0.5 { return true }
+        }
+        return false
     }
 
     /// Pure assembly (testable): build a `Workout` from extracted HealthKit values. GPS types get a

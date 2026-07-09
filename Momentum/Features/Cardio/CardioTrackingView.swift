@@ -30,6 +30,8 @@ struct CardioTrackingView: View {
     @State private var goalReached = false
     @State private var acquirePulse = false
     @State private var acquireTimedOut = false
+    /// Set when the user backs out via X — gates the countdown task so a cancelled start can't arm.
+    @State private var dismissed = false
     @State private var mapStyle: MapStyleOption = .standard
     @State private var offRoute = false        // drifted off the guide loop (hysteresis-gated)
     /// Cached smoothed trace — recomputed only when a route point is added (see the map's onChange),
@@ -246,8 +248,9 @@ struct CardioTrackingView: View {
                 MapLayersButton(style: $mapStyle)
                 if phase == .tracking, let vm {
                     HStack(spacing: 4) {
-                        Image(systemName: "location.fill")
-                        Text(vm.gpsStrength > 0.66 ? "Strong" : vm.gpsStrength > 0.33 ? "OK" : "Weak")
+                        Image(systemName: vm.gpsLost ? "location.slash" : "location.fill")
+                        Text(vm.gpsLost ? "Searching…"
+                             : vm.gpsStrength > 0.66 ? "Strong" : vm.gpsStrength > 0.33 ? "OK" : "Weak")
                     }
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
                     .padding(.horizontal, 10).padding(.vertical, Theme.Space.chipV).momentumGlass()
@@ -599,6 +602,9 @@ struct CardioTrackingView: View {
             }
             withAnimation(Motion.lively) { countdown = 0 }
             try? await Task.sleep(for: .seconds(0.5))
+            // The user can tap X mid-countdown; arming after that teardown would create an orphan
+            // workout (and re-set the recovery marker) with nothing on screen to finish it.
+            guard !dismissed else { return }
             await vm?.arm()
             Haptics.success()
             withAnimation(Motion.standard) { phase = .tracking }
@@ -606,6 +612,7 @@ struct CardioTrackingView: View {
     }
 
     private func cancelAndDismiss() {
+        dismissed = true
         vm?.cancelAcquiring()
         onFinish(nil)
     }

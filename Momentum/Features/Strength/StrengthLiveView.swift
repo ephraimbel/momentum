@@ -238,7 +238,13 @@ private struct RestBar: View {
         }
         .onReceive(tick) { date in
             now = date
-            if (vm.restRemaining(at: date) ?? 0) <= 0 && !didPulse {
+            let remaining = vm.restRemaining(at: date) ?? 0
+            if remaining > 0 {
+                // A new rest is running — re-arm the completion pulse. Without this, only the FIRST
+                // rest of a continuous bar session ever buzzed/announced (the view instance survives
+                // between sets, so a one-way flag stayed latched).
+                didPulse = false
+            } else if !didPulse {
                 Haptics.medium()
                 services.analytics.log(.restTimerComplete)
                 if services.paywall.isEntitled(to: .voiceCoach) {

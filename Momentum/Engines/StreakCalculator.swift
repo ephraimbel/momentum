@@ -54,6 +54,17 @@ enum StreakCalculator {
         return best
     }
 
+    /// Planned rest days — the documented other half of "a day counts": any day inside the plan's
+    /// active span (first session through today, never the future) with no session scheduled. An
+    /// athlete resting exactly when the plan says rest must never lose the streak — a 4-day/week
+    /// plan has back-to-back rest days every single week.
+    static func plannedRestDays(sessionDays: Set<Int>, today: Int) -> Set<Int> {
+        guard let start = sessionDays.min(), start <= today else { return [] }
+        var rest = Set<Int>()
+        for day in start...today where !sessionDays.contains(day) { rest.insert(day) }
+        return rest
+    }
+
     /// Weeks meeting `daysPerWeek`, bucketed by 7-day blocks from the reference epoch.
     static func weeksActive(countingDays: Set<Int>, daysPerWeek: Int) -> Int {
         guard daysPerWeek > 0 else { return 0 }

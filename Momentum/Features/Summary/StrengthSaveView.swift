@@ -90,6 +90,13 @@ struct StrengthSaveView: View {
         // Commit through the reader's own context (where `workout` lives) so the write persists.
         reader?.commit(title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                        note: desc.trimmingCharacters(in: .whitespacesAndNewlines))
+        // Persist the records this session set (fresh context — the logged sets are complete there).
+        if let reader, let workout = reader.workout {
+            let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)
+            PersonalRecord.persist(hits.compactMap { hit in
+                hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
+            }, workout: workout, in: reader.context)
+        }
         if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
         Haptics.success()
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
@@ -125,7 +132,8 @@ struct StrengthSaveView: View {
 @Observable
 final class FinishedWorkoutReader {
     let workout: Workout?
-    private let context: ModelContext   // retained so `workout`'s faults stay resolvable
+    let context: ModelContext   // retained so `workout`'s faults stay resolvable; save views
+    // also detect + persist PRs through it (same-context rule for relationship reads)
 
     init(container: ModelContainer, workoutId: UUID) {
         let context = ModelContext(container)
@@ -134,9 +142,22 @@ final class FinishedWorkoutReader {
     }
 
     func commit(title: String, note: String) {
+        commit { $0.title = title; $0.note = note }
+    }
+
+    /// General edit hook: mutate the fresh-context workout, then persist through the same context
+    /// (writes made through any other context wouldn't see these relationships resolved).
+    func commit(_ mutate: (Workout) -> Void) {
         guard let workout else { return }
-        workout.title = title
-        workout.note = note
+        mutate(workout)
+        try? context.save()
+    }
+
+    /// Explicit user discard — deletes through the fresh context so the cascade sees the full,
+    /// non-stale relationship graph.
+    func delete() {
+        guard let workout else { return }
+        context.delete(workout)
         try? context.save()
     }
 }

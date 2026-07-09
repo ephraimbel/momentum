@@ -28,6 +28,9 @@ final class CardioViewModel {
     private(set) var lastAccuracyM: Double?
     private(set) var workoutId: UUID?
     private var pumpTask: Task<Void, Never>?
+    /// When the last live fix arrived — feeds the GPS-lost watchdog.
+    private var lastFixAt: Date?
+    private var watchdogTask: Task<Void, Never>?
 
     /// True once a fix lands within the lock accuracy band — the cue to leave the "acquiring" gate
     /// and start the countdown (PRD §4.3; mirrors Strava's "GPS Signal Acquired").
@@ -111,6 +114,7 @@ final class CardioViewModel {
             guard let self else { return }
             for await fix in self.location.fixes() {
                 self.lastAccuracyM = fix.accuracyM
+                self.lastFixAt = Date()
                 guard self.armed else {
                     if fix.accuracyM > 0, fix.accuracyM <= Self.lockAccuracyM { self.hasGPSLock = true }
                     continue
@@ -165,6 +169,24 @@ final class CardioViewModel {
         armed = true
         // Light up the lock screen / Dynamic Island for the live run (PRD §23).
         liveActivity.start(title: type.title, symbol: type.systemImage, state: liveState())
+        // GPS-lost watchdog: `ingest` can only react to fixes that arrive, so a dropout (tunnel,
+        // urban canyon) would otherwise leave the state — and the signal chip — frozen at its last
+        // healthy value while the timer runs. Poll the fix age and flag the loss honestly; the next
+        // accepted fix flips the engine straight back to tracking.
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled else { break }
+                if !self.location.isDenied,
+                   let last = self.lastFixAt,
+                   Date().timeIntervalSince(last) > GPSTrackingEngine.Const.gpsLostTimeoutS,
+                   self.state == .tracking {
+                    await self.engine.markGPSLost()
+                    self.snapshot = await self.engine.snapshot()
+                    self.liveActivity.update(self.liveState())
+                }
+            }
+        }
         // Kick off guided-workout tracking: announce the first step and advance it once a second,
         // independent of GPS-fix cadence so timed recoveries count down while you stand still.
         if let step = tracker?.current {
@@ -247,6 +269,7 @@ final class CardioViewModel {
     func cancelAcquiring() {
         pumpTask?.cancel()
         structuredTask?.cancel()
+        watchdogTask?.cancel()
         location.stop()
         motion.stop()
         heartRate.stop()
@@ -311,11 +334,18 @@ final class CardioViewModel {
     func finish() async -> UUID? {
         pumpTask?.cancel()
         structuredTask?.cancel()
+        watchdogTask?.cancel()
         location.stop()
         motion.stop()
         heartRate.stop()
         liveActivity.end()
         voice?.stop()
+        // A step in progress at Finish is real work — close it out as a partial rep (exactly what
+        // Skip records) so the per-rep breakdown never silently drops the final effort.
+        if var t = tracker, !t.isComplete, t.current != nil {
+            t.skip(distanceM: distanceM, elapsedS: structuredElapsed())
+            tracker = t
+        }
         await engine.finish(durationOverrideS: elapsed())
         // Persist the run's average cadence + heart rate when the sensors produced readings.
         if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
@@ -396,6 +426,10 @@ final class CardioViewModel {
     var secondaryDistance: String { Formatters.distance(meters: distanceM, unit: distanceUnit) }
 
     var isPaused: Bool { state == .paused || state == .autoPaused }
+
+    /// True while the signal has dropped mid-run (watchdog-flagged) — the UI says "Searching…"
+    /// instead of showing the last healthy strength reading.
+    var gpsLost: Bool { state == .gpsLost }
 
     // MARK: Structured-workout display
 

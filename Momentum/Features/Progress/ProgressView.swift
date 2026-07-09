@@ -38,7 +38,7 @@ struct ProgressScreen: View {
     private var plan: TrainingPlan? { profiles.first?.plan }
 
     private var distanceUnit: DistanceUnit { .auto }
-    private var stats: ProfileStats { ProfileStats(workouts: workouts) }
+    private var stats: ProfileStats { ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
     private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
     private var recovery: RecoveryModel { RecoveryModel(workouts: workouts) }
 
@@ -732,7 +732,12 @@ struct ProgressScreen: View {
         return [Formatters.duration(s: w.durationS)]
     }
     private func feedIsPR(_ w: Workout) -> Bool {
-        !CardioAchievements.detect(for: w, distanceUnit: distanceUnit, in: context).isEmpty
+        // The cardio detector early-returns [] for strength, so lifts need their own check — a bench
+        // PR celebrated on the summary shouldn't vanish from the feed.
+        if w.type.isStrengthStyle {
+            return !StrengthPRs.detect(for: w, weightUnit: .default(), in: context).isEmpty
+        }
+        return !CardioAchievements.detect(for: w, distanceUnit: distanceUnit, in: context).isEmpty
     }
 
     // MARK: Status hero

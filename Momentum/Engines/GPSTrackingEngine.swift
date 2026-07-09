@@ -143,7 +143,14 @@ actor GPSTrackingEngine {
         }
     }
 
-    func pause() { if state == .tracking || state == .autoPaused { state = .paused } }
+    /// Manual Pause. Also honored while `.acquiring` (recording armed but no fix yet — e.g. location
+    /// denied, where the state never leaves acquiring) and `.gpsLost`, so the button is never a silent
+    /// no-op while the elapsed clock runs.
+    func pause() {
+        if state == .tracking || state == .autoPaused || state == .acquiring || state == .gpsLost {
+            state = .paused
+        }
+    }
     /// Manual Resume — works from a manual *or* an auto pause, and holds off auto-pause until the athlete
     /// moves again, so the button always responds even when they're standing still.
     func resume() {
