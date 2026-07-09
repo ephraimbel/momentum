@@ -110,6 +110,15 @@ struct TodayView: View {
                                  in: context, dedupeToken: "welcome", daily: false)
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
+            // Recovery-driven adaptation (§8.1): two independent warning signs from the athlete's
+            // wearables ease *today's* quality session — one bounded change, reason said plainly.
+            Task {
+                let signals = await services.health.recoverySignals()
+                let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
+                if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier) {
+                    _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
+                }
+            }
             // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
             // lands we switch to following the puck. We only *follow the puck* up front when location is
             // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
