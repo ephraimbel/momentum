@@ -21,34 +21,38 @@ struct PaywallView: View {
 
     private static let benefits: [(String, String)] = [
         ("brain.head.profile", "An adaptive AI coach that learns you"),
-        ("calendar", "Full multi-discipline plans, programs & adaptation"),
-        ("chart.xyaxis.line", "Advanced analytics — e1RM, training load, trends"),
-        ("clock.arrow.circlepath", "Your full history, forever"),
-        ("square.and.arrow.up", "Every share style"),
+        ("figure.run", "Full multi-discipline plans & daily adaptation"),
+        ("chart.xyaxis.line", "Advanced analytics — e1RM, load & trends"),
+        ("infinity", "Unlimited history and every share style"),
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: Theme.Space.xl) {
-                    hero
-                    benefitList
-                }
-                .padding(Theme.Space.lg)
-                .padding(.top, Theme.Space.xl)
-                .padding(.bottom, Theme.Space.md)
-            }
-            .scrollIndicators(.hidden)
-            // Pinned decision area — plans + CTA are always in view, never cut off below the fold.
-            VStack(spacing: Theme.Space.md) {
+        ScrollView {
+            VStack(spacing: Theme.Space.lg) {
+                hero
+                benefitList
                 plans
+            }
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.xxl)
+            .padding(.bottom, Theme.Space.md)
+        }
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
+        // Only the CTA is pinned — `safeAreaInset` insets the scroll content above it, so the plans and
+        // features are never covered. Everything else flows in one clean column.
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: Theme.Space.sm) {
                 cta
                 fineprint
             }
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.top, Theme.Space.md)
-            .padding(.bottom, Theme.Space.sm)
-            .background(Theme.background.shadow(color: .black.opacity(0.06), radius: 14, y: -6).ignoresSafeArea(edges: .bottom))
+            .padding(.top, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.xs)
+            .background {
+                Theme.background.ignoresSafeArea(edges: .bottom)
+                Rectangle().fill(Theme.hairline).frame(height: 0.5).frame(maxHeight: .infinity, alignment: .top)
+            }
         }
         .background(Theme.background.ignoresSafeArea())
         .overlay(alignment: .topTrailing) { closeButton }
@@ -59,41 +63,42 @@ struct PaywallView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(spacing: Theme.Space.md) {
-            // Brand lockup: the wordmark + an iridescent PRO badge — earned, premium, unmistakably ours.
+        VStack(spacing: Theme.Space.sm + 2) {
+            // Brand lockup: the wordmark + a purple PRO badge — premium, unmistakably ours.
             HStack(spacing: 8) {
-                Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 20)
+                Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 19)
                 Text("PRO").font(.rounded(11, weight: .black)).tracking(1.5).foregroundStyle(.white)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Theme.purple))
             }
             .accessibilityLabel("Momentum Pro")
-            VStack(spacing: 8) {
-                Text("Train smarter, every session.")
-                    .font(.serif(29, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                Text("Unlock \(feature.displayName) — and every Pro feature.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            }
+            Text("Train smarter,\nevery session.")
+                .font(.serif(28, weight: .semibold)).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            Text("Unlock \(feature.displayName) — and every Pro feature.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.bottom, Theme.Space.xs)
     }
 
     private var benefitList: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
             ForEach(Self.benefits, id: \.0) { icon, text in
                 HStack(spacing: Theme.Space.md) {
                     Image(systemName: icon)
-                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.purple)
-                        .frame(width: 40, height: 40)
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.purple)
+                        .frame(width: 34, height: 34)
                         .background(Circle().fill(Theme.purple.opacity(0.1)))
                     Text(text).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
     }
 
     // MARK: Plans
