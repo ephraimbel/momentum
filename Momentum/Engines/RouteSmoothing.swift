@@ -134,3 +134,139 @@ enum RouteSmoothing {
         Point(x: wa * a.x + wb * b.x, y: wa * a.y + wb * b.y)
     }
 }
+
+// MARK: - Live incremental smoothing
+
+extension RouteSmoothing {
+
+    /// Incrementally-maintained live spline for the recording map. `smooth(_:)` is O(n) per call, so
+    /// re-splining the whole route on every fix is O(n²) over a session — a 3-hour ride re-shapes
+    /// ~10k points on the main thread every second by the end. The spline is *local* (each output
+    /// span depends on ≤6 neighboring input points), so instead this freezes spans once their
+    /// neighborhood can no longer change and re-computes only a short live tail per fix: O(1)
+    /// amortized, and **bit-identical to `smooth(_:)`** on the same input (pinned by tests).
+    ///
+    /// It also splits the trace where the data actually gapped (tunnel, long reject stretch): a jump
+    /// of `gapSplitM` between consecutive accepted points ends the current segment instead of
+    /// drawing a chord through buildings. Chunks are emitted for append-only rendering
+    /// (`addGeoJSONSourceFeatures`) so the per-fix payload to Mapbox stays O(tail) too.
+    struct LiveSmoother {
+        /// Straight-line jump between consecutive accepted route points that reads as a data gap,
+        /// not movement (accepted points are normally ≤ a few fix-intervals apart).
+        static let gapSplitM = 100.0
+        /// Spans kept live at the tail. A span is final once its ±2-point denoise neighborhood is
+        /// final; 5 is deliberately one more than the math needs.
+        private static let tailSpans = 5
+
+        private let subdivisions: Int
+
+        // Current segment state (a segment = a gap-free stretch of the route).
+        private var pts: [Point] = []            // deduped, planar
+        private var rawSegment: [CLLocationCoordinate2D] = []  // pre-spline fallback while pts < 3
+        private var lonScale = 1.0
+        private var frozenSpans = 0
+
+        // Whole-route state.
+        private var consumed = 0                 // route points ingested so far
+        private var lastRaw: CLLocationCoordinate2D?
+        private(set) var allChunks: [[CLLocationCoordinate2D]] = []   // for style-reload rebuilds
+        private(set) var tail: [CLLocationCoordinate2D] = []
+
+        init(subdivisions: Int = 6) { self.subdivisions = subdivisions }
+
+        /// What changed this ingest: chunks to append (final — never re-sent) and the tail to replace.
+        struct Delta {
+            var newChunks: [[CLLocationCoordinate2D]] = []
+            var tail: [CLLocationCoordinate2D] = []
+        }
+
+        /// Feed the growing route (append-only — pass the whole array; only new points are read).
+        mutating func ingest(_ route: [CLLocationCoordinate2D]) -> Delta {
+            var delta = Delta()
+            guard route.count > consumed else { delta.tail = tail; return delta }
+            for coord in route[consumed...] {
+                if let last = lastRaw,
+                   Geo.distance(lat1: last.latitude, lon1: last.longitude,
+                                lat2: coord.latitude, lon2: coord.longitude) > Self.gapSplitM {
+                    // Real data gap: finalize this segment where it stands and start a new one —
+                    // separate features never connect, so no chord is drawn across the gap.
+                    if !tail.isEmpty { allChunks.append(tail); delta.newChunks.append(tail) }
+                    pts = []; rawSegment = []; frozenSpans = 0; tail = []
+                }
+                lastRaw = coord
+                appendToSegment(coord)
+            }
+            consumed = route.count
+
+            // Freeze every span whose neighborhood is now final, emitting one chunk for the batch.
+            let n = pts.count
+            let target = max(frozenSpans, n - 1 - Self.tailSpans)
+            if n >= 3, target > frozenSpans {
+                var chunk: [CLLocationCoordinate2D] = []
+                for span in frozenSpans..<target { emit(span: span, into: &chunk) }
+                chunk.append(unproject(denoised(target)))   // shared closing point — keeps the line continuous
+                frozenSpans = target
+                allChunks.append(chunk)
+                delta.newChunks.append(chunk)
+            }
+
+            tail = liveTail()
+            delta.tail = tail
+            return delta
+        }
+
+        // MARK: internals
+
+        private mutating func appendToSegment(_ coord: CLLocationCoordinate2D) {
+            rawSegment.append(coord)
+            if pts.isEmpty { lonScale = cos(coord.latitude * .pi / 180) }
+            let p = Point(x: coord.longitude * lonScale, y: coord.latitude)
+            // Same sequential dedupe rule as `smooth(_:)`.
+            if let last = pts.last {
+                let minDeltaDeg = 0.15 / 111_320.0
+                let dx = p.x - last.x, dy = p.y - last.y
+                guard dx * dx + dy * dy >= minDeltaDeg * minDeltaDeg else { return }
+            }
+            pts.append(p)
+        }
+
+        /// The re-shaped live end of the segment: everything not yet frozen.
+        private func liveTail() -> [CLLocationCoordinate2D] {
+            let n = pts.count
+            guard n >= 3 else { return rawSegment }   // matches smooth(_:)'s pass-through
+            var out: [CLLocationCoordinate2D] = []
+            for span in frozenSpans..<(n - 1) { emit(span: span, into: &out) }
+            out.append(unproject(pts[n - 1]))         // endpoint held raw, same as smooth(_:)
+            return out
+        }
+
+        /// Emit one span's `subdivisions` points (t ∈ [0,1)); identical math to `smooth(_:)`.
+        private func emit(span i: Int, into out: inout [CLLocationCoordinate2D]) {
+            let n = pts.count
+            let d0 = denoised(max(i - 1, 0)), d1 = denoised(i)
+            let p0 = i - 1 >= 0 ? d0 : Point(x: 2 * denoised(0).x - denoised(1).x,
+                                             y: 2 * denoised(0).y - denoised(1).y)
+            let p1 = d1
+            let p2 = denoised(i + 1)
+            let p3 = i + 2 <= n - 1 ? denoised(i + 2)
+                                    : Point(x: 2 * denoised(n - 1).x - denoised(n - 2).x,
+                                            y: 2 * denoised(n - 1).y - denoised(n - 2).y)
+            for s in 0..<subdivisions {
+                out.append(unproject(RouteSmoothing.segment(p0, p1, p2, p3, Double(s) / Double(subdivisions))))
+            }
+        }
+
+        /// The [1,2,1]/4 denoise of point `j`, computed on demand from the raw deduped points —
+        /// identical to `smooth(_:)`'s pre-pass (endpoints held fixed).
+        private func denoised(_ j: Int) -> Point {
+            let n = pts.count
+            guard j > 0, j < n - 1 else { return pts[j] }
+            return Point(x: (pts[j - 1].x + 2 * pts[j].x + pts[j + 1].x) / 4,
+                         y: (pts[j - 1].y + 2 * pts[j].y + pts[j + 1].y) / 4)
+        }
+
+        private func unproject(_ p: Point) -> CLLocationCoordinate2D {
+            CLLocationCoordinate2D(latitude: p.y, longitude: p.x / lonScale)
+        }
+    }
+}

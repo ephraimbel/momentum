@@ -56,6 +56,12 @@ struct GPSProcessor {
 
     let config: Config
     private(set) var anchor: Fix?
+    /// The most recent ACCEPTED fix, including micro-moves that never advance `anchor`. This is the
+    /// accept gate's time reference: `anchor` freezes while the athlete stands still (its timestamp
+    /// goes stale), and a stale reference dilutes the implied-speed test — after a 60 s traffic
+    /// light an 80 m GPS spike reads as a lazy 1.3 m/s and sails through. Measured against the fix
+    /// from one second ago, the same spike reads as 80 m/s and is rejected.
+    private var lastAccepted: Fix?
     private(set) var distanceM: Double = 0
     private(set) var elevationGainM: Double = 0
     /// EMA-smoothed pace in seconds per km (0 until first movement).
@@ -102,7 +108,8 @@ struct GPSProcessor {
     /// Process a raw fix. Distance is measured from a stable anchor and only accrues once movement
     /// clears `minMovementGate`, so positional jitter doesn't inflate distance.
     mutating func ingest(_ fix: Fix) -> Result {
-        guard Self.acceptable(fix, previous: anchor, config: config) else { return .rejected }
+        guard Self.acceptable(fix, previous: lastAccepted ?? anchor, config: config) else { return .rejected }
+        lastAccepted = fix
 
         // Kalman-correct the accepted position. Distance and the route polyline are measured off this
         // filtered track, not the raw fix — the accept gate above still runs against the raw anchor so
@@ -140,8 +147,18 @@ struct GPSProcessor {
         return .accepted(distanceAddedM: d)
     }
 
-    /// Returns true once speed has stayed below the threshold for `autoPauseSecs`.
-    mutating func shouldAutoPause(speedMS: Double, now: Date) -> Bool {
+    /// Returns true once speed has stayed below the threshold for `autoPauseSecs`. Resume is
+    /// hysteresis-gated: while already auto-paused (`currentlyPaused`), clearing requires 1.5× the
+    /// pause threshold — a walker hovering right at the boundary would otherwise flap the
+    /// "Auto-paused" banner (and its voice cue) on and off every few seconds.
+    mutating func shouldAutoPause(speedMS: Double, now: Date, currentlyPaused: Bool = false) -> Bool {
+        if currentlyPaused {
+            if speedMS >= config.autoPauseSpeedMS * 1.5 {
+                belowSpeedSince = nil
+                return false
+            }
+            return true
+        }
         if speedMS < config.autoPauseSpeedMS {
             if let since = belowSpeedSince {
                 return now.timeIntervalSince(since) >= config.autoPauseSecs

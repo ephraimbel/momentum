@@ -52,17 +52,25 @@ enum PlanCoaching {
         try? context.save()
     }
 
-    /// Credit a free workout toward today's matching planned session, if still open.
+    /// Credit a free workout toward today's matching planned session, if still open. Magnitude-aware
+    /// (`PlanCredit`): the workout must plausibly *fulfill* the prescription — a short recovery jog
+    /// leaves the day's long run open instead of silently completing it.
     @discardableResult
     static func creditWorkout(_ workout: Workout, to plan: TrainingPlan?, in context: ModelContext,
                               calendar: Calendar = .current) -> PlannedSession? {
         guard let plan else { return nil }
-        let candidates = todaySessions(plan, on: workout.startedAt, calendar: calendar)
-        guard let match = candidates.first(where: {
+        let open = todaySessions(plan, on: workout.startedAt, calendar: calendar).filter {
             $0.status == .planned && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
-        }) else { return nil }
-        markComplete(match, with: workout, in: context)
-        return match
+        }
+        guard !open.isEmpty else { return nil }
+        let candidates = open.map {
+            PlanCredit.Candidate(targetDistanceM: $0.targetDistanceM, targetDurationS: $0.targetDurationS)
+        }
+        guard let idx = PlanCredit.bestMatch(distanceM: workout.gps?.distanceM ?? 0,
+                                             durationS: workout.durationS,
+                                             candidates: candidates) else { return nil }
+        markComplete(open[idx], with: workout, in: context)
+        return open[idx]
     }
 
     /// Move past, still-planned sessions onto the next open day — never a red miss (§9.4).
@@ -114,9 +122,12 @@ enum PlanCoaching {
                       calendar: Calendar = .current) -> Int {
         guard let plan else { return 0 }
         let todayStart = calendar.startOfDay(for: date)
+        // Injury-converted sessions are off-limits: softening one would corrupt the swap (easy-run
+        // fields on a cycling session) and overwrite the marker `resume` needs to restore it.
         let future = plan.sessions
             .filter { $0.status == .planned && $0.completedWorkout == nil
-                      && calendar.startOfDay(for: $0.date) >= todayStart }
+                      && calendar.startOfDay(for: $0.date) >= todayStart
+                      && !($0.rationale?.hasPrefix(InjuryResponse.marker) ?? false) }
             .sorted { $0.date < $1.date }
         guard !future.isEmpty else { return 0 }
         let p5k = plan.p5kSPerKm

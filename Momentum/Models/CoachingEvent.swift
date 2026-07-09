@@ -36,14 +36,18 @@ final class CoachingEvent {
         self.date = date
     }
 
-    /// Log a coaching decision. Deduped: skips if the same kind was already recorded today (the
-    /// ≤1/week adaptation gates mean this rarely collides, but a same-day recalibrate + ease shouldn't
-    /// double-log the same nudge).
+    /// Log a coaching decision. Deduped on kind **and** headline per day: re-running the same
+    /// decision doesn't double-log, but two *different* decisions that share a kind (an injury
+    /// report and an overtraining cutback both record `.recover`) must each keep their receipt —
+    /// and their inbox notification.
     static func record(kind: Kind, headline: String, detail: String, on date: Date, in context: ModelContext,
                        calendar: Calendar = .current) {
         let dayStart = calendar.startOfDay(for: date)
         let existing = (try? context.fetch(FetchDescriptor<CoachingEvent>())) ?? []
-        let dup = existing.contains { $0.kindRaw == kind.rawValue && calendar.isDate($0.date, inSameDayAs: dayStart) }
+        let dup = existing.contains {
+            $0.kindRaw == kind.rawValue && $0.headline == headline
+            && calendar.isDate($0.date, inSameDayAs: dayStart)
+        }
         guard !dup else { return }
         context.insert(CoachingEvent(kind: kind, headline: headline, detail: detail, date: date))
         // A coaching decision is also a notification the athlete gets — mirror it into the bell inbox.

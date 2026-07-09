@@ -11,6 +11,11 @@ import Observation
 final class LocationService: NSObject, LocationServing, CLLocationManagerDelegate {
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    /// Keeps `liveUpdates` delivering while the app is backgrounded (locked phone in a pocket — the
+    /// normal case for a run). Without this session iOS suspends location delivery on background,
+    /// and the first fixes on return are dropped as stale — freezing distance while the timer runs.
+    /// Held for the lifetime of the recording stream; invalidated in `stop()`.
+    @ObservationIgnored private var backgroundSession: CLBackgroundActivitySession?
 
     /// Current authorization, kept live by the delegate so views update when the user responds.
     private(set) var authorizationStatus: CLAuthorizationStatus
@@ -91,23 +96,36 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
 #if DEBUG
         if Self.isUITestRoute { return simulatedRouteFixes() }
 #endif
+        // Must exist before updates begin, and must outlive the stream — otherwise iOS stops
+        // delivering fixes the moment the screen locks.
+        backgroundSession = CLBackgroundActivitySession()
         return AsyncStream { continuation in
             let task = Task {
-                do {
-                    for try await update in CLLocationUpdate.liveUpdates(.fitness) {
-                        if Task.isCancelled { break }
-                        guard let loc = update.location else { continue }
-                        continuation.yield(GPSProcessor.Fix(
-                            t: loc.timestamp,
-                            lat: loc.coordinate.latitude,
-                            lon: loc.coordinate.longitude,
-                            accuracyM: loc.horizontalAccuracy,
-                            speedMS: loc.speed,
-                            altitudeM: loc.altitude
-                        ))
+                // Re-subscribe on stream end: a transient CoreLocation error (or a system hiccup on
+                // background/foreground transitions) ends `liveUpdates` — without this loop that
+                // silently killed GPS for the rest of the run (trace + distance frozen forever,
+                // timer still counting). Only cancellation (stop()/finish) truly ends the stream;
+                // genuine denial just keeps erroring into the backoff while the UI shows the
+                // denied banner via `authorizationStatus`.
+                while !Task.isCancelled {
+                    do {
+                        for try await update in CLLocationUpdate.liveUpdates(.fitness) {
+                            if Task.isCancelled { break }
+                            guard let loc = update.location else { continue }
+                            continuation.yield(GPSProcessor.Fix(
+                                t: loc.timestamp,
+                                lat: loc.coordinate.latitude,
+                                lon: loc.coordinate.longitude,
+                                accuracyM: loc.horizontalAccuracy,
+                                speedMS: loc.speed,
+                                altitudeM: loc.altitude
+                            ))
+                        }
+                    } catch {
+                        // fall through to the backoff and re-subscribe
                     }
-                } catch {
-                    // Authorization denied / transient error: end the stream; UI reflects state.
+                    if Task.isCancelled { break }
+                    try? await Task.sleep(for: .seconds(1))
                 }
                 continuation.finish()
             }
@@ -119,6 +137,8 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     func stop() {
         streamTask?.cancel()
         streamTask = nil
+        backgroundSession?.invalidate()
+        backgroundSession = nil
     }
 
 #if DEBUG

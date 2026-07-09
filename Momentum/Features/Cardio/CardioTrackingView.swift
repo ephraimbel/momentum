@@ -2,6 +2,7 @@ import SwiftUI
 import MapboxMaps
 import SwiftData
 import CoreLocation
+import Combine
 import UIKit
 
 /// The immersive cardio recording experience (PRD §4.3) — presented after the user picks an
@@ -30,13 +31,20 @@ struct CardioTrackingView: View {
     @State private var goalReached = false
     @State private var acquirePulse = false
     @State private var acquireTimedOut = false
+    /// Set when the user backs out via X — gates the countdown task so a cancelled start can't arm.
+    @State private var dismissed = false
     // Shared app-wide base-map choice (see MapStyleOption.storageKey) — the style picked on Today
     // is the style the run records with, and vice versa.
     @AppStorage(MapStyleOption.storageKey) private var mapStyle: MapStyleOption = .realistic
     @State private var offRoute = false        // drifted off the guide loop (hysteresis-gated)
-    /// Cached smoothed trace — recomputed only when a route point is added (see the map's onChange),
-    /// never on incidental body re-evaluations like the 1 Hz elapsed-time tick.
-    @State private var smoothedTrace: [CLLocationCoordinate2D] = []
+    /// Incremental live spline (O(tail) per fix — a full re-smooth is O(n) and turns O(n²) over a
+    /// multi-hour session). Frozen chunks are appended to the Mapbox source once and never re-sent;
+    /// only the short live tail is replaced per fix, so map payloads stay constant-size too.
+    @State private var smoother = RouteSmoothing.LiveSmoother()
+    /// Drives the puck (and its follow camera) from our Kalman-filtered position instead of raw
+    /// CoreLocation — the dot, the camera, and the trace all track the same clean track, so a
+    /// rejected GPS spike can't teleport the dot into a building while the line stays put.
+    @State private var puckFeed = PuckFeed()
     @State private var deviationM = 0.0
     @State private var rejoinBearing = 0.0     // compass bearing to the nearest loop point (north-up)
     /// While true the camera stays locked on the athlete (zoomed in, north-up). A pan/pinch drops it;
@@ -51,11 +59,12 @@ struct CardioTrackingView: View {
     private static let offRouteM = 35.0
     private static let onRouteM = 20.0
 
-    /// Tight street-level zoom for the locked-on running view (north-up).
-    private static let followZoom: Double = 16
+    /// Locked-on zoom, tuned per discipline: street-tight for foot sports, one step wider for
+    /// cycling so 30-50 km/h doesn't scroll the world past faster than it reads.
+    private var followZoom: Double { type.discipline == .cycling ? 15 : 16 }
 
     /// The locked-on follow viewport — follows the location puck, north-up, at a tight running zoom.
-    private var followViewport: Viewport { .followPuck(zoom: Self.followZoom, bearing: .constant(0)) }
+    private var followViewport: Viewport { .followPuck(zoom: followZoom, bearing: .constant(0)) }
 
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
@@ -137,14 +146,22 @@ struct CardioTrackingView: View {
             .mapStyle(mapStyle.mapboxStyle)
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
-            .onStyleLoaded { _ in BrandPuck.apply(to: proxy); syncRouteLayers(proxy.map, trace: smoothedTrace) }
-            // Re-smooth only when a point is actually added (not on every body eval / 1 Hz timer tick),
-            // cache it, and hand it to the layer sync — so a long run doesn't re-spline thousands of
-            // points every frame.
+            .onStyleLoaded { _ in
+                BrandPuck.apply(to: proxy)
+                puckFeed.attach(to: proxy)
+                syncRouteLayers(proxy.map, delta: nil)   // style reload wiped sources → full rebuild
+            }
+            // Incremental: feed only the new points to the smoother; append the newly-frozen chunks
+            // and replace the short live tail. No full re-smooth, no full re-upload — per-fix work
+            // stays constant no matter how long the session gets.
             .onChange(of: routeCoords.count) {
-                let smoothed = RouteSmoothing.smooth(routeCoords)
-                smoothedTrace = smoothed
-                syncRouteLayers(proxy.map, trace: smoothed)
+                let delta = smoother.ingest(routeCoords)
+                syncRouteLayers(proxy.map, delta: delta)
+            }
+            // The puck follows the engine's filtered position (raw while acquiring so "you" shows
+            // instantly; Kalman tip once recording).
+            .onChange(of: vm?.puckPoint) { _, point in
+                if let point { puckFeed.push(lat: point.lat, lon: point.lon) }
             }
             .ignoresSafeArea()
             // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
@@ -158,8 +175,14 @@ struct CardioTrackingView: View {
     /// Builds/updates the route layers: a dashed guide loop beneath the live trace (white casing +
     /// solid purple). The trace is solid, not a gradient — Mapbox's `line-gradient` crashes when its
     /// source is updated live, so the gradient lives on the completed-route maps (`RouteMapView`).
-    /// Sources update efficiently as the run grows; layers are re-added whenever the style reloads.
-    private func syncRouteLayers(_ map: MapboxMap?, trace: [CLLocationCoordinate2D]) {
+    ///
+    /// The trace source is a FeatureCollection: frozen spline chunks are **appended once**
+    /// (`addGeoJSONSourceFeatures`) and only the short live tail is **replaced** per fix
+    /// (`updateGeoJSONSourceFeatures`) — so the payload handed to Mapbox each second is
+    /// constant-size, not the whole ever-growing route. Chunks share their boundary point, so the
+    /// line renders continuous; a data-gap split simply yields disjoint features (no chord).
+    /// `delta == nil` means the style reloaded → rebuild the source from the smoother's full state.
+    private func syncRouteLayers(_ map: MapboxMap?, delta: RouteSmoothing.LiveSmoother.Delta?) {
         guard let map, map.isStyleLoaded else { return }
 
         // Insert route layers *below* the location puck so the athlete's purple dot always sits on top
@@ -184,23 +207,52 @@ struct CardioTrackingView: View {
             }
         }
 
-        // Live trace: a white casing + a solid purple line on top — both below the puck.
-        guard trace.count > 1 else { return }
-        let traceData = GeoJSONSourceData.geometry(.lineString(LineString(trace)))
-        if map.sourceExists(withId: "trace-src") {
-            try? map.updateGeoJSONSource(withId: "trace-src", data: traceData)
-        } else {
-            var source = GeoJSONSource(id: "trace-src"); source.data = traceData
+        // Live trace — nothing to draw until there's a line.
+        guard !smoother.allChunks.isEmpty || smoother.tail.count > 1 else { return }
+
+        if !map.sourceExists(withId: "trace-src") {
+            // Fresh style (first draw, or a mid-run style switch wiped the sources): rebuild the
+            // whole trace from the smoother's retained state.
+            var features = smoother.allChunks.enumerated().map { chunkFeature($1, index: $0) }
+            features.append(tailFeature(smoother.tail))
+            var source = GeoJSONSource(id: "trace-src")
+            source.data = .featureCollection(FeatureCollection(features: features))
             try? map.addSource(source)
             let casing = LineLayer(id: "trace-casing", source: "trace-src")
                 .lineColor(StyleColor(UIColor.white))
                 .lineWidth(8.5).lineCap(.round).lineJoin(.round)
             try? map.addLayer(casing, layerPosition: belowPuck)
-            let trace = LineLayer(id: "trace-line", source: "trace-src")
+            let line = LineLayer(id: "trace-line", source: "trace-src")
                 .lineColor(StyleColor(UIColor(Theme.route)))
                 .lineWidth(5.5).lineCap(.round).lineJoin(.round)
-            try? map.addLayer(trace, layerPosition: belowPuck)
+            try? map.addLayer(line, layerPosition: belowPuck)
+            return
         }
+
+        guard let delta else { return }
+        if !delta.newChunks.isEmpty {
+            let start = smoother.allChunks.count - delta.newChunks.count
+            let features = delta.newChunks.enumerated().map { chunkFeature($1, index: start + $0) }
+            map.addGeoJSONSourceFeatures(forSourceId: "trace-src", features: features)
+        }
+        // A just-split segment can briefly have a sub-2-point tail; the finalized chunk already
+        // renders that geometry, so skipping the update never leaves a visible hole.
+        if delta.tail.count > 1 {
+            map.updateGeoJSONSourceFeatures(forSourceId: "trace-src", features: [tailFeature(delta.tail)])
+        }
+    }
+
+    // `MapboxMaps.Feature` spelled out — the app has its own `Feature` type (paywall gating).
+    private func chunkFeature(_ coords: [CLLocationCoordinate2D], index: Int) -> MapboxMaps.Feature {
+        var f = MapboxMaps.Feature(geometry: .lineString(LineString(coords)))
+        f.identifier = .string("trace-chunk-\(index)")
+        return f
+    }
+
+    private func tailFeature(_ coords: [CLLocationCoordinate2D]) -> MapboxMaps.Feature {
+        var f = MapboxMaps.Feature(geometry: .lineString(LineString(coords)))
+        f.identifier = .string("trace-tail")
+        return f
     }
 
     /// The guide line reads as a quiet dashed path — lighter over satellite imagery for contrast.
@@ -248,8 +300,9 @@ struct CardioTrackingView: View {
                 MapLayersButton(style: $mapStyle, previewCenter: routeCoords.last ?? lastKnownCoordinate)
                 if phase == .tracking, let vm {
                     HStack(spacing: 4) {
-                        Image(systemName: "location.fill")
-                        Text(vm.gpsStrength > 0.66 ? "Strong" : vm.gpsStrength > 0.33 ? "OK" : "Weak")
+                        Image(systemName: vm.gpsLost ? "location.slash" : "location.fill")
+                        Text(vm.gpsLost ? "Searching…"
+                             : vm.gpsStrength > 0.66 ? "Strong" : vm.gpsStrength > 0.33 ? "OK" : "Weak")
                     }
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
                     .padding(.horizontal, 10).padding(.vertical, Theme.Space.chipV).momentumGlass()
@@ -601,6 +654,9 @@ struct CardioTrackingView: View {
             }
             withAnimation(Motion.lively) { countdown = 0 }
             try? await Task.sleep(for: .seconds(0.5))
+            // The user can tap X mid-countdown; arming after that teardown would create an orphan
+            // workout (and re-set the recovery marker) with nothing on screen to finish it.
+            guard !dismissed else { return }
             await vm?.arm()
             Haptics.success()
             withAnimation(Motion.standard) { phase = .tracking }
@@ -608,8 +664,31 @@ struct CardioTrackingView: View {
     }
 
     private func cancelAndDismiss() {
+        dismissed = true
         vm?.cancelAcquiring()
         onFinish(nil)
+    }
+}
+
+/// Bridges our filtered position into the Mapbox puck. By default the puck (and the `.followPuck`
+/// camera) render raw CoreLocation, independent of the accept gate and Kalman filter that protect
+/// the trace — so a rejected GPS spike would teleport the dot and lurch the camera while the line
+/// correctly ignored it. Overriding the map's `LocationDataModel` puts dot, camera, and trace on
+/// the SAME clean track. Heading still comes from the system so the direction cone keeps working.
+@MainActor
+private final class PuckFeed {
+    private let subject = CurrentValueSubject<[Location], Never>([])
+    private let heading = AppleLocationProvider()   // heading only; position comes from `subject`
+
+    func attach(to proxy: MapProxy) {
+        proxy.location?.dataModel = LocationDataModel(
+            location: subject.eraseToAnyPublisher(),
+            heading: heading.onHeadingUpdate.eraseToAnyPublisher())
+    }
+
+    func push(lat: Double, lon: Double) {
+        subject.send([Location(coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                               timestamp: Date())])
     }
 }
 

@@ -12,9 +12,13 @@ struct CardioSaveView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
-    @Query private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
-    private var workout: Workout? { workouts.first { $0.id == workoutId } }
+    // Read the just-finished workout from a FRESH context (same rationale as StrengthSaveView): the
+    // GPS samples, HR series, and finish-time attachments were written by the background
+    // @ModelActor store, and the main context can still hold a stale mid-run copy — which would
+    // render a partial route / blank charts here even though the disk data is complete.
+    @State private var reader: FinishedWorkoutReader?
+    private var workout: Workout? { reader?.workout }
 
     @State private var title = ""
     @State private var desc = ""
@@ -39,8 +43,10 @@ struct CardioSaveView: View {
                         editor
                     }
                     .padding(Theme.Space.md)
-                } else {
+                } else if reader != nil {
                     ContentUnavailableView("Workout not found", systemImage: "questionmark")
+                } else {
+                    ProgressView().padding(.top, Theme.Space.xxl)
                 }
             }
             .background(Theme.background)
@@ -62,12 +68,16 @@ struct CardioSaveView: View {
                 CompletionCelebration(title: "\(workout?.type.title ?? "Run") saved") { onDone() }
             }
         }
-        .onAppear {
-            guard let workout else { return }
-            title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
-            desc = workout.note
-            sportType = workout.type
-            effort = workout.perceivedEffort
+        .task {
+            guard reader == nil else { return }
+            let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)
+            self.reader = reader
+            if let workout = reader.workout {
+                title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
+                desc = workout.note
+                sportType = workout.type
+                effort = workout.perceivedEffort
+            }
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
@@ -159,20 +169,33 @@ struct CardioSaveView: View {
 
     private func save() {
         focus = nil
-        if let workout {
-            workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-            workout.type = sportType
-            workout.perceivedEffort = effort
-            workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
-            try? context.save()
-            // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective only).
+        if let reader, let workout = reader.workout {
+            reader.commit {
+                $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+                $0.type = sportType
+                $0.perceivedEffort = effort
+                // Recompute on the fresh context so the estimate sees the complete GPS detail.
+                $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
+            }
+            // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
+            // only). Plan mutations go through the main context; only scalars are read off `workout`.
             if let note = PlanCoaching.adaptToEffort(workout, plan: profiles.first?.plan, in: context) {
                 services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
                 services.notifications.schedulePlannedReminders(profiles.first?.plan)
             }
-            let saved = workout
-            Task { await services.health.save(saved) }   // mirror to Apple Health (no-op unless connected)
+            // Persist any records this run set (detected against the fresh context, so the samples
+            // are complete) — the PR shelf is what the "PRs" stat counts.
+            let hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: reader.context)
+            PersonalRecord.persist(hits.compactMap { hit in
+                hit.prType.map { (type: $0, value: hit.value, exercise: nil) }
+            }, workout: workout, in: reader.context)
+            // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
+            // (a never-locked GPS run finished by accident has nothing worth exporting).
+            if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
+                let saved = workout
+                Task { await services.health.save(saved) }
+            }
         }
         Haptics.success()
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
@@ -183,10 +206,7 @@ struct CardioSaveView: View {
     /// detail, samples, and splits; the recovery marker was cleared when the workout finished.
     private func discard() {
         focus = nil
-        if let workout {
-            context.delete(workout)
-            try? context.save()
-        }
+        reader?.delete()
         Haptics.medium()
         onDone()
     }

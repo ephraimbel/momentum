@@ -97,7 +97,7 @@ struct TodayView: View {
             // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
             // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
             services.notifications.scheduleWeeklyCheckIn()
-            let stats = ProfileStats(workouts: workouts)
+            let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
             let plannedToday = !PlanCoaching.todaySessions(plan, on: Date()).isEmpty
             let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
             services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
@@ -546,7 +546,7 @@ struct TodayView: View {
             Spacer(minLength: Theme.Space.xs)
             activitySelector
             Spacer(minLength: Theme.Space.xs)
-            StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
+            StreakChip(days: ProfileStats(workouts: workouts, plan: profiles.first?.plan).currentStreak)
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)

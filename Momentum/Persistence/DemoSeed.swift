@@ -8,6 +8,7 @@ import CoreLocation
 @MainActor
 enum DemoSeed {
     static func seedIfRequested(_ context: ModelContext) {
+        seedInterruptedWorkoutIfRequested(context)
         guard ProcessInfo.processInfo.arguments.contains("--seed-demo") else { return }
         let existing = (try? context.fetch(FetchDescriptor<UserProfile>())) ?? []
         guard existing.isEmpty else { return }
@@ -112,6 +113,27 @@ enum DemoSeed {
     // MARK: Strength
 
     /// Four compound lifts spanning the body so the muscle map reads as a full-body session.
+    /// `--recovery-demo`: simulate a run the app died in the middle of — a half-loop of samples,
+    /// checkpointed aggregates, and the live marker still set — so the cold-launch "unfinished
+    /// workout found" prompt can be exercised on the simulator without killing a live recording.
+    private static func seedInterruptedWorkoutIfRequested(_ context: ModelContext) {
+        guard ProcessInfo.processInfo.arguments.contains("--recovery-demo"),
+              ActiveWorkoutMarker.pendingID == nil else { return }
+        let start = Date().addingTimeInterval(-40 * 60)
+        let w = Workout()
+        w.type = .run
+        w.startedAt = start
+        w.durationS = 22 * 60                                  // the last 5s checkpoint that stuck
+        let gps = GPSDetail()
+        gps.distanceM = 4_200
+        gps.avgPaceSPerKm = (22 * 60) / 4.2
+        gps.samples = loopSamples(start: start, variant: 2)
+        w.gps = gps
+        context.insert(w)
+        try? context.save()
+        ActiveWorkoutMarker.set(w.id)
+    }
+
     private static func demoLifts() -> [Exercise] {
         [
             Exercise(name: "Barbell Bench Press", primaryMuscles: [.chest], secondaryMuscles: [.triceps, .shoulders],

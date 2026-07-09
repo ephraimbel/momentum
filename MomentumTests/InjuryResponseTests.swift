@@ -42,6 +42,41 @@ struct InjuryResponseTests {
         #expect(beyond.contains { $0.runType?.isQuality == true || $0.runType == .long })
     }
 
+    @Test func reportJoinsTheSharedAdaptationThrottle() throws {
+        let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
+        let profile = makeRunner(ctx)
+        let plan = try #require(profile.plan)
+        #expect(plan.lastAdaptedAt == nil)
+
+        InjuryResponse.report(area: .knee, severity: .moderate, profile: profile, in: ctx)
+        // The injury response IS this week's structural change — load-based auto-adaptation must
+        // not stack a second reshape onto the same sessions.
+        #expect(plan.lastAdaptedAt != nil)
+        let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+        #expect(PlanCoaching.autoAdapt(plan, workouts: workouts, in: ctx) == nil)
+    }
+
+    @Test func loadAdaptationNeverTouchesInjuryConvertedSessions() throws {
+        let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
+        let profile = makeRunner(ctx)
+        let plan = try #require(profile.plan)
+
+        InjuryResponse.report(area: .knee, severity: .moderate, profile: profile, in: ctx)
+        let converted = plan.sessions.filter { $0.rationale?.hasPrefix(InjuryResponse.marker) ?? false }
+        #expect(!converted.isEmpty)
+        let snapshot = converted.map { ($0.discipline, $0.runType, $0.rationale) }
+
+        // Force a structural ease straight through `apply` (bypassing the throttle) — the exact
+        // path that used to corrupt cycling swaps into mixed sessions and erase the marker.
+        plan.lastAdaptedAt = nil
+        PlanCoaching.apply(.rest, to: plan, in: ctx)
+        for (i, s) in converted.enumerated() {
+            #expect(s.discipline == snapshot[i].0)
+            #expect(s.runType == snapshot[i].1)
+            #expect(s.rationale == snapshot[i].2)   // marker intact → resume can still find them
+        }
+    }
+
     @Test func moderateSwapsImpactForCrossTrainingAndSevereMakesItOptional() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
         let profile = makeRunner(ctx)

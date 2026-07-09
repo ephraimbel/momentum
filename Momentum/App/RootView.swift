@@ -7,6 +7,14 @@ struct RootView: View {
     @Query private var profiles: [UserProfile]
     @Environment(PaywallController.self) private var paywall
     @Environment(AuthController.self) private var auth
+    @Environment(\.modelContext) private var context
+    // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
+    // and set was persisted as it happened — this prompt is how they come back.
+    @State private var recoveredWorkout: Workout?
+    @State private var showRecoveryPrompt = false
+    @State private var recoverySave: PresentedWorkout?
+    /// Once per process: a fresh launch is the only moment the marker can't belong to a live workout.
+    @MainActor private static var didCheckRecovery = false
     @State private var selection: AppTab = {
         #if DEBUG
         // Deterministic deep-links for sim verification (tab-bar taps are unreliable in the sim).
@@ -68,8 +76,41 @@ struct RootView: View {
                 #endif
             }
         }
+        .alert("Unfinished \(recoveredWorkout?.type.title.lowercased() ?? "workout") found",
+               isPresented: $showRecoveryPrompt, presenting: recoveredWorkout) { workout in
+            Button("Save it") {
+                WorkoutRecovery.finalizePending(in: context)
+                recoverySave = PresentedWorkout(id: workout.id, type: workout.type)
+                recoveredWorkout = nil
+            }
+            Button("Discard", role: .destructive) {
+                WorkoutRecovery.discardPending(in: context)
+                recoveredWorkout = nil
+            }
+        } message: { _ in
+            Text("Looks like the app closed mid-workout. Everything you recorded is safe — keep it?")
+        }
+        .fullScreenCover(item: $recoverySave) { presented in
+            if presented.type.isStrengthStyle {
+                StrengthSaveView(workoutId: presented.id) { recoverySave = nil }
+            } else if presented.type.isTimed {
+                TimedSaveView(workoutId: presented.id) { recoverySave = nil }
+            } else {
+                CardioSaveView(workoutId: presented.id) { recoverySave = nil }
+            }
+        }
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
+            // One check per cold launch (onAppear re-fires on cover dismissals, when the marker may
+            // belong to a legitimately live workout), and never over the sign-in/onboarding gates —
+            // the marker survives until handled, so deferring a launch loses nothing.
+            if auth.isSignedIn, !profiles.isEmpty, !Self.didCheckRecovery {
+                Self.didCheckRecovery = true
+                if let pending = WorkoutRecovery.checkOnLaunch(in: context) {
+                    recoveredWorkout = pending
+                    showRecoveryPrompt = true
+                }
+            }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
             if ProcessInfo.processInfo.arguments.contains("--paywall") {
