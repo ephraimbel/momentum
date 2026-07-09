@@ -116,4 +116,24 @@ struct InjuryResponseTests {
         let farOut = plan.sessions.filter { $0.date > cal.date(byAdding: .day, value: 8, to: Date())! }
         #expect(farOut.contains { $0.runType?.isQuality == true || $0.runType == .long })
     }
+
+    @Test func resumeTellsTheTruthAboutTheRaceGoal() throws {
+        // Plenty of runway (10 weeks to a 10K, real volume) → reassurance on resume.
+        let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
+        let profile = makeRunner(ctx)                              // 10K, 10 weeks out, 30 km/wk
+        InjuryResponse.report(area: .calf, severity: .moderate, profile: profile, in: ctx)
+        let ok = InjuryResponse.resume(profile: profile, in: ctx)
+        #expect(ok.detail.contains("still on track"))
+
+        // A marathon three weeks out after a pause → the honest version, with a way forward.
+        profile.raceDistanceM = RaceDistance.marathon.meters
+        profile.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 3, to: Date())!
+        let short = try #require(InjuryResponse.raceRetiming(profile: profile))
+        #expect(short.contains("Honestly"))
+        #expect(short.contains("adjusting"))
+
+        // No race on the calendar → no re-timing talk at all.
+        profile.raceDate = nil
+        #expect(InjuryResponse.raceRetiming(profile: profile) == nil)
+    }
 }

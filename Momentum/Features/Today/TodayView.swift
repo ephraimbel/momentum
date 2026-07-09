@@ -109,6 +109,18 @@ struct TodayView: View {
             AppNotification.post(kind: .system, title: "Welcome to momentum",
                                  body: "Your plan is set. Tap Start whenever you're ready to move.",
                                  in: context, dedupeToken: "welcome", daily: false)
+            // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
+            // carb-load → kit → race-day fueling), each posted once.
+            if let profile = profiles.first, let raceDate = profile.raceDate,
+               let distanceM = profile.raceDistanceM, distanceM > 0,
+               let daysOut = Calendar.current.dateComponents(
+                   [.day], from: Calendar.current.startOfDay(for: Date()),
+                   to: Calendar.current.startOfDay(for: raceDate)).day,
+               let briefing = RaceBriefing.build(distanceM: distanceM,
+                                                 p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
+                AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
+                                     in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
+            }
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
             // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:

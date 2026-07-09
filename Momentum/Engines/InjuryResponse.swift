@@ -168,16 +168,50 @@ enum InjuryResponse {
         profile.activeInjurySeverity = nil
         profile.activeInjuryUntil = nil
 
+        var detail = restored > 0
+            ? "Eased you back in: a short recovery run first, easy miles after. Quality work returns once you're settled."
+            : "Glad you're feeling better — your plan continues as written."
+        // Honest re-timing (§8.2): a pause with a race on the calendar deserves a straight answer
+        // about the goal — reassurance when there's room, the truth when there isn't.
+        if let retiming = raceRetiming(profile: profile, today: today, calendar: calendar) {
+            detail += " \(retiming)"
+        }
         let outcome = Outcome(headline: "Back to running",
-                              detail: restored > 0
-                                ? "Eased you back in: a short recovery run first, easy miles after. Quality work returns once you're settled."
-                                : "Glad you're feeling better — your plan continues as written.",
+                              detail: detail,
                               guidance: "If the pain comes back, report it again and we'll adjust.",
                               sessionsChanged: restored)
         CoachingEvent.record(kind: .ease, headline: outcome.headline, detail: outcome.detail,
                              on: today, in: context)
         try? context.save()
         return outcome
+    }
+
+    /// Where the race goal stands after the pause — the feasibility engine re-run against today's
+    /// calendar. nil when there's no dated race ahead.
+    @MainActor
+    static func raceRetiming(profile: UserProfile, today: Date = Date(),
+                             calendar: Calendar = .current) -> String? {
+        guard let raceDate = profile.raceDate, raceDate > today,
+              let distanceM = profile.raceDistanceM, distanceM > 0 else { return nil }
+        let weeks = max(0, calendar.dateComponents([.weekOfYear], from: today, to: raceDate).weekOfYear ?? 0)
+        let experience = ExperienceLevel(rawValue: profile.experience[Discipline.running.rawValue] ?? "") ?? .some
+        let f = PlanFeasibility.assess(raceDistanceM: distanceM,
+                                       goalFinishTimeS: profile.goalFinishTimeS,
+                                       currentP5kSPerKm: profile.plan?.p5kSPerKm,
+                                       currentWeeklyVolumeM: profile.weeklyRunVolumeM ?? 0,
+                                       weeksAvailable: weeks,
+                                       experience: experience)
+        let label = RaceDistance.nearest(toMeters: distanceM).label.lowercased()
+        switch f.verdict {
+        case .onTrack:
+            return "Your \(label) is still on track — \(weeks) weeks is enough runway."
+        case .tight:
+            return "The \(label) is tighter now: \(weeks) weeks where we'd like about \(f.weeksNeeded). Doable if the body cooperates — consistency over heroics."
+        case .tooShort:
+            return "Honestly: \(weeks) weeks to the \(label) is short after a pause — a safe build wants about \(f.weeksNeeded). Consider adjusting the goal time or the date; we'll make either work."
+        case .noRace:
+            return nil
+        }
     }
 
     // MARK: Copy (general management — never a diagnosis, red flags said out loud)
