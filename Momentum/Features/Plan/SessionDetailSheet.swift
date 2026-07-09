@@ -211,6 +211,11 @@ struct SessionDetailSheet: View {
         if let d = session.targetDistanceM, d > 0 { out.append(Formatters.distance(meters: d, unit: distanceUnit)) }
         if let p = session.targetPaceSPerKm, p > 0 { out.append("~\(Formatters.pace(secPerKm: p, unit: distanceUnit))") }
         if let dur = session.targetDurationS, dur > 0 { out.append(Formatters.duration(s: dur)) }
+        // The HR anchor for the pace target (§10) — "Z2 · 128–141 bpm" when the athlete's zones are known.
+        if let rt = session.runType,
+           let hr = HRZones.target(for: rt, maxHR: profile?.maxHR, restingHR: profile?.restingHR) {
+            out.append(hr)
+        }
         // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
         // for guided sessions; only show it as a chip when no structured breakdown will render.
         if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) == nil { out.append(iv) }

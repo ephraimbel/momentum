@@ -19,6 +19,8 @@ enum DemoSeed {
         profile.daysPerWeek = 4
         profile.experience = ["running": "some", "strength": "some"]
         profile.weightUnit = WeightUnit.default().rawValue   // locale display units (lb in US/UK)
+        profile.maxHR = 188                                  // HR zones (Karvonen) render personalized
+        profile.restingHR = 52
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
 

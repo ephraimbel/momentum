@@ -107,6 +107,7 @@ struct ProgressScreen: View {
                     // Lead with the fitness read (are you getting fitter?), then the trend graphs up top —
                     // the "how I'm progressing" section sits near the top, not buried at the bottom.
                     fitnessHero().reveal(0)
+                    hrZonesCard.reveal(0.04).id("hrZones")
                     trendMetrics().reveal(0.05)
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         distanceChart(insights)
@@ -128,6 +129,9 @@ struct ProgressScreen: View {
                 if reduceMotion { animateCharts = true }                               // no chart build-in
                 else { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
                 #if DEBUG   // deterministic scroll to Form/Race for sim verification
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-zones") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("hrZones", anchor: .top) }
+                }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
                 }
@@ -312,6 +316,45 @@ struct ProgressScreen: View {
     private func infoParagraph(_ text: String) -> some View {
         Text(text).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The athlete's five personalized HR zones (§10) — Karvonen when resting HR is known. Where every
+    /// pace target gets its heart-rate anchor. Monochrome bars, Garmin-grade restraint.
+    @ViewBuilder
+    private var hrZonesCard: some View {
+        if let maxHR = profiles.first?.maxHR,
+           let zones = HRZones.zones(maxHR: maxHR, restingHR: profiles.first?.restingHR) {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                sectionTitle("Heart rate zones")
+                VStack(spacing: Theme.Space.sm) {
+                    ForEach(zones) { z in
+                        HStack(spacing: Theme.Space.md) {
+                            Text(z.label)
+                                .font(.rounded(Theme.FontSize.caption, weight: .black)).monospacedDigit()
+                                .foregroundStyle(z.index >= 4 ? Theme.background : Theme.ink)
+                                .frame(width: 34, height: 26)
+                                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Theme.ink.opacity(0.06 + 0.18 * Double(z.index))))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(z.name).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                                Text(z.purpose).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                                    .lineLimit(1).minimumScaleFactor(0.8)
+                            }
+                            Spacer(minLength: Theme.Space.sm)
+                            Text("\(z.bpm.lowerBound)–\(z.bpm.upperBound)")
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(Theme.inkSecondary)
+                        }
+                    }
+                }
+                Text(profiles.first?.restingHR != nil
+                     ? "Personalized from your max and resting heart rate."
+                     : "From your estimated max heart rate — connect Apple Health to sharpen these.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md).background(card)
+        }
     }
 
     @ViewBuilder
