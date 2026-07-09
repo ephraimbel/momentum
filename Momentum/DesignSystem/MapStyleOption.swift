@@ -24,7 +24,7 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .standard: "map"
+        case .standard: "map.fill"
         case .realistic: "building.2"
         case .streets: "road.lanes"
         case .outdoors: "mountain.2.fill"
@@ -94,7 +94,7 @@ struct MapLayersButton: View {
                 }
             }
         } label: {
-            Image(systemName: "square.3.layers.3d").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+            Image(systemName: "map.circle.fill").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
                 .frame(width: 38, height: 38)
                 .background(.regularMaterial, in: Circle())
                 .overlay(Circle().stroke(Theme.hairline))

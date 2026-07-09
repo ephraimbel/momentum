@@ -23,4 +23,43 @@ enum WorkoutRecovery {
         }
         ActiveWorkoutMarker.clear()
     }
+
+    /// Roll a still-recording shell up into a finished workout using only its durably-persisted data,
+    /// so a recovered run saves *identically* to one the athlete finished by hand — then clear the
+    /// marker. Everything this needs was written live: GPS samples + the ≤5s-old distance/duration
+    /// checkpoint, or each completed set. The live `finish()` never ran, so it fills the gaps it would
+    /// have: overall averages, the route thumbnail, calories, and the strength rollups.
+    static func finalize(_ workout: Workout, bodyMassKg: Double?, in context: ModelContext) async {
+        workout.elapsedS = workout.durationS
+
+        if let gps = workout.gps {
+            // Overall averages off the distance + moving time the engine checkpointed live.
+            if workout.type.discipline == .cycling {
+                gps.avgSpeedMS = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
+            } else if gps.distanceM > 0, workout.durationS > 0 {
+                gps.avgPaceSPerKm = workout.durationS / (gps.distanceM / 1000)
+            }
+            // Render the route thumbnail the finish path would have produced (unless one already exists).
+            if gps.mapSnapshotData == nil {
+                let coords = gps.routeCoordinates(type: workout.type)
+                if coords.count > 1, let data = await RouteSnapshotter.snapshot(coordinates: coords) {
+                    gps.mapSnapshotData = data
+                }
+            }
+        }
+
+        if let strength = workout.strength {
+            // Recompute the rollups from the persisted working sets (PRD §22 — working sets only).
+            let working = strength.exercises.flatMap(\.sets).filter { $0.isComplete && $0.type == .working }
+            strength.totalSets = working.count
+            strength.totalVolumeKg = working.reduce(0) { acc, s in
+                guard let w = s.weightKg, let r = s.reps else { return acc }
+                return acc + StrengthMath.setVolume(weightKg: w, reps: r)
+            }
+        }
+
+        workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: bodyMassKg)
+        try? context.save()
+        ActiveWorkoutMarker.clear()
+    }
 }

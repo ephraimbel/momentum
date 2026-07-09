@@ -69,14 +69,15 @@ final class OnboardingViewModel {
         }
     }
 
-    var step: Step = .coldOpen
+    var step: Step = .name   // the photo welcome (SignInView) is the only welcome; skip the cold open
 
     /// Goal-first, branching order — each user only sees the steps relevant to their goal/disciplines.
     enum Step: Int, CaseIterable {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
         case coldOpen, name, goal, disciplines, metrics, race, muscleFocus, experience, days,
-             preferredDays, session, equipment, why, calibration, commitment, building, reveal, primers
+             preferredDays, session, equipment, why, calibration, commitment, building, reveal, primers,
+             account   // final step: save your plan (Sign in with Apple) or continue as guest
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -87,6 +88,7 @@ final class OnboardingViewModel {
     var steps: [Step] {
         Step.allCases.filter { step in
             switch step {
+            case .coldOpen:    return false   // removed — the photo welcome is the only welcome screen
             case .race:        return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
@@ -98,7 +100,7 @@ final class OnboardingViewModel {
 
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
-        steps.filter { ![.coldOpen, .commitment, .building, .reveal, .primers].contains($0) }
+        steps.filter { ![.coldOpen, .commitment, .building, .reveal, .primers, .account].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 

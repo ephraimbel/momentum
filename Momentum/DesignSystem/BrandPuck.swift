@@ -41,12 +41,24 @@ enum BrandPuck {
     static let pulse = Puck2DConfiguration.Pulsing(color: purple.withAlphaComponent(0.35), radius: .constant(26))
 }
 
-extension Puck2D {
-    /// Recolor the location puck to the brand: purple dot, heading cone, pulse, no accuracy ring.
-    func brandStyled() -> Puck2D {
-        topImage(BrandPuck.dot)
-            .bearingImage(BrandPuck.beam)
-            .pulsing(BrandPuck.pulse)
-            .showsAccuracyRing(false)
+extension BrandPuck {
+    /// A fully-specified 2D puck configuration using our brand images, built via the **public**
+    /// initializer (optional images) so it never force-unwraps Mapbox's *bundled default* images.
+    /// Those defaults fail to load on some iOS builds/devices and hard-crash the SwiftUI `Puck2D`
+    /// (`PuckType.makeDefault`), so we configure the puck imperatively instead — see `apply(to:)`.
+    static var configuration: Puck2DConfiguration {
+        var config = Puck2DConfiguration(topImage: dot, bearingImage: beam, showsAccuracyRing: false)
+        config.pulsing = pulse
+        return config
+    }
+
+    /// Turn on the brand location puck for a SwiftUI map. Call from `MapReader`'s `.onStyleLoaded`,
+    /// where `proxy.location` is live. Idempotent. Replaces the `Puck2D(bearing:).brandStyled()`
+    /// content, which crashes on devices where Mapbox's default puck asset won't load.
+    @MainActor static func apply(to proxy: MapProxy) {
+        guard let location = proxy.location else { return }
+        location.options.puckType = .puck2D(configuration)
+        location.options.puckBearing = .heading
+        location.options.puckBearingEnabled = true
     }
 }

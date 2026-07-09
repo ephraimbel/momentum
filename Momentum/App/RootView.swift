@@ -55,7 +55,10 @@ struct RootView: View {
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding") }) {
+                if !auth.isSignedIn { auth.continueAsGuest() }   // guest so the onboarding branch renders
+                showOnboarding = true
+            }
             #endif
         }
         // Just signed in (new athlete) → straight into onboarding.

@@ -68,6 +68,7 @@ struct CardioSummaryContent: View {
     var canEditPhoto: Bool = false
 
     @Environment(\.modelContext) private var context
+    @Query private var profiles: [UserProfile]
     @State private var hits: [CardioAchievements.Hit] = []
 
     private var unitMeters: Double {
@@ -88,8 +89,11 @@ struct CardioSummaryContent: View {
                 WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.20)
                 routeMap(gps).reveal(0.22)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
+                PaceInsightsCard(workout: workout, distanceUnit: distanceUnit).reveal(0.32)
                 PlanProposalCard().reveal(0.34)
-                splitsSection(gps).reveal(0.38)
+                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
+                                   maxHR: profiles.first?.maxHR).reveal(0.36)
+                splitsSection(gps).reveal(0.40)
             }
             .task {
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)

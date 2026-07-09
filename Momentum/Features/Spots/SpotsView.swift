@@ -46,8 +46,10 @@ struct SpotsView: View {
     // MARK: Map
 
     private var map: some View {
+        MapReader { proxy in
         Map(viewport: $viewport) {
-            Puck2D(bearing: .heading).brandStyled()
+            // Purple "you" puck configured imperatively in `.onStyleLoaded` (see BrandPuck.apply) to
+            // avoid the SwiftUI `Puck2D` device crash.
             CircleAnnotationGroup(vm.spots) { spot in
                 CircleAnnotation(centerCoordinate: spot.point.clCoordinate)
                     .circleColor(StyleColor(UIColor(spot.id == vm.selectedID ? Theme.ink : Theme.route)))
@@ -63,7 +65,9 @@ struct SpotsView: View {
         }
         .mapStyle(MapStyleOption.standard.mapboxStyle)
         .ornamentOptions(MapChrome.hidden)
+        .onStyleLoaded { _ in BrandPuck.apply(to: proxy) }
         .ignoresSafeArea()
+        }
     }
 
     /// A small name bubble over the selected spot.

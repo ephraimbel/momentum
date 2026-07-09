@@ -101,6 +101,26 @@ protocol MotionServing: AnyObject {
     var elevationGainM: Double { get }
 }
 
+/// One live heart-rate reading (bpm at a wall-clock instant), as streamed during capture.
+struct HRReading: Sendable {
+    let t: Date
+    let bpm: Int
+}
+
+/// Live heart-rate source for cardio capture (running-excellence R3). Per-session, like
+/// `LocationServing` — the view model owns one for the duration of a run.
+@MainActor
+protocol HeartRateServing: AnyObject {
+    /// Ask Health for heart-rate read permission (no-op once determined / unavailable).
+    func requestAuthorization() async
+    /// Stream readings arriving from `start` onward; starts the underlying query. Finishes on `stop()`.
+    func samples(from start: Date) -> AsyncStream<HRReading>
+    /// The most recent reading, staleness-gated — nil when there's no *live* source (a Watch outside
+    /// a workout session writes only every few minutes; a minutes-old number must not read as live).
+    var bpm: Int? { get }
+    func stop()
+}
+
 @MainActor
 protocol HealthServing: AnyObject {
     var isAuthorized: Bool { get }
@@ -237,6 +257,13 @@ final class StubMotionService: MotionServing {
     var elevationGainM: Double = 0
     func requestAuthorization() {}
     func start() {}
+    func stop() {}
+}
+@MainActor
+final class StubHeartRateService: HeartRateServing {
+    var bpm: Int? = nil
+    func requestAuthorization() async {}
+    func samples(from start: Date) -> AsyncStream<HRReading> { AsyncStream { $0.finish() } }
     func stop() {}
 }
 final class StubHealthService: HealthServing {

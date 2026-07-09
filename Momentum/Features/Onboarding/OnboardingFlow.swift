@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AuthenticationServices
 
 /// Onboarding → plan reveal (PRD §4.1, §7.1) — the conversion engine. Cal-AI-grade structure
 /// (continuous progress, back chevron, one bold question per screen, tactile cards, a pinned
@@ -16,7 +17,6 @@ struct OnboardingFlow: View {
     @State private var profile: UserProfile?
     @State private var goingBack = false
     @State private var locator = LocationService()   // request location on the final primer
-    @State private var brandRevealed = false         // cold open plays the route map, then dissolves to brand
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
@@ -33,8 +33,6 @@ struct OnboardingFlow: View {
                                  sex: vm.bodySex)
                     .task { await buildPlan() }
                     .transition(.opacity)
-            } else if vm.step == .coldOpen {
-                coldOpen.transition(.opacity)   // full-bleed welcome map
             } else if vm.step == .commitment {
                 commitmentStep.transition(.opacity)   // full-bleed hold-to-commit beat
             } else {
@@ -47,6 +45,9 @@ struct OnboardingFlow: View {
                         .transition(stepTransition)
                         .id(vm.step)
                 }
+                // Fill the screen top-aligned so the scaffold's ScrollView gets a bounded height and
+                // can actually scroll (otherwise tall steps overflow off-screen with no scroll).
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
             }
@@ -56,7 +57,15 @@ struct OnboardingFlow: View {
         }
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
-        .onAppear { if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n } }
+        .onAppear {
+            if vm.name.isEmpty, let n = auth.displayName, !n.isEmpty { vm.name = n }
+            #if DEBUG
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("--onboarding-account") { vm.step = .account }
+            if args.contains("--onboarding-disciplines") { vm.step = .disciplines }
+            if args.contains("--onboarding-metrics") { vm.step = .metrics }
+            #endif
+        }
         .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
@@ -88,11 +97,16 @@ struct OnboardingFlow: View {
 
     private var header: some View {
         HStack(spacing: Theme.Space.md) {
-            Button { goBack() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 28, height: 28)
+            // No back on the first step — it's now the first screen (the cold open was removed).
+            if vm.step != vm.steps.first {
+                Button { goBack() } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(width: 28, height: 28)
+                }
+            } else {
+                Color.clear.frame(width: 28, height: 28)
             }
             GeometryReader { geo in
                 let w = max(10, geo.size.width * vm.progress)
@@ -149,46 +163,7 @@ struct OnboardingFlow: View {
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
         case .primers: primersStep
-        }
-    }
-
-    // MARK: Cold open
-
-    private var coldOpen: some View {
-        ZStack {
-            // Phase 1: a real run path draws itself across the map — a cinematic intro. It signals when
-            // the draw + arrival lands, so the handoff is synced rather than guessed at on a timer.
-            RouteDrawMap(showsStats: true) {
-                guard !brandRevealed else { return }
-                withAnimation(.easeInOut(duration: 0.75)) { brandRevealed = true }
-            }
-            .ignoresSafeArea()
-            // Rack-focus depth dissolve: the map pushes back + blurs out as the brand rises in.
-            .scaleEffect(brandRevealed && !reduceMotion ? 1.08 : 1)
-            .blur(radius: brandRevealed && !reduceMotion ? 10 : 0)
-            .opacity(brandRevealed ? 0 : 1)
-
-            // Phase 2: the clean brand canvas — orb + wordmark + Start.
-            if brandRevealed {
-                VStack(spacing: Theme.Space.lg) {
-                    Spacer()
-                    IridescentOrb(size: 124)
-                    VStack(spacing: Theme.Space.sm) {
-                        Text("momentum")
-                            .font(.display(42, weight: .black))
-                            .foregroundStyle(Theme.ink)
-                        Text("keep moving.")
-                            .font(.rounded(Theme.FontSize.headline, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
-                    .reveal(0.12)
-                    Spacer()
-                    OversizedButton(title: "Get started") { goNext() }
-                        .reveal(0.28)
-                }
-                .padding(.horizontal, Theme.Space.lg)
-                .transition(.opacity.combined(with: .scale(scale: 0.97)))
-            }
+        case .account: accountStep
         }
     }
 
@@ -648,11 +623,72 @@ struct OnboardingFlow: View {
             }
             .reveal(0.15)
             Spacer()
-            OversizedButton(title: "Start training") { onComplete() }
+            OversizedButton(title: "Continue") { goNext() }
                 .reveal(0.3)
         }
         // Ask for location here so the app opens with the map already centered on the athlete.
         .onAppear { locator.requestAuthorization() }
+    }
+
+    /// Final onboarding beat — save the plan they just built. Sign in with Apple upgrades the guest
+    /// to a real account; "Maybe later" enters the app as a guest (their plan is already on-device).
+    private var accountStep: some View {
+        VStack(spacing: Theme.Space.xl) {
+            Spacer()
+            VStack(spacing: Theme.Space.lg) {
+                Image("BrandIcon")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 92, height: 92)
+                    .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
+                    .accessibilityHidden(true)
+                VStack(spacing: Theme.Space.sm) {
+                    Text(vm.name.isEmpty ? "Save your plan" : "Save your plan, \(vm.name)")
+                        .font(.display(30, weight: .black))
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Create a free account to back it up, sync across your devices, and never lose a workout.")
+                        .font(.rounded(Theme.FontSize.body, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .reveal(0.1)
+            Spacer()
+            VStack(spacing: Theme.Space.md) {
+                SignInWithAppleButton(.signUp) { request in
+                    request.requestedScopes = [.fullName, .email]
+                } onCompletion: { result in
+                    if case .success(let authResult) = result,
+                       let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
+                        auth.signIn(userID: credential.user, fullName: credential.fullName, email: credential.email)
+                    }
+                    onComplete()
+                }
+                .signInWithAppleButtonStyle(.black)
+                .frame(height: 54)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+
+                Button { onComplete() } label: {
+                    Text("Maybe later")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                }
+                .buttonStyle(.plain)
+
+                Text("Private by default — your training stays yours.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .multilineTextAlignment(.center)
+            }
+            .reveal(0.2)
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .padding(.bottom, Theme.Space.xxl)
     }
 
     // MARK: Scaffolding

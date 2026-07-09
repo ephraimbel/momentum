@@ -78,6 +78,40 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         detail.matchedRouteData = data
         try? modelContext.save()
     }
+
+    /// Attach the run's average cadence (steps/min) captured from CoreMotion (R3). Written at finish;
+    /// nil/zero is simply not stored so imported or motion-less runs stay blank.
+    func attachCadence(_ stepsPerMin: Int) {
+        guard stepsPerMin > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.avgCadence = stepsPerMin
+        try? modelContext.save()
+    }
+
+    /// Persist one live heart-rate reading the moment it arrives (R3) — same durability contract as
+    /// `persistSample`, so a force-quit keeps every beat captured so far.
+    func persistHeartRate(t: Date, bpm: Int) {
+        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        let sample = HeartRateSample()
+        sample.t = t
+        sample.bpm = bpm
+        detail.hrSamples.append(sample)
+        try? modelContext.save()
+    }
+
+    /// Attach a guided run's per-step results (JSON `[StepResult]`) at finish — the raw material for
+    /// the post-run Pace Insights review.
+    func attachStepResults(_ data: Data) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.stepResultsData = data
+        try? modelContext.save()
+    }
+
+    /// Attach the run's average heart rate at finish; zero/negative is simply not stored.
+    func attachAvgHR(_ bpm: Int) {
+        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.avgHR = bpm
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row

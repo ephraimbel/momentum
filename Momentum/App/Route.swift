@@ -21,10 +21,10 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 
     var systemImage: String {
         switch self {
-        case .today: "map"
-        case .plan: "calendar"
-        case .progress: "chart.line.uptrend.xyaxis"
-        case .profile: "person.crop.circle"
+        case .today: "map.circle.fill"
+        case .plan: "calendar.circle.fill"
+        case .progress: "chart.xyaxis.line"
+        case .profile: "person.crop.circle.fill"
         }
     }
 }

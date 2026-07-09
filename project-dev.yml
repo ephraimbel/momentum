@@ -1,0 +1,43 @@
+name: MomentumDev
+options:
+  bundleIdPrefix: com.ephraimbelachew.momentumdev
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: LRDHWBMA87
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_STRICT_CONCURRENCY: complete
+packages:
+  MapboxMaps:
+    url: https://github.com/mapbox/mapbox-maps-ios.git
+    from: "11.0.0"
+targets:
+  Momentum:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Momentum
+    configFiles:
+      Debug: Secrets.xcconfig
+      Release: Secrets.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbelachew.momentumdev
+        INFOPLIST_FILE: Momentum/Resources/Info.plist
+        ENABLE_PREVIEWS: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    dependencies:
+      - package: MapboxMaps
+schemes:
+  MomentumDev:
+    build:
+      targets:
+        Momentum: all

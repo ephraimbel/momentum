@@ -11,6 +11,12 @@ import Observation
 final class LocationService: NSObject, LocationServing, CLLocationManagerDelegate {
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    /// Held for the duration of a recording so location updates keep flowing when the app is
+    /// backgrounded or the screen locks (PRD §8.3 — "never lose a workout"). With the iOS 17+
+    /// `CLLocationUpdate.liveUpdates` API this session is *required* for background delivery: the
+    /// `UIBackgroundModes: location` entitlement alone is not enough — without a live session iOS stops
+    /// delivering fixes the instant we leave the foreground, which is what froze a run's route mid-lap.
+    @ObservationIgnored private var backgroundSession: CLBackgroundActivitySession?
 
     /// Current authorization, kept live by the delegate so views update when the user responds.
     private(set) var authorizationStatus: CLAuthorizationStatus
@@ -24,6 +30,12 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         super.init()
         manager.delegate = self
         authorizationStatus = manager.authorizationStatus
+        // Belt-and-suspenders for background delivery: the live-updates session (`startBackgroundUpdates`)
+        // is the real mechanism, but these keep the classic manager path honest too and show the blue
+        // "in use" pill. `allowsBackgroundLocationUpdates` requires the `location` UIBackgroundMode
+        // (declared in Info.plist) — setting it without that entitlement would trap.
+        manager.allowsBackgroundLocationUpdates = true
+        manager.showsBackgroundLocationIndicator = true
     }
 
     var isAuthorized: Bool {
@@ -82,28 +94,52 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         // One-shot fix failed (no signal / sim with no location) — keep last known; UI falls back.
     }
 
+    /// Begin a background-activity session so fixes keep arriving with the screen locked / app
+    /// backgrounded. Idempotent — safe to call once recording is armed. Skipped when unauthorized (the
+    /// session would immediately fail) and under UI-test routes (no real CoreLocation).
+    func startBackgroundUpdates() {
+#if DEBUG
+        if Self.isUITestRoute { return }
+#endif
+        guard isAuthorized, backgroundSession == nil else { return }
+        backgroundSession = CLBackgroundActivitySession()
+    }
+
     /// Stream accepted-or-not raw fixes. The engine's `GPSProcessor` applies the accept gate.
+    ///
+    /// The `liveUpdates` sequence can end or throw on a transient CoreLocation interruption (a brief
+    /// service reset, returning from a long background stretch). We **re-subscribe** rather than let the
+    /// stream die, so a single hiccup never silently stops tracking for the rest of a run — the run only
+    /// ends when the caller cancels (`stop()`) or the user has actually denied access.
     func fixes() -> AsyncStream<GPSProcessor.Fix> {
 #if DEBUG
         if Self.isUITestRoute { return simulatedRouteFixes() }
 #endif
         return AsyncStream { continuation in
-            let task = Task {
-                do {
-                    for try await update in CLLocationUpdate.liveUpdates(.fitness) {
-                        if Task.isCancelled { break }
-                        guard let loc = update.location else { continue }
-                        continuation.yield(GPSProcessor.Fix(
-                            t: loc.timestamp,
-                            lat: loc.coordinate.latitude,
-                            lon: loc.coordinate.longitude,
-                            accuracyM: loc.horizontalAccuracy,
-                            speedMS: loc.speed,
-                            altitudeM: loc.altitude
-                        ))
+            let task = Task { @MainActor in
+                while !Task.isCancelled {
+                    if self.isDenied { break }   // genuinely no access — stop retrying, UI reflects it
+                    do {
+                        for try await update in CLLocationUpdate.liveUpdates(.fitness) {
+                            if Task.isCancelled { break }
+                            // No usable position this cycle (stationary flag, or a dropped fix): don't
+                            // yield, but keep the sequence alive — it resumes when a fix returns.
+                            guard let loc = update.location else { continue }
+                            continuation.yield(GPSProcessor.Fix(
+                                t: loc.timestamp,
+                                lat: loc.coordinate.latitude,
+                                lon: loc.coordinate.longitude,
+                                accuracyM: loc.horizontalAccuracy,
+                                speedMS: loc.speed,
+                                altitudeM: loc.altitude
+                            ))
+                        }
+                    } catch {
+                        // Transient error — fall through to the re-subscribe backoff below.
                     }
-                } catch {
-                    // Authorization denied / transient error: end the stream; UI reflects state.
+                    if Task.isCancelled { break }
+                    // Brief backoff before re-subscribing so a persistent failure can't hot-spin.
+                    try? await Task.sleep(for: .seconds(1))
                 }
                 continuation.finish()
             }
@@ -115,6 +151,8 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     func stop() {
         streamTask?.cancel()
         streamTask = nil
+        backgroundSession?.invalidate()
+        backgroundSession = nil
     }
 
 #if DEBUG

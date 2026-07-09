@@ -41,10 +41,25 @@ final class GPSDetail {
     /// `[[lat, lon]]`. Present only when matching succeeded above the confidence gate; display falls
     /// back to the Kalman-filtered raw trace when nil. The raw `samples` are always retained.
     var matchedRouteData: Data?
+    /// A guided (structured) run's per-step outcomes as JSON `[StepResult]` — achieved vs prescribed
+    /// per rep, written at finish. Feeds the post-run Pace Insights review; nil for free runs.
+    var stepResultsData: Data?
     var isManualTrim: Bool = false
 
     @Relationship(deleteRule: .cascade) var samples: [LocationSample] = []
     @Relationship(deleteRule: .cascade) var splits: [Split] = []
+    @Relationship(deleteRule: .cascade) var hrSamples: [HeartRateSample] = []
+
+    init() {}
+}
+
+/// A live heart-rate reading captured during the workout (running-excellence R3) — from an Apple
+/// Watch in a workout session or a BLE strap bridged through Health. Persisted as it arrives
+/// (durability), powering the post-run HR chart + zone distribution.
+@Model
+final class HeartRateSample {
+    var t: Date = Date()
+    var bpm: Int = 0
 
     init() {}
 }

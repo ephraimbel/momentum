@@ -15,45 +15,67 @@ struct ProfileScreen: View {
     @Environment(FollowStore.self) private var follows
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
+    @State private var gridTab: ProfileGridTab = .grid
+    @State private var immersive: ImmersiveStart?
 
     private var profile: UserProfile? { profiles.first }
     private var stats: ProfileStats { ProfileStats(workouts: workouts) }
+    private var highlights: ProfileHighlights {
+        ProfileHighlights(stats: stats, workouts: workouts, weightUnit: weightUnit, distanceUnit: distanceUnit)
+    }
     private var weightUnit: WeightUnit { WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
 
-    /// The athlete's own shared workouts, rendered through the feed card (their public posts).
-    private var myPosts: [FeedItem] {
-        workouts.filter { SocialPrivacy.isShared($0) }.map { FeedAssembler.item(from: $0, profile: profile) }
-    }
+    /// A tapped tile/highlight to open the immersive pager on (Identifiable for `.fullScreenCover(item:)`).
+    private struct ImmersiveStart: Identifiable { let id: UUID }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                identity
-                headlineStats
-                if let profile, !profile.bio.isEmpty {
-                    Text(profile.bio)
-                        .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
+                Group {
+                    identity
+                    headlineStats
+                    if let profile, !profile.bio.isEmpty {
+                        Text(profile.bio)
+                            .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .padding(.horizontal, Theme.Space.md)
+
                 if stats.totalWorkouts == 0 {
-                    firstRunCard
+                    Group {
+                        firstRunCard
+                        if let profile { privacyCard(profile) }
+                    }
+                    .padding(.horizontal, Theme.Space.md)
                 } else {
-                    lifetimeTotals
-                    if !stats.countsByType.isEmpty { breakdownSection }
-                    consistencySection
-                    if !trophyShelf.isEmpty { trophySection }
-                    recentSection
+                    // The grid rides high — the athlete's training is the hero. Lifetime totals,
+                    // discipline mix, and consistency now live one tap away under "Highlights".
+                    Section {
+                        ProfileGrid(workouts: workouts, stats: stats, highlights: highlights,
+                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab) { id in
+                            immersive = ImmersiveStart(id: id)
+                        }
+                    } header: {
+                        ProfileGridTabBar(tab: $gridTab)
+                    }
+                    if gridTab == .highlights, let profile {
+                        privacyCard(profile).padding(.horizontal, Theme.Space.md)
+                    }
                 }
-                if let profile { privacyCard(profile) }
             }
-            .padding(Theme.Space.md)
+            .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
         .navigationBarHidden(true)
         .safeAreaInset(edge: .top) { header }
         .sheet(isPresented: $editing) { if let profile { EditProfileView(profile: profile) } }
+        .fullScreenCover(item: $immersive) { start in
+            ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
+                                  weightUnit: weightUnit, distanceUnit: distanceUnit)
+        }
     }
 
     // MARK: Header (custom — matches Progress/World)
@@ -122,78 +144,6 @@ struct ProfileScreen: View {
         .background(card)
     }
 
-    // MARK: Lifetime totals
-
-    private var lifetimeTotals: some View {
-        var cells: [StatGrid.Cell] = [
-            .init(value: Formatters.distance(meters: stats.totalDistanceM, unit: distanceUnit), label: "Distance"),
-            .init(value: Formatters.duration(s: stats.totalDurationS), label: "Time"),
-        ]
-        if stats.totalVolumeKg > 0 {
-            let vol = weightUnit == .lb ? stats.totalVolumeKg * Formatters.lbPerKg : stats.totalVolumeKg
-            cells.append(.init(value: "\(Formatters.compact(vol)) \(weightUnit == .lb ? "lb" : "kg")", label: "Volume"))
-        }
-        return section("Lifetime") {
-            StatGrid(cells: cells, valueSize: 18)
-                .padding(.vertical, Theme.Space.md)
-                .background(card)
-        }
-    }
-
-    // MARK: Discipline breakdown
-
-    private var breakdownSection: some View {
-        section("How you train") {
-            DisciplineBreakdown(counts: stats.countsByType)
-                .padding(Theme.Space.md)
-                .background(card)
-        }
-    }
-
-    // MARK: Consistency
-
-    private var consistencySection: some View {
-        section("Consistency") {
-            ConsistencyHeatmap(countingDays: stats.countingDays)
-                .padding(Theme.Space.md)
-                .background(card)
-        }
-    }
-
-    // MARK: Trophy case
-
-    private var trophyShelf: [(name: String, e1RMKg: Double)] { stats.strengthPRs }
-    private var trophySection: some View {
-        section("Personal records") {
-            PRShelf(strengthPRs: stats.strengthPRs, longestRunM: stats.longestRunM,
-                    longestDurationS: stats.longestDurationS, weightUnit: weightUnit, distanceUnit: distanceUnit)
-        }
-    }
-
-    // MARK: Recent activities
-
-    @ViewBuilder
-    private var recentSection: some View {
-        if myPosts.isEmpty {
-            section("Recent") {
-                VStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "square.stack.3d.up").font(.system(size: 28, weight: .light)).foregroundStyle(Theme.inkTertiary)
-                    Text("Your shared workouts show here").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    Text("Set a workout to Followers or Everyone and it lands on your profile.")
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity).padding(.vertical, Theme.Space.xl)
-                .background(card)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
-                sectionTitle("Recent")
-                ForEach(myPosts) { FeedPostCard(item: $0) }
-            }
-        }
-    }
-
     // MARK: Privacy chip
 
     private func privacyCard(_ profile: UserProfile) -> some View {
@@ -233,15 +183,6 @@ struct ProfileScreen: View {
 
     // MARK: Building blocks
 
-    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            sectionTitle(title)
-            content()
-        }
-    }
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-    }
     private var card: some View {
         RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))

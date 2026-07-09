@@ -15,6 +15,9 @@ struct MuscleMapView: View {
     /// The body shape to render. `.female` warps the figure (narrower shoulders/waist, wider hips);
     /// a true female anatomical dataset can drop into `BodyAnatomy` later with no call-site changes.
     var sex: BodySex = .neutral
+    /// Force the iridescence to hold static (no animated `MeshGradient`). Set when many maps render at
+    /// once — e.g. the profile grid — so the tiles stay at 60fps. Independent of Reduce Motion.
+    var forceStatic: Bool = false
 
     /// `.fullBody` credit floods every muscle (cardio/HIIT/"other"); fold it into the real regions.
     private var resolved: [MuscleGroup: Double] {
@@ -32,7 +35,7 @@ struct MuscleMapView: View {
     var body: some View {
         HStack(spacing: Theme.Space.md) {
             ForEach(sides) { side in
-                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: sex)
+                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: sex, forceStatic: forceStatic)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -61,6 +64,7 @@ private struct BodyFigure: View {
     let activation: [MuscleGroup: Double]
     let maxVal: Double
     var sex: BodySex = .neutral
+    var forceStatic: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -93,7 +97,7 @@ private struct BodyFigure: View {
 
                 // Worked muscles: one flowing oil-slick, revealed only through worked regions, each at
                 // an alpha proportional to its volume. (Mask alpha = per-muscle intensity.)
-                IridescentView(intensity: 1.0, isStatic: reduceMotion)
+                IridescentView(intensity: 1.0, isStatic: reduceMotion || forceStatic)
                     .mask(
                         ZStack {
                             ForEach(parts.indices, id: \.self) { i in

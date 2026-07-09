@@ -28,6 +28,19 @@ struct ProgressScreen: View {
     private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
     private var recovery: RecoveryModel { RecoveryModel(workouts: workouts) }
 
+    /// Riegel race-time projections from current running fitness (R4) — shown for runners only.
+    @ViewBuilder private var racePredictionCard: some View {
+        if (profiles.first?.disciplines ?? []).contains(Discipline.running.rawValue) {
+            RacePredictionCard(
+                predictions: RacePredictor.predictions(
+                    p5kEquivSPerKm: profiles.first?.athlete?.snapshots
+                        .max(by: { $0.weekStart < $1.weekStart })?.p5kEquivSPerKm,
+                    planP5kSPerKm: plan?.p5kSPerKm),
+                goalMeters: profiles.first?.raceDistanceM,
+                distanceUnit: distanceUnit)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -82,6 +95,7 @@ struct ProgressScreen: View {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 statusHero(insights).reveal(0)
                 coachCard(insights).reveal(0.06)
+                racePredictionCard.reveal(0.09)
                 // Advanced analytics — Pro (PRD §10): training load, pace/distance trends, weekly
                 // sets-per-muscle. The body-of-work (totals, consistency grid, PR shelf) now lives on
                 // the Profile tab; Progress stays the analytical/coaching brain.

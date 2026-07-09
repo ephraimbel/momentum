@@ -70,7 +70,7 @@ struct PlanView: View {
                 AddSessionSheet(plan: plan, defaultDate: addDay) { showingAdd = false }
             }
         }
-        .sheet(item: $editing, onDismiss: {
+        .fullScreenCover(item: $editing, onDismiss: {
             if let s = pendingStart { pendingStart = nil; start(s) }
         }) { item in
             SessionDetailSheet(session: item.session, distanceUnit: distanceUnit, profile: profiles.first,
