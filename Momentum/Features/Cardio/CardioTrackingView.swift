@@ -611,20 +611,3 @@ struct CardioTrackingView: View {
     }
 }
 
-/// The breathing route dot with a soft iridescent edge (PRD §6.2).
-struct BreathingDot: View {
-    @State private var pulse = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        ZStack {
-            Circle().fill(IridescentMaterial()).frame(width: 28, height: 28).opacity(0.6)
-            Circle().fill(Theme.route).frame(width: 15, height: 15)
-            Circle().strokeBorder(.white, lineWidth: 2).frame(width: 15, height: 15)
-        }
-        .scaleEffect(pulse && !reduceMotion ? 1.15 : 1)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: pulse)
-        .onAppear { pulse = true }
-        .accessibilityHidden(true)
-    }
-}

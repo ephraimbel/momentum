@@ -235,50 +235,8 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
 
 // MARK: - Phase 0 stubs
 
-final class StubLocationService: LocationServing {
-    var isAuthorized = false
-    func requestAuthorization() {}
-    func fixes() -> AsyncStream<GPSProcessor.Fix> { AsyncStream { $0.finish() } }
-    func stop() {}
-}
-final class StubMotionService: MotionServing {
-    var isAuthorized = false
-    var cadenceStepsPerMin: Int? = nil
-    var elevationGainM: Double = 0
-    func requestAuthorization() {}
-    func start() {}
-    func stop() {}
-}
-final class StubHealthService: HealthServing {
-    var isAuthorized = false
-    func requestAuthorization() async -> Bool { false }
-    func save(_ workout: Workout) async {}
-    func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) { (nil, nil) }
-    func recoverySignals() async -> RecoverySignals { .empty }
-    func measuredVO2Max() async -> Double? { nil }
-    func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int { 0 }
-    func runningBaseline() async -> BaselineEstimator.RunningBaseline? { nil }
-    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)] { [] }
-}
 final class StubPlanEngine: PlanEngineServing {}
-final class StubSyncService: SyncServing {
-    func sync(_ workouts: [Workout], in context: ModelContext) async {}
-}
 @MainActor
-final class StubNotificationService: NotificationServing {
-    func requestAuthorization() {}
-    func schedulePlannedReminders(_ plan: TrainingPlan?) {}
-    func notifyPlanUpdated(title: String, body: String) {}
-    func scheduleWeeklyCheckIn() {}
-    func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool) {}
-}
-/// No-op Athlete Model service for previews/tests that don't exercise learning.
-final class StubAthleteModelService: AthleteModelServing {
-    func ingest(profile: UserProfile, in context: ModelContext, now: Date) {}
-    func seedOnboarding(for profile: UserProfile, in context: ModelContext) {}
-    func addCorrection(_ text: String, category: MemoryCategory, for profile: UserProfile, in context: ModelContext) {}
-    func forget(noteID: UUID, in context: ModelContext) {}
-}
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {
     func isEntitled(to feature: Feature) -> Bool { true }

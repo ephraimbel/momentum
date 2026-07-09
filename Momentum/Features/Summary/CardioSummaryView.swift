@@ -2,62 +2,6 @@ import SwiftUI
 import CoreLocation
 import SwiftData
 
-/// Post-workout summary screen for cardio (PRD §4.3 finish, §4.6): presented cover with Done.
-/// Renders `CardioSummaryContent`, reused by `WorkoutDetailView`.
-struct CardioSummaryView: View {
-    let workoutId: UUID
-    var distanceUnit: DistanceUnit = .auto
-    var onDone: () -> Void
-
-    @Query private var workouts: [Workout]
-    @Query private var profiles: [UserProfile]
-    private var workout: Workout? { workouts.first { $0.id == workoutId } }
-
-    @Environment(Services.self) private var services
-    @Environment(\.modelContext) private var context
-    @State private var logged = false
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                if let workout {
-                    CardioSummaryContent(workout: workout, distanceUnit: distanceUnit, canEditPhoto: true)
-                        .padding(Theme.Space.md)
-                } else {
-                    ContentUnavailableView("Workout not found", systemImage: "questionmark")
-                }
-            }
-            .background(Theme.background)
-            .onAppear {
-                // Fire once on the post-workout screen (not in history, which uses Content directly).
-                guard !logged, let workout else { return }
-                logged = true
-                // Apply the athlete's default visibility to this freshly-finished workout (PRD §11).
-                if let profile = profiles.first {
-                    workout.privacy = SocialPrivacy.defaultVisibility(profile)
-                    try? context.save()
-                }
-                services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
-                if !CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context).isEmpty {
-                    services.analytics.log(.prHit(type: workout.type.rawValue))
-                }
-            }
-            .navigationTitle(workout?.type.title ?? "Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { onDone() }.fontWeight(.semibold)
-                }
-                if let workout {
-                    ToolbarItem(placement: .topBarLeading) {
-                        ShareButton(workout: workout, distanceUnit: distanceUnit)
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Reusable cardio summary body: route map, distance/pace/elevation, per-unit splits.
 struct CardioSummaryContent: View {
     let workout: Workout

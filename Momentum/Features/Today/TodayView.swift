@@ -1237,25 +1237,6 @@ enum TodayLaunch: Identifiable {
 
 struct PresentedWorkout: Identifiable { let id: UUID; let type: WorkoutType }
 
-/// A glanceable cross-discipline training-status pill — the home's read of the same ACWR-based
-/// `ProgressInsights` the Progress tab uses, so runs + lifts roll into one status. Informational
-/// (not an achievement) → monochrome, no iridescence.
-struct TrainingLoadChip: View {
-    let status: ProgressInsights.Status
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "waveform.path.ecg").font(.system(size: 13, weight: .bold))
-            Text(status.rawValue).font(.rounded(Theme.FontSize.caption, weight: .bold)).lineLimit(1)
-        }
-        .fixedSize()
-        .foregroundStyle(Theme.ink)
-        .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
-        .momentumGlass()
-        .accessibilityLabel("Training status")
-        .accessibilityValue(status.rawValue)
-    }
-}
-
 /// A streak chip — a clean monochrome pill: flame glyph + day count. Static and restrained (the earned
 /// celebration lives on the finish/summary screen, not this passive header chip).
 struct StreakChip: View {
