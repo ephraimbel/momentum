@@ -37,6 +37,7 @@ struct PlanRevealView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: Theme.Space.lg) {
                 brandmark
@@ -44,7 +45,13 @@ struct PlanRevealView: View {
                 reflectionChips.reveal(0.24)
                 if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.27) }
                 weeklyVolumeCard.reveal(0.30)
-                if vm.includesStrength { anatomySection.reveal(0.33) }
+                // Running-first (ENDURANCE-FOCUS §13): runners get the road ahead — a route drawing
+                // itself under the purple "you" puck. The anatomy body stays only for lift-only plans.
+                if vm.running {
+                    routeSection.reveal(0.33).id("road")
+                } else if vm.includesStrength {
+                    anatomySection.reveal(0.33)
+                }
                 firstWeekList
             }
             .frame(maxWidth: .infinity)
@@ -52,6 +59,17 @@ struct PlanRevealView: View {
             .padding(.bottom, Theme.Space.sm)
         }
         .scrollIndicators(.hidden)
+        .onAppear {
+            #if DEBUG
+            // Deterministic sim verification of the road-ahead beat (simctl can't scroll).
+            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-road") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    withAnimation { proxy.scrollTo("road", anchor: .center) }
+                }
+            }
+            #endif
+        }
+        }
         // Pin the CTA so it's visible the moment the page opens; the plan scrolls above it.
         .safeAreaInset(edge: .bottom) {
             OversizedButton(title: "This looks great") { onContinue() }
@@ -260,7 +278,21 @@ struct PlanRevealView: View {
         }
     }
 
-    // MARK: Anatomy — where the plan will build you (strength/hybrid)
+    // MARK: The road ahead — a real route drawing itself under the purple "you" puck (runners)
+
+    private var routeSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            sectionLabel("THE ROAD AHEAD")
+            RouteDrawMap(headStyle: .puck, frameInsets: (64, 22))
+                .frame(height: 236)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+                .accessibilityLabel("A running route drawing across a map — your training ahead")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Anatomy — where the plan will build you (lift-only plans)
 
     private var anatomySection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {

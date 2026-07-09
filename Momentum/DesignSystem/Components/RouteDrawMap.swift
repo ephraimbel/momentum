@@ -9,8 +9,14 @@ import CoreLocation
 /// user's real route — location stays deferred). Honors Reduce Motion (static full route, no fly/draw).
 /// Callers add their own scrim/overlay; `onComplete` fires when the draw + settle finishes.
 struct RouteDrawMap: View {
+    /// What leads the drawing line: the glowing comet dot (brand beats), or the purple location puck —
+    /// "you", the same dot as the live map — so the trace reads as a real runner covering a real route
+    /// (the plan-reveal beat, ENDURANCE-FOCUS §13).
+    enum HeadStyle { case comet, puck }
+
     /// Show the live distance readout (the "this is a fitness app" signal). Off for embedded beats.
     var showsStats: Bool = false
+    var headStyle: HeadStyle = .comet
     /// Called once the route has finished drawing and the head has landed — lets the caller time a handoff.
     var onComplete: (() -> Void)? = nil
 
@@ -25,21 +31,31 @@ struct RouteDrawMap: View {
     private let cumDist: [Double]             // cumulative metres along the route, for the live readout
     private let drawDuration = 2.6
 
-    init(showsStats: Bool = false, onComplete: (() -> Void)? = nil) {
+    init(showsStats: Bool = false, headStyle: HeadStyle = .comet,
+         frameInsets: (wide: CGFloat, tight: CGFloat) = (130, 56),
+         onComplete: (() -> Void)? = nil) {
         self.showsStats = showsStats
+        self.headStyle = headStyle
+        self.frameInsets = frameInsets
         self.onComplete = onComplete
         let r = RouteDrawMap.makeRoute()
         self.route = r
         self.cumDist = RouteDrawMap.cumulativeDistances(r)
         // Open on a wide establishing frame; begin() dollies in to the full loop as it draws.
         _viewport = State(initialValue: .overview(geometry: LineString(r),
-            geometryPadding: EdgeInsets(top: 130, leading: 130, bottom: 130, trailing: 130)))
+            geometryPadding: EdgeInsets(top: frameInsets.wide, leading: frameInsets.wide,
+                                        bottom: frameInsets.wide, trailing: frameInsets.wide)))
     }
+
+    /// Camera framing paddings (wide establishing → tight settle). The defaults suit the full-screen
+    /// welcome; embedded cards pass smaller insets so the loop fills the frame.
+    private let frameInsets: (wide: CGFloat, tight: CGFloat)
 
     /// Tight frame that snugly fits the loop — the dolly-in target.
     private var tightViewport: Viewport {
         .overview(geometry: LineString(route),
-                  geometryPadding: EdgeInsets(top: 56, leading: 56, bottom: 56, trailing: 56))
+                  geometryPadding: EdgeInsets(top: frameInsets.tight, leading: frameInsets.tight,
+                                              bottom: frameInsets.tight, trailing: frameInsets.tight))
     }
 
     private var shownCount: Int {
@@ -79,17 +95,31 @@ struct RouteDrawMap: View {
         .accessibilityHidden(true)
     }
 
+    @ViewBuilder
     private var headDot: some View {
-        let dot = ZStack {
-            Circle().fill(.white).frame(width: 18, height: 18)
-                .shadow(color: Theme.iridescent[0].opacity(0.9), radius: 8)
-            Circle().fill(iridescent).frame(width: 10, height: 10)
+        let dot = Group {
+            switch headStyle {
+            case .comet:
+                ZStack {
+                    Circle().fill(.white).frame(width: 18, height: 18)
+                        .shadow(color: Theme.iridescent[0].opacity(0.9), radius: 8)
+                    Circle().fill(iridescent).frame(width: 10, height: 10)
+                }
+            case .puck:
+                // The live-map "you" — purple dot, white ring, soft sonar ring (matches BrandPuck).
+                ZStack {
+                    Circle().fill(Theme.route.opacity(0.22)).frame(width: 34, height: 34)
+                    Circle().fill(.white).frame(width: 19, height: 19)
+                        .shadow(color: .black.opacity(0.25), radius: 2.5, y: 1)
+                    Circle().fill(Theme.route).frame(width: 12, height: 12)
+                }
+            }
         }
         // Breathing pulse while drawing; a spring "pop" layered on top when the path lands.
-        return dot
+        dot
             .scaleEffect(headPulse ? 1.1 : 0.9)
             .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: headPulse)
-            .scaleEffect(landed ? 1.5 : 1)
+            .scaleEffect(landed ? (headStyle == .puck ? 1.18 : 1.5) : 1)   // gentler arrival for the larger puck
             .animation(.spring(response: 0.45, dampingFraction: 0.5), value: landed)
     }
 
