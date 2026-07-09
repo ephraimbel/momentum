@@ -126,6 +126,31 @@ final class HealthService: HealthServing {
         return await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"))
     }
 
+    /// Estimate the athlete's current running baseline from their recent Health run history — the
+    /// onboarding "it already understands me" import (ENDURANCE-FOCUS §4). Reads runs from ANY source
+    /// (Watch, Garmin, Strava re-syncs…), maps them to samples, and hands off to the pure estimator.
+    func runningBaseline() async -> BaselineEstimator.RunningBaseline? {
+        #if DEBUG
+        // Sim has no Health data — a believable demo baseline so the import card's success state is
+        // verifiable end-to-end (26:40 5K-equivalent, ~21 km/wk, 10K long run).
+        if ProcessInfo.processInfo.arguments.contains("--health-baseline-demo") {
+            return .init(p5kSPerKm: 320, weeklyVolumeM: 21_000, longestRunM: 10_000,
+                         runsPerWeek: 3.1, runCount: 25, confidence: .high)
+        }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        let cutoff = Date().addingTimeInterval(-Double(BaselineEstimator.windowDays) * 86_400)
+        let runs = await fetchWorkouts(since: cutoff)
+            .filter { $0.workoutActivityType == .running }
+            .compactMap { hk -> BaselineEstimator.RunSample? in
+                let meters = hk.statistics(for: HKQuantityType(.distanceWalkingRunning))?
+                    .sumQuantity()?.doubleValue(for: .meter()) ?? 0
+                guard meters > 0 else { return nil }
+                return .init(date: hk.startDate, distanceM: meters, durationS: hk.duration)
+            }
+        return BaselineEstimator.estimate(from: runs)
+    }
+
     // MARK: Import (Apple Watch / Garmin via Apple Health → our store)
 
     /// Pull workouts recorded by **other** sources (Apple Watch, Garmin via Garmin Connect, Strava,

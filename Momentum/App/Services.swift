@@ -119,6 +119,9 @@ protocol HealthServing: AnyObject {
     /// De-duplicated; skips our own writes. Returns the number newly imported.
     @discardableResult
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int
+    /// Estimate the athlete's current running baseline (fitness + load) from their recent Health run
+    /// history — the onboarding "it already understands me" import. nil when there isn't enough.
+    func runningBaseline() async -> BaselineEstimator.RunningBaseline?
 }
 protocol PlanEngineServing: AnyObject {}
 @MainActor
@@ -252,6 +255,7 @@ final class StubHealthService: HealthServing {
     func recoverySignals() async -> RecoverySignals { .empty }
     func measuredVO2Max() async -> Double? { nil }
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int { 0 }
+    func runningBaseline() async -> BaselineEstimator.RunningBaseline? { nil }
 }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {

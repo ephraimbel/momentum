@@ -19,6 +19,9 @@ struct OnboardingFlow: View {
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
+    @State private var healthImport: HealthImportState = .idle   // calibration: the Health baseline card
+
+    enum HealthImportState { case idle, importing, done(BaselineEstimator.RunningBaseline), empty }
 
     var body: some View {
         ZStack {
@@ -75,6 +78,18 @@ struct OnboardingFlow: View {
                 vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 18, to: Date()) ?? Date()
                 vm.experience = .some; vm.calibrationMode = .feel; vm.paceFeel = .regular; vm.weeklyRunVolumeM = 35_000
                 vm.step = .intensity
+            }
+            if args.contains("--onboarding-calibration") {
+                vm.activities = [.run]; vm.experience = .some; vm.step = .calibration
+                // With the Health demo flag, exercise the import path automatically (sim can't tap).
+                if args.contains("--health-baseline-demo") {
+                    Task {
+                        if let b = await services.health.runningBaseline() {
+                            vm.importedBaseline = b
+                            withAnimation(Motion.standard) { healthImport = .done(b) }
+                        }
+                    }
+                }
             }
             if args.contains("--onboarding-intensity-short") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
@@ -364,14 +379,94 @@ struct OnboardingFlow: View {
     private var calibrationStep: some View {
         questionScaffold("How's your running pace?",
                          subtitle: "So your easy runs feel easy and the hard ones land right. Not sure? Just continue — we'll learn from your first runs.") {
+            healthImportCard.reveal(cascade(0))
             ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
                 SelectionCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
                               isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
                     pick { vm.calibrationMode = .feel; vm.paceFeel = f }
                 }
-                .reveal(cascade(i))
+                .reveal(cascade(i + 1))
             }
-            timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
+            timeEntryCard.reveal(cascade(PaceFeel.allCases.count + 1))
+        }
+    }
+
+    /// "It already understands me" — estimate the baseline from their Apple Health run history
+    /// (Watch/Garmin/Oura all sync into Health, so one tap covers every device). Read-only.
+    @ViewBuilder
+    private var healthImportCard: some View {
+        switch healthImport {
+        case .done(let b):
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "checkmark.seal.fill").font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Theme.ink)
+                    Text("Got it — we found your runs").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                }
+                Text("\(b.runCount) runs in 8 weeks · ~\(Formatters.distance(meters: b.weeklyVolumeM, unit: .auto))/week · longest \(Formatters.distance(meters: b.longestRunM, unit: .auto)) · est. 5K \(PlanFeasibility.hms(b.p5kSPerKm * 5))")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Your paces and starting volume are set from what you actually run.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .stroke(IridescentMaterial(), lineWidth: 1.5)   // earned — real history read
+            }
+        case .empty:
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: "heart.text.square").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                Text("Not enough recent runs in Apple Health — pick how your pace feels below.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        case .idle, .importing:
+            Button {
+                Haptics.light()
+                healthImport = .importing
+                Task {
+                    _ = await services.health.requestAuthorization()
+                    if let baseline = await services.health.runningBaseline() {
+                        vm.importedBaseline = baseline
+                        withAnimation(Motion.standard) { healthImport = .done(baseline) }
+                    } else {
+                        withAnimation(Motion.standard) { healthImport = .empty }
+                    }
+                }
+            } label: {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: "heart.text.square.fill")
+                        .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.purple)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Theme.purple.opacity(0.1)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Use my run history").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text("Apple Health — Watch, Garmin & Oura sync there too. Read-only.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                    if case .importing = healthImport {
+                        ProgressView().tint(Theme.inkSecondary)
+                    } else {
+                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                .padding(Theme.Space.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 
