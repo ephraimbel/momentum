@@ -276,6 +276,48 @@ final class HealthService: HealthServing {
         }
     }
 
+    /// The full heart-rate series for a workout window (Watch/Garmin runs carry one in Health) — feeds
+    /// the time-in-zones card. Empty when unauthorized or the workout has no HR data.
+    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)] {
+        #if DEBUG
+        // Sim has no Health data — a believable interval-session series so the zones card is verifiable
+        // (warmup Z2 → 4 hard reps touching Z4/Z5 with Z2 floats → cooldown Z1/Z2).
+        if ProcessInfo.processInfo.arguments.contains("--zones-demo") {
+            var out: [(Date, Double)] = []
+            let duration = min(end.timeIntervalSince(start), 40 * 60)
+            var t: TimeInterval = 0
+            while t < duration {
+                let phase = t / duration
+                let bpm: Double
+                switch phase {
+                case ..<0.15: bpm = 125 + phase * 100          // warmup drift up
+                case ..<0.85:
+                    let rep = sin((phase - 0.15) / 0.7 * .pi * 4)   // 4 work/float waves
+                    bpm = rep > 0 ? 168 + rep * 12 : 142
+                default: bpm = 130 - (phase - 0.85) * 80       // cooldown
+                }
+                out.append((start.addingTimeInterval(t), bpm))
+                t += 5
+            }
+            return out
+        }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        return await withCheckedContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+            let query = HKSampleQuery(sampleType: HKQuantityType(.heartRate), predicate: predicate,
+                                      limit: 4_000, sortDescriptors: [sort]) { _, samples, _ in
+                let unit = HKUnit.count().unitDivided(by: .minute())
+                let out = (samples as? [HKQuantitySample])?.map {
+                    (date: $0.startDate, bpm: $0.quantity.doubleValue(for: unit))
+                } ?? []
+                continuation.resume(returning: out)
+            }
+            store.execute(query)
+        }
+    }
+
     private func averageHR(start: Date, end: Date) async -> Int? {
         await withCheckedContinuation { continuation in
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end)

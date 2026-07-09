@@ -9,6 +9,7 @@ struct WorkoutDetailView: View {
     @Environment(\.modelContext) private var context
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: Theme.Space.md) {
                 visibilityRow
@@ -23,6 +24,20 @@ struct WorkoutDetailView: View {
                 }
             }
             .padding(Theme.Space.md)
+        }
+        .onAppear {
+            #if DEBUG
+            // Deterministic sim verification of the time-in-zones card (simctl can't scroll).
+            if ProcessInfo.processInfo.arguments.contains("--detail-scroll-zones") {
+                // Two attempts — the card's id only exists once its async HR series has loaded.
+                for delay in [2.0, 4.5] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        withAnimation { proxy.scrollTo("timeInZones", anchor: .center) }
+                    }
+                }
+            }
+            #endif
+        }
         }
         .background(Theme.background)
         .navigationTitle(workout.type.title)

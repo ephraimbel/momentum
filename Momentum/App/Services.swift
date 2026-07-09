@@ -122,6 +122,8 @@ protocol HealthServing: AnyObject {
     /// Estimate the athlete's current running baseline (fitness + load) from their recent Health run
     /// history — the onboarding "it already understands me" import. nil when there isn't enough.
     func runningBaseline() async -> BaselineEstimator.RunningBaseline?
+    /// The full heart-rate series for a workout window (Watch/Garmin runs carry one) — time-in-zones.
+    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)]
 }
 protocol PlanEngineServing: AnyObject {}
 @MainActor
@@ -256,6 +258,7 @@ final class StubHealthService: HealthServing {
     func measuredVO2Max() async -> Double? { nil }
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int { 0 }
     func runningBaseline() async -> BaselineEstimator.RunningBaseline? { nil }
+    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)] { [] }
 }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {
