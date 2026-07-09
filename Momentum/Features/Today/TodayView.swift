@@ -530,28 +530,23 @@ struct TodayView: View {
     /// A clean header card floating over the map (Runna-style): profile + notifications on the left, the
     /// live streak centered, the world on the right — and a week strip below that dots the days you
     /// train and marks today. The map shows through everywhere else.
+    /// The floating header — individual glass elements over the map (the Apple Maps / AllTrails
+    /// convention), not an opaque slab. Avatar + bell left, the sport pill center, streak right; the
+    /// week lives with the plan in the deck, where data belongs.
     private var headerCard: some View {
-        VStack(spacing: Theme.Space.md) {
-            HStack(spacing: Theme.Space.sm) {
-                Button { Haptics.light(); showProfile = true } label: {
-                    AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Your profile")
-                bellButton
-                Spacer(minLength: Theme.Space.xs)
-                activitySelector
-                Spacer(minLength: Theme.Space.xs)
-                StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
+        HStack(spacing: Theme.Space.sm) {
+            Button { Haptics.light(); showProfile = true } label: {
+                AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
+                    .background(Circle().fill(.regularMaterial).padding(-3))
             }
-            weekStrip
+            .buttonStyle(.plain)
+            .accessibilityLabel("Your profile")
+            bellButton
+            Spacer(minLength: Theme.Space.xs)
+            activitySelector
+            Spacer(minLength: Theme.Space.xs)
+            StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
         }
-        .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous).fill(Theme.background)
-            RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous).stroke(Theme.hairline)
-        }
-        .shadow(color: .black.opacity(0.06), radius: 18, y: 6)
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
     }
@@ -577,8 +572,9 @@ struct TodayView: View {
         .accessibilityLabel("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")")
     }
 
-    /// Mon–Sun of the current week — tap a day to open that day's session. Today glows in the brand
-    /// iridescent; a filled iridescent dot marks days you trained, a hollow ring marks planned days.
+    /// Mon–Sun, slim and monochrome — lives at the top of the deck (data belongs with the plan, not
+    /// floating over the map). Today is a quiet ink circle; iridescence appears only where it's
+    /// *earned* — the dot under a day you trained. Tap a day to open its session.
     private var weekStrip: some View {
         HStack(spacing: 0) {
             ForEach(weekDays, id: \.self) { day in
@@ -588,19 +584,11 @@ struct TodayView: View {
                     if let s = plannedSession(on: day) { selectedDaySession = s }
                 } label: {
                     VStack(spacing: 5) {
-                        Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
-                            .font(.rounded(Theme.FontSize.label, weight: .bold))
-                            .foregroundStyle(isToday ? Theme.ink : Theme.inkTertiary)
                         Text("\(Calendar.current.component(.day, from: day))")
-                            .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                            .foregroundStyle(Theme.ink)
-                            .frame(width: 34, height: 34)
-                            .background {
-                                if isToday {
-                                    Circle().fill(LinearGradient(colors: Theme.iridescent, startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    Circle().stroke(Theme.ink.opacity(0.08))
-                                }
-                            }
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(isToday ? Theme.background : (day < Date() ? Theme.inkSecondary : Theme.inkTertiary))
+                            .frame(width: 28, height: 28)
+                            .background { if isToday { Circle().fill(Theme.ink) } }
                         dayMarker(day)
                     }
                     .frame(maxWidth: .infinity)
@@ -711,6 +699,12 @@ struct TodayView: View {
     /// element so the hierarchy never competes.
     private var deck: some View {
         VStack(spacing: 0) {
+            weekStrip
+                .padding(.horizontal, Theme.Space.sm)
+                .padding(.top, Theme.Space.md)
+                .padding(.bottom, Theme.Space.sm)
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                .padding(.horizontal, Theme.Space.md)
             if let session = pendingToday {
                 planRow(session)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
@@ -1338,11 +1332,8 @@ struct StreakChip: View {
             Text("\(days)").font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
         }
         .foregroundStyle(Theme.ink)
-        .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
-        .background {
-            Capsule().fill(Theme.surface)
-            Capsule().stroke(Theme.hairline)
-        }
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
+        .momentumGlass()
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
     }

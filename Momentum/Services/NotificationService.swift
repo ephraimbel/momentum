@@ -31,7 +31,8 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     /// Resync per-session reminders to the plan's upcoming sessions (next 7 days). Replaces every
     /// previously scheduled momentum reminder, so moved/recalibrated/deleted sessions stay correct.
     func schedulePlannedReminders(_ plan: TrainingPlan?) {
-        requestAuthorization()
+        // Never prompts — scheduling while unauthorized is harmless (iOS won't deliver); the ASK
+        // happens only at explicit consent moments (onboarding's reminders step, the bell).
         let payloads = plan.map { Self.reminderPayloads(for: $0, hour: reminderHour, minute: reminderMinute) } ?? []
         let prefix = sessionPrefix
         UNUserNotificationCenter.current().getPendingNotificationRequests { pending in
@@ -52,7 +53,6 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     /// An immediate, encouraging nudge when the coach adapts the plan. A short delay lets it land
     /// just after the post-workout celebration rather than on top of it.
     func notifyPlanUpdated(title: String, body: String) {
-        requestAuthorization()
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -90,7 +90,6 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     // MARK: Sunday check-in (PRD §24) — a weekly recap nudge; the Progress tab is the recap.
 
     func scheduleWeeklyCheckIn() {
-        requestAuthorization()
         let content = UNMutableNotificationContent()
         content.title = "Your week in review"
         content.body = "See how this week stacked up — and what's next."
