@@ -22,6 +22,9 @@ struct TodayView: View {
     @State private var viewport: Viewport = .idle
     @State private var launch: TodayLaunch?
     @State private var locator = LocationService()
+    /// Where the map opens for a brand-new athlete with no fix and no location permission yet — a
+    /// neutral view, never the puck (which would prompt). Start/recenter asks + flies to them.
+    private static let defaultMapCenter = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
     @State private var mapStyle: MapStyleOption = .standard
@@ -105,11 +108,18 @@ struct TodayView: View {
                                  in: context, dedupeToken: "welcome", daily: false)
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
-            // Open over the athlete's last-known neighborhood (never the whole world); once a live
-            // fix lands we switch to following the location puck.
+            // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
+            // lands we switch to following the puck. We only *follow the puck* up front when location is
+            // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
+            // (last-known, else a neutral default) until they grant it via Start/recenter.
             if case .idle = viewport {
-                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 13.5, pitch: mapStyle.explorePitch) }
-                    ?? .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
+                if let coord = lastKnownCoordinate {
+                    viewport = .camera(center: coord, zoom: 13.5, pitch: mapStyle.explorePitch)
+                } else if locator.isAuthorized {
+                    viewport = .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
+                } else {
+                    viewport = .camera(center: Self.defaultMapCenter, zoom: 11, pitch: mapStyle.explorePitch)
+                }
             }
             #if DEBUG
             // --world deep link: let the map bind, then fly out to the globe (same path as the button).
@@ -160,9 +170,10 @@ struct TodayView: View {
                 }
             }
             #endif
-            // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
-            // usually settled this); requesting also pulls a one-shot fix to center the map on them.
-            locator.requestAuthorization()
+            // Never prompt for location on arrival — the map opens at the last-known neighborhood and
+            // the GPS ask happens contextually (Start a run, or tap recenter). If they've already
+            // granted it, just pull a fresh fix to center on them.
+            if locator.isAuthorized { locator.refreshLocation() }
         }
         // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
@@ -353,7 +364,10 @@ struct TodayView: View {
         }
         .mapStyle(activeMapboxStyle)
         .ornamentOptions(MapChrome.hidden)
-        .onStyleLoaded { _ in BrandPuck.apply(to: proxy) }
+        // Enabling the puck activates Mapbox's location provider, which prompts for permission — so we
+        // only turn it on once the athlete has actually granted location (never up front on arrival).
+        .onStyleLoaded { _ in if locator.isAuthorized { BrandPuck.apply(to: proxy) } }
+        .onChange(of: locator.isAuthorized) { _, granted in if granted { BrandPuck.apply(to: proxy) } }
         .ignoresSafeArea()
         }
     }
