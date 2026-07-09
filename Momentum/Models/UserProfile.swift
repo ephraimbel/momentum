@@ -31,6 +31,11 @@ final class UserProfile {
     /// Past injury areas from onboarding (InjuryArea raw values) — starts the plan protective and seeds
     /// the injury loop's watch list. Empty → none reported.
     var injuryHistory: [String] = []
+    /// The currently-reported injury (ENDURANCE-FOCUS §8.2) — set by InjuryResponse.report, cleared by
+    /// resume. Drives the "training around your…" state + the feeling-better affordance on Today.
+    var activeInjuryArea: String?
+    var activeInjurySeverity: String?
+    var activeInjuryUntil: Date?
     /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.

@@ -112,6 +112,21 @@ enum PlanEngine {
             weeks.append(GeneratedWeek(index: w, isDeload: isDeload, isTaper: isTaper, sessions: scheduled))
         }
 
+        // Safety governor (ENDURANCE-FOCUS §6.2): no generated week may exceed 1.3× its trailing
+        // 4-week average running volume. Dormant on sane ramps; catches the dangerous edges.
+        let factors = ACWRGovernor.capFactors(weeklyMeters: weeks.map(\.runVolumeM),
+                                              currentWeeklyM: profile.currentWeeklyVolumeM ?? 0)
+        for (w, factor) in factors.enumerated() where factor < 0.999 {
+            for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
+                if let d = weeks[w].sessions[s].targetDistanceM {
+                    weeks[w].sessions[s].targetDistanceM = (d * factor).rounded()
+                }
+                if let dur = weeks[w].sessions[s].targetDurationS {
+                    weeks[w].sessions[s].targetDurationS = (dur * factor).rounded()
+                }
+            }
+        }
+
         return GeneratedPlan(p5kSPerKm: p5k, weeks: weeks)
     }
 

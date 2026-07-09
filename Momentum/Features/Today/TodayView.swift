@@ -38,6 +38,8 @@ struct TodayView: View {
     @State private var showNotifications = false
     @State private var showProfile = false
     @State private var showLogWorkout = false
+    @State private var showInjuryReport = false
+    @State private var confirmResume = false
     @State private var selectedDaySession: PlannedSession?
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
@@ -144,6 +146,9 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--log-workout") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
             }
+            if ProcessInfo.processInfo.arguments.contains("--injury-report") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showInjuryReport = true }
+            }
             if ProcessInfo.processInfo.arguments.contains("--today-day") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     selectedDaySession = plan?.sessions.sorted { $0.date < $1.date }.first
@@ -200,6 +205,18 @@ struct TodayView: View {
         }
         .sheet(isPresented: $showNotifications) { NotificationsView() }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
+        .sheet(isPresented: $showInjuryReport) { InjuryReportSheet(profile: profiles.first) }
+        .confirmationDialog("Feeling better?", isPresented: $confirmResume, titleVisibility: .visible) {
+            Button("Yes — ease me back in") {
+                if let profile = profiles.first {
+                    _ = InjuryResponse.resume(profile: profile, in: context)
+                    Haptics.success()
+                }
+            }
+            Button("Not yet", role: .cancel) {}
+        } message: {
+            Text("We'll start with a short recovery run and easy miles — quality work returns once you're settled.")
+        }
         .sheet(isPresented: $showProfile) {
             NavigationStack {
                 ProfileScreen()
@@ -674,9 +691,10 @@ struct TodayView: View {
                     .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
+                injuryBanner
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-                logPastButton
+                quietActionsRow
                 // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
                 // good enough yet (lopsided, backtracking) and Spots is parked. All the code stays
                 // (inline loop mode + `discoverChip` + `--loop`/`--spots` deep links); re-add a chip
@@ -687,19 +705,62 @@ struct TodayView: View {
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
     }
 
-    /// "Forgot to track it?" — log a past workout by hand (run, ride, treadmill/e-bike, or a lift).
-    /// A quiet secondary action beneath Start so it never competes with the hero.
-    private var logPastButton: some View {
-        Button { Haptics.light(); showLogWorkout = true } label: {
+    /// Quiet secondary actions beneath Start — log a forgotten workout, or tell the coach something
+    /// hurts (the injury loop, ENDURANCE-FOCUS §8.2). Neither competes with the hero.
+    private var quietActionsRow: some View {
+        HStack(spacing: 0) {
+            quietAction("square.and.pencil", "Add a past workout", a11y: "Add a workout you forgot to track") {
+                showLogWorkout = true
+            }
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
+            quietAction("bandage.fill", "Something hurts?", a11y: "Report a pain or injury — your plan adjusts") {
+                showInjuryReport = true
+            }
+        }
+    }
+
+    private func quietAction(_ icon: String, _ title: String, a11y: String, action: @escaping () -> Void) -> some View {
+        Button { Haptics.light(); action() } label: {
             HStack(spacing: 6) {
-                Image(systemName: "square.and.pencil").font(.system(size: 13, weight: .bold))
-                Text("Add a past workout").font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                Image(systemName: icon).font(.system(size: 13, weight: .bold))
+                Text(title).font(.rounded(Theme.FontSize.caption, weight: .semibold))
             }
             .foregroundStyle(Theme.inkSecondary)
             .frame(maxWidth: .infinity).frame(height: 38)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Add a workout you forgot to track")
+        .accessibilityLabel(a11y)
+    }
+
+    /// While an injury is active: the plan's protective state + the way back — "feeling better?" is the
+    /// gate into the gentle return (InjuryResponse.resume). Empty when healthy.
+    @ViewBuilder
+    private var injuryBanner: some View {
+        if let profile = profiles.first, let areaRaw = profile.activeInjuryArea,
+           let area = InjuryArea(rawValue: areaRaw) {
+            Button { Haptics.light(); confirmResume = true } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "bandage.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.purple)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Training around your \(area.label.lowercased())")
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text("Feeling better? Tap to ease back in.")
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+                .background {
+                    Capsule().fill(Theme.purple.opacity(0.08))
+                    Capsule().stroke(Theme.purple.opacity(0.25))
+                }
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Training around your \(area.label). Feeling better? Tap to ease back into running.")
+        }
     }
 
     /// A small, soft secondary action — icon + short label, capsule, muted ink. Deliberately lighter
