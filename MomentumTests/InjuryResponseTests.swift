@@ -20,14 +20,14 @@ struct InjuryResponseTests {
         return vm.finish(in: ctx)
     }
 
-    @Test func niggleKeepsRunningButDropsQuality() throws {
+    @Test func twingeKeepsRunningButDropsQuality() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
         let profile = makeRunner(ctx)
         let plan = try #require(profile.plan)
         let cal = Calendar.current
-        let windowEnd = cal.date(byAdding: .day, value: InjurySeverity.niggle.windowDays, to: cal.startOfDay(for: Date()))!
+        let windowEnd = cal.date(byAdding: .day, value: InjurySeverity.twinge.windowDays, to: cal.startOfDay(for: Date()))!
 
-        let outcome = InjuryResponse.report(area: .shins, severity: .niggle, profile: profile, in: ctx)
+        let outcome = InjuryResponse.report(area: .shins, severity: .twinge, profile: profile, in: ctx)
         #expect(outcome.sessionsChanged > 0)
         #expect(profile.activeInjuryArea == "shins")
         #expect(profile.injuryHistory.contains("shins"))          // remembered for future plans
@@ -99,7 +99,7 @@ struct InjuryResponseTests {
         let plan = try #require(profile.plan)
         let cal = Calendar.current
 
-        InjuryResponse.report(area: .achilles, severity: .niggle, profile: profile, in: ctx)   // 5-day window
+        InjuryResponse.report(area: .achilles, severity: .twinge, profile: profile, in: ctx)   // 5-day window
         // Plant an eager interval session on day 6 — past the window, inside the return gate.
         let eager = try #require(plan.sessions.filter {
             $0.discipline == .running && $0.status == .planned

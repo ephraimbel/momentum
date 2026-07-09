@@ -6,26 +6,26 @@ import SwiftData
 /// "failed" state: we reduce the aggravating stress, preserve fitness with non-impact work, say the
 /// red flags out loud, and gate the way back. The AI narrates; these rules decide.
 enum InjurySeverity: String, Codable, Sendable, CaseIterable, Identifiable {
-    case niggle, moderate, severe
+    case twinge, moderate, severe
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .niggle: "A niggle"
+        case .twinge: "A slight twinge"
         case .moderate: "It changes how I run"
         case .severe: "I can't run on it"
         }
     }
     var subtitle: String {
         switch self {
-        case .niggle: "Mild — I notice it, but it doesn't change my stride"
+        case .twinge: "Mild — I notice it, but it doesn't change my stride"
         case .moderate: "It hurts or alters my gait, but I can keep moving"
         case .severe: "Sharp pain, limping, or I'm avoiding it entirely"
         }
     }
     /// How long the plan trains around it before we check back in.
     var windowDays: Int {
-        switch self { case .niggle: 5; case .moderate: 10; case .severe: 14 }
+        switch self { case .twinge: 5; case .moderate: 10; case .severe: 14 }
     }
 }
 
@@ -62,7 +62,7 @@ enum InjuryResponse {
             }
             for s in window {
                 switch severity {
-                case .niggle:
+                case .twinge:
                     // Keep running, drop the intensity: quality → easy, volume trimmed a touch.
                     if let rt = s.runType, rt.isQuality || rt == .long {
                         s.runType = .easy
@@ -184,10 +184,10 @@ enum InjuryResponse {
 
     private static func outcomeCopy(area: String, severity: InjurySeverity, changed: Int) -> Outcome {
         switch severity {
-        case .niggle:
+        case .twinge:
             return Outcome(
                 headline: "Training around your \(area)",
-                detail: "Kept you running, dropped the intensity for \(InjurySeverity.niggle.windowDays) days. Most niggles settle with easy running and rest.",
+                detail: "Kept you running, dropped the intensity for \(InjurySeverity.twinge.windowDays) days. Most twinges settle with easy running and rest.",
                 guidance: "Ice and gentle mobility can help. If it sharpens, changes your stride, or lasts beyond a week — report it again or see a physio.",
                 sessionsChanged: changed)
         case .moderate:

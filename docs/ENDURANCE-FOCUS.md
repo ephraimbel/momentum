@@ -206,14 +206,14 @@ Two inputs feed one adaptive coach: **data-driven** (HRV/sleep/RHR/load) and **a
   Health). Post-run RPE already exists.
 - **"Report an issue"** flow: body area (shin, calf, knee, ankle, foot, hip, IT band, hamstring,
   Achilles, back), quality (sharp / dull / ache), timing (during / after / constant), and severity:
-  1. **Niggle** — mild, no change to how you run.
+  1. **Twinge** — mild, no change to how you run.
   2. **Moderate** — hurts / changes your gait but you can run.
   3. **Severe** — can't run / sharp pain.
 
 **Classification → plan response (rules-based, non-medical):**
 | Severity | Running | Fitness preservation | Guidance (general only) |
 |---|---|---|---|
-| Niggle | keep easy, cut intensity, add mobility | full | monitor; ice/mobility |
+| Twinge | keep easy, cut intensity, add mobility | full | monitor; ice/mobility |
 | Moderate | rest the impact; cross-train (bike/pool) | maintain via cross-training | RICE; if not improving in ~3–5 days, see a physio |
 | Severe | stop running | non-impact cross-train only if pain-free | **strongly recommend seeing a professional**; return-to-run gated |
 
@@ -225,7 +225,7 @@ Two inputs feed one adaptive coach: **data-driven** (HRV/sleep/RHR/load) and **a
 
 **Return-to-run progression:** when the athlete reports feeling better, a **walk/run ramp gated by
 pain-free checkpoints** (e.g., 20-min walk pain-free → 1-min run / 2-min walk × 8 → …). Advance only if
-pain stays ≤ niggle; back off automatically if it flares.
+pain stays ≤ twinge; back off automatically if it flares.
 
 **Narration + record:** "Injuries happen to every runner — we're protecting your season. Here's the smart
 way back." Logged in adaptation history + the bell inbox.
