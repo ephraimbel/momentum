@@ -37,6 +37,38 @@ enum RecoveryAdaptation {
         return Decision(reason: reasons.joined(separator: " and "))
     }
 
+    // MARK: Overtraining tripwire (§8.1) — load + physiology agreeing is a different animal
+
+    /// The forced-cutback condition: training load already in the danger zone (ACWR beyond ~1.5) AND
+    /// the body agreeing (HRV suppressed or resting HR elevated). Load alone can be a planned peak;
+    /// physiology alone can be a bad night — together they're the classic overtraining signature.
+    static func tripwire(acwr: Double, signals: RecoverySignals) -> Decision? {
+        guard acwr > 1.5 else { return nil }
+        var reasons = ["your training load has spiked (\(String(format: "%.1f", acwr))× your recent norm)"]
+        if signals.hrvTrend == .down { reasons.append("HRV is suppressed") }
+        if signals.restingHRTrend == .down { reasons.append("resting HR is elevated") }
+        guard reasons.count >= 2 else { return nil }             // load must be corroborated by the body
+        return Decision(reason: reasons.joined(separator: " and "))
+    }
+
+    /// Apply the tripwire: a real cutback (every upcoming session eased, the next one a true recovery
+    /// day) via the same bounded path as every other adaptation — throttled to once a week so it can
+    /// never spiral a plan downward.
+    @MainActor
+    @discardableResult
+    static func applyCutback(_ decision: Decision, plan: TrainingPlan?, today: Date = Date(),
+                             in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
+        guard let plan else { return nil }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+        guard PlanCoaching.apply(.rest, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
+        let note = (headline: "Cutback week",
+                    detail: "We pulled this week back: \(decision.reason). Absorbing the work now is how you come back stronger — this is the plan working, not failing.")
+        CoachingEvent.record(kind: .recover, headline: note.headline, detail: note.detail, on: today, in: context)
+        try? context.save()
+        return note
+    }
+
     /// Apply a decision: soften **today's** run only — quality/long becomes easy at ~90% volume. If
     /// today is already easy (or a rest/strength day) there's nothing to protect; returns nil.
     /// Recorded once per day (CoachingEvent dedupes), mirrored to the bell inbox.

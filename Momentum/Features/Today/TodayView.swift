@@ -110,10 +110,15 @@ struct TodayView: View {
                                  in: context, dedupeToken: "welcome", daily: false)
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
-            // Recovery-driven adaptation (§8.1): two independent warning signs from the athlete's
-            // wearables ease *today's* quality session — one bounded change, reason said plainly.
+            // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
+            // load in the danger zone + the body agreeing forces a real cutback week (throttled to
+            // one/week); otherwise two warning signs just ease *today's* quality session.
             Task {
                 let signals = await services.health.recoverySignals()
+                let acwr = ProgressInsights(workouts: workouts).acwr
+                if let cutback = RecoveryAdaptation.tripwire(acwr: acwr, signals: signals) {
+                    if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
+                }
                 let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
                 if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier) {
                     _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)

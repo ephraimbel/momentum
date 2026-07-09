@@ -47,6 +47,39 @@ struct RecoveryAdaptationTests {
         #expect(RecoveryAdaptation.decide(signals: .empty, intensity: .aggressive) == nil)
     }
 
+    @Test func tripwireNeedsLoadAndBodyToAgree() throws {
+        let suppressed = signals(hrv: 40, hrvBase: 55)
+        // Load spike alone: could be a planned peak week — hold.
+        #expect(RecoveryAdaptation.tripwire(acwr: 1.8, signals: .empty) == nil)
+        // Body warning alone at sane load: the daily ease's job, not a cutback.
+        #expect(RecoveryAdaptation.tripwire(acwr: 1.1, signals: suppressed) == nil)
+        // Both: the overtraining signature — forced cutback, reason names both.
+        let d = try #require(RecoveryAdaptation.tripwire(acwr: 1.8, signals: suppressed))
+        #expect(d.reason.contains("load"))
+        #expect(d.reason.contains("HRV"))
+    }
+
+    @Test func cutbackAppliesOncePerWeekAndMakesNextSessionRecovery() throws {
+        let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
+        let vm = OnboardingViewModel()
+        vm.activities = [.run]; vm.goal = .endurance; vm.experience = .some; vm.weeklyRunVolumeM = 30_000
+        let profile = vm.finish(in: ctx)
+        let plan = try #require(profile.plan)
+
+        let d = RecoveryAdaptation.Decision(reason: "your training load has spiked and HRV is suppressed")
+        let note = try #require(RecoveryAdaptation.applyCutback(d, plan: plan, in: ctx))
+        #expect(note.headline == "Cutback week")
+        #expect(note.detail.contains("not failing"))              // no-shame framing, always
+
+        // The very next session became a true recovery day; the throttle is set.
+        let next = try #require(plan.sessions.filter { $0.status == .planned }.min { $0.date < $1.date })
+        if next.strengthTargets.isEmpty { #expect(next.runType == .recovery) }
+        #expect(plan.lastAdaptedAt != nil)
+
+        // A second tripwire inside the same week is refused — a cutback can never spiral.
+        #expect(RecoveryAdaptation.applyCutback(d, plan: plan, in: ctx) == nil)
+    }
+
     @Test func easesOnlyTodaysQualityRunAndRecordsWhy() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
         let vm = OnboardingViewModel()

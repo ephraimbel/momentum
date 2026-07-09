@@ -90,4 +90,30 @@ struct InjuryResponseTests {
         // No cross-train conversions remain in the future.
         #expect(!plan.sessions.contains { $0.status == .planned && $0.rationale?.hasPrefix(InjuryResponse.marker) == true })
     }
+
+    @Test func firstWeekBackHoldsNoQualityAnywhere() throws {
+        // Re-injury risk peaks right after resume — even sessions the injury window never touched
+        // must hold no quality for 7 days.
+        let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
+        let profile = makeRunner(ctx)
+        let plan = try #require(profile.plan)
+        let cal = Calendar.current
+
+        InjuryResponse.report(area: .achilles, severity: .niggle, profile: profile, in: ctx)   // 5-day window
+        // Plant an eager interval session on day 6 — past the window, inside the return gate.
+        let eager = try #require(plan.sessions.filter {
+            $0.discipline == .running && $0.status == .planned
+            && $0.date > cal.date(byAdding: .day, value: 5, to: Date())!
+        }.min { $0.date < $1.date })
+        eager.date = cal.date(byAdding: .day, value: 6, to: cal.startOfDay(for: Date()))!
+        eager.runType = .intervals
+
+        InjuryResponse.resume(profile: profile, in: ctx)
+        #expect(eager.runType == .easy)                            // gated
+        #expect(eager.rationale?.contains("First week back") == true)
+
+        // Quality beyond the 7-day gate survives — the gate is bounded too.
+        let farOut = plan.sessions.filter { $0.date > cal.date(byAdding: .day, value: 8, to: Date())! }
+        #expect(farOut.contains { $0.runType?.isQuality == true || $0.runType == .long })
+    }
 }

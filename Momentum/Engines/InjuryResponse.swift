@@ -145,6 +145,24 @@ enum InjuryResponse {
                 }
                 restored += 1
             }
+            // The return gate: the first week back holds NO quality anywhere — including sessions the
+            // injury window never touched. Re-injury risk peaks right here, when the athlete feels
+            // fine and the plan still says "intervals".
+            let gateEnd = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: today)) ?? today
+            let eager = plan.sessions.filter {
+                $0.status == .planned && $0.completedWorkout == nil
+                && $0.discipline == .running
+                && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
+                && $0.date <= gateEnd
+                && ($0.runType?.isQuality == true || $0.runType == .long)
+            }
+            for s in eager {
+                s.runType = .easy
+                s.intervals = nil
+                s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                if let d = s.targetDistanceM { s.targetDistanceM = min(d, 8_000) }
+                s.rationale = "First week back — easy only. Quality returns once you've settled."
+            }
         }
         profile.activeInjuryArea = nil
         profile.activeInjurySeverity = nil
