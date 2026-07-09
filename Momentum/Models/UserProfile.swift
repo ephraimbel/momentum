@@ -28,6 +28,9 @@ final class UserProfile {
     /// How hard the athlete chose to push (PlanIntensity raw value) — shapes the volume ramp + down-week
     /// cadence. nil → balanced.
     var planIntensity: String?
+    /// Past injury areas from onboarding (InjuryArea raw values) — starts the plan protective and seeds
+    /// the injury loop's watch list. Empty → none reported.
+    var injuryHistory: [String] = []
     /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.

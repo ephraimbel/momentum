@@ -79,6 +79,8 @@ struct OnboardingFlow: View {
                 vm.experience = .some; vm.calibrationMode = .feel; vm.paceFeel = .regular; vm.weeklyRunVolumeM = 35_000
                 vm.step = .intensity
             }
+            if args.contains("--onboarding-injuries") { vm.activities = [.run]; vm.step = .injuries }
+            if args.contains("--onboarding-health") { vm.activities = [.run]; vm.step = .health }
             if args.contains("--onboarding-calibration") {
                 vm.activities = [.run]; vm.experience = .some; vm.step = .calibration
                 // With the Health demo flag, exercise the import path automatically (sim can't tap).
@@ -180,6 +182,7 @@ struct OnboardingFlow: View {
         case .raceGoalTime: raceGoalTimeStep
         case .muscleFocus: muscleFocusStep
         case .experience: experienceStep
+        case .injuries: injuriesStep
         case .runVolume: runVolumeStep
         case .days: daysStep
         case .preferredDays: preferredDaysStep
@@ -189,6 +192,7 @@ struct OnboardingFlow: View {
         case .metrics: metricsStep
         case .why: whyStep
         case .calibration: calibrationStep
+        case .health: healthStep
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
@@ -469,6 +473,102 @@ struct OnboardingFlow: View {
                 }
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    /// Past injuries — multi-select body areas the plan will train around (ENDURANCE-FOCUS §8.2).
+    /// Optional and shame-free; empty = none. Feeds the protective ramp + the injury loop's watch list.
+    private var injuriesStep: some View {
+        questionScaffold("Anything to train around?",
+                         subtitle: "Past injuries shape a safer ramp — we'll build up gently where you've been hurt. Skip if you're all clear.") {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],
+                      spacing: Theme.Space.sm) {
+                ForEach(Array(InjuryArea.allCases.enumerated()), id: \.element) { i, area in
+                    let on = vm.injuryAreas.contains(area)
+                    Button {
+                        Haptics.selection()
+                        withAnimation(Motion.lively) {
+                            if on { vm.injuryAreas.remove(area) } else { vm.injuryAreas.insert(area) }
+                        }
+                    } label: {
+                        Text(area.label)
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .frame(maxWidth: .infinity).frame(height: 48)
+                            .background {
+                                Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                                if !on { Capsule().stroke(Theme.hairline) }
+                            }
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                    .reveal(cascade(i / 2))
+                }
+            }
+            if !vm.injuryAreas.isEmpty {
+                Text("We'll ease the impact around \(vm.injuryAreas.count == 1 ? "this area" : "these areas") and watch for early warning signs.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    /// The recovery consent beat (ENDURANCE-FOCUS §7) — connect Apple Health so the plan adapts to how
+    /// the athlete is *actually* recovering. Benefit-first, names their devices, read-only reassurance.
+    private var healthStep: some View {
+        VStack(spacing: Theme.Space.lg) {
+            Spacer(minLength: 0)
+            VStack(spacing: Theme.Space.sm) {
+                Text("Train with your whole picture")
+                    .font(.serif(30, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                Text("Connect Apple Health and momentum learns how you're actually recovering — so each week adapts to you, not a template.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            }
+            .reveal(0.05)
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                healthBenefitRow("bed.double.fill", "Sleep & heart rate", "Rough night? Your week eases off before you overdo it.")
+                healthBenefitRow("applewatch", "Your devices, one tap", "Oura, Garmin, Whoop & Apple Watch already sync to Apple Health — no separate logins.")
+                healthBenefitRow("lock.fill", "Read-only, always", "It stays on your device, in your control. Disconnect anytime.")
+            }
+            .padding(Theme.Space.md)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+            .reveal(0.15)
+            Spacer(minLength: 0)
+            VStack(spacing: Theme.Space.sm) {
+                OversizedButton(title: "Connect Apple Health") {
+                    Task {
+                        _ = await services.health.requestAuthorization()
+                        goNext()
+                    }
+                }
+                Button { Haptics.light(); goNext() } label: {
+                    Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            .reveal(0.28)
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.bottom, Theme.Space.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func healthBenefitRow(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.md) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.purple)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Theme.purple.opacity(0.1)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(detail).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
         }
     }
 

@@ -74,16 +74,18 @@ struct PlanFeasibility: Sendable {
     /// Assess a goal against current fitness and the calendar.
     /// - currentP5kSPerKm: current 5K-equivalent pace (fitness). nil when unknown → time check is skipped.
     /// - currentWeeklyVolumeM: recent weekly running volume (0 for a brand-new runner).
+    /// - injuryProne: past injuries reported — with room to spare, the recommendation eases off.
     static func assess(raceDistanceM: Double?,
                        goalFinishTimeS: Double?,
                        currentP5kSPerKm: Double?,
                        currentWeeklyVolumeM: Double,
                        weeksAvailable: Int,
-                       experience: ExperienceLevel) -> PlanFeasibility {
+                       experience: ExperienceLevel,
+                       injuryProne: Bool = false) -> PlanFeasibility {
 
         guard let distanceM = raceDistanceM, distanceM > 0 else {
             return PlanFeasibility(verdict: .noRace, weeksAvailable: weeksAvailable, weeksNeeded: 0,
-                                   recommended: experience == .new ? .gentle : .balanced,
+                                   recommended: (experience == .new || injuryProne) ? .gentle : .balanced,
                                    headline: "A plan that grows with you",
                                    detail: "No race on the calendar — we'll build your fitness safely, week over week, and you can point it at a race anytime.",
                                    options: [], realisticFinishS: nil)
@@ -139,7 +141,8 @@ struct PlanFeasibility: Sendable {
         let recommended: PlanIntensity
         switch verdict {
         case .onTrack:
-            recommended = experience == .new ? .gentle : .balanced   // ease in new runners; everyone else builds
+            // Ease in new runners and anyone with an injury history; everyone else builds.
+            recommended = (experience == .new || injuryProne) ? .gentle : .balanced
         case .tight, .tooShort:
             recommended = .aggressive
         case .noRace:

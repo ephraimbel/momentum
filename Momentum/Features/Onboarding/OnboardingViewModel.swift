@@ -19,6 +19,8 @@ final class OnboardingViewModel {
     }
     var goal: Goal = .generalFitness
     var experience: ExperienceLevel = .some          // running / general
+    /// Past injury areas — the plan starts protective around these (ENDURANCE-FOCUS §8.2). Empty → none.
+    var injuryAreas: Set<InjuryArea> = []
     var liftExperience: ExperienceLevel = .some      // used when hybrid (run + lift)
     var daysPerWeek: Int = 3
     var equipment: Equipment = .fullGym
@@ -58,7 +60,8 @@ final class OnboardingViewModel {
             currentP5kSPerKm: p5k,
             currentWeeklyVolumeM: weeklyRunVolumeM ?? 0,
             weeksAvailable: hasRace ? (weeksToRace ?? 16) : 999,   // no date → no time pressure
-            experience: experience)
+            experience: experience,
+            injuryProne: !injuryAreas.isEmpty)
     }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0
@@ -120,9 +123,9 @@ final class OnboardingViewModel {
         // → race specifics → schedule → equipment/focus → motivation → pace → build → reveal → opt-ins.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
-        case name, goal, disciplines, experience, metrics, race, raceGoalTime, muscleFocus,
+        case name, goal, disciplines, experience, injuries, metrics, race, raceGoalTime, muscleFocus,
              runVolume, days, preferredDays, session, equipment, hybridFocus, why, calibration,
-             intensity, building, reveal, notifications, primers
+             health, intensity, building, reveal, notifications, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -139,6 +142,10 @@ final class OnboardingViewModel {
             case .equipment:   return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
             case .calibration: return running
+            // Anything to train around — endurance athletes only (drives the protective ramp).
+            case .injuries:    return running
+            // The recovery-tracking consent beat (HealthKit) — shown to everyone; wearables sync there.
+            case .health:      return true
             // How hard to push — a running decision (endurance focus); paired with the honesty check.
             case .intensity:   return running
             // Current mileage only makes sense once you have some — beginners keep the gentle default.
@@ -150,7 +157,8 @@ final class OnboardingViewModel {
 
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
-        steps.filter { ![.building, .reveal, .notifications, .primers].contains($0) }
+        // `.health` is an opt-in consent beat (like notifications), not an answerable question.
+        steps.filter { ![.health, .building, .reveal, .notifications, .primers].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 
@@ -257,11 +265,17 @@ final class OnboardingViewModel {
             if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
             return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label) — whenever you toe the line"
         }
-        var bits: [String] = []
-        if disciplines.contains(.strength) { bits.append(goal == .getStronger ? "Stronger" : "Leaner & stronger") }
-        if disciplines.contains(.running) { bits.append(hasRace ? "race-ready" : "fitter") }
-        if bits.isEmpty { bits.append("Fitter") }
-        let phrase = bits.joined(separator: " + ")
+        // Running-first phrasing (Phase 0): the runner identity leads; strength reads as the support.
+        let phrase: String
+        if running && lifting {
+            phrase = hasRace ? "Race-ready — and stronger everywhere" : "A faster runner — stronger everywhere"
+        } else if running {
+            phrase = hasRace ? "Race-ready" : "A faster, stronger runner"
+        } else if lifting {
+            phrase = goal == .getStronger ? "Stronger" : "Leaner & stronger"
+        } else {
+            phrase = "Fitter"
+        }
         if hasRace { return "\(phrase) by \(raceDate.formatted(.dateTime.month().day()))" }
         return "\(phrase) — one week at a time"
     }
@@ -300,6 +314,7 @@ final class OnboardingViewModel {
         }
         if hybrid { profile.hybridPriority = hybridPriority.rawValue }
         if running { profile.planIntensity = intensity.rawValue }
+        profile.injuryHistory = injuryAreas.map(\.rawValue).sorted()
         if goal == .raceDistance { profile.goalFinishTimeS = goalFinishTimeS }
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()

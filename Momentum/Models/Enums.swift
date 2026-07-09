@@ -75,6 +75,19 @@ enum BiologicalSex: String, Codable, Sendable, CaseIterable, Identifiable {
 enum Goal: String, Codable, Sendable, CaseIterable {
     case loseFat, buildMuscle, getStronger, raceDistance, endurance, generalFitness, stayConsistent
 }
+/// Common running injury areas (ENDURANCE-FOCUS §8.2) — captured at onboarding so the plan starts
+/// protective, and reused by the injury-report loop. Body areas, never diagnoses.
+enum InjuryArea: String, Codable, Sendable, CaseIterable, Identifiable {
+    case shins, knee, itBand, ankle, achilles, foot, calf, hamstring, hip, back
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .shins: "Shins"; case .knee: "Knee"; case .itBand: "IT band"; case .ankle: "Ankle"
+        case .achilles: "Achilles"; case .foot: "Foot / plantar"; case .calf: "Calf"
+        case .hamstring: "Hamstring"; case .hip: "Hip"; case .back: "Lower back"
+        }
+    }
+}
 enum Equipment: String, Codable, Sendable, CaseIterable { case fullGym, dumbbellsOnly, homeMinimal, bodyweight }
 enum ExperienceLevel: String, Codable, Sendable, CaseIterable { case new, some, experienced }
 enum MuscleGroup: String, Codable, Sendable, CaseIterable {
