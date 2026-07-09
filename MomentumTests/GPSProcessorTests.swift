@@ -136,4 +136,33 @@ struct GPSProcessorTests {
         _ = p.shouldAutoPause(speedMS: 0.2, now: t0)
         #expect(p.shouldAutoPause(speedMS: 2.0, now: t0.addingTimeInterval(4)) == false)
     }
+
+    /// Resume hysteresis: once auto-paused, hovering just above the pause threshold must NOT flap
+    /// the banner — clearing requires 1.5× threshold (walk: 0.5 → 0.75 m/s).
+    @Test func autoPauseResumeRequiresHysteresisMargin() {
+        var p = GPSProcessor(config: GPSProcessor.Config.forType(.walk))
+        let t0 = Date(timeIntervalSinceReferenceDate: 0)
+        #expect(p.shouldAutoPause(speedMS: 0.55, now: t0, currentlyPaused: true) == true)   // stays paused
+        #expect(p.shouldAutoPause(speedMS: 0.80, now: t0.addingTimeInterval(1), currentlyPaused: true) == false)
+    }
+
+    /// The stale-anchor hole: standing at a light freezes `anchor.t`, so a later spike's implied
+    /// speed was diluted by the long dt and slipped through. The gate must reference the LAST
+    /// accepted fix (seconds old), which reads the same spike as ~40 m/s and rejects it.
+    @Test func spikeAfterLongStationaryWaitIsRejected() {
+        var p = GPSProcessor(config: runConfig)
+        // Establish the anchor, then stand still for 60 s of accepted micro-move jitter (speed ~0,
+        // sub-2m wobble never advances the anchor).
+        _ = p.ingest(fix(30.0, -97.0, acc: 5, speed: 0, t: 0))
+        for t in stride(from: 1.0, through: 60.0, by: 1.0) {
+            let r = p.ingest(fix(30.0 + 0.000005, -97.0, acc: 5, speed: 0, t: t))
+            #expect(r != .rejected)
+        }
+        let before = p.distanceM
+        // A 40 m lateral spike one second later, device speed still 0. Against the stale anchor
+        // this implied a lazy 0.7 m/s and was accepted; against the last fix it's ~40 m/s.
+        let spike = p.ingest(fix(30.0, -97.0 + 0.00042, acc: 5, speed: 0, t: 61))
+        #expect(spike == .rejected)
+        #expect(p.distanceM == before)   // no phantom spur, no phantom distance
+    }
 }

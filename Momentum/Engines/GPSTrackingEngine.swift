@@ -41,6 +41,10 @@ actor GPSTrackingEngine {
         let movingTimeS: TimeInterval
         let elevationGainM: Double
         let route: [Coordinate]
+        /// The latest Kalman-corrected position — fresher than `route.last` (which only advances
+        /// past the 2 m move gate). Drives the on-map puck so the dot, the camera, and the trace
+        /// all follow the SAME filtered track: a rejected GPS spike can't teleport any of them.
+        let tip: Coordinate?
     }
 
     enum Const {
@@ -84,7 +88,9 @@ actor GPSTrackingEngine {
         LiveSnapshot(state: state, distanceM: processor.distanceM,
                      smoothedPaceSPerKm: processor.smoothedPaceSPerKm,
                      movingTimeS: movingTimeS, elevationGainM: processor.elevationGainM,
-                     route: route)
+                     route: route,
+                     tip: route.isEmpty ? nil : Coordinate(lat: processor.filteredLat,
+                                                           lon: processor.filteredLon))
     }
 
     func begin(now: Date = Date()) async {
@@ -122,7 +128,8 @@ actor GPSTrackingEngine {
 
         // Auto-pause / resume (manual pause is sticky and not overridden here).
         if state != .paused {
-            let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now)
+            let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now,
+                                                          currentlyPaused: state == .autoPaused)
             if !pausedBySpeed {
                 // Real movement → a manual-resume override is done its job; normal auto-pause resumes.
                 autoPauseSuppressed = false

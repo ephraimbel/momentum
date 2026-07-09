@@ -32,6 +32,18 @@ final class CardioViewModel {
     private var lastFixAt: Date?
     private var watchdogTask: Task<Void, Never>?
 
+    /// Where the on-map puck should sit. Raw while acquiring (so "you" appears immediately), then
+    /// the engine's Kalman-corrected tip once recording — the dot, the follow camera, and the trace
+    /// all track the SAME filtered position, so a rejected GPS spike can't teleport any of them.
+    struct LivePoint: Equatable { var lat: Double; var lon: Double }
+    private(set) var puckPoint: LivePoint?
+
+    // Live Activity pushes are rate-limited by ActivityKit — pushing every fix risks the system
+    // throttling updates entirely (lock-screen stats stalling). Push every few seconds, plus
+    // immediately on any pause-state flip.
+    private var lastActivityPush = Date.distantPast
+    private var lastActivityPaused = false
+
     /// True once a fix lands within the lock accuracy band — the cue to leave the "acquiring" gate
     /// and start the countdown (PRD §4.3; mirrors Strava's "GPS Signal Acquired").
     private(set) var hasGPSLock = false
@@ -110,6 +122,9 @@ final class CardioViewModel {
             lastAccuracyM = fix.accuracyM
             hasGPSLock = true
         }
+        if let coord = location.lastLocation {
+            puckPoint = LivePoint(lat: coord.latitude, lon: coord.longitude)
+        }
         pumpTask = Task { [weak self] in
             guard let self else { return }
             for await fix in self.location.fixes() {
@@ -117,13 +132,19 @@ final class CardioViewModel {
                 self.lastFixAt = Date()
                 guard self.armed else {
                     if fix.accuracyM > 0, fix.accuracyM <= Self.lockAccuracyM { self.hasGPSLock = true }
+                    if fix.accuracyM > 0, fix.accuracyM <= Self.lockAccuracyM * 2 {
+                        self.puckPoint = LivePoint(lat: fix.lat, lon: fix.lon)
+                    }
                     continue
                 }
                 await self.engine.ingest(fix)
                 self.snapshot = await self.engine.snapshot()
+                if let tip = self.snapshot?.tip {
+                    self.puckPoint = LivePoint(lat: tip.lat, lon: tip.lon)
+                }
                 self.syncPauseClock()
                 self.sampleCadence()
-                self.liveActivity.update(self.liveState())
+                self.pushLiveActivityIfDue()
                 self.announceMilestonesIfNeeded()
                 self.announcePauseIfChanged()
             }
@@ -295,8 +316,20 @@ final class CardioViewModel {
         return "Z\(HeartRateZones.zone(forBpm: b, maxHR: m))"
     }
 
-    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
-    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); liveActivity.update(liveState()); announcePauseIfChanged() }
+    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); pushLiveActivityIfDue(); announcePauseIfChanged() }
+    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); pushLiveActivityIfDue(); announcePauseIfChanged() }
+
+    /// Push to the Live Activity at most every `liveActivityUpdateS`, or immediately when the
+    /// paused state flips (that change must never wait out the throttle).
+    private func pushLiveActivityIfDue() {
+        let paused = isPaused
+        guard paused != lastActivityPaused
+            || Date().timeIntervalSince(lastActivityPush) >= GPSTrackingEngine.Const.liveActivityUpdateS
+        else { return }
+        lastActivityPush = Date()
+        lastActivityPaused = paused
+        liveActivity.update(liveState())
+    }
 
     /// Elapsed (moving) time since start, frozen while paused — ticks every second regardless of
     /// GPS fixes. This is the timer shown on the live screen and saved as the workout duration.
