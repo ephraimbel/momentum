@@ -19,7 +19,7 @@ struct ProfileScreen: View {
     @State private var immersive: ImmersiveStart?
 
     private var profile: UserProfile? { profiles.first }
-    private var stats: ProfileStats { ProfileStats(workouts: workouts) }
+    private var stats: ProfileStats { ProfileStats(workouts: workouts, plan: profile?.plan) }
     private var highlights: ProfileHighlights {
         ProfileHighlights(stats: stats, workouts: workouts, weightUnit: weightUnit, distanceUnit: distanceUnit)
     }

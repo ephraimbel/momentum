@@ -12,6 +12,13 @@ final class VoiceCoachService: NSObject, VoiceCoachServing {
     private let synthesizer = AVSpeechSynthesizer()
     private let logger = Logger(subsystem: "com.momentum.app", category: "voicecoach")
 
+    override init() {
+        super.init()
+        // Without the delegate, `didFinish` never fires and the ducking session is only released at
+        // finish() — leaving the athlete's music quiet for the entire run after the first cue.
+        synthesizer.delegate = self
+    }
+
     /// Speak a cue. Activates a ducking audio session, speaks, and lets the session deactivate when
     /// speech finishes (so music returns to full volume).
     func announce(_ text: String) {
@@ -41,7 +48,9 @@ final class VoiceCoachService: NSObject, VoiceCoachServing {
 extension VoiceCoachService: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                        didFinish utterance: AVSpeechUtterance) {
-        // Hand audio focus back once we're done talking.
+        // Hand audio focus back once we're done talking — but not between queued cues, or the
+        // deactivate would race the next utterance's playback.
+        guard !synthesizer.isSpeaking else { return }
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 }

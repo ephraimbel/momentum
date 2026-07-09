@@ -33,6 +33,9 @@ final class SetEntry {
     var type: SetType = SetType.working
     var isComplete: Bool = false
     var restS: Double = 120
+    /// When the set was logged — lets cold-launch recovery reconstruct an honest duration for a
+    /// session the app never got to finish. Optional and additive (older rows stay nil).
+    var completedAt: Date?
 
     init() {}
 }

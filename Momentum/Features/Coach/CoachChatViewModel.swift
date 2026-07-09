@@ -88,7 +88,7 @@ final class CoachChatViewModel {
         let today = PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed }
         return CoachResponder.Context(
             insights: ProgressInsights(workouts: workouts),
-            stats: ProfileStats(workouts: workouts),
+            stats: ProfileStats(workouts: workouts, plan: plan),
             todaySession: today,
             goal: profile?.goal ?? .generalFitness,
             disciplines: profile?.disciplines ?? [],

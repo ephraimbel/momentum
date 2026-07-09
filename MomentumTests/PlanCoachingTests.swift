@@ -361,15 +361,18 @@ struct PlanCoachingTests {
         #expect(PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx) == nil)
     }
 
-    @Test func coachingEventRecordDedupesSameKindSameDay() throws {
+    @Test func coachingEventRecordDedupesOnKindAndHeadline() throws {
         let container = try makeContainer()
         let ctx = container.mainContext
         let today = Date(timeIntervalSince1970: 1_000_000)
         CoachingEvent.record(kind: .ease, headline: "A", detail: "a", on: today, in: ctx)
-        CoachingEvent.record(kind: .ease, headline: "B", detail: "b", on: today, in: ctx)      // same kind+day → skipped
+        CoachingEvent.record(kind: .ease, headline: "A", detail: "again", on: today, in: ctx)  // same decision re-run → skipped
+        CoachingEvent.record(kind: .ease, headline: "B", detail: "b", on: today, in: ctx)      // DIFFERENT decision, same kind → kept
         CoachingEvent.record(kind: .recover, headline: "C", detail: "c", on: today, in: ctx)   // different kind → kept
         let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
-        #expect(events.count == 2)
+        // An injury report and an overtraining cutback can share a kind on one day — both must
+        // keep their receipt (and their inbox notification); only true re-runs dedupe.
+        #expect(events.count == 3)
     }
 
     @Test func rpeAdaptationNoOpWhenEffortMatchesPrescription() throws {

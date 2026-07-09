@@ -155,6 +155,7 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         set.rpe = rpe
         set.type = type
         set.isComplete = true
+        set.completedAt = Date()   // lets cold-launch recovery reconstruct an honest duration
         try? modelContext.save()
         setIDs[setId] = set.persistentModelID
     }

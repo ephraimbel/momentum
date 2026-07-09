@@ -9,6 +9,7 @@ struct LogWorkoutView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var library: [Exercise]
+    @Query private var profiles: [UserProfile]
 
     @State private var type: WorkoutType
     @State private var showTypePicker = false
@@ -247,8 +248,14 @@ struct LogWorkoutView: View {
         let w = LogWorkoutBuilder.make(type: type, date: date, durationS: durationS, distanceM: distanceMeters,
                                        indoor: indoor, effort: effort, note: notes,
                                        exercises: inputs, resolveExercise: exerciseRef)
+        // A logged workout is a real workout: same calorie estimate and plan credit as a tracked one
+        // (otherwise a treadmill run leaves today's planned session open and shows a blank calorie
+        // stat forever). Deliberately no pace recalibration — hand-entered numbers are too coarse
+        // to move the plan's fitness model.
+        w.calories = CalorieEstimator.kcal(for: w, bodyMassKg: profiles.first?.bodyMassKg)
         context.insert(w)
         try? context.save()
+        PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
         Haptics.success()
         dismiss()
     }
