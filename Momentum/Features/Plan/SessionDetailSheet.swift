@@ -29,6 +29,7 @@ struct SessionDetailSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     statusChip
                     targets
+                    fuelSection
                     if let why = session.rationale, session.status == .moved {
                         note(why)
                     }
@@ -414,4 +415,45 @@ struct SessionDetailSheet: View {
         }
     }
 
+    // MARK: Fuel (ENDURANCE-FOCUS §11) — long runs and races only; short runs stay silent
+
+    @ViewBuilder
+    private var fuelSection: some View {
+        if session.discipline == .running, session.status == .planned,
+           let dur = FuelingGuide.estimatedDurationS(distanceM: session.targetDistanceM,
+                                                     paceSPerKm: session.targetPaceSPerKm,
+                                                     durationS: session.targetDurationS) {
+            let g = FuelingGuide.guidance(durationS: dur, isRace: session.runType == .race)
+            if g.carbsPerHour != nil {
+                section("Fuel") {
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        HStack(spacing: Theme.Space.sm) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.purple)
+                                .frame(width: 30, height: 30)
+                                .background(Circle().fill(Theme.purple.opacity(0.1)))
+                            Text(g.headline).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        }
+                        fuelRow("BEFORE", g.before)
+                        fuelRow("DURING", g.during)
+                        fuelRow("AFTER", g.after)
+                        Text(FuelingGuide.Guidance.disclaimer)
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .padding(Theme.Space.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+                }
+            }
+        }
+    }
+
+    private func fuelRow(_ label: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Text(label).font(.rounded(9, weight: .black)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
+                .frame(width: 52, alignment: .leading).padding(.top, 3)
+            Text(text).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 }

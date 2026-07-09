@@ -83,6 +83,16 @@ struct PlanView: View {
         .sheet(isPresented: $showSettings) {
             if let p = profiles.first { PlanSettingsSheet(profile: p) { showSettings = false } }
         }
+        .onAppear {
+            #if DEBUG
+            // Open the first long run's detail (fuel-section verification; sim taps are unreliable).
+            if ProcessInfo.processInfo.arguments.contains("--plan-detail-long"),
+               let long = plan?.sessions.filter({ $0.runType == .long && $0.status == .planned })
+                   .min(by: { $0.date < $1.date }) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { editing = EditingSession(session: long) }
+            }
+            #endif
+        }
     }
 
     /// Launch the right recorder for a planned session (uses its precise sport; requests GPS for cardio).
