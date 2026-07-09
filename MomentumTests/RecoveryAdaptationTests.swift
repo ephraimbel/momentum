@@ -47,6 +47,23 @@ struct RecoveryAdaptationTests {
         #expect(RecoveryAdaptation.decide(signals: .empty, intensity: .aggressive) == nil)
     }
 
+    @Test func theAthletesOwnWordsCountAsSignals() throws {
+        // Clean wearables, but the athlete says sore legs AND low energy → ease (their word stands
+        // equal to the sensor). One subjective signal alone → still hold.
+        let rough = DailyCheckin(energy: .low, legs: .sore)
+        let d = try #require(RecoveryAdaptation.decide(signals: .empty, intensity: .balanced, checkin: rough))
+        #expect(d.reason.contains("legs"))
+        #expect(d.reason.contains("energy"))
+
+        let justTired = DailyCheckin(energy: .low, legs: .fresh)
+        #expect(RecoveryAdaptation.decide(signals: .empty, intensity: .balanced, checkin: justTired) == nil)
+
+        // A check-in signal + a wearable signal combine across sources.
+        let hrvDown = signals(hrv: 40, hrvBase: 55)
+        let sore = DailyCheckin(energy: .full, legs: .sore)
+        #expect(RecoveryAdaptation.decide(signals: hrvDown, intensity: .balanced, checkin: sore) != nil)
+    }
+
     @Test func tripwireNeedsLoadAndBodyToAgree() throws {
         let suppressed = signals(hrv: 40, hrvBase: 55)
         // Load spike alone: could be a planned peak week — hold.

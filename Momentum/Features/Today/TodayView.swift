@@ -12,6 +12,7 @@ struct TodayView: View {
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
     @Query private var appNotifications: [AppNotification]
+    @Query private var checkins: [DailyCheckin]
 
     // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
@@ -39,6 +40,7 @@ struct TodayView: View {
     @State private var showProfile = false
     @State private var showLogWorkout = false
     @State private var showInjuryReport = false
+    @State private var showCheckin = false
     @State private var confirmResume = false
     @State private var selectedDaySession: PlannedSession?
     @State private var pendingLoopStart: GeoPoint?
@@ -120,7 +122,8 @@ struct TodayView: View {
                     if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
                 }
                 let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
-                if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier) {
+                if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier,
+                                                            checkin: DailyCheckin.today(in: checkins)) {
                     _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
                 }
             }
@@ -162,6 +165,9 @@ struct TodayView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--injury-report") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showInjuryReport = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--checkin") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showCheckin = true }
             }
             if ProcessInfo.processInfo.arguments.contains("--today-day") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -220,6 +226,12 @@ struct TodayView: View {
         .sheet(isPresented: $showNotifications) { NotificationsView() }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
         .sheet(isPresented: $showInjuryReport) { InjuryReportSheet(profile: profiles.first) }
+        .sheet(isPresented: $showCheckin) {
+            CheckinSheet(profile: profiles.first) {
+                // "Something hurts" routes straight into the injury loop.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showInjuryReport = true }
+            }
+        }
         .confirmationDialog("Feeling better?", isPresented: $confirmResume, titleVisibility: .visible) {
             Button("Yes — ease me back in") {
                 if let profile = profiles.first {
@@ -706,6 +718,7 @@ struct TodayView: View {
             }
             VStack(spacing: Theme.Space.md) {
                 injuryBanner
+                checkinChip
                 if isCardio { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
                 quietActionsRow
@@ -745,6 +758,32 @@ struct TodayView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(a11y)
+    }
+
+    /// The morning check-in nudge — one quiet line, gone the moment today's answered (or an injury is
+    /// already active, which outranks it).
+    @ViewBuilder
+    private var checkinChip: some View {
+        if DailyCheckin.today(in: checkins) == nil, profiles.first?.activeInjuryArea == nil {
+            Button { Haptics.light(); showCheckin = true } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "sun.max.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("How are you feeling today?")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                    Text("10 sec").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+                .background {
+                    Capsule().fill(Theme.surface)
+                    Capsule().stroke(Theme.hairline)
+                }
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Morning check-in — how are you feeling today? Takes ten seconds.")
+        }
     }
 
     /// While an injury is active: the plan's protective state + the way back — "feeling better?" is the

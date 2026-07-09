@@ -21,6 +21,7 @@ final class PersistenceController {
         ChatMessage.self,
         CoachingEvent.self,
         AppNotification.self,
+        DailyCheckin.self,
     ]
 
     private init(inMemory: Bool = false) {

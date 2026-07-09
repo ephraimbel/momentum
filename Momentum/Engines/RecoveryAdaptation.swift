@@ -14,11 +14,17 @@ enum RecoveryAdaptation {
 
     /// Decide whether today should be eased. Requires TWO independent warning signs — one noisy night
     /// never lurches the plan (§1 guardrail). The aggressive tier also counts a *slightly* elevated
-    /// resting HR and a slightly shorter night (the tighter leash it was promised).
-    static func decide(signals: RecoverySignals, intensity: PlanIntensity) -> Decision? {
+    /// resting HR and a slightly shorter night (the tighter leash it was promised). The morning
+    /// check-in counts too: what the athlete says stands equal to what the wearable measured.
+    static func decide(signals: RecoverySignals, intensity: PlanIntensity,
+                       checkin: DailyCheckin? = nil) -> Decision? {
         var reasons: [String] = []
 
         if signals.hrvTrend == .down { reasons.append("HRV below your norm") }
+        if let c = checkin {
+            if c.legs == .sore || c.legs == .heavy { reasons.append("your legs feel \(c.legs.rawValue)") }
+            if c.energy == .low { reasons.append("you're low on energy") }
+        }
 
         // NOTE the trend polarity: `.down` is the "well up" caution (≥4 bpm over baseline); `.up` is
         // slightly raised (1–4 bpm) — only the aggressive leash reacts to the milder form.
