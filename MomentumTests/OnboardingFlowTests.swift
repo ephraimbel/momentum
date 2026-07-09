@@ -126,6 +126,12 @@ struct OnboardingFlowTests {
         #expect(profile.raceDistanceM == RaceDistance.half.meters)
         #expect(profile.plan != nil)
 
+        // The macrocycle persists (§6.1): opens on Base, ends in Taper for a dated race.
+        let phases = try #require(profile.plan?.weekPhases)
+        #expect(phases.first == PlanPhase.base.rawValue)
+        #expect(phases.last == PlanPhase.taper.rawValue)
+        #expect(phases.contains(PlanPhase.build.rawValue))
+
         // The feasibility read honors the injury history: on-track + injuries → gentle recommendation.
         let easy = PlanFeasibility.assess(raceDistanceM: RaceDistance.fiveK.meters, goalFinishTimeS: nil,
                                           currentP5kSPerKm: 320, currentWeeklyVolumeM: 30_000,

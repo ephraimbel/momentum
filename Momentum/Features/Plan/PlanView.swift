@@ -217,10 +217,22 @@ struct PlanView: View {
                     Text("of \(total)").font(.rounded(9, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                 }
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(weekTitle).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
                     .contentTransition(.opacity)
-                Text(weekSummary).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                if let phase = weekPhase {
+                    Text(phase.label.uppercased())
+                        .font(.rounded(9, weight: .black)).tracking(1)
+                        .fixedSize()
+                        .foregroundStyle(phase == .taper ? Theme.background : Theme.inkSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background {
+                            Capsule().fill(phase == .taper ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                            if phase != .taper { Capsule().stroke(Theme.hairline) }
+                        }
+                }
+                Text(weekPhase?.intent ?? weekSummary)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     .contentTransition(.opacity)
             }
             Spacer(minLength: 0)
@@ -229,7 +241,17 @@ struct PlanView: View {
         .padding(Theme.Space.lg)
         .background(card)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(weekTitle), \(weekSummary)")
+        .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase — \($0.intent)" } ?? weekSummary)")
+    }
+
+    /// The macrocycle phase of the displayed week (nil off-plan or for legacy plans without phases).
+    private var weekPhase: PlanPhase? {
+        guard let plan = profiles.first?.plan, !plan.weekPhases.isEmpty,
+              let first = plan.sessions.map(\.date).min(),
+              let firstWeek = Calendar.current.dateInterval(of: .weekOfYear, for: first)?.start else { return nil }
+        let idx = Calendar.current.dateComponents([.weekOfYear], from: firstWeek, to: weekStart).weekOfYear ?? -1
+        guard idx >= 0, idx < plan.weekPhases.count else { return nil }
+        return PlanPhase(rawValue: plan.weekPhases[idx])
     }
 
     private func chevron(_ system: String, _ action: @escaping () -> Void) -> some View {

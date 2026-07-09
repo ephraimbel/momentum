@@ -113,6 +113,7 @@ struct ProgressScreen: View {
                         distanceChart(insights)
                         loadChart(insights)
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
+                        intensityMixCard.id("intensityMix")
                         if !weeklyMuscleActivation.isEmpty { muscleWeek }
                     }
                     .reveal(0.09)
@@ -131,6 +132,9 @@ struct ProgressScreen: View {
                 #if DEBUG   // deterministic scroll to Form/Race for sim verification
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-zones") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("hrZones", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-mix") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("intensityMix", anchor: .center) }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
@@ -316,6 +320,66 @@ struct ProgressScreen: View {
     private func infoParagraph(_ text: String) -> some View {
         Text(text).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The last 28 days of runs → the 80/20 polarized check (prescribed quality outranks the pace read).
+    private var intensityMix: IntensityMix.Mix? {
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -28, to: Date()) else { return nil }
+        let runs = workouts
+            .filter { $0.type.discipline == .running && $0.startedAt >= cutoff }
+            .compactMap { w -> IntensityMix.RunInput? in
+                guard let gps = w.gps, gps.distanceM > 500, w.durationS > 0 else { return nil }
+                return .init(paceSPerKm: w.durationS / (gps.distanceM / 1000),
+                             plannedQuality: w.plannedSession?.runType?.isQuality)
+            }
+        return IntensityMix.analyze(runs: runs, p5kSPerKm: profiles.first?.plan?.p5kSPerKm ?? 0)
+    }
+
+    /// The polarized-training story (§12): one stacked easy/hard bar against the 80/20 target. The
+    /// sweet spot earns the iridescent accent; everything else stays monochrome and matter-of-fact.
+    @ViewBuilder
+    private var intensityMixCard: some View {
+        if let mix = intensityMix {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack(alignment: .firstTextBaseline) {
+                    sectionTitle("Intensity mix")
+                    Spacer()
+                    Text("4 WKS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.1)
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    ZStack(alignment: .leading) {
+                        HStack(spacing: 2) {
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(mix.verdict == .polarized ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.15)))
+                                .frame(width: max(8, w * mix.easyFraction - 1))
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Theme.ink)
+                                .frame(maxWidth: .infinity)
+                        }
+                        // The 80/20 target tick — background-colored so it reads over either segment.
+                        Rectangle().fill(Theme.background).frame(width: 2, height: 22)
+                            .shadow(color: .black.opacity(0.25), radius: 0.5)
+                            .offset(x: w * 0.8)
+                    }
+                }
+                .frame(height: 16)
+                HStack {
+                    Text("\(Int((mix.easyFraction * 100).rounded()))% easy · \(mix.hardCount) hard run\(mix.hardCount == 1 ? "" : "s")")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                    Spacer()
+                    Text("80/20 target").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                Text(mix.blurb)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md).background(card)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Intensity mix over four weeks: \(Int((mix.easyFraction * 100).rounded())) percent easy. \(mix.blurb)")
+        }
     }
 
     /// The athlete's five personalized HR zones (§10) — Karvonen when resting HR is known. Where every
