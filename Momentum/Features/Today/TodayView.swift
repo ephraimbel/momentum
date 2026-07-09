@@ -42,7 +42,6 @@ struct TodayView: View {
     @State private var showInjuryReport = false
     @State private var showCheckin = false
     @State private var confirmResume = false
-    @State private var selectedDaySession: PlannedSession?
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
     @Environment(ModerationStore.self) private var moderation
@@ -169,11 +168,6 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--checkin") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showCheckin = true }
             }
-            if ProcessInfo.processInfo.arguments.contains("--today-day") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    selectedDaySession = plan?.sessions.sorted { $0.date < $1.date }.first
-                }
-            }
             // --loop deep link: open the inline loop suggester straight away (deterministic verification).
             if ProcessInfo.processInfo.arguments.contains("--loop") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
@@ -253,13 +247,6 @@ struct TodayView: View {
                     }
             }
             .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $selectedDaySession) { session in
-            NavigationStack {
-                SessionDetailSheet(session: session, distanceUnit: .auto, profile: profiles.first,
-                                   onRemove: { context.delete(session); try? context.save() })
-            }
-            .presentationDetents([.medium, .large])
         }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
@@ -572,77 +559,6 @@ struct TodayView: View {
         .accessibilityLabel("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")")
     }
 
-    /// Mon–Sun, slim and monochrome — lives at the top of the deck (data belongs with the plan, not
-    /// floating over the map). Today is a quiet ink circle; iridescence appears only where it's
-    /// *earned* — the dot under a day you trained. Tap a day to open its session.
-    private var weekStrip: some View {
-        HStack(spacing: 0) {
-            ForEach(weekDays, id: \.self) { day in
-                let isToday = Calendar.current.isDateInToday(day)
-                Button {
-                    Haptics.light()
-                    if let s = plannedSession(on: day) { selectedDaySession = s }
-                } label: {
-                    VStack(spacing: 5) {
-                        Text("\(Calendar.current.component(.day, from: day))")
-                            .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
-                            .foregroundStyle(isToday ? Theme.background : (day < Date() ? Theme.inkSecondary : Theme.inkTertiary))
-                            .frame(width: 28, height: 28)
-                            .background { if isToday { Circle().fill(Theme.ink) } }
-                        dayMarker(day)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func plannedSession(on day: Date) -> PlannedSession? {
-        plan?.sessions.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
-    }
-
-    private var weekDays: [Date] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let weekday = cal.component(.weekday, from: today)          // 1 = Sun … 7 = Sat
-        let monday = cal.date(byAdding: .day, value: -((weekday + 5) % 7), to: today) ?? today
-        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
-    }
-
-    /// A day's training state for the week strip: filled dot = you trained, hollow ring = planned but
-    /// not done, nothing = rest. Monochrome and legible — the dot means something now.
-    @ViewBuilder
-    private func dayMarker(_ day: Date) -> some View {
-        let cal = Calendar.current
-        let onDay = plan?.sessions.filter { cal.isDate($0.date, inSameDayAs: day) } ?? []
-        let done = onDay.contains { $0.status == .completed || $0.completedWorkout != nil }
-        if done {
-            // Trained — the earned iridescent accent.
-            Circle().fill(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
-                .frame(width: 6, height: 6)
-        } else if !onDay.isEmpty {
-            Circle().stroke(Theme.inkTertiary, lineWidth: 1.5).frame(width: 6, height: 6)
-        } else {
-            Color.clear.frame(width: 6, height: 6)
-        }
-    }
-
-    /// Opens the world: the Today map zooms all the way out to the globe of everyone on Momentum.
-    /// `highPriorityGesture` so the tap reliably wins over the live map's gesture recognizer (a plain
-    /// Button loses the race over Mapbox), same as the globe's exit control.
-    private var worldButton: some View {
-        Image(systemName: "globe")
-            .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-            .frame(width: 44, height: 44)
-            .momentumGlass(in: Circle())
-            .contentShape(Circle())
-            .highPriorityGesture(TapGesture().onEnded { enterWorld() })
-            .accessibilityElement()
-            .accessibilityLabel("See the world")
-            .accessibilityAddTraits(.isButton)
-    }
 
 
     /// A compact label for the header pill — the long enum titles ("Weight Training", "Mountain Bike
@@ -681,8 +597,7 @@ struct TodayView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: Theme.Space.sm) {
-                        worldButton
-                        MapLayersButton(style: $mapStyle)
+                        MapLayersButton(style: $mapStyle, onWorld: { enterWorld() })
                         recenterButton
                     }
                 }
@@ -697,25 +612,20 @@ struct TodayView: View {
     /// thought: today's plan (coaching) → goal (setting) → Start (the one hero) → discovery (explore).
     /// A single hairline divides the coaching context from the action zone; Start is the only filled
     /// element so the hierarchy never competes.
+    /// The deck holds exactly three thoughts: today's plan, Start, and ONE quiet utility line
+    /// (injury state ▸ morning check-in ▸ small actions — whichever matters right now). The week
+    /// lives on the Plan tab; the free-run goal picker appears only when there's no plan to follow.
     private var deck: some View {
         VStack(spacing: 0) {
-            weekStrip
-                .padding(.horizontal, Theme.Space.sm)
-                .padding(.top, Theme.Space.md)
-                .padding(.bottom, Theme.Space.sm)
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-                .padding(.horizontal, Theme.Space.md)
             if let session = pendingToday {
                 planRow(session)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
                     .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
-                injuryBanner
-                checkinChip
-                if isCardio { goalControl }
+                if isCardio && pendingToday == nil { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-                quietActionsRow
+                utilityLine
                 // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
                 // good enough yet (lopsided, backtracking) and Spots is parked. All the code stays
                 // (inline loop mode + `discoverChip` + `--loop`/`--spots` deep links); re-add a chip
@@ -724,6 +634,19 @@ struct TodayView: View {
             .padding(Theme.Space.md)
         }
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+    }
+
+    /// One utility line under Start — whichever matters right now: an active injury (with the way
+    /// back), the unanswered morning check-in, else the quiet actions. Never more than one.
+    @ViewBuilder
+    private var utilityLine: some View {
+        if profiles.first?.activeInjuryArea != nil {
+            injuryBanner
+        } else if DailyCheckin.today(in: checkins) == nil {
+            checkinChip
+        } else {
+            quietActionsRow
+        }
     }
 
     /// Quiet secondary actions beneath Start — log a forgotten workout, or tell the coach something
