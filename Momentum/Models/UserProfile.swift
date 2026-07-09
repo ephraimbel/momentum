@@ -25,6 +25,9 @@ final class UserProfile {
     /// Target race finish time in seconds (race goals) — the athlete's aim, surfaced on the reveal and
     /// compared against the race predictor. nil → no explicit target.
     var goalFinishTimeS: Double?
+    /// How hard the athlete chose to push (PlanIntensity raw value) — shapes the volume ramp + down-week
+    /// cadence. nil → balanced.
+    var planIntensity: String?
     /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.

@@ -17,7 +17,7 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .gentle:     "Gentler ramp, most sustainable"
-        case .balanced:   "Steady progress — recommended"
+        case .balanced:   "Steady, sustainable progress"
         case .aggressive: "Faster gains, more demanding"
         }
     }
@@ -139,7 +139,7 @@ struct PlanFeasibility: Sendable {
         let recommended: PlanIntensity
         switch verdict {
         case .onTrack:
-            recommended = (experience == .new || weeksAvailable >= weeksNeeded + 4) ? .gentle : .balanced
+            recommended = experience == .new ? .gentle : .balanced   // ease in new runners; everyone else builds
         case .tight, .tooShort:
             recommended = .aggressive
         case .noRace:

@@ -70,6 +70,18 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-goaltime") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.step = .raceGoalTime
             }
+            if args.contains("--onboarding-intensity") {
+                vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .half; vm.hasRace = true
+                vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 18, to: Date()) ?? Date()
+                vm.experience = .some; vm.calibrationMode = .feel; vm.paceFeel = .regular; vm.weeklyRunVolumeM = 35_000
+                vm.step = .intensity
+            }
+            if args.contains("--onboarding-intensity-short") {
+                vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
+                vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 6, to: Date()) ?? Date()
+                vm.experience = .new; vm.weeklyRunVolumeM = 15_000
+                vm.step = .intensity
+            }
             #endif
         }
         .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
@@ -162,6 +174,7 @@ struct OnboardingFlow: View {
         case .metrics: metricsStep
         case .why: whyStep
         case .calibration: calibrationStep
+        case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
         case .notifications: notificationsStep
@@ -359,6 +372,68 @@ struct OnboardingFlow: View {
                 .reveal(cascade(i))
             }
             timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
+        }
+    }
+
+    /// How hard to push — led by the honesty banner (what the calendar + current fitness actually
+    /// allow), then the three tiers with the recommended one marked. This is our edge over generic
+    /// plan apps: we tell the truth before we sell the plan.
+    private var intensityStep: some View {
+        let f = vm.feasibility
+        return questionScaffold("How hard do you want to push?",
+                                subtitle: "Same goal — your pace. You can change this anytime.") {
+            feasibilityBanner(f).reveal(cascade(0))
+            ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { i, tier in
+                SelectionCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
+                              subtitle: tier.riskNote ?? tier.subtitle,
+                              isSelected: vm.intensity == tier) {
+                    pick { vm.intensity = tier }
+                }
+                .reveal(cascade(i + 1))
+            }
+        }
+        .onAppear { if !touchedSteps.contains(.intensity) { vm.intensity = f.recommended } }
+    }
+
+    /// The truth about the goal vs. the calendar — the icon carries the verdict; monochrome otherwise.
+    @ViewBuilder
+    private func feasibilityBanner(_ f: PlanFeasibility) -> some View {
+        let icon: String = {
+            switch f.verdict {
+            case .onTrack: "checkmark.seal.fill"
+            case .tight: "exclamationmark.triangle.fill"
+            case .tooShort: "hand.raised.fill"
+            case .noRace: "infinity"
+            }
+        }()
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: icon).font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(f.headline).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+            }
+            if !f.detail.isEmpty {
+                Text(f.detail).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !f.options.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(f.options, id: \.self) { opt in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Theme.purple).padding(.top, 2)
+                            Text(opt).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
         }
     }
 

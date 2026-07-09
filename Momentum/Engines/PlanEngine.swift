@@ -78,9 +78,13 @@ enum PlanEngine {
         var weeks: [GeneratedWeek] = []
         var buildIndex = 0
         var lastBuildMult = 1.0
+        // The chosen intensity sets how fast volume ramps and how often we cut back. Aggressive ramps
+        // harder and stacks a little more before easing; gentle ramps softly and rests more often.
+        let ramp = profile.intensity.weeklyRamp
+        let downEvery = profile.intensity.buildWeeksPerDownWeek + 1   // deload on the Nth week
         for w in 0..<totalWeeks {
             let isTaper = taperWeeks > 0 && w >= totalWeeks - taperWeeks
-            let isDeload = !isTaper && (w % 4 == 3)
+            let isDeload = !isTaper && (w % downEvery == downEvery - 1)
             let volumeMult: Double
             if isTaper {
                 let into = w - (totalWeeks - taperWeeks)
@@ -88,7 +92,7 @@ enum PlanEngine {
             } else if isDeload {
                 volumeMult = lastBuildMult * 0.7
             } else {
-                volumeMult = pow(1.08, Double(buildIndex))
+                volumeMult = pow(ramp, Double(buildIndex))
                 lastBuildMult = volumeMult
                 buildIndex += 1
             }
@@ -468,4 +472,6 @@ struct PlanInputs: Sendable {
     var muscleFocus: [MuscleGroup] = []
     /// Preferred in-week day offsets (0…6 from the plan's start day). Empty → even auto-spread.
     var preferredDayOffsets: [Int] = []
+    /// How hard to push — sets the weekly volume ramp + down-week cadence. Defaults to balanced.
+    var intensity: PlanIntensity = .balanced
 }

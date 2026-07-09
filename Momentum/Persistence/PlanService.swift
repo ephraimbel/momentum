@@ -108,7 +108,8 @@ enum PlanService {
             currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
             hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
-            preferredDayOffsets: offsets)
+            preferredDayOffsets: offsets,
+            intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced)
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,

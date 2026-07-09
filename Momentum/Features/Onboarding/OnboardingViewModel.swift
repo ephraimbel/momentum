@@ -43,6 +43,23 @@ final class OnboardingViewModel {
 
     // Hybrid emphasis (run + lift athletes) — biases the run/lift day split.
     var hybridPriority: HybridPriority = .balanced
+    // How hard to push toward the goal (Take your time / Balanced / Aggressive). Pre-set to the honest
+    // recommendation when the intensity step appears; the athlete can override.
+    var intensity: PlanIntensity = .balanced
+
+    /// The honest read on the athlete's goal vs. the calendar + their current fitness — drives the
+    /// intensity step's headline, recommendation, and any "here's the truth" alternatives.
+    var feasibility: PlanFeasibility {
+        let p5k = calibration.recentRun.map { PlanEngine.riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
+            ?? calibration.estimatedP5kSPerKm
+        return PlanFeasibility.assess(
+            raceDistanceM: goal == .raceDistance ? raceDistance?.meters : nil,
+            goalFinishTimeS: goalFinishTimeS,
+            currentP5kSPerKm: p5k,
+            currentWeeklyVolumeM: weeklyRunVolumeM ?? 0,
+            weeksAvailable: hasRace ? (weeksToRace ?? 16) : 999,   // no date → no time pressure
+            experience: experience)
+    }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0
     var goalMinutes = 0
@@ -94,7 +111,7 @@ final class OnboardingViewModel {
         // right body everywhere it appears.
         case name, goal, disciplines, experience, metrics, race, raceGoalTime, muscleFocus,
              runVolume, days, preferredDays, session, equipment, hybridFocus, why, calibration,
-             building, reveal, notifications, primers
+             intensity, building, reveal, notifications, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -111,6 +128,8 @@ final class OnboardingViewModel {
             case .equipment:   return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
             case .calibration: return running
+            // How hard to push — a running decision (endurance focus); paired with the honesty check.
+            case .intensity:   return running
             // Current mileage only makes sense once you have some — beginners keep the gentle default.
             case .runVolume:   return running && experience != .new
             default:           return true
@@ -268,6 +287,7 @@ final class OnboardingViewModel {
             profile.longestRunM = longestRunM
         }
         if hybrid { profile.hybridPriority = hybridPriority.rawValue }
+        if running { profile.planIntensity = intensity.rawValue }
         if goal == .raceDistance { profile.goalFinishTimeS = goalFinishTimeS }
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
