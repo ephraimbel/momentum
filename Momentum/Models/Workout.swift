@@ -45,6 +45,12 @@ final class GPSDetail {
 
     @Relationship(deleteRule: .cascade) var samples: [LocationSample] = []
     @Relationship(deleteRule: .cascade) var splits: [Split] = []
+    /// Per-rep results from a guided structured run (JSON-encoded `[RepResult]`) — the post-run
+    /// adherence breakdown. nil for a plain run.
+    var structuredRepsData: Data?
+    var structuredReps: [RepResult] {
+        structuredRepsData.flatMap { try? JSONDecoder().decode([RepResult].self, from: $0) } ?? []
+    }
 
     init() {}
 }

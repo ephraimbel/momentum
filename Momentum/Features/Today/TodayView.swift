@@ -11,6 +11,8 @@ struct TodayView: View {
     @Environment(Services.self) private var services
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
+    @Query private var appNotifications: [AppNotification]
+    @Query private var checkins: [DailyCheckin]
 
     // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
@@ -21,6 +23,9 @@ struct TodayView: View {
     @State private var viewport: Viewport = .idle
     @State private var launch: TodayLaunch?
     @State private var locator = LocationService()
+    /// Where the map opens for a brand-new athlete with no fix and no location permission yet — a
+    /// neutral view, never the puck (which would prompt). Start/recenter asks + flies to them.
+    private static let defaultMapCenter = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
     @State private var mapStyle: MapStyleOption = .standard
@@ -31,6 +36,12 @@ struct TodayView: View {
     // Spots is hidden for now; reachable only via the `--spots` deep link. "Loop here" from it enters
     // inline loop mode after the sheet dismisses (presenting/transitioning on one tick misbehaves).
     @State private var showSpots = false
+    @State private var showNotifications = false
+    @State private var showProfile = false
+    @State private var showLogWorkout = false
+    @State private var showInjuryReport = false
+    @State private var showCheckin = false
+    @State private var confirmResume = false
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
     @Environment(ModerationStore.self) private var moderation
@@ -90,13 +101,55 @@ struct TodayView: View {
             services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
                                                        isPlannedDayToday: plannedToday,
                                                        hasWorkedOutToday: workedOutToday)
+            // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
+            if let s = PlanCoaching.todaySessions(plan, on: Date()).first {
+                AppNotification.post(kind: .reminder, title: "Today's session is ready",
+                                     body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
+            }
+            AppNotification.post(kind: .system, title: "Welcome to momentum",
+                                 body: "Your plan is set. Tap Start whenever you're ready to move.",
+                                 in: context, dedupeToken: "welcome", daily: false)
+            // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
+            // carb-load → kit → race-day fueling), each posted once.
+            if let profile = profiles.first, let raceDate = profile.raceDate,
+               let distanceM = profile.raceDistanceM, distanceM > 0,
+               let daysOut = Calendar.current.dateComponents(
+                   [.day], from: Calendar.current.startOfDay(for: Date()),
+                   to: Calendar.current.startOfDay(for: raceDate)).day,
+               let briefing = RaceBriefing.build(distanceM: distanceM,
+                                                 p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
+                AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
+                                     in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
+            }
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
-            // Open over the athlete's last-known neighborhood (never the whole world); once a live
-            // fix lands we switch to following the location puck.
+            // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
+            // load in the danger zone + the body agreeing forces a real cutback week (throttled to
+            // one/week); otherwise two warning signs just ease *today's* quality session.
+            Task {
+                let signals = await services.health.recoverySignals()
+                let acwr = ProgressInsights(workouts: workouts).acwr
+                if let cutback = RecoveryAdaptation.tripwire(acwr: acwr, signals: signals) {
+                    if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
+                }
+                let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
+                if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier,
+                                                            checkin: DailyCheckin.today(in: checkins)) {
+                    _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
+                }
+            }
+            // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
+            // lands we switch to following the puck. We only *follow the puck* up front when location is
+            // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
+            // (last-known, else a neutral default) until they grant it via Start/recenter.
             if case .idle = viewport {
-                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 13.5, pitch: mapStyle.explorePitch) }
-                    ?? .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
+                if let coord = lastKnownCoordinate {
+                    viewport = .camera(center: coord, zoom: 13.5, pitch: mapStyle.explorePitch)
+                } else if locator.isAuthorized {
+                    viewport = .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
+                } else {
+                    viewport = .camera(center: Self.defaultMapCenter, zoom: 11, pitch: mapStyle.explorePitch)
+                }
             }
             #if DEBUG
             // --world deep link: let the map bind, then fly out to the globe (same path as the button).
@@ -108,14 +161,50 @@ struct TodayView: View {
             if ProcessInfo.processInfo.arguments.contains("--spots") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSpots = true }
             }
+            // --notifications: open the bell inbox for verification.
+            if ProcessInfo.processInfo.arguments.contains("--notifications") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showNotifications = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--today-profile") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showProfile = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--log-workout") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--injury-report") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showInjuryReport = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--checkin") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showCheckin = true }
+            }
             // --loop deep link: open the inline loop suggester straight away (deterministic verification).
             if ProcessInfo.processInfo.arguments.contains("--loop") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
             }
+            // --ui-test-structured-run: launch straight into a guided 6×400 m interval session so the
+            // structured-workout flow (step banner + Skip advancement + cues) is drivable deterministically.
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-structured-run") {
+                let variety = ProcessInfo.processInfo.arguments.contains("--ui-test-variety")
+                let session = PlannedSession()
+                session.discipline = .running
+                session.runType = variety ? .hills : .intervals
+                session.targetDistanceM = 3000
+                session.targetPaceSPerKm = variety ? 380 : 300
+                session.intervals = variety ? "8×45sec hills" : "6×400m @ 5K pace"
+                session.date = Date()
+                context.insert(session)   // inserted so post-run crediting behaves like a real plan session
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    launch = .cardio(type: .run, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+                }
+            }
             #endif
-            // Show the athlete on their map. Only prompts if still undetermined (onboarding's primer
-            // usually settled this); requesting also pulls a one-shot fix to center the map on them.
-            locator.requestAuthorization()
+            // Never prompt for location on arrival — the map opens at the last-known neighborhood and
+            // the GPS ask happens contextually (Start a run, or tap recenter). If they've already
+            // granted it, just pull a fresh fix to center on them.
+            if locator.isAuthorized { locator.refreshLocation() }
         }
         // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
@@ -139,6 +228,37 @@ struct TodayView: View {
         }
         .sheet(isPresented: $showSportPicker) {
             SportPicker(selection: $activity) { showSportPicker = false }
+        }
+        .sheet(isPresented: $showNotifications) { NotificationsView() }
+        .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
+        .sheet(isPresented: $showInjuryReport) { InjuryReportSheet(profile: profiles.first) }
+        .sheet(isPresented: $showCheckin) {
+            CheckinSheet(profile: profiles.first) {
+                // "Something hurts" routes straight into the injury loop.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showInjuryReport = true }
+            }
+        }
+        .confirmationDialog("Feeling better?", isPresented: $confirmResume, titleVisibility: .visible) {
+            Button("Yes — ease me back in") {
+                if let profile = profiles.first {
+                    _ = InjuryResponse.resume(profile: profile, in: context)
+                    Haptics.success()
+                }
+            }
+            Button("Not yet", role: .cancel) {}
+        } message: {
+            Text("We'll start with a short recovery run and easy miles — quality work returns once you're settled.")
+        }
+        .sheet(isPresented: $showProfile) {
+            NavigationStack {
+                ProfileScreen()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showProfile = false }.fontWeight(.semibold)
+                        }
+                    }
+            }
+            .presentationDragIndicator(.visible)
         }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
@@ -245,8 +365,11 @@ struct TodayView: View {
     }
 
     private var mapLayer: some View {
+        MapReader { proxy in
         Map(viewport: $viewport) {
-            Puck2D(bearing: .heading).brandStyled()   // the athlete's purple location puck (this is you)
+            // The purple location puck ("you") is configured imperatively in `.onStyleLoaded` below —
+            // the SwiftUI `Puck2D` content force-unwraps a Mapbox bundled asset that fails to load on
+            // some devices and hard-crashes (PuckType.makeDefault).
             // Zoomed out to the world: every athlete on Momentum as a glowing iridescent dot at their
             // (city-level, fuzzed) location. Tap one to open that athlete. Honest presence — the real
             // community only, no fabricated crowd. Gated on `mapShowsGlobe` (not `worldMode`) so the dots
@@ -283,7 +406,12 @@ struct TodayView: View {
         }
         .mapStyle(activeMapboxStyle)
         .ornamentOptions(MapChrome.hidden)
+        // Enabling the puck activates Mapbox's location provider, which prompts for permission — so we
+        // only turn it on once the athlete has actually granted location (never up front on arrival).
+        .onStyleLoaded { _ in if locator.isAuthorized { BrandPuck.apply(to: proxy) } }
+        .onChange(of: locator.isAuthorized) { _, granted in if granted { BrandPuck.apply(to: proxy) } }
         .ignoresSafeArea()
+        }
     }
 
     /// The globe wears Mapbox Standard — a vivid, *living* vector Earth: bright blue oceans, green/tan
@@ -297,21 +425,28 @@ struct TodayView: View {
     private var strengthHome: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
-            VStack(spacing: Theme.Space.lg) {
-                Spacer()
-                if activity.isStrengthStyle {
-                    // The lifting identity: a body map glowing with the muscles from your last session
-                    // (a quiet empty silhouette before your first lift), then the readout below.
-                    MuscleMapView(activation: lastStrengthActivation)
-                        .frame(height: 300)
-                        .frame(maxWidth: .infinity)
-                    lastStrengthReadout
-                } else {
-                    IridescentOrb(size: 132)   // timed sports (yoga, etc.) keep the brand orb
+            // A scroll view so the muscle map + last-session card always clear the floating header and
+            // deck — nothing gets cut off, and a tall session just scrolls. The insets reserve the
+            // space the header (top) and control deck (bottom) float over.
+            ScrollView {
+                VStack(spacing: Theme.Space.md) {
+                    if activity.isStrengthStyle {
+                        // The lifting identity: a body map glowing with the muscles from your last
+                        // session (a quiet empty silhouette before your first lift), then the readout.
+                        MuscleMapView(activation: lastStrengthActivation)
+                            .frame(height: 236)
+                            .frame(maxWidth: .infinity)
+                        lastStrengthReadout
+                    } else {
+                        IridescentOrb(size: 124).padding(.top, Theme.Space.xl)   // timed sports keep the orb
+                    }
                 }
-                Spacer(); Spacer()   // bias the figure to the upper-middle, clear of the bottom panel
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.top, 148)      // clear the floating header card
+                .padding(.bottom, 220)   // clear the floating control deck
             }
-            .padding(.horizontal, Theme.Space.xl)
+            .scrollIndicators(.hidden)
         }
     }
 
@@ -386,38 +521,76 @@ struct TodayView: View {
 
     private var topBar: some View {
         VStack {
-            HStack(spacing: Theme.Space.sm) {
-                activitySelector
-                Spacer()
-                worldButton
-                StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
-            }
-            .padding(Theme.Space.md)
+            headerCard
             Spacer()
         }
     }
 
-    /// Opens the world: the Today map zooms all the way out to the globe of everyone on Momentum.
-    /// `highPriorityGesture` so the tap reliably wins over the live map's gesture recognizer (a plain
-    /// Button loses the race over Mapbox), same as the globe's exit control.
-    private var worldButton: some View {
-        Image(systemName: "globe")
-            .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-            .frame(width: 44, height: 44)
-            .momentumGlass(in: Circle())
-            .contentShape(Circle())
-            .highPriorityGesture(TapGesture().onEnded { enterWorld() })
-            .accessibilityElement()
-            .accessibilityLabel("See the world")
-            .accessibilityAddTraits(.isButton)
+    /// A clean header card floating over the map (Runna-style): profile + notifications on the left, the
+    /// live streak centered, the world on the right — and a week strip below that dots the days you
+    /// train and marks today. The map shows through everywhere else.
+    /// The floating header — individual glass elements over the map (the Apple Maps / AllTrails
+    /// convention), not an opaque slab. Avatar + bell left, the sport pill center, streak right; the
+    /// week lives with the plan in the deck, where data belongs.
+    private var headerCard: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Button { Haptics.light(); showProfile = true } label: {
+                AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
+                    .background(Circle().fill(.regularMaterial).padding(-3))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Your profile")
+            bellButton
+            Spacer(minLength: Theme.Space.xs)
+            activitySelector
+            Spacer(minLength: Theme.Space.xs)
+            StreakChip(days: ProfileStats(workouts: workouts).currentStreak)
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.top, Theme.Space.sm)
+    }
+
+    private var unreadCount: Int { appNotifications.filter { !$0.read }.count }
+
+    private var bellButton: some View {
+        Button { Haptics.light(); showNotifications = true } label: {
+            Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44).momentumGlass(in: Circle())
+                .overlay(alignment: .topTrailing) {
+                    if unreadCount > 0 {
+                        Text("\(min(unreadCount, 9))")
+                            .font(.rounded(9, weight: .black)).foregroundStyle(Theme.background)
+                            .frame(width: 17, height: 17)
+                            .background(Circle().fill(Theme.ink))
+                            .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                            .offset(x: 3, y: -3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")")
     }
 
 
+
+    /// A compact label for the header pill — the long enum titles ("Weight Training", "Mountain Bike
+    /// Ride") would push the streak off the row, so the pill uses short forms.
+    private var activityShortLabel: String {
+        switch activity {
+        case .strength: "Strength"
+        case .mountainBikeRide: "MTB"
+        case .eBikeRide: "E-Bike"
+        case .gravelRide: "Gravel"
+        case .trailRun: "Trail"
+        default: activity.title
+        }
+    }
+
     private var activitySelector: some View {
         Button { Haptics.light(); showSportPicker = true } label: {
-            HStack(spacing: Theme.Space.sm) {
+            HStack(spacing: 6) {
                 Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
-                Text(activity.title).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
+                Text(activityShortLabel).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
             }
             .fixedSize()
@@ -433,7 +606,13 @@ struct TodayView: View {
     private var bottomPanel: some View {
         VStack(spacing: Theme.Space.sm) {
             if isCardio {
-                HStack(spacing: Theme.Space.sm) { Spacer(); MapLayersButton(style: $mapStyle); recenterButton }
+                HStack {
+                    Spacer()
+                    VStack(spacing: Theme.Space.sm) {
+                        MapLayersButton(style: $mapStyle, onWorld: { enterWorld() })
+                        recenterButton
+                    }
+                }
             }
             deck
         }
@@ -445,6 +624,9 @@ struct TodayView: View {
     /// thought: today's plan (coaching) → goal (setting) → Start (the one hero) → discovery (explore).
     /// A single hairline divides the coaching context from the action zone; Start is the only filled
     /// element so the hierarchy never competes.
+    /// The deck holds exactly three thoughts: today's plan, Start, and ONE quiet utility line
+    /// (injury state ▸ morning check-in ▸ small actions — whichever matters right now). The week
+    /// lives on the Plan tab; the free-run goal picker appears only when there's no plan to follow.
     private var deck: some View {
         VStack(spacing: 0) {
             if let session = pendingToday {
@@ -453,19 +635,114 @@ struct TodayView: View {
                     .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
-                if isCardio { goalControl }
+                if isCardio && pendingToday == nil { goalControl }
                 OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
-                // Discovery — a quiet footer, lighter than Start. Shown whenever we can place the athlete
-                // (a live fix or last-known neighborhood), so the loop suggester isn't hidden waiting.
-                // (Spots is built but hidden for now — re-enable its chip when that feature ships.)
-                if isCardio, activity.discipline != .cycling, spotsOrigin != nil {
-                    discoverChip("Suggest a loop", icon: "arrow.triangle.capsulepath",
-                                 a11y: "Suggest a running loop") { enterLoopMode(start: nil) }
-                }
+                utilityLine
+                // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
+                // good enough yet (lopsided, backtracking) and Spots is parked. All the code stays
+                // (inline loop mode + `discoverChip` + `--loop`/`--spots` deep links); re-add a chip
+                // here to bring either back once it's ready.
             }
             .padding(Theme.Space.md)
         }
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+    }
+
+    /// One utility line under Start — whichever matters right now: an active injury (with the way
+    /// back), the unanswered morning check-in, else the quiet actions. Never more than one.
+    @ViewBuilder
+    private var utilityLine: some View {
+        if profiles.first?.activeInjuryArea != nil {
+            injuryBanner
+        } else if DailyCheckin.today(in: checkins) == nil {
+            checkinChip
+        } else {
+            quietActionsRow
+        }
+    }
+
+    /// Quiet secondary actions beneath Start — log a forgotten workout, or tell the coach something
+    /// hurts (the injury loop, ENDURANCE-FOCUS §8.2). Neither competes with the hero.
+    private var quietActionsRow: some View {
+        HStack(spacing: 0) {
+            quietAction("square.and.pencil", "Add a past workout", a11y: "Add a workout you forgot to track") {
+                showLogWorkout = true
+            }
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
+            quietAction("bandage.fill", "Something hurts?", a11y: "Report a pain or injury — your plan adjusts") {
+                showInjuryReport = true
+            }
+        }
+    }
+
+    private func quietAction(_ icon: String, _ title: String, a11y: String, action: @escaping () -> Void) -> some View {
+        Button { Haptics.light(); action() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 13, weight: .bold))
+                Text(title).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+            }
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(maxWidth: .infinity).frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(a11y)
+    }
+
+    /// The morning check-in nudge — one quiet line, gone the moment today's answered (or an injury is
+    /// already active, which outranks it).
+    @ViewBuilder
+    private var checkinChip: some View {
+        if DailyCheckin.today(in: checkins) == nil, profiles.first?.activeInjuryArea == nil {
+            Button { Haptics.light(); showCheckin = true } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "sun.max.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("How are you feeling today?")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                    Text("10 sec").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+                .background {
+                    Capsule().fill(Theme.surface)
+                    Capsule().stroke(Theme.hairline)
+                }
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Morning check-in — how are you feeling today? Takes ten seconds.")
+        }
+    }
+
+    /// While an injury is active: the plan's protective state + the way back — "feeling better?" is the
+    /// gate into the gentle return (InjuryResponse.resume). Empty when healthy.
+    @ViewBuilder
+    private var injuryBanner: some View {
+        if let profile = profiles.first, let areaRaw = profile.activeInjuryArea,
+           let area = InjuryArea(rawValue: areaRaw) {
+            Button { Haptics.light(); confirmResume = true } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "bandage.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.purple)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Training around your \(area.label.lowercased())")
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text("Feeling better? Tap to ease back in.")
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+                .background {
+                    Capsule().fill(Theme.purple.opacity(0.08))
+                    Capsule().stroke(Theme.purple.opacity(0.25))
+                }
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Training around your \(area.label). Feeling better? Tap to ease back into running.")
+        }
     }
 
     /// A small, soft secondary action — icon + short label, capsule, muted ink. Deliberately lighter
@@ -979,17 +1256,19 @@ struct TrainingLoadChip: View {
     }
 }
 
-/// A streak chip — flame + count; lights up iridescent when the streak is alive.
+/// A streak chip — a clean monochrome pill: flame glyph + day count. Static and restrained (the earned
+/// celebration lives on the finish/summary screen, not this passive header chip).
 struct StreakChip: View {
     let days: Int
+
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "flame.fill")
+        HStack(spacing: 5) {
+            Image(systemName: "flame.fill").font(.system(size: 13, weight: .semibold))
             Text("\(days)").font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
         }
         .foregroundStyle(Theme.ink)
-        .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
-        .momentumGlass(iridescent: days > 0 ? .chip : nil)
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
+        .momentumGlass()
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
     }

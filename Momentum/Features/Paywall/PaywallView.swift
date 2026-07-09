@@ -21,24 +21,38 @@ struct PaywallView: View {
 
     private static let benefits: [(String, String)] = [
         ("brain.head.profile", "An adaptive AI coach that learns you"),
-        ("calendar", "Full multi-discipline plans, programs & adaptation"),
-        ("chart.xyaxis.line", "Advanced analytics — e1RM, training load, trends"),
-        ("clock.arrow.circlepath", "Your full history, forever"),
-        ("square.and.arrow.up", "Every share style"),
+        ("figure.run", "Full multi-discipline plans & daily adaptation"),
+        ("chart.xyaxis.line", "Advanced analytics — e1RM, load & trends"),
+        ("infinity", "Unlimited history and every share style"),
     ]
 
     var body: some View {
         ScrollView {
-            VStack(spacing: Theme.Space.xl) {
+            VStack(spacing: Theme.Space.lg) {
                 hero
                 benefitList
                 plans
+            }
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.xxl)
+            .padding(.bottom, Theme.Space.md)
+        }
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
+        // Only the CTA is pinned — `safeAreaInset` insets the scroll content above it, so the plans and
+        // features are never covered. Everything else flows in one clean column.
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: Theme.Space.sm) {
                 cta
                 fineprint
             }
-            .padding(Theme.Space.lg)
-            .padding(.top, Theme.Space.xxl)
-            .padding(.bottom, Theme.Space.xl)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.xs)
+            .background {
+                Theme.background.ignoresSafeArea(edges: .bottom)
+                Rectangle().fill(Theme.hairline).frame(height: 0.5).frame(maxHeight: .infinity, alignment: .top)
+            }
         }
         .background(Theme.background.ignoresSafeArea())
         .overlay(alignment: .topTrailing) { closeButton }
@@ -49,32 +63,42 @@ struct PaywallView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(spacing: Theme.Space.md) {
-            IridescentOrb(size: 84)
-            VStack(spacing: 6) {
-                Text("Momentum Pro").font(.display(26, weight: .bold)).foregroundStyle(Theme.ink)
-                Text("Unlock \(feature.displayName) and everything below.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
+        VStack(spacing: Theme.Space.sm + 2) {
+            // Brand lockup: the wordmark + a purple PRO badge — premium, unmistakably ours.
+            HStack(spacing: 8) {
+                Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 19)
+                Text("PRO").font(.rounded(11, weight: .black)).tracking(1.5).foregroundStyle(.white)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.purple))
             }
+            .accessibilityLabel("Momentum Pro")
+            Text("Train smarter,\nevery session.")
+                .font(.serif(28, weight: .semibold)).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            Text("Unlock \(feature.displayName) — and every Pro feature.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.bottom, Theme.Space.xs)
     }
 
     private var benefitList: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
             ForEach(Self.benefits, id: \.0) { icon, text in
                 HStack(spacing: Theme.Space.md) {
                     Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                        .frame(width: 26)
-                    Text(text).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.purple)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Theme.purple.opacity(0.1)))
+                    Text(text).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
     }
 
     // MARK: Plans
@@ -82,9 +106,16 @@ struct PaywallView: View {
     private var plans: some View {
         VStack(spacing: Theme.Space.sm) {
             planCard(offering.annual, period: .annual,
-                     badge: "Save \(offering.annualSavingsPercent)% · 7-day free trial")
+                     badge: "7-day free trial, then save \(offering.annualSavingsPercent)%")
+                .overlay(alignment: .top) {
+                    Text("BEST VALUE").font(.rounded(10, weight: .black)).tracking(1.2).foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(Theme.purple))
+                        .offset(y: -9)
+                }
             planCard(offering.monthly, period: .monthly, badge: nil)
         }
+        .padding(.top, 6)   // room for the floating badge
     }
 
     private func planCard(_ p: PaywallProduct, period: PaywallProduct.Period, badge: String?) -> some View {
@@ -94,8 +125,8 @@ struct PaywallView: View {
         } label: {
             HStack(spacing: Theme.Space.md) {
                 ZStack {
-                    Circle().stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: 2).frame(width: 22, height: 22)
-                    if isSelected { Circle().fill(Theme.ink).frame(width: 12, height: 12) }
+                    Circle().stroke(isSelected ? Theme.purple : Theme.hairline, lineWidth: 2).frame(width: 22, height: 22)
+                    if isSelected { Circle().fill(Theme.purple).frame(width: 12, height: 12) }
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(p.isAnnual ? "Annual" : "Monthly")
@@ -115,12 +146,8 @@ struct PaywallView: View {
             .padding(Theme.Space.lg)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                shape.fill(Theme.surface)
-                if isSelected && p.isAnnual {
-                    shape.stroke(IridescentMaterial(), lineWidth: 2)   // earned iridescence on the hero plan
-                } else {
-                    shape.stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: isSelected ? 2 : 1)
-                }
+                shape.fill(isSelected ? Theme.purple.opacity(0.06) : Theme.surface)
+                shape.stroke(isSelected ? Theme.purple : Theme.hairline, lineWidth: isSelected ? 2 : 1)
             }
         }
         .buttonStyle(.plain)

@@ -83,8 +83,12 @@ struct RecoveryModel {
     }
 
     /// One-line, no-shame guidance for the band — what to do today.
-    var guidance: String {
-        switch readiness {
+    var guidance: String { Self.guidance(readiness) }
+
+    /// Guidance for an arbitrary band — used when a device-blended readiness re-bands the score
+    /// (`RecoverySignals.blendedReadiness`) so the copy matches the blended, not the load-only, level.
+    static func guidance(_ band: Readiness) -> String {
+        switch band {
         case .primed:   "Well recovered — a good day to push."
         case .ready:    "Recovered and ready for quality work."
         case .moderate: "Moderate load — keep today honest, not heroic."

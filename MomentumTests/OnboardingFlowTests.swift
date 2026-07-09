@@ -77,4 +77,66 @@ struct OnboardingFlowTests {
         #expect(profile.disciplines == ["running"])  // only the programmable one drives the engine
         #expect(profile.daysPerWeek == 3)            // the athlete's choice is preserved for display
     }
+
+    /// Full-flow integrity for the endurance profiler: a race-goal runner walks every step in the
+    /// designed order (injuries after experience, health consent before intensity), and everything
+    /// they answered persists onto the profile that seeds the plan.
+    @Test func enduranceProfilerWalksInOrderAndPersists() throws {
+        let pc = PersistenceController.inMemory()
+        let ctx = pc.container.mainContext
+
+        let vm = OnboardingViewModel()
+        vm.activities = [.run]
+        vm.goal = .raceDistance
+        vm.raceDistance = .half
+        vm.hasRace = true
+        vm.experience = .some
+        vm.injuryAreas = [.shins, .itBand]
+        vm.weeklyRunVolumeM = 30_000
+        vm.longestRunM = 12_000
+        vm.intensity = .aggressive
+
+        // Step order: the coach-interview arc holds (broad → specific → consent → commitment).
+        let steps = vm.steps
+        func idx(_ s: OnboardingViewModel.Step) throws -> Int { try #require(steps.firstIndex(of: s)) }
+        #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
+        #expect(try idx(.injuries) < idx(.race))             // before the race specifics
+        #expect(try idx(.calibration) < idx(.health))        // fitness baseline → recovery consent
+        #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
+        #expect(try idx(.intensity) < idx(.building))        // last decision before the build
+        #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
+
+        // Walk the whole flow front to back — advance() must traverse every step without a dead end.
+        vm.step = steps.first!
+        var visited: [OnboardingViewModel.Step] = [vm.step]
+        while vm.step != steps.last {
+            let before = vm.step
+            vm.advance()
+            #expect(vm.step != before)                       // never stuck
+            visited.append(vm.step)
+            if visited.count > steps.count { break }         // safety against an infinite loop
+        }
+        #expect(visited == steps)                            // exactly the designed order, no skips
+
+        // Everything they answered lands on the profile.
+        let profile = vm.finish(in: ctx)
+        #expect(profile.injuryHistory == ["itBand", "shins"])
+        #expect(profile.planIntensity == "aggressive")
+        #expect(profile.weeklyRunVolumeM == 30_000)
+        #expect(profile.raceDistanceM == RaceDistance.half.meters)
+        #expect(profile.plan != nil)
+
+        // The macrocycle persists (§6.1): opens on Base, ends in Taper for a dated race.
+        let phases = try #require(profile.plan?.weekPhases)
+        #expect(phases.first == PlanPhase.base.rawValue)
+        #expect(phases.last == PlanPhase.taper.rawValue)
+        #expect(phases.contains(PlanPhase.build.rawValue))
+
+        // The feasibility read honors the injury history: on-track + injuries → gentle recommendation.
+        let easy = PlanFeasibility.assess(raceDistanceM: RaceDistance.fiveK.meters, goalFinishTimeS: nil,
+                                          currentP5kSPerKm: 320, currentWeeklyVolumeM: 30_000,
+                                          weeksAvailable: 16, experience: .some, injuryProne: true)
+        #expect(easy.verdict == .onTrack)
+        #expect(easy.recommended == .gentle)
+    }
 }

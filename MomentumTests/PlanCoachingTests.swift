@@ -327,4 +327,63 @@ struct PlanCoachingTests {
 
         #expect(PlanCoaching.proposeAdjustment(plan, workouts: workouts) == nil)
     }
+
+    // MARK: RPE → adaptation (the subjective loop)
+
+    @Test func rpeAdaptationEasesAndIsGatedWeekly() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        // A future quality session + a just-completed easy run that "felt brutal" (RPE 8).
+        let future = PlannedSession()
+        future.date = Calendar.current.date(byAdding: .day, value: 2, to: Date())!
+        future.discipline = .running; future.runType = .intervals; future.status = .planned
+        future.targetDistanceM = 6000; future.targetPaceSPerKm = 300; future.intervals = "6×400m @ 5K"
+        let easyDone = PlannedSession()
+        easyDone.date = Calendar.current.startOfDay(for: Date())
+        easyDone.discipline = .running; easyDone.runType = .easy; easyDone.status = .completed
+        let plan = makePlan(in: ctx, sessions: [future, easyDone])
+        plan.p5kSPerKm = 300
+
+        let workout = Workout(); workout.type = .run; workout.startedAt = Date()
+        workout.perceivedEffort = 8
+        workout.plannedSession = easyDone; easyDone.completedWorkout = workout
+        ctx.insert(workout)
+
+        let note = PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx)
+        #expect(note != nil)                          // it changed the plan and narrated it
+        #expect(note?.detail.contains("easy run") == true)   // names the session that felt hard
+        #expect(future.runType == .recovery)          // the next hard session became a recovery day
+        #expect(plan.lastAdaptedAt != nil)
+        // A coaching event is recorded for the adaptation-history timeline.
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 1 && events.first?.kind == .recover)
+        // The ≤1/week gate blocks a second adaptation.
+        #expect(PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx) == nil)
+    }
+
+    @Test func coachingEventRecordDedupesSameKindSameDay() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let today = Date(timeIntervalSince1970: 1_000_000)
+        CoachingEvent.record(kind: .ease, headline: "A", detail: "a", on: today, in: ctx)
+        CoachingEvent.record(kind: .ease, headline: "B", detail: "b", on: today, in: ctx)      // same kind+day → skipped
+        CoachingEvent.record(kind: .recover, headline: "C", detail: "c", on: today, in: ctx)   // different kind → kept
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 2)
+    }
+
+    @Test func rpeAdaptationNoOpWhenEffortMatchesPrescription() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let done = PlannedSession()
+        done.date = Calendar.current.startOfDay(for: Date())
+        done.discipline = .running; done.runType = .intervals; done.status = .completed
+        let plan = makePlan(in: ctx, sessions: [done])
+        let workout = Workout(); workout.type = .run; workout.startedAt = Date()
+        workout.perceivedEffort = 8                   // a hard session that felt appropriately hard
+        workout.plannedSession = done; done.completedWorkout = workout
+        ctx.insert(workout)
+        #expect(PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx) == nil)
+        #expect(plan.lastAdaptedAt == nil)            // nothing changed
+    }
 }

@@ -110,10 +110,20 @@ protocol HealthServing: AnyObject {
     func save(_ workout: Workout) async
     /// Read the athlete's latest body mass + resting HR (for personalizing estimates). nils if N/A.
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
+    /// Read recovery signals wearables mirror into Health — HRV, resting HR, and last night's sleep,
+    /// each with a personal baseline (for the readiness card). `.empty` if unavailable/unauthorized.
+    func recoverySignals() async -> RecoverySignals
+    /// The device-measured VO₂max from Apple Health (Watch/Garmin), preferred over our pace estimate.
+    func measuredVO2Max() async -> Double?
     /// Import workouts from other sources (Apple Watch, Garmin via Health, …) into our store.
     /// De-duplicated; skips our own writes. Returns the number newly imported.
     @discardableResult
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int
+    /// Estimate the athlete's current running baseline (fitness + load) from their recent Health run
+    /// history — the onboarding "it already understands me" import. nil when there isn't enough.
+    func runningBaseline() async -> BaselineEstimator.RunningBaseline?
+    /// The full heart-rate series for a workout window (Watch/Garmin runs carry one) — time-in-zones.
+    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)]
 }
 protocol PlanEngineServing: AnyObject {}
 @MainActor
@@ -244,7 +254,11 @@ final class StubHealthService: HealthServing {
     func requestAuthorization() async -> Bool { false }
     func save(_ workout: Workout) async {}
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) { (nil, nil) }
+    func recoverySignals() async -> RecoverySignals { .empty }
+    func measuredVO2Max() async -> Double? { nil }
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int { 0 }
+    func runningBaseline() async -> BaselineEstimator.RunningBaseline? { nil }
+    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)] { [] }
 }
 final class StubPlanEngine: PlanEngineServing {}
 final class StubSyncService: SyncServing {

@@ -14,11 +14,14 @@ struct CardioTrackingView: View {
     var distanceUnit: DistanceUnit = .auto
     /// An optional suggested loop to follow — drawn as a faint dashed guide beneath the live trace.
     var guideRoute: [GeoPoint] = []
+    /// An optional guided structured session (warm-up → reps → cool-down) to coach through in real time.
+    var structured: StructuredWorkout? = nil
     var onFinish: (UUID?) -> Void
 
     enum Phase { case acquiring, countdown, tracking }
 
     @Query private var workouts: [Workout]
+    @Query private var profiles: [UserProfile]   // for max HR → live zone banding
     @State private var phase: Phase = .acquiring
     @State private var countdown = 3
     @State private var viewport: Viewport = .idle
@@ -85,7 +88,8 @@ struct CardioTrackingView: View {
                 // Voice coach is Pro (PRD §10) — pass it only when entitled, else nil (silent).
                 let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
                 let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit,
-                                            goalMeters: goalMeters, voice: voice)
+                                            goalMeters: goalMeters, structured: structured, voice: voice,
+                                            motion: services.motion, maxHR: profiles.first?.maxHR)
                 model.beginAcquiring()
                 vm = model
             }
@@ -389,6 +393,11 @@ struct CardioTrackingView: View {
 
     private func trackingPanel(_ vm: CardioViewModel) -> some View {
         VStack(spacing: Theme.Space.md) {
+            if vm.currentStep != nil {
+                stepBanner(vm).transition(.move(edge: .top).combined(with: .opacity))
+            } else if vm.structuredComplete {
+                structuredCompletePill.transition(.opacity)
+            }
             VStack(spacing: Theme.Space.sm) {
                 if vm.isPaused {
                     Text(vm.state == .autoPaused ? "Auto-paused" : "Paused")
@@ -396,13 +405,21 @@ struct CardioTrackingView: View {
                 }
                 HeroMetric(value: distanceNumber(forMeters: vm.distanceM),
                            label: unitLabel == "mi" ? "Miles" : "Kilometers")
-                HStack(spacing: Theme.Space.xl) {
-                    TimelineView(.periodic(from: vm.startedAt, by: 1)) { ctx in
+                TimelineView(.periodic(from: vm.startedAt, by: 1)) { ctx in
+                    HStack(spacing: Theme.Space.xl) {
                         stat(Formatters.duration(s: vm.elapsed(at: ctx.date)), "Time")
+                        stat(vm.heroValue, vm.heroLabel)
+                        // Cadence (steps/min) from CoreMotion — run/walk only, once the hardware reports.
+                        if type.discipline != .cycling, let cad = vm.cadence {
+                            stat("\(cad)", "spm")
+                        }
+                        // Live heart rate + zone from a paired BLE strap, once it reports.
+                        if let hr = vm.bpm {
+                            stat("\(hr)", vm.hrZone ?? "bpm")
+                        }
                     }
-                    stat(vm.heroValue, vm.heroLabel)
                 }
-                if let goalMeters { goalBar(distance: vm.distanceM, goal: goalMeters) }
+                if let goalMeters, structured == nil { goalBar(distance: vm.distanceM, goal: goalMeters) }
             }
             .padding(.vertical, Theme.Space.md).frame(maxWidth: .infinity)
             .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
@@ -415,11 +432,120 @@ struct CardioTrackingView: View {
                 OversizedButton(title: "Finish", systemImage: "stop.fill") { confirmStop = true }
             }
         }
+        .animation(Motion.standard, value: vm.stepTitle)
         .padding(Theme.Space.md)
         .confirmationDialog("End this \(type.title.lowercased())?", isPresented: $confirmStop, titleVisibility: .visible) {
             Button("Finish", role: .destructive) { Task { onFinish(await vm.finish()) } }
             Button("Keep going", role: .cancel) {}
         }
+    }
+
+    // MARK: Structured-workout guidance (R1)
+
+    /// The guided-step panel above the metrics: current step, big remaining count-down, target pace,
+    /// rep dots, next-step preview, and a Skip control. When you're inside the target pace band the
+    /// card earns an iridescent border — hitting the prescription is progress, so it glows.
+    private func stepBanner(_ vm: CardioViewModel) -> some View {
+        TimelineView(.periodic(from: vm.startedAt, by: 1)) { _ in
+            let onPace = vm.stepAdherence == .onPace
+            let rem = vm.stepRemaining
+            VStack(spacing: Theme.Space.sm) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(vm.stepTitle.uppercased())
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).tracking(1.2)
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityIdentifier("structuredStepTitle")
+                    Spacer()
+                    if let pace = vm.stepTargetPaceText {
+                        Text("target \(pace)")
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                    if let hint = adherenceHint(vm.stepAdherence) {
+                        Text("· \(hint)")
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(rem.value).font(.display(48, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    Text(rem.caption).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
+                        .foregroundStyle(Theme.inkTertiary)
+                    Spacer()
+                }
+                stepProgressBar(vm.stepProgress, onPace: onPace)
+                HStack {
+                    if let reps = vm.repProgress { repDots(done: reps.done, total: reps.total) }
+                    Spacer()
+                    if let next = vm.stepNextText {
+                        Text(next).font(.rounded(Theme.FontSize.label, weight: .semibold))
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                Button { Haptics.light(); vm.skipStep() } label: {
+                    Label("Skip step", systemImage: "forward.fill")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                }
+                .padding(.top, 2)
+            }
+            .padding(Theme.Space.md).frame(maxWidth: .infinity)
+            .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous)
+                    .strokeBorder(onPace ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Color.clear),
+                                  lineWidth: 2)
+            )
+            .animation(Motion.standard, value: onPace)
+            // Children stay individually accessible (VoiceOver reads step, remaining, target in order;
+            // UI tests query the step title by identifier).
+            .accessibilityHint(onPace ? "On pace" : "")
+        }
+    }
+
+    /// A slim step-progress capsule — iridescent while you're on pace, monochrome otherwise.
+    private func stepProgressBar(_ progress: Double, onPace: Bool) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.hairline)
+                Capsule()
+                    .fill(onPace ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                    .frame(width: max(6, geo.size.width * min(1, max(0, progress))))
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: progress)
+            }
+        }
+        .frame(height: 6)
+    }
+
+    /// A dot per rep — filled for completed reps, iridescent for the one in progress.
+    private func repDots(done: Int, total: Int) -> some View {
+        HStack(spacing: 5) {
+            ForEach(0..<total, id: \.self) { i in
+                Circle()
+                    .fill(i < done ? AnyShapeStyle(Theme.ink)
+                          : i == done ? AnyShapeStyle(IridescentMaterial())
+                          : AnyShapeStyle(Theme.hairline))
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .accessibilityLabel("Rep \(min(done + 1, total)) of \(total)")
+    }
+
+    /// A quiet no-shame nudge string mirroring the audio cue; nil when on pace / no target.
+    private func adherenceHint(_ a: StructuredRunTracker.Adherence) -> String? {
+        switch a { case .tooFast: "ease back"; case .tooSlow: "pick it up"; default: nil }
+    }
+
+    /// Shown once every step is done — cool-down finished, ready to finish. Earned iridescent tint.
+    private var structuredCompletePill: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "checkmark.seal.fill").font(.system(size: 15, weight: .bold))
+            Text("Workout complete — strong session")
+                .font(.rounded(Theme.FontSize.caption, weight: .bold))
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
+        .background(IridescentMaterial().opacity(0.22), in: Capsule())
+        .overlay(Capsule().strokeBorder(IridescentMaterial(), lineWidth: 1))
+        .accessibilityIdentifier("structuredComplete")
     }
 
     private func goalBar(distance: Double, goal: Double) -> some View {
@@ -432,7 +558,7 @@ struct CardioTrackingView: View {
                     Capsule()
                         .fill(goalReached ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
                         .frame(width: max(6, geo.size.width * progress))
-                        .animation(.easeOut(duration: 0.4), value: progress)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: progress)
                 }
             }
             .frame(height: 6)

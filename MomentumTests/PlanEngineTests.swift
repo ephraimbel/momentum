@@ -150,16 +150,18 @@ struct PlanEngineTests {
         #expect(fiveK <= PlanEngine.longRunPeak(forRaceM: 5_000) + 1)
     }
 
-    @Test func shortRaceUsesIntervalsLongRaceUsesTempo() {
-        func qualityTypes(_ raceM: Double) -> Set<RunType> {
+    @Test func shortRaceUsesSpeedLongRaceUsesThreshold() {
+        // Both prescribe reps, but the *pace* differs: short races sharpen at ~5K pace (P5k), long races
+        // build threshold (P5k + 20). (Default experience → P5k = 300 s/km.)
+        func week0QualityPace(_ raceM: Double) -> Double? {
             var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
             inp.raceDistanceM = raceM
             let plan = PlanEngine.generate(profile: inp, catalog: catalog,
                                            startDate: Date(timeIntervalSinceReferenceDate: 0))
-            return Set(plan.weeks[0].sessions.compactMap(\.runType))
+            return plan.weeks[0].sessions.first { $0.discipline == .running && $0.isHardRun }?.targetPaceSPerKm
         }
-        #expect(qualityTypes(5_000).contains(.intervals))
-        #expect(qualityTypes(42_195).contains(.tempo))
+        #expect(week0QualityPace(5_000) == 300)     // 5K → speed reps at P5k
+        #expect(week0QualityPace(42_195) == 320)    // marathon → threshold reps (P5k + 20)
     }
 
     // MARK: Muscle focus
@@ -195,5 +197,74 @@ struct PlanEngineTests {
         let week0 = plan.weeks[0]
         #expect(week0.sessions.count == 6)
         #expect(Set(week0.sessions.map(\.dayOffset)).count == 6)
+    }
+
+    // MARK: Workout variety
+
+    @Test func qualityWorkoutRotatesAndCarriesRepPace() {
+        // Two consecutive weeks produce different quality work — no "6×400 @ 5K" every week.
+        let w0 = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 5000, level: .some, p5k: 300)
+        let w1 = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 5000, level: .some, p5k: 300)
+        #expect(w0.type != w1.type || w0.intervals != w1.intervals)
+        // The VO₂ week carries a faster-than-5K rep pace (P5k − 6).
+        #expect(w1.paceOverride == 294)
+        // A half-marathon plan emphasizes threshold (P5k + 20), not raw speed.
+        let half = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 21_097, level: .some, p5k: 300)
+        #expect(half.paceOverride == 320)
+    }
+
+    @Test func hybridPriorityShiftsRunLiftSplit() {
+        func runDays(_ priority: HybridPriority?) -> Int {
+            var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: 5)
+            inp.hybridPriority = priority
+            let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+            return plan.weeks[0].sessions.filter { $0.discipline == .running }.count
+        }
+        // Running-priority weights the week toward runs; lifting-priority away from them.
+        #expect(runDays(.running) > runDays(.lifting))
+        #expect(runDays(.balanced) >= runDays(.lifting))
+    }
+
+    @Test func hybridWeekAttachesSequencingRationale() {
+        // A running + strength week places a leg day and a hard run — the hard run should carry a
+        // cross-discipline "fresh legs" rationale (our differentiator, made visible).
+        let plan = PlanEngine.generate(profile: inputs(disciplines: [.running, .strength], goal: .raceDistance, days: 6),
+                                       catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let hardRuns = plan.weeks[0].sessions.filter { $0.discipline == .running && $0.isHardRun }
+        #expect(!hardRuns.isEmpty)
+        #expect(hardRuns.contains { ($0.rationale?.lowercased().contains("leg")) == true })
+    }
+
+    @Test func seedsStartingVolumeFromStatedLoad() {
+        // An athlete running 30 km/week with a 10 km long run should start near that — not the
+        // experience-tier default (fixes plans that open too aggressively).
+        var inp = inputs(disciplines: [.running], goal: .generalFitness, days: 4)
+        inp.currentWeeklyVolumeM = 30_000
+        inp.longestRunM = 10_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let week0 = plan.weeks[0].sessions.filter { $0.discipline == .running }
+        let weekly = week0.compactMap(\.targetDistanceM).reduce(0, +)
+        #expect(weekly >= 24_000 && weekly <= 36_000)                 // starting week within ~20% of stated
+        let longRun = week0.first { $0.runType == .long }?.targetDistanceM ?? 0
+        #expect(longRun >= 9_000 && longRun <= 14_000)               // reflects their 10 km, not the 16 km default
+    }
+
+    @Test func startingVolumeUnchangedWithoutStatedLoad() {
+        // No stated volume → the experience-tier default still governs (regression guard).
+        let inp = inputs(disciplines: [.running], goal: .generalFitness, days: 4)   // helper defaults to .experienced
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let longRun = plan.weeks[0].sessions.first { $0.discipline == .running && $0.runType == .long }?.targetDistanceM ?? 0
+        #expect(longRun >= 15_000)                                    // experienced default long base ≈ 16 km
+    }
+
+    @Test func generatedPlanHasRealVariety() {
+        let race = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date(timeIntervalSinceReferenceDate: 0))
+        let ins = PlanInputs(disciplines: [.running], goal: .raceDistance, daysPerWeek: 4, equipment: .fullGym,
+                             sessionMinutes: 45, raceDate: race, runningExperience: .some, liftingExperience: .some,
+                             raceDistanceM: 5000)
+        let plan = PlanEngine.generate(profile: ins, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let runTypes = Set(plan.weeks.flatMap { $0.sessions }.compactMap { $0.runType })
+        // Across the block we should see several distinct run types (intervals/fartlek/hills/strides/…).
+        #expect(runTypes.count >= 4)
     }
 }

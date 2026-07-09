@@ -18,6 +18,11 @@ struct RootView: View {
         return .today
     }()
     @State private var showOnboarding = false
+    #if DEBUG
+    // Open the most recent run's detail (for verifying the guided-run Reps breakdown).
+    @Query(sort: \Workout.startedAt, order: .reverse) private var recentWorkouts: [Workout]
+    @State private var showRunDetail = ProcessInfo.processInfo.arguments.contains("--ui-test-run-detail")
+    #endif
 
     var body: some View {
         #if DEBUG
@@ -50,12 +55,22 @@ struct RootView: View {
                 .sheet(item: $paywall.presentedFeature) { feature in
                     PaywallView(feature: feature)
                 }
+                #if DEBUG
+                .fullScreenCover(isPresented: $showRunDetail) {
+                    if let run = recentWorkouts.first(where: { $0.type == .run && $0.gps != nil }) {
+                        NavigationStack { WorkoutDetailView(workout: run) }
+                    }
+                }
+                #endif
             }
         }
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
+            if ProcessInfo.processInfo.arguments.contains("--paywall") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { paywall.present(for: .aiCoach) }
+            }
             #endif
         }
         // Just signed in (new athlete) → straight into onboarding.

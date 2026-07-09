@@ -23,6 +23,9 @@ final class HealthService: HealthServing {
         HKObjectType.workoutType(),               // import workouts from other apps/devices (Garmin, Watch)
         HKQuantityType(.heartRate),
         HKQuantityType(.restingHeartRate),
+        HKQuantityType(.heartRateVariabilitySDNN), // recovery: HRV (Watch / Garmin / Oura → Health)
+        HKCategoryType(.sleepAnalysis),            // recovery: last night's sleep
+        HKQuantityType(.vo2Max),                   // fitness: device-measured VO₂max (Watch / Garmin)
         HKQuantityType(.bodyMass),
         HKQuantityType(.stepCount),
         HKQuantityType(.activeEnergyBurned),       // workout calorie totals
@@ -90,6 +93,62 @@ final class HealthService: HealthServing {
         async let mass = latest(.bodyMass, unit: .gramUnit(with: .kilo))
         async let rhr = latest(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()))
         return (await mass, (await rhr).map { Int($0.rounded()) })
+    }
+
+    /// Read the recovery signals wearables mirror into Health — HRV (SDNN), resting HR, and last
+    /// night's sleep — each with a ~30-day baseline so the value reads against the athlete's own norm
+    /// (PRD §4.8, §8.6). Best-effort; every field is `nil` when unavailable/unauthorized.
+    func recoverySignals() async -> RecoverySignals {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return .demo }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return .empty }
+        let ms = HKUnit.secondUnit(with: .milli)
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        async let hrv = latest(.heartRateVariabilitySDNN, unit: ms)
+        async let hrvBase = average(.heartRateVariabilitySDNN, unit: ms, days: 30)
+        async let rhr = latest(.restingHeartRate, unit: bpm)
+        async let rhrBase = average(.restingHeartRate, unit: bpm, days: 30)
+        async let sleep = sleepHoursLastNight()
+        return RecoverySignals(
+            hrvMs: await hrv, hrvBaselineMs: await hrvBase,
+            restingHR: (await rhr).map { Int($0.rounded()) }, restingHRBaseline: await rhrBase,
+            sleepHours: await sleep)
+    }
+
+    /// The device-measured VO₂max from Apple Health (Apple Watch outdoor runs, Garmin, etc.) — a real
+    /// cardiorespiratory measurement we prefer over our pace-derived estimate when present. `nil` if none.
+    func measuredVO2Max() async -> Double? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return 42.4 }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        return await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"))
+    }
+
+    /// Estimate the athlete's current running baseline from their recent Health run history — the
+    /// onboarding "it already understands me" import (ENDURANCE-FOCUS §4). Reads runs from ANY source
+    /// (Watch, Garmin, Strava re-syncs…), maps them to samples, and hands off to the pure estimator.
+    func runningBaseline() async -> BaselineEstimator.RunningBaseline? {
+        #if DEBUG
+        // Sim has no Health data — a believable demo baseline so the import card's success state is
+        // verifiable end-to-end (26:40 5K-equivalent, ~21 km/wk, 10K long run).
+        if ProcessInfo.processInfo.arguments.contains("--health-baseline-demo") {
+            return .init(p5kSPerKm: 320, weeklyVolumeM: 21_000, longestRunM: 10_000,
+                         runsPerWeek: 3.1, runCount: 25, confidence: .high)
+        }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        let cutoff = Date().addingTimeInterval(-Double(BaselineEstimator.windowDays) * 86_400)
+        let runs = await fetchWorkouts(since: cutoff)
+            .filter { $0.workoutActivityType == .running }
+            .compactMap { hk -> BaselineEstimator.RunSample? in
+                let meters = hk.statistics(for: HKQuantityType(.distanceWalkingRunning))?
+                    .sumQuantity()?.doubleValue(for: .meter()) ?? 0
+                guard meters > 0 else { return nil }
+                return .init(date: hk.startDate, distanceM: meters, durationS: hk.duration)
+            }
+        return BaselineEstimator.estimate(from: runs)
     }
 
     // MARK: Import (Apple Watch / Garmin via Apple Health → our store)
@@ -217,6 +276,48 @@ final class HealthService: HealthServing {
         }
     }
 
+    /// The full heart-rate series for a workout window (Watch/Garmin runs carry one in Health) — feeds
+    /// the time-in-zones card. Empty when unauthorized or the workout has no HR data.
+    func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)] {
+        #if DEBUG
+        // Sim has no Health data — a believable interval-session series so the zones card is verifiable
+        // (warmup Z2 → 4 hard reps touching Z4/Z5 with Z2 floats → cooldown Z1/Z2).
+        if ProcessInfo.processInfo.arguments.contains("--zones-demo") {
+            var out: [(Date, Double)] = []
+            let duration = min(end.timeIntervalSince(start), 40 * 60)
+            var t: TimeInterval = 0
+            while t < duration {
+                let phase = t / duration
+                let bpm: Double
+                switch phase {
+                case ..<0.15: bpm = 125 + phase * 100          // warmup drift up
+                case ..<0.85:
+                    let rep = sin((phase - 0.15) / 0.7 * .pi * 4)   // 4 work/float waves
+                    bpm = rep > 0 ? 168 + rep * 12 : 142
+                default: bpm = 130 - (phase - 0.85) * 80       // cooldown
+                }
+                out.append((start.addingTimeInterval(t), bpm))
+                t += 5
+            }
+            return out
+        }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        return await withCheckedContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+            let query = HKSampleQuery(sampleType: HKQuantityType(.heartRate), predicate: predicate,
+                                      limit: 4_000, sortDescriptors: [sort]) { _, samples, _ in
+                let unit = HKUnit.count().unitDivided(by: .minute())
+                let out = (samples as? [HKQuantitySample])?.map {
+                    (date: $0.startDate, bpm: $0.quantity.doubleValue(for: unit))
+                } ?? []
+                continuation.resume(returning: out)
+            }
+            store.execute(query)
+        }
+    }
+
     private func averageHR(start: Date, end: Date) async -> Int? {
         await withCheckedContinuation { continuation in
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
@@ -240,6 +341,45 @@ final class HealthService: HealthServing {
             let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: nil,
                                       limit: 1, sortDescriptors: sort) { _, samples, _ in
                 continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
+    }
+
+    /// Discrete average of a quantity over the last `days` — the athlete's personal baseline for a
+    /// recovery signal (HRV, resting HR). `nil` when there are no samples in the window.
+    private func average(_ id: HKQuantityTypeIdentifier, unit: HKUnit, days: Int) async -> Double? {
+        await withCheckedContinuation { continuation in
+            let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
+            let query = HKStatisticsQuery(quantityType: HKQuantityType(id),
+                                          quantitySamplePredicate: predicate,
+                                          options: .discreteAverage) { _, stats, _ in
+                continuation.resume(returning: stats?.averageQuantity()?.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
+    }
+
+    /// Hours of actual sleep in the most recent night — sums `asleep*` category samples from the last
+    /// 18 hours (long enough to catch last night, short enough to exclude the night before). Naps fold
+    /// in; "in bed" (awake) time is excluded. `nil` when there's no sleep recorded.
+    private func sleepHoursLastNight() async -> Double? {
+        await withCheckedContinuation { continuation in
+            let start = Calendar.current.date(byAdding: .hour, value: -18, to: Date())
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
+            let query = HKSampleQuery(sampleType: HKCategoryType(.sleepAnalysis), predicate: predicate,
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
+                let asleep: Set<Int> = [
+                    HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                    HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                    HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+                    HKCategoryValueSleepAnalysis.asleepREM.rawValue,
+                ]
+                let seconds = (samples as? [HKCategorySample] ?? [])
+                    .filter { asleep.contains($0.value) }
+                    .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+                continuation.resume(returning: seconds > 0 ? seconds / 3600 : nil)
             }
             store.execute(query)
         }

@@ -105,8 +105,11 @@ enum PlanService {
             runningExperience: level(Discipline.running.rawValue),
             liftingExperience: level(Discipline.strength.rawValue),
             raceDistanceM: p.raceDistanceM,
+            currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
+            hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
-            preferredDayOffsets: offsets)
+            preferredDayOffsets: offsets,
+            intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced)
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,
@@ -127,6 +130,14 @@ enum PlanService {
         trainingPlan.disciplines = profile.disciplines
         trainingPlan.raceDate = profile.raceDate
         trainingPlan.p5kSPerKm = plan.p5kSPerKm
+        // Persist the macrocycle (§6.1): taper/deload from the generator; the first two build weeks
+        // read as Base (the foundation), everything else as Build.
+        trainingPlan.weekPhases = plan.weeks.map { week in
+            if week.isTaper { PlanPhase.taper.rawValue }
+            else if week.isDeload { PlanPhase.recovery.rawValue }
+            else if week.index < 2 { PlanPhase.base.rawValue }
+            else { PlanPhase.build.rawValue }
+        }
 
         let anchor = calendar.startOfDay(for: startDate)
         var sessions: [PlannedSession] = []

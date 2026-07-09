@@ -85,6 +85,8 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
 /// map screen so the affordance is identical everywhere.
 struct MapLayersButton: View {
     @Binding var style: MapStyleOption
+    /// When set, the menu offers "World" — fly out to the globe of everyone on momentum (Today only).
+    var onWorld: (() -> Void)? = nil
 
     var body: some View {
         Menu {
@@ -93,11 +95,14 @@ struct MapLayersButton: View {
                     Label(option.label, systemImage: option.systemImage).tag(option)
                 }
             }
+            if let onWorld {
+                Divider()
+                Button { onWorld() } label: { Label("World", systemImage: "globe.americas.fill") }
+            }
         } label: {
-            Image(systemName: "square.3.layers.3d").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 38, height: 38)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().stroke(Theme.hairline))
+            Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 44, height: 44)
+                .momentumGlass(in: Circle())
         }
         .accessibilityLabel("Map style")
     }

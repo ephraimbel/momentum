@@ -125,7 +125,7 @@ enum PlanCoaching {
         func soften(_ s: PlannedSession, factor: Double, note: String) {
             if let d = s.targetDistanceM { s.targetDistanceM = (d * factor).rounded() }
             if let dur = s.targetDurationS { s.targetDurationS = (dur * factor).rounded() }
-            if s.runType == .intervals || s.runType == .tempo || s.runType == .long {
+            if let rt = s.runType, rt.isQuality || rt == .long {
                 s.runType = .easy
                 s.intervals = nil
                 s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
@@ -220,6 +220,12 @@ enum PlanCoaching {
             updated += 1
         }
         try? context.save()
+        if updated > 0 {
+            let delta = Int((current - bounded).rounded())
+            CoachingEvent.record(kind: .recalibrate, headline: "Your paces got faster",
+                                 detail: "That run showed real fitness, so I sharpened your target paces by about \(delta) s/km. You've earned it.",
+                                 on: today, in: context, calendar: calendar)
+        }
         return Recalibration(oldP5kSPerKm: current, newP5kSPerKm: bounded, sessionsUpdated: updated)
     }
 
@@ -241,7 +247,38 @@ enum PlanCoaching {
         let rec = ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation
         guard rec == .ease || rec == .rest else { return nil }   // protective directions only
         guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
+        let (headline, detail): (String, String) = rec == .rest
+            ? ("Recovery inserted", "Your training load's been climbing, so your next session is now a recovery day. Rest is where it sticks.")
+            : ("Eased your week", "Your recent load spiked, so I trimmed this week's volume to keep you fresh and healthy.")
+        CoachingEvent.record(kind: rec == .rest ? .recover : .ease, headline: headline, detail: detail,
+                             on: today, in: context, calendar: calendar)
         return rec   // `apply` already recorded `lastAdaptedAt` + saved
+    }
+
+    /// Post-run RPE → adaptation — the *subjective* half of the closed loop (Runna's RPE prompt, but
+    /// automatic). Called once the athlete rates a run: if it felt far harder than prescribed, ease the
+    /// block; if an easy day felt brutal, insert recovery. Never auto-*raises* load (headroom is
+    /// informational). Shares `autoAdapt`'s ≤1/week gate so subjective + objective easing never stack.
+    /// Returns a no-shame note when it changed the plan.
+    @discardableResult
+    static func adaptToEffort(_ workout: Workout, plan: TrainingPlan?, today: Date = Date(),
+                              in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
+        guard let plan, workout.type.discipline == .running else { return nil }
+        let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort, runType: workout.plannedSession?.runType)
+        let rec: ProgressInsights.Recommendation
+        switch outcome {
+        case .ease: rec = .ease
+        case .recover: rec = .rest
+        case .none, .headroom: return nil
+        }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+        guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
+        let note = EffortAdaptation.note(for: outcome, runType: workout.plannedSession?.runType,
+                                         rpe: workout.perceivedEffort)
+        if let note { CoachingEvent.record(kind: outcome == .recover ? .recover : .ease,
+                                           headline: note.headline, detail: note.detail, on: today, in: context) }
+        return note
     }
 
     /// A bounded plan change the athlete can opt into on confirm — the consent-required half of the

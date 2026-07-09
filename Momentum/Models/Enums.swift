@@ -2,6 +2,20 @@ import Foundation
 
 // Unified domain enums (PRD §8.7). Stored as raw strings for SwiftData/Supabase portability.
 
+/// For a hybrid (run + lift) athlete, where the emphasis sits — biases the run/lift day split so the
+/// plan matches how they actually think of themselves, rather than being inferred from the goal alone.
+enum HybridPriority: String, Codable, Sendable, CaseIterable {
+    case running, balanced, lifting
+    /// Fraction of the week's training days given to lifting.
+    var liftFraction: Double {
+        switch self {
+        case .running: 0.35
+        case .balanced: 0.5
+        case .lifting: 0.6
+        }
+    }
+}
+
 enum WorkoutType: String, Codable, Sendable, CaseIterable {
     // Foot (GPS)
     case run, trailRun, walk, hike
@@ -61,6 +75,37 @@ enum BiologicalSex: String, Codable, Sendable, CaseIterable, Identifiable {
 enum Goal: String, Codable, Sendable, CaseIterable {
     case loseFat, buildMuscle, getStronger, raceDistance, endurance, generalFitness, stayConsistent
 }
+/// Macrocycle phase of a plan week (ENDURANCE-FOCUS §6.1) — persisted per week so the Plan page reads
+/// like a coached block (Base → Build → Recovery → Taper), not a list of runs.
+enum PlanPhase: String, Codable, Sendable {
+    case base, build, recovery, taper
+    var label: String {
+        switch self { case .base: "Base"; case .build: "Build"; case .recovery: "Recovery week"; case .taper: "Taper" }
+    }
+    /// One line of coach's intent for the week header.
+    var intent: String {
+        switch self {
+        case .base: "Laying the foundation — easy volume first"
+        case .build: "The work phase — fitness is built here"
+        case .recovery: "Planned down week — absorb the training"
+        case .taper: "Sharpening up — arrive fresh"
+        }
+    }
+}
+
+/// Common running injury areas (ENDURANCE-FOCUS §8.2) — captured at onboarding so the plan starts
+/// protective, and reused by the injury-report loop. Body areas, never diagnoses.
+enum InjuryArea: String, Codable, Sendable, CaseIterable, Identifiable {
+    case shins, knee, itBand, ankle, achilles, foot, calf, hamstring, hip, back
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .shins: "Shins"; case .knee: "Knee"; case .itBand: "IT band"; case .ankle: "Ankle"
+        case .achilles: "Achilles"; case .foot: "Foot / plantar"; case .calf: "Calf"
+        case .hamstring: "Hamstring"; case .hip: "Hip"; case .back: "Lower back"
+        }
+    }
+}
 enum Equipment: String, Codable, Sendable, CaseIterable { case fullGym, dumbbellsOnly, homeMinimal, bodyweight }
 enum ExperienceLevel: String, Codable, Sendable, CaseIterable { case new, some, experienced }
 enum MuscleGroup: String, Codable, Sendable, CaseIterable {
@@ -74,6 +119,17 @@ enum TrackingMode: String, Codable, Sendable, CaseIterable { case weightReps, re
 enum SetType: String, Codable, Sendable, CaseIterable { case working, warmup, drop, failure, amrap }
 enum RunType: String, Codable, Sendable, CaseIterable {
     case easy, long, tempo, intervals, recovery, race, freeRun
+    // Workout variety (running-excellence): speed play, hill reps, neuromuscular strides, and a
+    // progression run that finishes fast. Single-word raw values display cleanly via `.capitalized`.
+    case fartlek, hills, strides, progression
+
+    /// The quality (hard) sessions — used for recovery scheduling, pace recalibration, and Pace Insights.
+    var isQuality: Bool {
+        switch self {
+        case .tempo, .intervals, .race, .fartlek, .hills, .progression: true
+        case .easy, .long, .recovery, .freeRun, .strides: false
+        }
+    }
 }
 enum SessionStatus: String, Codable, Sendable, CaseIterable { case planned, completed, missed, moved }
 enum PRType: String, Codable, Sendable, CaseIterable {

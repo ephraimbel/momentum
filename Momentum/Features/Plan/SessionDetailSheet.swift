@@ -29,6 +29,7 @@ struct SessionDetailSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     statusChip
                     targets
+                    fuelSection
                     if let why = session.rationale, session.status == .moved {
                         note(why)
                     }
@@ -116,7 +117,83 @@ struct SessionDetailSheet: View {
                     }
                 }
             }
+            // Guided quality sessions (intervals/tempo/run-walk) expand into a step breakdown so the
+            // athlete sees the shape of the session before starting the guided run.
+            if let workout = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) {
+                structuredSection(workout)
+            }
         }
+    }
+
+    /// A compact, grouped preview of a structured session — rep blocks collapse to one line
+    /// ("6 × 400 m @ pace") with the recovery shown once, warm-up/cool-down as their own rows.
+    private func structuredSection(_ w: StructuredWorkout) -> some View {
+        section("Workout") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(Array(structuredLines(w).enumerated()), id: \.offset) { _, line in
+                    HStack {
+                        Text(line.label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Spacer(minLength: Theme.Space.sm)
+                        Text(line.detail).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                            .monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                    }
+                    .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
+                        RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+                    }
+                }
+            }
+        }
+    }
+
+    private func structuredLines(_ w: StructuredWorkout) -> [(label: String, detail: String)] {
+        // Repeating run/walk sessions collapse to a single summary line.
+        if w.workStepCount > 0, w.steps.allSatisfy({ $0.repTotal == nil }),
+           w.title.lowercased().contains("run/walk") {
+            return [("\(w.workStepCount) × run / walk", "alternating")]
+        }
+        var lines: [(String, String)] = []
+        var i = 0
+        let steps = w.steps
+        while i < steps.count {
+            let s = steps[i]
+            if s.kind == .work, let total = s.repTotal {
+                // A rep group (intervals / hills / strides / fartlek surges) → one collapsed line, named
+                // by the step's noun, then the recovery once.
+                let noun = s.title.map { " \($0.lowercased())s" } ?? ""   // "8 × 45 s hills"
+                let pace = s.paceSPerKm.map { "@ \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? "by feel"
+                lines.append(("\(total) × \(targetLabel(s.target))\(noun)", pace))
+                if i + 1 < steps.count, steps[i + 1].kind == .recovery {
+                    let r = steps[i + 1]
+                    lines.append((r.title ?? "Recovery", targetLabel(r.target)))
+                }
+                // Skip the whole rep block (this group's work + recovery steps).
+                while i < steps.count, steps[i].kind == .work, steps[i].repTotal != nil { i += 1
+                    if i < steps.count, steps[i].kind == .recovery { i += 1 }
+                }
+            } else {
+                // A standalone block (warm-up, cool-down, tempo, progression thirds).
+                lines.append((s.displayNoun, stepDetail(s)))
+                i += 1
+            }
+        }
+        return lines
+    }
+
+    private func targetLabel(_ t: WorkoutStep.Target) -> String {
+        switch t {
+        case let .distance(d): return d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
+        case let .duration(s): return s >= 60 ? "\(Int((s / 60).rounded())) min" : "\(Int(s)) s"
+        }
+    }
+
+    private func stepDetail(_ s: WorkoutStep) -> String {
+        let base = targetLabel(s.target)
+        if s.kind == .work, let p = s.paceSPerKm {
+            return "\(base) @ \(Formatters.pace(secPerKm: p, unit: distanceUnit))"
+        }
+        return base
     }
 
     private var exercisesSection: some View {
@@ -135,7 +212,14 @@ struct SessionDetailSheet: View {
         if let d = session.targetDistanceM, d > 0 { out.append(Formatters.distance(meters: d, unit: distanceUnit)) }
         if let p = session.targetPaceSPerKm, p > 0 { out.append("~\(Formatters.pace(secPerKm: p, unit: distanceUnit))") }
         if let dur = session.targetDurationS, dur > 0 { out.append(Formatters.duration(s: dur)) }
-        if let iv = session.intervals { out.append(iv) }
+        // The HR anchor for the pace target (§10) — "Z2 · 128–141 bpm" when the athlete's zones are known.
+        if let rt = session.runType,
+           let hr = HRZones.target(for: rt, maxHR: profile?.maxHR, restingHR: profile?.restingHR) {
+            out.append(hr)
+        }
+        // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
+        // for guided sessions; only show it as a chip when no structured breakdown will render.
+        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) == nil { out.append(iv) }
         return out
     }
 
@@ -331,4 +415,45 @@ struct SessionDetailSheet: View {
         }
     }
 
+    // MARK: Fuel (ENDURANCE-FOCUS §11) — long runs and races only; short runs stay silent
+
+    @ViewBuilder
+    private var fuelSection: some View {
+        if session.discipline == .running, session.status == .planned,
+           let dur = FuelingGuide.estimatedDurationS(distanceM: session.targetDistanceM,
+                                                     paceSPerKm: session.targetPaceSPerKm,
+                                                     durationS: session.targetDurationS) {
+            let g = FuelingGuide.guidance(durationS: dur, isRace: session.runType == .race)
+            if g.carbsPerHour != nil {
+                section("Fuel") {
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        HStack(spacing: Theme.Space.sm) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.purple)
+                                .frame(width: 30, height: 30)
+                                .background(Circle().fill(Theme.purple.opacity(0.1)))
+                            Text(g.headline).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        }
+                        fuelRow("BEFORE", g.before)
+                        fuelRow("DURING", g.during)
+                        fuelRow("AFTER", g.after)
+                        Text(FuelingGuide.Guidance.disclaimer)
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .padding(Theme.Space.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+                }
+            }
+        }
+    }
+
+    private func fuelRow(_ label: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Text(label).font(.rounded(9, weight: .black)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
+                .frame(width: 52, alignment: .leading).padding(.top, 3)
+            Text(text).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 }

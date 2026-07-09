@@ -49,6 +49,8 @@ struct PlanView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         header
                         weekHero
+                        hybridCard
+                        raceInsightSection
                         if isCurrentWeek { tuneSection }
                         VStack(spacing: Theme.Space.sm) {
                             ForEach(Array(days.enumerated()), id: \.element) { i, day in
@@ -81,6 +83,16 @@ struct PlanView: View {
         .sheet(isPresented: $showSettings) {
             if let p = profiles.first { PlanSettingsSheet(profile: p) { showSettings = false } }
         }
+        .onAppear {
+            #if DEBUG
+            // Open the first long run's detail (fuel-section verification; sim taps are unreliable).
+            if ProcessInfo.processInfo.arguments.contains("--plan-detail-long"),
+               let long = plan?.sessions.filter({ $0.runType == .long && $0.status == .planned })
+                   .min(by: { $0.date < $1.date }) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { editing = EditingSession(session: long) }
+            }
+            #endif
+        }
     }
 
     /// Launch the right recorder for a planned session (uses its precise sport; requests GPS for cardio).
@@ -99,6 +111,71 @@ struct PlanView: View {
     }
 
     private func presentAdd(for day: Date) { addDay = day; showingAdd = true }
+
+    /// R4 coach intelligence: a race-day projection (when a race goal is set) + a Pace Insight reading
+    /// "Your week, sequenced" — surfaces the cross-discipline coaching moment: how the week's runs and
+    /// lifts are spaced so hard efforts land on fresh legs. Shown only on genuinely hybrid weeks.
+    @ViewBuilder
+    private var hybridCard: some View {
+        if let insight = hybridWeekInsight {
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+                Image(systemName: "figure.run.circle").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("YOUR WEEK, SEQUENCED").font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                    Text(insight).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(Theme.Space.md).frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Your week, sequenced. \(insight)")
+        }
+    }
+
+    /// The cross-discipline read for the displayed week — nil unless it pairs a leg day with a hard/long
+    /// run. Infers "leg day" from a strength session's lower-body primary muscles.
+    private var hybridWeekInsight: String? {
+        guard let plan else { return nil }
+        let cal = Calendar.current
+        let items: [HybridSequencing.Item] = plan.sessions.compactMap { s in
+            guard let dayIndex = cal.dateComponents([.day], from: weekStart, to: cal.startOfDay(for: s.date)).day,
+                  (0...6).contains(dayIndex) else { return nil }
+            if s.discipline == .running {
+                let hard = s.runType.map { $0.isQuality || $0 == .long } ?? false
+                return .init(dayIndex: dayIndex, runType: s.runType, isHardRun: hard, isLegDay: false)
+            }
+            if s.discipline == .strength {
+                let isLeg = s.strengthTargets.contains { pe in
+                    (pe.exercise?.primaryMuscles ?? []).contains { HybridSequencing.Item.legMuscles.contains($0) }
+                }
+                return .init(dayIndex: dayIndex, runType: nil, isHardRun: false, isLegDay: isLeg)
+            }
+            return nil
+        }
+        return HybridSequencing.weekInsight(items)
+    }
+
+    /// the athlete's recent quality-session pacing. Both are quiet reads above the week.
+    @ViewBuilder
+    private var raceInsightSection: some View {
+        if let plan {
+            if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
+                RacePredictionCard(raceDistanceM: raceM,
+                                   raceDate: profiles.first?.raceDate ?? plan.raceDate,
+                                   p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit)
+            }
+            let runs = PaceInsights.recentQualityRuns(plan)
+            if !runs.isEmpty {
+                PaceInsightCard(result: PaceInsights.evaluate(runs))
+            }
+        }
+    }
 
     private func delete(_ session: PlannedSession) {
         withAnimation(Motion.standard) {
@@ -150,10 +227,22 @@ struct PlanView: View {
                     Text("of \(total)").font(.rounded(9, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                 }
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(weekTitle).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
                     .contentTransition(.opacity)
-                Text(weekSummary).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                if let phase = weekPhase {
+                    Text(phase.label.uppercased())
+                        .font(.rounded(9, weight: .black)).tracking(1)
+                        .fixedSize()
+                        .foregroundStyle(phase == .taper ? Theme.background : Theme.inkSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background {
+                            Capsule().fill(phase == .taper ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                            if phase != .taper { Capsule().stroke(Theme.hairline) }
+                        }
+                }
+                Text(weekPhase?.intent ?? weekSummary)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     .contentTransition(.opacity)
             }
             Spacer(minLength: 0)
@@ -162,7 +251,17 @@ struct PlanView: View {
         .padding(Theme.Space.lg)
         .background(card)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(weekTitle), \(weekSummary)")
+        .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase — \($0.intent)" } ?? weekSummary)")
+    }
+
+    /// The macrocycle phase of the displayed week (nil off-plan or for legacy plans without phases).
+    private var weekPhase: PlanPhase? {
+        guard let plan = profiles.first?.plan, !plan.weekPhases.isEmpty,
+              let first = plan.sessions.map(\.date).min(),
+              let firstWeek = Calendar.current.dateInterval(of: .weekOfYear, for: first)?.start else { return nil }
+        let idx = Calendar.current.dateComponents([.weekOfYear], from: firstWeek, to: weekStart).weekOfYear ?? -1
+        guard idx >= 0, idx < plan.weekPhases.count else { return nil }
+        return PlanPhase(rawValue: plan.weekPhases[idx])
     }
 
     private func chevron(_ system: String, _ action: @escaping () -> Void) -> some View {

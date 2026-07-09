@@ -10,6 +10,9 @@ final class TrainingPlan {
     var p5kSPerKm: Double = 360       // calibrated running pace (if running)
     var createdAt: Date = Date()
     var lastAdaptedAt: Date?          // last automatic load adaptation — gates auto-adapt to ≤1/week
+    /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from the first session) —
+    /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
+    var weekPhases: [String] = []
     @Relationship(deleteRule: .cascade) var sessions: [PlannedSession] = []
 
     init() {}

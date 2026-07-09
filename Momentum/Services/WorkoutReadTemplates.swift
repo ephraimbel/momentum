@@ -90,13 +90,54 @@ enum WorkoutReadTemplates {
 
         var narrative = "\(typeWord) of \(dist) \(metric)."
         if let trend = splitTrend(gps) { narrative += " \(trend)." }
-        narrative += planned ? " That's today's session ✓, base is building." : " Nice work, saved."
+        // Close the coaching loop: name the prescribed session + how it landed, not just "session ✓".
+        if planned, let clause = coachingClause(runType: workout.plannedSession?.runType, reps: gps.structuredReps) {
+            narrative += " \(clause)"
+        } else if planned {
+            narrative += " That's today's session ✓, base is building."
+        } else {
+            narrative += " Nice work, saved."
+        }
 
         let insights = [
             WorkoutRead.Insight(label: "Distance", value: dist, note: ""),
             WorkoutRead.Insight(label: "Elevation", value: "\(Int(gps.elevationGainM)) m", note: ""),
         ]
         return WorkoutRead(narrative: narrative, insights: insights, planAdjustment: nil)
+    }
+
+    /// The coaching tie-in for a prescribed run — names the session and, for a guided one, how the reps
+    /// landed. Turns "today's session ✓" into a read that shows the plan understood what you just did.
+    /// Pure + testable. nil for a free run with no prescription.
+    static func coachingClause(runType: RunType?, reps: [RepResult]) -> String? {
+        guard let rt = runType else { return nil }
+        let name: String
+        switch rt {
+        case .intervals:   name = "speed session"
+        case .tempo:       name = "tempo"
+        case .fartlek:     name = "fartlek"
+        case .hills:       name = "hill session"
+        case .strides:     name = "strides"
+        case .progression: name = "progression run"
+        case .long:        name = "long run"
+        case .recovery:    name = "recovery run"
+        case .easy:        name = "easy run"
+        case .race:        name = "race"
+        case .freeRun:     return nil
+        }
+        var clause = "That's your \(name) done ✓"
+        let paced = reps.filter { $0.verdict != .noTarget }
+        if !paced.isEmpty {
+            let on = paced.filter { $0.verdict == .onPace }.count
+            clause += ". \(on) of \(paced.count) reps on pace"
+        } else if rt == .long {
+            clause += ", aerobic base building"
+        } else if rt.isQuality {
+            clause += ", the hard work's banked"
+        } else if rt == .recovery || rt == .easy {
+            clause += ", easy as prescribed"
+        }
+        return clause + "."
     }
 
     /// "Negative split" if the back half was quicker than the front half.

@@ -15,6 +15,27 @@ final class UserProfile {
     var raceDate: Date?
     /// Target race distance in meters (for "run a race" goals) — drives long-run progression + taper.
     var raceDistanceM: Double?
+    /// Current running load, captured at onboarding — seeds the plan's starting volume so it meets the
+    /// athlete where they are (not an experience-tier default). Both in meters (SI); nil until answered.
+    var weeklyRunVolumeM: Double?
+    var longestRunM: Double?
+    /// Hybrid (run + lift) emphasis — biases the run/lift day split. `HybridPriority` raw value; nil →
+    /// inferred from the goal.
+    var hybridPriority: String?
+    /// Target race finish time in seconds (race goals) — the athlete's aim, surfaced on the reveal and
+    /// compared against the race predictor. nil → no explicit target.
+    var goalFinishTimeS: Double?
+    /// How hard the athlete chose to push (PlanIntensity raw value) — shapes the volume ramp + down-week
+    /// cadence. nil → balanced.
+    var planIntensity: String?
+    /// Past injury areas from onboarding (InjuryArea raw values) — starts the plan protective and seeds
+    /// the injury loop's watch list. Empty → none reported.
+    var injuryHistory: [String] = []
+    /// The currently-reported injury (ENDURANCE-FOCUS §8.2) — set by InjuryResponse.report, cleared by
+    /// resume. Drives the "training around your…" state + the feeling-better affordance on Today.
+    var activeInjuryArea: String?
+    var activeInjurySeverity: String?
+    var activeInjuryUntil: Date?
     /// Muscle groups the athlete wants to emphasize (MuscleGroup raw values) — biases strength volume.
     var muscleFocus: [String] = []
     /// Preferred training weekdays (Calendar weekday: 1 = Sunday … 7 = Saturday). Empty → auto-spread.

@@ -166,6 +166,11 @@ struct CardioSaveView: View {
             workout.perceivedEffort = effort
             workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
             try? context.save()
+            // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective only).
+            if let note = PlanCoaching.adaptToEffort(workout, plan: profiles.first?.plan, in: context) {
+                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
+                services.notifications.schedulePlannedReminders(profiles.first?.plan)
+            }
             let saved = workout
             Task { await services.health.save(saved) }   // mirror to Apple Health (no-op unless connected)
         }
