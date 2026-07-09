@@ -34,6 +34,7 @@ struct CardioSummaryContent: View {
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
                 PlanProposalCard().reveal(0.34)
                 repsSection(gps).reveal(0.35)   // a structured run's headline: how each rep landed
+                SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(0.36)
                 RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit).reveal(0.38)
                 TimeInZonesCard(workout: workout).reveal(0.39)
                 splitsSection(gps).reveal(0.40)

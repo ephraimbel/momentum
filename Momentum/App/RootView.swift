@@ -57,7 +57,10 @@ struct RootView: View {
                 }
                 #if DEBUG
                 .fullScreenCover(isPresented: $showRunDetail) {
-                    if let run = recentWorkouts.first(where: { $0.type == .run && $0.gps != nil }) {
+                    // Prefer a run with a reps breakdown (this hook exists to verify guided-run
+                    // surfaces) — an interrupted stub from an earlier UI test must never win.
+                    let runs = recentWorkouts.filter { $0.type == .run && $0.gps != nil }
+                    if let run = runs.first(where: { $0.gps?.structuredRepsData != nil }) ?? runs.first {
                         NavigationStack { WorkoutDetailView(workout: run) }
                     }
                 }

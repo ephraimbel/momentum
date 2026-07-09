@@ -37,10 +37,19 @@ struct RunAnalysisSection: View {
     }
 
     /// Evenly thin a long trace so the charts stay smooth (keeps endpoints).
-    private func thinned(_ pts: [Pt], to max: Int = 200) -> [Pt] {
+    private func thinned<T>(_ pts: [T], to max: Int = 200) -> [T] {
         guard pts.count > max, max > 2 else { return pts }
         let stride = Double(pts.count - 1) / Double(max - 1)
         return (0..<max).map { pts[Int((Double($0) * stride).rounded())] }
+    }
+
+    private struct HRPt { let t: TimeInterval; let bpm: Int }
+
+    /// Locally captured heart-rate readings as elapsed-time points (seconds from the first reading).
+    private var hrPoints: [HRPt] {
+        let readings = gps.hrSamples.filter { $0.bpm > 0 }.sorted { $0.t < $1.t }
+        guard let first = readings.first else { return [] }
+        return readings.map { HRPt(t: $0.t.timeIntervalSince(first.t), bpm: $0.bpm) }
     }
 
     private struct SplitBar: Identifiable { let id: Int; let unitIndex: Int; let paceSPerUnit: Double; let isBest: Bool }
@@ -66,12 +75,52 @@ struct RunAnalysisSection: View {
         let elevRange = (altitudes.max() ?? 0) - (altitudes.min() ?? 0)
         let bars = splitBars
 
-        if pts.count >= 4 {
+        let hr = hrPoints
+
+        if pts.count >= 4 || hr.count >= 4 {
             VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                if hasPace, type != .ride { paceCard(pts) }
-                if bars.count >= 2, type != .ride { splitsCard(bars) }
-                if elevRange > 4 { elevationCard(pts, minAlt: altitudes.min() ?? 0) }
+                if pts.count >= 4 {
+                    if hasPace, type != .ride { paceCard(pts) }
+                    if bars.count >= 2, type != .ride { splitsCard(bars) }
+                }
+                if hr.count >= 4 { hrCard(thinned(hr)) }
+                if pts.count >= 4, elevRange > 4 { elevationCard(pts, minAlt: altitudes.min() ?? 0) }
             }
+        }
+    }
+
+    // MARK: Heart rate over time
+
+    private func hrCard(_ hr: [HRPt]) -> some View {
+        let avg = gps.avgHR ?? RunSignals.mean(hr.map(\.bpm))
+        return chartCard("Heart rate", subtitle: avg.map { "avg \($0) bpm" } ?? "bpm over time") {
+            Chart(Array(hr.enumerated()), id: \.offset) { _, p in
+                LineMark(x: .value("Time", p.t / 60),
+                         y: .value("BPM", p.bpm))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(Theme.ink)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+            }
+            .chartYScale(domain: .automatic(includesZero: false))
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine().foregroundStyle(Theme.hairline)
+                    AxisValueLabel {
+                        if let d = value.as(Double.self) { tick("\(Int(d))") }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks { value in
+                    AxisGridLine().foregroundStyle(Theme.hairline)
+                    AxisValueLabel {
+                        // Minute marks in runner's notation (12′), never "m" (reads as meters).
+                        if let d = value.as(Double.self) { tick("\(Int(d))′") }
+                    }
+                }
+            }
+            .frame(height: 150)
+            .accessibilityLabel("Heart rate over time" + (avg.map { ", average \($0) beats per minute" } ?? ""))
         }
     }
 

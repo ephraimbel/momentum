@@ -69,8 +69,19 @@ struct TimeInZonesCard: View {
                 #endif
                 return
             }
-            let end = workout.startedAt.addingTimeInterval(max(workout.elapsedS, workout.durationS))
-            let series = await services.health.heartRateSeries(start: workout.startedAt, end: end)
+            // Prefer the workout's own captured HR series (strap / Watch via Health, persisted live)
+            // — Health only carries a series for *imported* workouts, so without this our own
+            // recordings would never show zones. Fall back to the Health query for imports.
+            let local = (workout.gps?.hrSamples ?? [])
+                .sorted { $0.t < $1.t }
+                .map { (date: $0.t, bpm: Double($0.bpm)) }
+            let series: [(date: Date, bpm: Double)]
+            if local.count >= 2 {
+                series = local
+            } else {
+                let end = workout.startedAt.addingTimeInterval(max(workout.elapsedS, workout.durationS))
+                series = await services.health.heartRateSeries(start: workout.startedAt, end: end)
+            }
             distribution = ZoneDistribution.compute(samples: series, zones: zones)
             #if DEBUG
             print("[zones] series=\(series.count) dist=\(distribution?.map { Int($0) } ?? [])")

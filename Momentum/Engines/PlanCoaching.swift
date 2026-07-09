@@ -229,6 +229,36 @@ enum PlanCoaching {
         return Recalibration(oldP5kSPerKm: current, newP5kSPerKm: bounded, sessionsUpdated: updated)
     }
 
+    /// The consent-required inverse of `recalibratePaces`, offered by the session pace review when a
+    /// guided run's targets consistently ran hot ("Review"): ease the plan's assumed 5k a small
+    /// bounded step and re-derive **future** planned running paces so the prescription stays honest.
+    /// Never touches history; bounded to +2% per approval (mirrors recalibrate's ≤3% in the other
+    /// direction) so a tap can't lurch the plan. No-shame: this is "make the targets fit", never a
+    /// demotion. Returns the number of future sessions updated (0 ⇒ nothing upcoming to change).
+    @discardableResult
+    static func easeQualityPaces(_ plan: TrainingPlan?, from date: Date = Date(),
+                                 in context: ModelContext, calendar: Calendar = .current) -> Int {
+        guard let plan, plan.p5kSPerKm > 0 else { return 0 }
+        let newP5k = plan.p5kSPerKm * 1.02
+        let todayStart = calendar.startOfDay(for: date)
+        var updated = 0
+        for s in plan.sessions
+            where s.status == .planned && s.completedWorkout == nil
+                  && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
+            s.targetPaceSPerKm = PlanEngine.pace(runType, p5k: newP5k)
+            updated += 1
+        }
+        guard updated > 0 else { return 0 }   // nothing to change → don't move p5k either
+        let delta = Int((newP5k - plan.p5kSPerKm).rounded())
+        plan.p5kSPerKm = newP5k
+        try? context.save()
+        CoachingEvent.record(kind: .recalibrate, headline: "Eased your target paces",
+                             detail: "You asked for honest targets, so I eased your paces by about \(max(1, delta)) s/km. The reps will land the way they should.",
+                             on: date, in: context, calendar: calendar)
+        return updated
+    }
+
     /// Automatically protect the athlete from overreaching (PRD §9.4) — the closed-loop half of
     /// `apply`. Reads the ACWR recommendation from *completed* load and, **only when it says ease or
     /// rest**, applies it to upcoming sessions. Deliberately never auto-*increases* load (raising

@@ -47,6 +47,8 @@ enum DemoSeed {
                 let gps = GPSDetail(); gps.distanceM = dist; gps.elevationGainM = 30 + Double(daysAgo % 5) * 8
                 gps.avgPaceSPerKm = pace
                 gps.samples = loopSamples(start: start, variant: runIndex)   // a distinct route per run
+                gps.hrSamples = hrTrace(start: start, durationS: run.durationS, variant: runIndex)
+                gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
                 run.gps = gps; context.insert(run)
                 runIndex += 1
             }
@@ -140,6 +142,25 @@ enum DemoSeed {
         session.totalVolumeKg = volume
         session.totalSets = sets
         return session
+    }
+
+    /// A believable HR trace for a seeded run — a ~2 min warm-up ramp into a steady aerobic effort
+    /// with a slow wander, one reading every 5 s — so the HR chart + time-in-zones render from local
+    /// data exactly like a live-captured run (R3).
+    private static func hrTrace(start: Date, durationS: Double, variant: Int) -> [HeartRateSample] {
+        let steady = 148.0 + Double(variant % 4) * 5     // effort varies run to run
+        var out: [HeartRateSample] = []
+        var t = 0.0
+        while t <= durationS {
+            let ramp = min(1.0, t / 120)
+            let bpm = 95 + (steady - 95) * ramp + 5 * sin(t / 47 + Double(variant)) + 2 * sin(t / 9)
+            let s = HeartRateSample()
+            s.t = start.addingTimeInterval(t)
+            s.bpm = Int(bpm.rounded())
+            out.append(s)
+            t += 5
+        }
+        return out
     }
 
     // MARK: Routes

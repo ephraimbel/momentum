@@ -87,8 +87,20 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    /// Attach the run's average heart rate (bpm) captured from a BLE monitor (R3). Written at finish;
-    /// not stored when no strap fed readings, so strapless runs stay blank.
+    /// Persist one live heart-rate reading the moment it arrives (R3) — same durability contract as
+    /// `persistSample`, so a force-quit keeps every beat captured so far. Powers the post-run HR
+    /// chart + time-in-zones for runs recorded by us.
+    func persistHeartRate(t: Date, bpm: Int) {
+        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        let sample = HeartRateSample()
+        sample.t = t
+        sample.bpm = bpm
+        detail.hrSamples.append(sample)
+        try? modelContext.save()
+    }
+
+    /// Attach the run's average heart rate (bpm) from the live source — a BLE strap or a Watch
+    /// workout session via Health (R3). Written at finish; sourceless runs stay blank.
     func attachHR(_ bpm: Int) {
         guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         detail.avgHR = bpm

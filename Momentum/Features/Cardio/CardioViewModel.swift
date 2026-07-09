@@ -86,7 +86,7 @@ final class CardioViewModel {
         self.structured = structured
         self.voice = voice
         self.motion = motion ?? MotionService()
-        self.heartRate = heartRate ?? HeartRateMonitor()
+        self.heartRate = heartRate ?? LiveHeartRateSource()
         self.maxHR = maxHR
         self.location = LocationService()
         let store = GPSWorkoutStore(modelContainer: container)
@@ -254,16 +254,22 @@ final class CardioViewModel {
     }
 
     /// Record the current cadence + heart-rate readings for the run's averages — skipped while paused.
+    /// Each HR reading also persists immediately (same durability contract as GPS samples), powering
+    /// the post-run HR chart + time-in-zones.
     private func sampleCadence() {
         guard !isPaused else { return }
         if let c = motion.cadenceStepsPerMin, c > 0 { cadenceReadings.append(c) }
-        if let b = heartRate.bpm, b > 0 { hrReadings.append(b) }
+        if let b = heartRate.bpm, b > 0 {
+            hrReadings.append(b)
+            let store = self.store
+            Task { await store.persistHeartRate(t: Date(), bpm: b) }
+        }
     }
 
     /// Live cadence (steps/min) for the run screen; nil until CoreMotion reports (never in the sim).
     var cadence: Int? { motion.cadenceStepsPerMin }
 
-    /// Live heart rate (bpm) from the paired BLE monitor; nil without a strap.
+    /// Live heart rate (bpm) from the composed source (BLE strap, or Watch session via Health).
     var bpm: Int? { heartRate.bpm }
 
     /// Current HR zone label ("Z1"…"Z5") when both a live BPM and a max HR are known.

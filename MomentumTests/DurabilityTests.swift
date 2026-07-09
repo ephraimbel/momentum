@@ -55,6 +55,31 @@ struct DurabilityTests {
         ActiveWorkoutMarker.clear()
     }
 
+    @Test func heartRateReadingsPersistDurablyAndAverageAttaches() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+
+        await store.beginWorkout(type: .run, startedAt: start)
+        for (i, bpm) in [120, 140, 160].enumerated() {
+            await store.persistHeartRate(t: start.addingTimeInterval(Double(i) * 5), bpm: bpm)
+        }
+        await store.persistHeartRate(t: start, bpm: 0)   // a zero reading is dropped, not stored
+
+        // Durable mid-capture, exactly like GPS samples: visible from a fresh read.
+        let pending = try #require(WorkoutRecovery.pendingWorkout(in: container.mainContext))
+        #expect(pending.gps?.hrSamples.count == 3)
+        #expect(pending.gps?.hrSamples.map(\.bpm).sorted() == [120, 140, 160])
+
+        await store.attachHR(140)
+        await store.finishWorkout(distanceM: 1000, durationS: 300,
+                                  elevationGainM: 0, smoothedPaceSPerKm: 300)
+        let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
+        #expect(all.first { $0.id == pending.id }?.gps?.avgHR == 140)
+        ActiveWorkoutMarker.clear()
+    }
+
     @Test func strengthCapturePersistsSetsAndRecovers() async throws {
         ActiveWorkoutMarker.clear()
         let container = try makeContainer()

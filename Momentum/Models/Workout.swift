@@ -45,12 +45,25 @@ final class GPSDetail {
 
     @Relationship(deleteRule: .cascade) var samples: [LocationSample] = []
     @Relationship(deleteRule: .cascade) var splits: [Split] = []
+    @Relationship(deleteRule: .cascade) var hrSamples: [HeartRateSample] = []
     /// Per-rep results from a guided structured run (JSON-encoded `[RepResult]`) — the post-run
     /// adherence breakdown. nil for a plain run.
     var structuredRepsData: Data?
     var structuredReps: [RepResult] {
         structuredRepsData.flatMap { try? JSONDecoder().decode([RepResult].self, from: $0) } ?? []
     }
+
+    init() {}
+}
+
+/// A live heart-rate reading captured during the workout (running-excellence R3) — from a BLE strap
+/// or an Apple Watch workout session via Health. Persisted as it arrives (durability), powering the
+/// post-run HR chart + time-in-zones for runs recorded by us (Health only has series for *imported*
+/// workouts).
+@Model
+final class HeartRateSample {
+    var t: Date = Date()
+    var bpm: Int = 0
 
     init() {}
 }

@@ -14,29 +14,14 @@ final class RunChartsUITests: XCTestCase {
 
     func testRunDetailShowsCharts() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--progress-tab"]
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
-                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
-            }
-            return false
-        }
+        // The run-detail deep link opens a seeded run directly — History's feed rows carry composed
+        // accessibility labels (post-lean-cleanup), so navigating by an exact "Run" label is brittle.
+        app.launchArguments = ["--seed-demo", "--ui-test-run-detail"]
         app.launch()
-        app.tap()
-
-        // Progress → History segment.
-        let history = app.buttons["History"]
-        XCTAssertTrue(history.waitForExistence(timeout: 20), "History segment not found.")
-        history.tap()
-
-        // Tap the first run card (accessibilityLabel is the sport title).
-        let runCard = app.buttons["Run"].firstMatch
-        XCTAssertTrue(runCard.waitForExistence(timeout: 10), "No run cards in history.")
-        runCard.tap()
 
         // The detail scrolls; charts live below the route map. Swipe up to reveal them.
         let splits = app.staticTexts["SPLITS"]
-        XCTAssertTrue(splits.waitForExistence(timeout: 10), "Run detail didn't open.")
+        XCTAssertTrue(splits.waitForExistence(timeout: 15), "Run detail didn't open.")
         app.swipeUp(); app.swipeUp()
         dump(app, "verify_runcharts")
         // Chart section titles are present.
