@@ -30,7 +30,9 @@ struct CardioTrackingView: View {
     @State private var goalReached = false
     @State private var acquirePulse = false
     @State private var acquireTimedOut = false
-    @State private var mapStyle: MapStyleOption = .standard
+    // Shared app-wide base-map choice (see MapStyleOption.storageKey) — the style picked on Today
+    // is the style the run records with, and vice versa.
+    @AppStorage(MapStyleOption.storageKey) private var mapStyle: MapStyleOption = .realistic
     @State private var offRoute = false        // drifted off the guide loop (hysteresis-gated)
     /// Cached smoothed trace — recomputed only when a route point is added (see the map's onChange),
     /// never on incidental body re-evaluations like the 1 Hz elapsed-time tick.
@@ -243,7 +245,7 @@ struct CardioTrackingView: View {
                         .frame(width: 38, height: 38).momentumGlass(in: Circle())
                 }
                 Spacer()
-                MapLayersButton(style: $mapStyle)
+                MapLayersButton(style: $mapStyle, previewCenter: routeCoords.last ?? lastKnownCoordinate)
                 if phase == .tracking, let vm {
                     HStack(spacing: 4) {
                         Image(systemName: "location.fill")

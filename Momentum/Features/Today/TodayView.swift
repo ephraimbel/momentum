@@ -28,7 +28,9 @@ struct TodayView: View {
     private static let defaultMapCenter = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
-    @State private var mapStyle: MapStyleOption = .standard
+    // The athlete's app-wide base-map choice — persists across launches and stays in sync with every
+    // other map surface (run screen, heatmap). Realistic (Mapbox Standard 3D) is the default.
+    @AppStorage(MapStyleOption.storageKey) private var mapStyle: MapStyleOption = .realistic
     // Inline loop suggester — runs ON the Today map (no separate page), like world mode. `loopVM` holds
     // the candidates; the selected loop draws in brand purple beneath the live purple puck.
     @State private var loopMode = false
@@ -609,7 +611,8 @@ struct TodayView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: Theme.Space.sm) {
-                        MapLayersButton(style: $mapStyle, onWorld: { enterWorld() })
+                        MapLayersButton(style: $mapStyle, onWorld: { enterWorld() },
+                                        previewCenter: locator.lastCoordinate)
                         recenterButton
                     }
                 }

@@ -63,7 +63,7 @@ struct SpotsView: View {
                     .allowOverlap(true)
             }
         }
-        .mapStyle(MapStyleOption.standard.mapboxStyle)
+        .mapStyle(MapStyleOption.persisted.mapboxStyle)   // follow the athlete's app-wide choice
         .ornamentOptions(MapChrome.hidden)
         .onStyleLoaded { _ in BrandPuck.apply(to: proxy) }
         .ignoresSafeArea()

@@ -8,7 +8,8 @@ import MapboxMaps
 /// Non-interactive by default (a display canvas, not an explorable map).
 struct RouteMapView: View {
     let coordinates: [CLLocationCoordinate2D]
-    var style: MapStyleOption = .standard
+    /// Defaults to the athlete's persisted app-wide style, read at init (summary/history cards).
+    var style: MapStyleOption = .persisted
     var interactive: Bool = false
     var padding: CGFloat = 28
 

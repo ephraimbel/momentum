@@ -20,10 +20,15 @@ struct HeatmapMapView: UIViewRepresentable {
         map.gestures.options.pitchEnabled = false
         map.ornaments.options = MapChrome.hidden    // no Mapbox logo/attribution/scale bar/compass
         map.mapboxMap.styleURI = style.styleURI
-        context.coordinator.styleToken = map.mapboxMap.onStyleLoaded.observeNext { [weak map] _ in
+        // Observe EVERY style load, not just the first: switching the base style tears down all
+        // runtime-added sources/layers, so the heat must re-apply each time or it silently vanishes
+        // (the "heat areas went away" bug).
+        let coordinator = context.coordinator
+        coordinator.styleToken = map.mapboxMap.onStyleLoaded.observe { [weak map] _ in
             guard let map else { return }
-            context.coordinator.apply(cells: cells, to: map)
+            coordinator.apply(cells: coordinator.cells, to: map)
         }
+        context.coordinator.cells = cells
         return map
     }
 
@@ -37,14 +42,20 @@ struct HeatmapMapView: UIViewRepresentable {
     final class Coordinator {
         var cells: [HeatCell] = []
         var styleToken: AnyCancelable?
+        /// The cells the camera was last fitted to — a style switch re-applies the heat layers but
+        /// must NOT snap the athlete's pan/zoom back to the fitted frame.
+        private var fittedCells: [HeatCell] = []
 
         func apply(cells: [HeatCell], to map: MapView) {
             self.cells = cells
             guard map.mapboxMap.isStyleLoaded, !cells.isEmpty else { return }
-            let coords = cells.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-            let camera = map.mapboxMap.camera(for: coords,
-                padding: UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40), bearing: 0, pitch: 0)
-            map.mapboxMap.setCamera(to: camera)
+            if fittedCells != cells {
+                fittedCells = cells
+                let coords = cells.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                let camera = map.mapboxMap.camera(for: coords,
+                    padding: UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40), bearing: 0, pitch: 0)
+                map.mapboxMap.setCamera(to: camera)
+            }
 
             let features = cells.map { cell -> Turf.Feature in
                 var f = Turf.Feature(geometry: Point(CLLocationCoordinate2D(latitude: cell.lat, longitude: cell.lon)))

@@ -57,6 +57,10 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         manager.requestLocation()
     }
 
+    /// The most-recent known coordinate, however stale — for framing non-critical UI like the map
+    /// style previews around the athlete's area. Never used for tracking (no accuracy gate).
+    var lastCoordinate: CLLocationCoordinate2D? { manager.location?.coordinate }
+
     /// The system's most-recent cached fix — its accuracy and age — if iOS already knows where we are.
     /// Lets a run **warm-start**: skip the "Acquiring GPS" gate when the location is already good (the
     /// home map was just showing the puck). nil if there's no usable cached fix yet.

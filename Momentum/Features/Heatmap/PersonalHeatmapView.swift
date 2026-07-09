@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import CoreLocation
 
 /// "Your map" — every place the athlete has been active, drawn as an iridescent density heatmap from
 /// their *own* routes (the private mirror, north-star). Switchable base layers; lights up as they log
@@ -12,7 +13,7 @@ struct PersonalHeatmapView: View {
     @Query private var workouts: [Workout]
 
     @State private var cells: [HeatCell] = []
-    @State private var style: MapStyleOption = .standard
+    @AppStorage(MapStyleOption.storageKey) private var style: MapStyleOption = .realistic
     @State private var totalMeters = 0.0
     @State private var activityCount = 0
     @State private var loaded = false
@@ -54,7 +55,12 @@ struct PersonalHeatmapView: View {
                     }
                 }
                 Spacer()
-                if !cells.isEmpty { MapLayersButton(style: $style) }
+                if !cells.isEmpty {
+                    MapLayersButton(style: $style,
+                                    previewCenter: cells.first.map {
+                                        CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)
+                                    })
+                }
             }
             .padding(Theme.Space.md)
             Spacer()
