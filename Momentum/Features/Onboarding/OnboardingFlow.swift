@@ -245,10 +245,12 @@ struct OnboardingFlow: View {
     }
 
     private var goalStep: some View {
+        // Running-first ordering (ENDURANCE-FOCUS Phase 0): the racing + endurance goals lead — this is
+        // a running app. Strength/body-composition goals remain, as the supporting pillar.
         let goals: [(Goal, String, String)] = [
-            (.loseFat, "Lose fat / get fit", "flame"), (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"),
-            (.getStronger, "Get stronger", "dumbbell.fill"), (.raceDistance, "Run a race", "flag.checkered"),
-            (.endurance, "Improve endurance", "wind"), (.stayConsistent, "Stay consistent", "calendar")]
+            (.raceDistance, "Run a race", "flag.checkered"), (.endurance, "Run farther & faster", "wind"),
+            (.stayConsistent, "Stay consistent", "calendar"), (.loseFat, "Lose fat / get fit", "flame"),
+            (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"), (.getStronger, "Get stronger", "dumbbell.fill")]
         return questionScaffold("What's your main goal?", subtitle: "This shapes everything that follows.") {
             ForEach(Array(goals.enumerated()), id: \.element.0) { i, g in
                 SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) {
