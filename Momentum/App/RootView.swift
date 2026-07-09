@@ -14,6 +14,7 @@ struct RootView: View {
         if args.contains("--profile-tab") { return .profile }
         if args.contains("--plan-tab") { return .plan }
         if args.contains("--progress-tab") { return .progress }
+        if args.contains("--community-tab") { return .community }
         #endif
         return .today
     }()
@@ -104,6 +105,7 @@ struct RootView: View {
         case .today: TodayView()
         case .plan: PlanView()
         case .progress: ProgressScreen()
+        case .community: CommunityView()
         case .profile: ProfileScreen()
         }
     }

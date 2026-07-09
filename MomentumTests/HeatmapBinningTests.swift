@@ -52,4 +52,27 @@ struct HeatmapBinningTests {
         let centre = GeoPoint(lat: cell.lat, lon: cell.lon)
         #expect(centre.distance(to: base) < 25)                   // within one cell of the fix
     }
+
+    // MARK: Dominant cluster (what the camera opens on)
+
+    @Test func dominantClusterPicksTheBusierCity() {
+        // 10 fixes at home, 2 on a trip ~1000 km east — the camera set must be home only.
+        let away = offset(base, metresNorth: 0, metresEast: 1_000_000)
+        let cells = HeatmapBinning.bin(Array(repeating: base, count: 10) + [away, away], cellMeters: 25)
+        let cluster = HeatmapBinning.dominantCluster(cells)
+        #expect(cluster.count == 1)
+        #expect(cluster.first?.count == 10)
+    }
+
+    @Test func dominantClusterKeepsAWholeMetro() {
+        // Routes spread across a city (≤ 50 km) all stay in frame.
+        let coords = [base, offset(base, metresNorth: 8_000, metresEast: 0),
+                      offset(base, metresNorth: 0, metresEast: 12_000)]
+        let cells = HeatmapBinning.bin(coords, cellMeters: 25)
+        #expect(HeatmapBinning.dominantCluster(cells).count == cells.count)
+    }
+
+    @Test func dominantClusterOfNothingIsEmpty() {
+        #expect(HeatmapBinning.dominantCluster([]).isEmpty)
+    }
 }

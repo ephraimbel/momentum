@@ -4,9 +4,10 @@ import MapboxMaps
 import Turf   // `Feature`/`FeatureCollection` — qualified to avoid the app's paywall `Feature` enum
 
 /// Hosts a Mapbox `MapView` with a native `HeatmapLayer` — the athlete's own density only (PRD
-/// "private mirror"). The heat ramps through the iridescent palette to a white-hot core (PRD §6
-/// earned-iridescence) instead of Strava's red. Base layer switches via `MapStyleOption`; the camera
-/// fits the cells.
+/// "private mirror"). The heat uses the classic thermal ramp (blue → red; user decision 2026-07-09 —
+/// data viz speaks the universal heat language, iridescence stays reserved for earned progress) and
+/// a zoom-scaled radius so it traces the actual streets they ran. Base layer switches via
+/// `MapStyleOption`; the camera opens on the dominant training area.
 struct HeatmapMapView: UIViewRepresentable {
     let cells: [HeatCell]
     let style: MapStyleOption
@@ -51,7 +52,11 @@ struct HeatmapMapView: UIViewRepresentable {
             guard map.mapboxMap.isStyleLoaded, !cells.isEmpty else { return }
             if fittedCells != cells {
                 fittedCells = cells
-                let coords = cells.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                // Open on the athlete's primary training area at street level — where the heat
+                // actually traces their routes — not a fit of every city they've ever logged.
+                let cluster = HeatmapBinning.dominantCluster(cells)
+                let coords = (cluster.isEmpty ? cells : cluster)
+                    .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                 let camera = map.mapboxMap.camera(for: coords,
                     padding: UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40), bearing: 0, pitch: 0)
                 map.mapboxMap.setCamera(to: camera)
@@ -74,20 +79,41 @@ struct HeatmapMapView: UIViewRepresentable {
 
             var layer = HeatmapLayer(id: HeatmapMapView.layerID, source: HeatmapMapView.sourceID)
             layer.heatmapWeight = .expression(Exp(.get) { "w" })
-            layer.heatmapRadius = .constant(30)
-            layer.heatmapIntensity = .constant(1.1)
-            layer.heatmapOpacity = .constant(0.9)
-            // density 0 → clear, ramping through iridescent stops to a white-hot core.
-            let iri = Theme.iridescent
+            // Zoom-scaled radius is what makes the heat TRACE the athlete's actual routes (the cells
+            // are a 25 m grid): small when zoomed out (a glowing filament, not a city-sized ball),
+            // wide enough at street zoom that adjacent cells fuse into a continuous line.
+            layer.heatmapRadius = .expression(
+                Exp(.interpolate) {
+                    Exp(.exponential) { 1.6 }
+                    Exp(.zoom)
+                    8; 2
+                    11; 4
+                    13; 8
+                    15; 14
+                    17; 24
+                }
+            )
+            layer.heatmapIntensity = .expression(
+                Exp(.interpolate) {
+                    Exp(.linear)
+                    Exp(.zoom)
+                    8; 0.8
+                    15; 1.3
+                }
+            )
+            layer.heatmapOpacity = .constant(0.85)
+            // Classic thermal ramp (user decision 2026-07-09 — heat is data, not earned progress, so
+            // it reads in the universal heat language): cold blue → cyan → green → yellow → red-hot.
             layer.heatmapColor = .expression(
                 Exp(.interpolate) {
                     Exp(.linear)
                     Exp(.heatmapDensity)
                     0.0; UIColor.clear
-                    0.2; UIColor(iri[3])
-                    0.5; UIColor(iri[0])
-                    0.8; UIColor(iri[1])
-                    1.0; UIColor.white
+                    0.15; UIColor.systemBlue
+                    0.4; UIColor.cyan
+                    0.6; UIColor.green
+                    0.8; UIColor.yellow
+                    1.0; UIColor.red
                 }
             )
             try? map.mapboxMap.addLayer(layer)

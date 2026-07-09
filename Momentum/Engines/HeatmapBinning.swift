@@ -40,5 +40,27 @@ enum HeatmapBinning {
         }
     }
 
+    /// The metro-area subset the camera should open on. Cells are bucketed into a coarse ~`radiusM`
+    /// grid and the bucket with the most **total fixes** wins — the athlete's primary training city —
+    /// then everything within a bucket-radius of its centre is framed. Anchoring on totals (not the
+    /// single busiest cell) matters: one slow out-and-back stacks many fixes into a few cells and
+    /// would otherwise drag the camera to a one-off route. All cells still render; this only frames
+    /// the opening view. Box distance is plenty at metro scale.
+    static func dominantCluster(_ cells: [HeatCell], radiusM: Double = 50_000) -> [HeatCell] {
+        guard !cells.isEmpty else { return [] }
+        let latDeg = radiusM / metersPerDegLat
+        var totals: [Cell: Int] = [:]
+        for c in cells {
+            let lonDeg = radiusM / (metersPerDegLat * max(0.01, cos(c.lat * .pi / 180)))
+            totals[Cell(i: Int((c.lat / latDeg).rounded()), j: Int((c.lon / lonDeg).rounded())),
+                   default: 0] += c.count
+        }
+        guard let best = totals.max(by: { $0.value < $1.value })?.key else { return [] }
+        let anchorLat = Double(best.i) * latDeg
+        let anchorLonDeg = radiusM / (metersPerDegLat * max(0.01, cos(anchorLat * .pi / 180)))
+        let anchorLon = Double(best.j) * anchorLonDeg
+        return cells.filter { abs($0.lat - anchorLat) <= latDeg && abs($0.lon - anchorLon) <= anchorLonDeg }
+    }
+
     private struct Cell: Hashable { let i: Int; let j: Int }
 }
