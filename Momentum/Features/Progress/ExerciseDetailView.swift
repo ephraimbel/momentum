@@ -1,3 +1,6 @@
+// KEPT (lean-cleanup 2026-07): currently unreachable — its entry point was lost in the
+// Profile-tab redesign. This is planned strength-support analytics (per-lift e1RM progression);
+// re-link it from the strength surfaces rather than rebuilding. Do not delete.
 import SwiftUI
 import SwiftData
 import Charts

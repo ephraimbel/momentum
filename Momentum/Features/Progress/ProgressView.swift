@@ -595,6 +595,9 @@ struct ProgressScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 historySummary().reveal(0)
+                // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a tab).
+                // Rescued from the retired standalone History screen during the lean-cleanup pass.
+                HeatmapHistoryCard(workouts: workouts, distanceUnit: distanceUnit).reveal(0.04)
                 ForEach(Array(monthGroups.enumerated()), id: \.element.key) { gi, group in
                     VStack(alignment: .leading, spacing: Theme.Space.sm) {
                         Text(group.key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))

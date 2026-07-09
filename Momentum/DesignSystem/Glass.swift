@@ -47,17 +47,3 @@ private struct MomentumGlassModifier<S: Shape>: ViewModifier {
     }
 }
 
-/// Groups several glass elements so they morph/blend together on iOS 26 (a no-op container below).
-/// Use around clusters like the Today top bar (coach + streak).
-struct MomentumGlassCluster<Content: View>: View {
-    var spacing: CGFloat = Theme.Space.sm
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        if #available(iOS 26, *) {
-            GlassEffectContainer(spacing: spacing) { content() }
-        } else {
-            content()
-        }
-    }
-}

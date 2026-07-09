@@ -1,61 +1,6 @@
 import SwiftUI
 import SwiftData
 
-/// Post-workout summary screen for strength (PRD §4.4 finish, §4.6): a presented cover with Done.
-/// Renders `StrengthSummaryContent`, which is also reused by `WorkoutDetailView`.
-struct StrengthSummaryView: View {
-    let workoutId: UUID
-    var weightUnit: WeightUnit = .default()
-    var onDone: () -> Void
-
-    @Query private var workouts: [Workout]
-    @Query private var profiles: [UserProfile]
-    private var workout: Workout? { workouts.first { $0.id == workoutId } }
-
-    @Environment(Services.self) private var services
-    @Environment(\.modelContext) private var context
-    @State private var logged = false
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                if let workout {
-                    StrengthSummaryContent(workout: workout, weightUnit: weightUnit, celebratePRs: true, canEditPhoto: true)
-                        .padding(Theme.Space.md)
-                } else {
-                    ContentUnavailableView("Workout not found", systemImage: "questionmark")
-                }
-            }
-            .background(Theme.background)
-            .onAppear {
-                // Fire once on the post-workout screen (not in history, which uses Content directly).
-                guard !logged, let workout else { return }
-                logged = true
-                if let profile = profiles.first {
-                    workout.privacy = SocialPrivacy.defaultVisibility(profile)
-                    try? context.save()
-                }
-                services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
-                if !StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context).isEmpty {
-                    services.analytics.log(.prHit(type: workout.type.rawValue))
-                }
-            }
-            .navigationTitle("Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { onDone() }.fontWeight(.semibold)
-                }
-                if let workout {
-                    ToolbarItem(placement: .topBarLeading) {
-                        ShareButton(workout: workout, weightUnit: weightUnit)
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Reusable strength summary body (PRD §4.4): headline volume/sets/duration, PR badges,
 /// working-sets-by-muscle, per-exercise breakdown. No navigation chrome of its own.
 struct StrengthSummaryContent: View {

@@ -11,7 +11,10 @@ struct HeatmapHistoryCard: View {
     @State private var expand = false
 
     var body: some View {
-        Group {
+        // ZStack with a zero-size anchor: lifecycle modifiers never fire on a Group that renders
+        // EmptyView, so a bare `if` here would leave `.task` dead and the card permanently hidden.
+        ZStack {
+            Color.clear.frame(width: 0, height: 0)
             if let r = result, !r.cells.isEmpty {
                 Button { expand = true } label: { card(r) }
                     .buttonStyle(.plain)
