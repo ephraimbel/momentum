@@ -14,6 +14,7 @@ import Supabase
 final class AuthController {
     private static let userIDKey = "com.momentum.auth.userID"
     private static let nameKey = "com.momentum.auth.name"
+    private static let emailKey = "com.momentum.auth.email"
     private static let cloudSessionKey = "com.momentum.auth.hadCloudSession"
 
     /// The raw nonce for the in-flight Apple request. Apple gets its SHA-256 hash; Supabase gets
@@ -29,6 +30,8 @@ final class AuthController {
 
     private(set) var userID: String?
     private(set) var displayName: String?
+    /// Sign-in email (Apple first-auth / Google) — feeds handle suggestions; never shown publicly.
+    private(set) var email: String?
 
     /// The app is "in" (past the gate) when there's any userID — a real Apple id *or* the guest one.
     var isSignedIn: Bool { userID != nil }
@@ -45,6 +48,7 @@ final class AuthController {
         #endif
         userID = UserDefaults.standard.string(forKey: Self.userIDKey)
         displayName = UserDefaults.standard.string(forKey: Self.nameKey)
+        email = UserDefaults.standard.string(forKey: Self.emailKey)
     }
 
     /// Persist a successful Apple sign-in. `fullName` arrives only on the first authorization.
@@ -56,6 +60,10 @@ final class AuthController {
         if let fullName, let formatted = Self.format(fullName) {
             displayName = formatted
             UserDefaults.standard.set(formatted, forKey: Self.nameKey)
+        }
+        if let email, !email.isEmpty {   // Apple hands this over on the FIRST authorization only
+            self.email = email
+            UserDefaults.standard.set(email, forKey: Self.emailKey)
         }
         Haptics.success()
     }
@@ -116,16 +124,20 @@ final class AuthController {
     func continueAsGuest() {
         userID = Self.guestID
         displayName = nil
+        email = nil
         UserDefaults.standard.set(Self.guestID, forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
+        UserDefaults.standard.removeObject(forKey: Self.emailKey)
         Haptics.success()
     }
 
     func signOut() {
         userID = nil
         displayName = nil
+        email = nil
         UserDefaults.standard.removeObject(forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
+        UserDefaults.standard.removeObject(forKey: Self.emailKey)
         if let client = SupabaseClientProvider.client {
             Task { try? await client.auth.signOut() }
         }
@@ -150,6 +162,10 @@ final class AuthController {
             if let name, !name.isEmpty {
                 displayName = name
                 UserDefaults.standard.set(name, forKey: Self.nameKey)
+            }
+            if let mail = session.user.email, !mail.isEmpty {
+                email = mail
+                UserDefaults.standard.set(mail, forKey: Self.emailKey)
             }
             markCloudSession()
             Haptics.success()

@@ -18,8 +18,16 @@ struct OnboardingFlowTests {
         vm.daysPerWeek = 4
         vm.equipment = .fullGym
         vm.sessionMinutes = 60
+        vm.name = "Maya Rivera"
+        vm.handle = "maya_runs"
+        vm.avatarData = Data([0xFF, 0xD8])
 
         let profile = vm.finish(in: ctx)
+
+        // Identity from the onboarding identity step lands on the profile.
+        #expect(profile.displayName == "Maya Rivera")
+        #expect(profile.handle == "maya_runs")
+        #expect(profile.avatarData != nil)
 
         #expect(profile.disciplines.contains("running"))
         #expect(profile.disciplines.contains("strength"))
@@ -54,6 +62,13 @@ struct OnboardingFlowTests {
         #expect(vm.canAdvance)                        // activities chosen
         vm.activities = []
         #expect(!vm.canAdvance)                        // must pick at least one
+
+        // The identity step gates on a usable handle (prefill makes it one tap in practice).
+        vm.step = .identity
+        vm.handle = ""
+        #expect(!vm.canAdvance)
+        vm.handle = "Maya Runs!"                      // normalizes to "mayaruns" → valid
+        #expect(vm.canAdvance)
     }
 
     @Test func crossTrainingAddOnsHonorChosenDayCount() throws {
@@ -99,6 +114,8 @@ struct OnboardingFlowTests {
         // Step order: the coach-interview arc holds (broad → specific → consent → commitment).
         let steps = vm.steps
         func idx(_ s: OnboardingViewModel.Step) throws -> Int { try #require(steps.firstIndex(of: s)) }
+        #expect(try idx(.name) < idx(.identity))             // your name → your @handle
+        #expect(try idx(.identity) < idx(.goal))             // identity settles before training questions
         #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
         #expect(try idx(.injuries) < idx(.race))             // before the race specifics
         #expect(try idx(.calibration) < idx(.health))        // fitness baseline → recovery consent

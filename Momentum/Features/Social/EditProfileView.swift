@@ -84,14 +84,10 @@ struct EditProfileView: View {
         VStack(spacing: 0) {
             field("Name", text: $profile.displayName, placeholder: "Your name")
             divider
-            HStack(spacing: 0) {
-                Text("@").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                TextField("handle", text: $handle)
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                    .autocorrectionDisabled().textInputAutocapitalization(.never)
-                    .onChange(of: handle) { _, new in handle = SocialPrivacy.normalizedHandle(new) }
-            }
-            .padding(.vertical, 12)
+            HandleField(handle: $handle, backend: services.social,
+                        suggestions: HandleSuggester.candidates(
+                            name: profile.displayName, email: nil,
+                            seed: UInt64(bitPattern: Int64(profile.id.hashValue))))
             divider
             field("City", text: $profile.city, placeholder: "Optional")
             divider

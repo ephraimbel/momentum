@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
 
 /// Onboarding → plan reveal (PRD §4.1, §7.1) — the conversion engine. Cal-AI-grade structure
 /// (continuous progress, back chevron, one bold question per screen, tactile cards, a pinned
@@ -11,6 +12,8 @@ struct OnboardingFlow: View {
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(Services.self) private var services
+    @Environment(AuthController.self) private var auth
+    @State private var pickedOnboardingAvatar: PhotosPickerItem?
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
     @State private var goingBack = false
@@ -55,10 +58,15 @@ struct OnboardingFlow: View {
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
         .onAppear {
-            // No name prefill — onboarding is guest-first now (Sign in with Apple comes later), so the
-            // athlete types their own name on a clean field instead of inheriting a placeholder.
+            // Signed-in athletes (Apple/Google at the gate) shouldn't retype what they just told
+            // us — prefill the name. Guests keep the clean field (nothing to inherit).
+            if vm.name.isEmpty, let known = auth.displayName, !known.isEmpty { vm.name = known }
             #if DEBUG
             let args = ProcessInfo.processInfo.arguments
+            if args.contains("--onboarding-identity") { vm.name = "Maya"; vm.step = .identity }
+            // Pre-set a handle so the field's taken/available state renders deterministically
+            // (sim can't type): pair with a row for that handle in the backend to see ✗ + chips.
+            if args.contains("--onboarding-identity-taken") { vm.name = "Maya"; vm.handle = "maya"; vm.step = .identity }
             if args.contains("--onboarding-volume") { vm.activities = [.run]; vm.experience = .some; vm.step = .runVolume }
             if args.contains("--onboarding-hybrid") { vm.activities = [.run, .strength]; vm.step = .hybridFocus }
             if args.contains("--onboarding-disciplines") { vm.step = .disciplines }
@@ -176,6 +184,7 @@ struct OnboardingFlow: View {
     private var content: some View {
         switch vm.step {
         case .name: nameStep
+        case .identity: identityStep
         case .goal: goalStep
         case .disciplines: disciplinesStep
         case .race: raceStep
@@ -246,6 +255,66 @@ struct OnboardingFlow: View {
                 }
                 .reveal(cascade(0))
         }
+    }
+
+    /// The @handle claim — the athlete's name on the Community feed, unique across momentum.
+    /// Prefilled with an available suggestion (one tap for most people); availability is advisory
+    /// (guests get real checks via the anon RPC; the claim itself is race-safe server-side).
+    /// The avatar is deliberately optional and quiet — no permission pressure mid-flow.
+    private var identityStep: some View {
+        questionScaffold("Claim your @handle", subtitle: "Your name on momentum — how friends find and cheer you. Yours alone.") {
+            HandleField(handle: $vm.handle, backend: services.social,
+                        suggestions: identitySuggestions, boxed: true, showsOfflineHint: true)
+                .reveal(cascade(0))
+            HStack(spacing: Theme.Space.md) {
+                AvatarView(photo: vm.avatarData, name: vm.name.isEmpty ? "You" : vm.name, size: 56)
+                PhotosPicker(selection: $pickedOnboardingAvatar, matching: .images) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(vm.avatarData == nil ? "Add a photo" : "Change photo")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Text("Optional — you can always add one later.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(Theme.Space.md)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            }
+            .reveal(cascade(1))
+        }
+        .onChange(of: pickedOnboardingAvatar) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    vm.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
+                    Haptics.success()
+                }
+            }
+        }
+        .task { await seedHandleSuggestion() }
+    }
+
+    /// Candidates offered by the field when the typed handle is taken.
+    @State private var identitySuggestionSeed = UInt64.random(in: .min ... .max)
+    private var identitySuggestions: [String] {
+        HandleSuggester.candidates(name: vm.name, email: auth.email, seed: identitySuggestionSeed)
+    }
+
+    /// Prefill the handle with the first *available* candidate (≤3 probes; offline/guest-dark
+    /// falls back to the first candidate unchecked). Never overwrites a typed handle.
+    private func seedHandleSuggestion() async {
+        guard vm.handle.isEmpty else { return }
+        let candidates = identitySuggestions
+        for candidate in candidates.prefix(3) {
+            if await services.social.handleAvailability(candidate) == true {
+                if vm.handle.isEmpty { vm.handle = candidate }
+                return
+            }
+        }
+        if vm.handle.isEmpty { vm.handle = candidates.first ?? "" }
     }
 
     private var goalStep: some View {
@@ -1075,7 +1144,16 @@ struct OnboardingFlow: View {
     }
 
     private func buildPlan() async {
-        if profile == nil { profile = vm.finish(in: context) }
+        if profile == nil {
+            profile = vm.finish(in: context)
+            // Claim the identity on the backend (signed-in athletes; guests no-op and claim on
+            // first sign-in). Fire-and-forget — never delays the building beat.
+            if let claimed = profile {
+                let backend = services.social
+                let claimContext = context
+                Task { await backend.claimProfile(claimed, in: claimContext) }
+            }
+        }
         services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
         // Long enough for the route to finish drawing and the head to pulse before the reveal.
         try? await Task.sleep(for: .seconds(3.1))

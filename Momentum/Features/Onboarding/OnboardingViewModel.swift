@@ -9,6 +9,10 @@ final class OnboardingViewModel {
     // Answers
     /// What to call the athlete (prefilled from Sign in with Apple; editable). Fills the profile.
     var name: String = ""
+    /// The claimed @handle (identity step) — normalized on entry, unique-enforced at claim.
+    var handle: String = ""
+    /// Optional onboarding avatar (identity step) — already downscaled to ≤512px.
+    var avatarData: Data?
     /// Everything the athlete chose to do (source of truth for the picker).
     var activities: Set<ActivityChoice> = []
     /// Engine-facing disciplines — the programmable subset of the chosen activities.
@@ -123,9 +127,11 @@ final class OnboardingViewModel {
         // → race specifics → schedule → equipment/focus → motivation → pace → build → reveal → opt-ins.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
-        case name, goal, disciplines, experience, injuries, metrics, race, raceGoalTime, muscleFocus,
-             runVolume, days, preferredDays, session, equipment, hybridFocus, why, calibration,
-             health, intensity, building, reveal, notifications, primers
+        // `identity` (the @handle claim) follows `name` — who you are, then your name on the
+        // Community feed, both before any training questions.
+        case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
+             muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
+             calibration, health, intensity, building, reveal, notifications, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -171,6 +177,7 @@ final class OnboardingViewModel {
 
     var canAdvance: Bool {
         switch step {
+        case .identity: return !SocialPrivacy.normalizedHandle(handle).isEmpty
         case .disciplines: return !activities.isEmpty
         case .race: return raceDistance != nil
         default: return true
@@ -294,6 +301,8 @@ final class OnboardingViewModel {
         let chosen = disciplines.isEmpty ? [Discipline.running] : Array(disciplines)
         // Identity from onboarding fills the profile (no more blank "Athlete").
         profile.displayName = name.trimmingCharacters(in: .whitespaces)
+        profile.handle = SocialPrivacy.normalizedHandle(handle)
+        if let avatarData { profile.avatarData = avatarData }
         if profile.bio.isEmpty { profile.bio = bioForGoal }
         profile.disciplines = chosen.map(\.rawValue)
         profile.goal = goal

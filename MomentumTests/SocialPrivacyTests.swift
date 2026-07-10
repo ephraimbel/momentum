@@ -12,6 +12,32 @@ struct SocialPrivacyTests {
         #expect(SocialPrivacy.normalizedHandle(String(repeating: "a", count: 40)).count == 20)
     }
 
+    /// The output must always satisfy the server's `^[a-z0-9_]{0,20}$` constraint — accented
+    /// letters fold to ASCII instead of slipping through as "valid" handles the claim rejects.
+    @Test func handleNormalizationFoldsToASCII() {
+        #expect(SocialPrivacy.normalizedHandle("José") == "jose")
+        #expect(SocialPrivacy.normalizedHandle("Åsa Öström") == "asaostrom")
+        #expect(SocialPrivacy.normalizedHandle("François") == "francois")
+        for raw in ["José", "Müller_99", "Zoë 🏃", "日本語"] {
+            let normalized = SocialPrivacy.normalizedHandle(raw)
+            #expect(normalized.unicodeScalars.allSatisfy {
+                ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_"
+            })
+        }
+    }
+
+    /// The reserved list mirrors the SQL migration — every entry must be self-normalized (or the
+    /// client check could never match what a user can actually type).
+    @Test func reservedHandlesAreEnforcedAndNormalized() {
+        #expect(!SocialPrivacy.reservedHandles.isEmpty)
+        #expect(SocialPrivacy.isReservedHandle("momentum"))
+        #expect(SocialPrivacy.isReservedHandle("ADMIN"))          // case-insensitive
+        #expect(!SocialPrivacy.isReservedHandle("maya_runs"))
+        for reserved in SocialPrivacy.reservedHandles {
+            #expect(SocialPrivacy.normalizedHandle(reserved) == reserved)
+        }
+    }
+
     @Test func defaultsAreFullyPrivate() {
         let p = UserProfile()
         #expect(SocialPrivacy.defaultVisibility(p) == .private)

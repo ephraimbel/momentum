@@ -13,6 +13,10 @@ protocol SocialBackending: AnyObject {
     // Profile
     func pushProfile(_ dto: SocialSyncEngine.ProfileDTO) async throws
     func uploadAvatar(jpeg: Data) async -> String?
+    /// Advisory availability probe for the @handle field. Works WITHOUT a session (anon RPC) so
+    /// guests get live checks during onboarding; nil = unknown (offline/unconfigured) and the UI
+    /// stays neutral — the unique index at claim time is the real arbiter.
+    func handleAvailability(_ handle: String) async -> Bool?
 
     // Posts
     func publish(_ post: SocialSyncEngine.PostDTO, photos: [Data]) async -> Bool
@@ -63,6 +67,34 @@ enum SocialBackendError: Error {
 }
 
 extension SocialBackending {
+    /// Claim the athlete's identity on the backend: avatar first (so the first profile row
+    /// carries its path), then the profile upsert. No-ops for guests/dark builds/empty handles.
+    /// Losing the claim race (handle taken between the availability check and now, or a guest's
+    /// handle claimed while they were offline) keeps the local handle and posts one deduped
+    /// inbox notification pointing at Edit Profile — no-shame, no blocking.
+    func claimProfile(_ profile: UserProfile, in context: ModelContext) async {
+        guard await isAvailable else { return }
+        var dto = SocialSyncEngine.profileDTO(for: profile)
+        guard !dto.handle.isEmpty || !dto.displayName.isEmpty else { return }
+        if let avatar = profile.avatarData, let path = await uploadAvatar(jpeg: avatar) {
+            dto.avatarPath = path
+        }
+        do {
+            try await pushProfile(dto)
+        } catch SocialBackendError.handleTaken {
+            AppNotification.post(
+                kind: .system,
+                title: "Your handle is taken",
+                body: "@\(dto.handle) was claimed by another athlete — pick a new one in Edit Profile.",
+                in: context,
+                dedupeToken: "handle-conflict",
+                daily: false)
+            try? context.save()
+        } catch {
+            // Offline/transient — the profile stays local and re-claims on the next edit/sign-in.
+        }
+    }
+
     /// The opportunistic publish sweep (runs alongside the workout sync on Today's appear):
     /// posts for newly-shared workouts go up (photos first), privacy-downgraded posts come down.
     /// `postPublishedAt` is stamped/cleared **on success only**, so failures retry next sweep —
@@ -92,6 +124,7 @@ final class StubSocialBackend: SocialBackending {
     var isAvailable: Bool { false }
     func pushProfile(_ dto: SocialSyncEngine.ProfileDTO) async throws {}
     func uploadAvatar(jpeg: Data) async -> String? { nil }
+    func handleAvailability(_ handle: String) async -> Bool? { nil }
     func publish(_ post: SocialSyncEngine.PostDTO, photos: [Data]) async -> Bool { false }
     func unpublish(postID: UUID) async -> Bool { false }
     func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? { nil }
@@ -154,6 +187,18 @@ final class SupabaseSocialBackend: SocialBackending {
             }
             throw error
         }
+    }
+
+    /// Anon-callable by design (see the migration): gate on the client existing, NEVER on a
+    /// session — guests are the whole point of this probe.
+    func handleAvailability(_ handle: String) async -> Bool? {
+        guard let client, !handle.isEmpty else { return nil }
+        do {
+            let available: Bool = try await client
+                .rpc("handle_available", params: ["p_handle": handle])
+                .execute().value
+            return available
+        } catch { return nil }
     }
 
     func uploadAvatar(jpeg: Data) async -> String? {

@@ -5,12 +5,30 @@ import Foundation
 /// call site. The server re-enforces fuzzing/redaction — this is the client-side source of truth.
 enum SocialPrivacy {
 
-    /// Normalize a raw display string into a valid @handle: lowercase, keep [a-z0-9_], cap at 20.
+    /// Normalize a raw display string into a valid @handle: diacritic-fold to ASCII (José → jose),
+    /// lowercase, keep only [a-z0-9_], cap at 20. Must stay in lockstep with the server's
+    /// `profiles_handle_format` constraint (supabase/migrations/…_handle_available.sql) — anything
+    /// this produces must pass `^[a-z0-9_]{0,20}$`, or a "valid" handle would fail its claim.
     static func normalizedHandle(_ raw: String) -> String {
-        let kept = raw.lowercased().unicodeScalars.filter {
-            CharacterSet.alphanumerics.contains($0) || $0 == "_"
+        let folded = raw
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+        let kept = folded.unicodeScalars.filter {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_"
         }
         return String(String(String.UnicodeScalarView(kept)).prefix(20))
+    }
+
+    /// Handles the product owns — never claimable. Byte-identical mirror of the SQL list in
+    /// supabase/migrations/…_handle_available.sql (the server enforces; this is instant client UX).
+    static let reservedHandles: Set<String> = [
+        "momentum", "admin", "administrator", "support", "help", "official", "mod", "moderator",
+        "team", "staff", "root", "api", "www", "app", "about", "settings", "profile", "athlete",
+        "everyone", "following", "feed",
+    ]
+
+    static func isReservedHandle(_ handle: String) -> Bool {
+        reservedHandles.contains(handle.lowercased())
     }
 
     /// The visibility applied to a newly-finished workout (the athlete's chosen default).

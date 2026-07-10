@@ -34,6 +34,12 @@ struct MomentumApp: App {
                 workout.postPublishedAt = nil
             }
             try? context.save()
+            // A guest who onboarded already picked an identity — claim it under the new account
+            // (conflicts surface as one inbox notification). No profile yet = gate sign-in before
+            // onboarding; that path claims right after onboarding's finish() instead.
+            if let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
+                Task { await services.social.claimProfile(profile, in: context) }
+            }
         }
         authController.refresh()   // sign out if the Apple credential was revoked
         _auth = State(initialValue: authController)
