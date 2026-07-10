@@ -131,9 +131,38 @@ final class AuthController {
         }
     }
 
+    /// Google sign-in via the Supabase OAuth web sheet (ASWebAuthenticationSession — no Google
+    /// SDK, per the third-party-dependency rules). The SDK opens the sheet, captures the
+    /// `momentum://auth-callback` redirect, and persists the session in the Keychain. Returns
+    /// false on cancel/offline/unconfigured — the gate simply stays put.
+    func signInWithGoogle() async -> Bool {
+        guard let client = SupabaseClientProvider.client else { return false }
+        do {
+            let session = try await client.auth.signInWithOAuth(
+                provider: .google,
+                redirectTo: URL(string: "momentum://auth-callback"))
+            let name = session.user.userMetadata["full_name"]?.stringValue
+                ?? session.user.userMetadata["name"]?.stringValue
+            // No Apple id to key on — the Supabase user id (prefixed so `refresh()` knows not to
+            // run the Apple credential check against it) becomes the local identity.
+            userID = "google:\(session.user.id.uuidString)"
+            UserDefaults.standard.set(userID, forKey: Self.userIDKey)
+            if let name, !name.isEmpty {
+                displayName = name
+                UserDefaults.standard.set(name, forKey: Self.nameKey)
+            }
+            markCloudSession()
+            Haptics.success()
+            return true
+        } catch {
+            return false   // user cancelled the sheet, offline, or provider not configured
+        }
+    }
+
     /// On launch, confirm the Apple credential is still valid; sign out if it was revoked. Skips the
-    /// demo + guest sessions, which have no Apple credential to validate. Also restores the Supabase
-    /// session from the Keychain (refreshing the JWT if stale) so RLS'd calls work from cold launch.
+    /// demo + guest + Google sessions, which have no Apple credential to validate. Also restores the
+    /// Supabase session from the Keychain (refreshing the JWT if stale) so RLS'd calls work from
+    /// cold launch.
     func refresh() {
         guard let userID, userID != "demo-user", userID != Self.guestID else { return }
         if let client = SupabaseClientProvider.client {
@@ -141,6 +170,7 @@ final class AuthController {
                 if (try? await client.auth.session) != nil { await self?.markCloudSession() }
             }
         }
+        guard !userID.hasPrefix("google:") else { return }   // Google sessions live in the Keychain
         ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { [weak self] state, _ in
             guard state == .revoked || state == .notFound else { return }
             Task { @MainActor in self?.signOut() }

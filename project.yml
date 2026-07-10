@@ -80,6 +80,12 @@ targets:
         # templates, local-only social). Setup: docs/SOCIAL-BACKEND-SETUP.md.
         SupabaseURL: "$(SUPABASE_URL)"
         SupabaseAnonKey: "$(SUPABASE_ANON_KEY)"
+        # OAuth deep-link callback (Google sign-in via ASWebAuthenticationSession) — the scheme
+        # the Supabase web flow redirects back to (momentum://auth-callback).
+        CFBundleURLTypes:
+          - CFBundleURLName: com.momentum.app.auth
+            CFBundleURLSchemes:
+              - momentum
         # Billing (PRD §10). Empty → local entitlement seam. Set these + link the SDKs to go live
         # (docs/MONETIZATION-SETUP.md). Read by `BillingKeys`.
         RevenueCatAPIKey: ""
