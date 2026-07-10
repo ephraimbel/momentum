@@ -109,7 +109,8 @@ enum PlanService {
             hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets,
-            intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced)
+            intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
+            injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)))
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,

@@ -244,6 +244,65 @@ struct PlanEngineTests {
         #expect(half.paceOverride == PlanEngine.pace(.tempo, p5k: 300))
     }
 
+    // MARK: Injury history (the "safer ramp where you've been hurt" promise)
+
+    @Test func injuryHistoryCapsAggressiveRamp() {
+        // An aggressive pick with an injury history ramps no faster than balanced (1.08/wk) and
+        // deloads on the balanced cadence (every 4th week, not aggressive's 5th).
+        var inp = inputs(disciplines: [.running], goal: .endurance, days: 4)
+        inp.intensity = .aggressive
+        inp.injuryHistory = [.shins]
+        let race = Calendar.current.date(byAdding: .weekOfYear, value: 9, to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.raceDate = race
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        var lastBuild: Double?
+        for week in plan.weeks where !week.isDeload && !week.isTaper {
+            if let prev = lastBuild { #expect(week.runVolumeM <= prev * 1.08 + 1) }
+            lastBuild = week.runVolumeM
+        }
+        #expect(plan.weeks[3].isDeload)   // balanced cadence: deload on week 4
+        // No injury history → aggressive keeps its own ramp (regression guard).
+        var clean = inp; clean.injuryHistory = []
+        let cleanPlan = PlanEngine.generate(profile: clean, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(!cleanPlan.weeks[3].isDeload)   // aggressive deloads every 5th, not 4th
+    }
+
+    @Test func lowerLegInjuryAvoidsHillReps() {
+        // A shin history swaps high-impact hill reps for tempo — and says so on the session.
+        func runTypes(_ areas: [InjuryArea]) -> (types: Set<RunType>, notes: [String]) {
+            var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+            inp.raceDistanceM = 5_000
+            inp.injuryHistory = areas
+            inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 9,
+                                                 to: Date(timeIntervalSinceReferenceDate: 0))
+            let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+            let sessions = plan.weeks.flatMap(\.sessions)
+            return (Set(sessions.compactMap(\.runType)), sessions.compactMap(\.rationale))
+        }
+        let hurt = runTypes([.shins])
+        #expect(!hurt.types.contains(.hills))
+        #expect(hurt.notes.contains { $0.lowercased().contains("injury history") })
+        let clean = runTypes([])
+        #expect(clean.types.contains(.hills))   // regression: hills stay without a history
+    }
+
+    @Test func hamstringInjuryAvoidsMaxSpeedWork() {
+        // A hamstring history drops sprint-fast 400s and strides; threshold cruise reps take over.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+        inp.raceDistanceM = 5_000
+        inp.injuryHistory = [.hamstring]
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 9,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let sessions = plan.weeks.flatMap(\.sessions)
+        #expect(!sessions.contains { $0.intervals?.contains("@ 5K") == true })
+        #expect(!sessions.contains { $0.runType == .strides })
+        #expect(sessions.contains { $0.intervals?.contains("threshold") == true })
+        // The swapped-in cruise reps carry the threshold pace, not race pace.
+        let cruise = sessions.first { $0.intervals?.contains("threshold") == true && $0.rationale != nil }
+        #expect(cruise?.targetPaceSPerKm == PlanEngine.pace(.tempo, p5k: 300))
+    }
+
     @Test func hybridPriorityShiftsRunLiftSplit() {
         func runDays(_ priority: HybridPriority?) -> Int {
             var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: 5)
