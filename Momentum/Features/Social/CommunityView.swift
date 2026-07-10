@@ -73,6 +73,17 @@ struct CommunityView: View {
             // First load per scope — pull-to-refresh handles the rest. No-op offline/guest/dark.
             if remoteFeed.items.isEmpty { await remoteFeed.refresh(scope: remoteScope) }
         }
+        #if DEBUG
+        // --athlete-profile: open the first community athlete directly (deterministic sim
+        // verification of the visited-profile design; feed taps are flaky in UI tests).
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--athlete-profile"), selectedAthlete == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    selectedAthlete = CommunityDirectory.all().first
+                }
+            }
+        }
+        #endif
     }
 
     private var remoteScope: FeedScope { scope == .following ? .following : .everyone }

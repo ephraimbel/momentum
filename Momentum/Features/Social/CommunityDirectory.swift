@@ -107,6 +107,25 @@ enum CommunityDirectory {
         all(now: now).first { $0.handle == handle }
     }
 
+    /// The posts shown on a visited SAMPLE athlete's profile grid: their feed post(s) plus a
+    /// deterministic history (~10 weeks of training) so the grid reads like a real training log.
+    /// Cached per handle — profiles open instantly on revisit. Real athletes never come through
+    /// here; their grids show only what they actually shared.
+    @MainActor private static var gridCache: [String: [FeedItem]] = [:]
+
+    @MainActor
+    static func gridPosts(for athlete: CommunityAthlete, now: Date = Date()) -> [FeedItem] {
+        guard athlete.isSample else { return athlete.posts }
+        if let cached = gridCache[athlete.handle] { return cached }
+        var seed = SeededRNG(athlete.handle.utf8.reduce(3) { ($0 &* 61 &+ Int($1)) & 0xFFFF })
+        let history = CommunityGenerator.historyPosts(
+            handle: athlete.handle, name: athlete.name, city: athlete.location ?? "Austin",
+            count: 11 + seed.int(0...7), now: now)
+        let posts = (athlete.posts + history).sorted { $0.date > $1.date }
+        gridCache[athlete.handle] = posts
+        return posts
+    }
+
     private static func pid(_ n: Int) -> UUID {
         UUID(uuidString: "00000000-0000-0000-0000-0000000000\(String(format: "%02d", n))")!
     }

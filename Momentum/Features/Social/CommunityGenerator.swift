@@ -40,6 +40,26 @@ enum CommunityGenerator {
             lat: lat, lon: lon, posts: [post])
     }
 
+    /// A visited athlete's grid history — the older posts behind their most recent share, so their
+    /// profile reads like a real training log (~10 weeks deep) rather than a single tile. Generated
+    /// on demand per athlete (deterministic — seeded from the handle), NOT folded into the feed:
+    /// the feed stays one-recent-post-per-athlete, exactly as before.
+    static func historyPosts(handle: String, name: String, city: String,
+                             count: Int, now: Date) -> [FeedItem] {
+        var rng = SeededRNG(handle.utf8.reduce(11) { ($0 &* 131 &+ Int($1)) & 0x7FFF_FFFF })
+        // A stable per-athlete discipline mix: mostly running, seasoned with rides + lifting.
+        var date = now.addingTimeInterval(-Double(rng.int(30...90)) * 3600)
+        return (0..<count).map { j in
+            let roll = rng.int(0...99)
+            let discipline: WorkoutType = roll < 62 ? .run : (roll < 76 ? .ride : (roll < 92 ? .strength : .hiit))
+            date = date.addingTimeInterval(-Double(rng.int(30...110)) * 3600)   // every 1–4½ days back
+            // Unique, deterministic id-space far away from the feed posts' indices.
+            let index = 500_000 + (handle.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }) * 100 + j
+            return makePost(index: index, name: name, handle: handle, city: city,
+                            discipline: discipline, lat: 0, lon: 0, date: date, rng: &rng)
+        }
+    }
+
     private static func makePost(index i: Int, name: String, handle: String, city: String,
                                  discipline: WorkoutType, lat: Double, lon: Double, date: Date,
                                  rng: inout SeededRNG) -> FeedItem {
