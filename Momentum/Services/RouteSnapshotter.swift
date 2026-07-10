@@ -10,7 +10,8 @@ import SwiftUI
 @MainActor
 enum RouteSnapshotter {
     static func snapshot(coordinates: [CLLocationCoordinate2D],
-                         size: CGSize = CGSize(width: 640, height: 360)) async -> Data? {
+                         size: CGSize = CGSize(width: 640, height: 360),
+                         styleURI: StyleURI = .light) async -> Data? {
         guard coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
@@ -20,7 +21,7 @@ enum RouteSnapshotter {
         guard drawn.count > 1 else { return nil }
 
         let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2))
-        snapshotter.styleURI = .light
+        snapshotter.styleURI = styleURI
         snapshotter.setCamera(to: snapshotter.camera(
             for: drawn, padding: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26), bearing: 0, pitch: 0))
         let gradientStart = UIColor(Theme.route), gradientEnd = UIColor(Theme.iridescent[3])

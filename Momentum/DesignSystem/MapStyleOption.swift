@@ -103,6 +103,17 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
+    /// URI variant of `mapboxStyle(for:)` for snapshot/UIKit surfaces: the adaptive pairs follow
+    /// dark mode (Light basemap → Dark; the Standard moods fall back to Standard day — a URI can't
+    /// carry the light preset); deliberate looks render as chosen.
+    func styleURI(for scheme: ColorScheme) -> StyleURI {
+        guard scheme == .dark else { return styleURI }
+        switch self {
+        case .standard: return .dark
+        default: return styleURI
+        }
+    }
+
     /// The Standard style's light preset, when this option is one of its moods — applied to
     /// snapshot previews via the style-import config (the URI alone can't express it).
     var standardLightPreset: String? {

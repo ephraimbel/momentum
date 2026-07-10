@@ -10,6 +10,7 @@ struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.colorScheme) private var colorScheme
     @Environment(Services.self) private var services
+    @Environment(CoachPresenter.self) private var coach
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
     @Query private var appNotifications: [AppNotification]
@@ -46,6 +47,9 @@ struct TodayView: View {
     @State private var showCheckin = false
     /// Throttles the appear-time orchestration — `onAppear` re-fires on every tab switch.
     @State private var lastBootstrap: (at: Date, day: Date)?
+    /// True once the map backdrop has been mounted — it then stays warm for the session (a
+    /// strength-only athlete who never shows the map never pays for it).
+    @State private var mapWasShown = false
     /// The header streak, computed once per data change instead of on every body evaluation
     /// (the map re-evaluates the body constantly while panning).
     @State private var cachedStreak: Int?
@@ -80,8 +84,14 @@ struct TodayView: View {
         ZStack(alignment: .bottom) {
             // Discipline-adaptive backdrop: a live map for cardio, a strength home for lifting — and
             // the *same* map for the world globe, so it zooms out continuously instead of being a
-            // separate screen. So Strength isn't a second-class citizen staring at a meaningless map.
-            if isCardio || worldMode || loopMode { mapLayer } else { strengthHome }
+            // separate screen. Once the map has been shown it stays MOUNTED (hidden behind the
+            // strength home) — tearing the engine down on a strength switch made returning to a
+            // cardio sport re-download the style and repopulate tiles: seconds of blank map.
+            let mapActive = isCardio || worldMode || loopMode
+            if mapActive || mapWasShown {
+                mapLayer.opacity(mapActive ? 1 : 0).allowsHitTesting(mapActive)
+            }
+            if !mapActive { strengthHome }
             if worldMode {
                 worldTopChrome.transition(.opacity)
                 worldBottomChrome.transition(.opacity)
@@ -97,6 +107,7 @@ struct TodayView: View {
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .onAppear {
             bootstrapIfNeeded()
+            if isCardio || worldMode || loopMode { mapWasShown = true }
             // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
             // lands we switch to following the puck. We only *follow the puck* up front when location is
             // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
@@ -118,6 +129,7 @@ struct TodayView: View {
         }
         // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
         .onChange(of: workouts.count) { cachedStreak = nil; lastBootstrap = nil; bootstrapIfNeeded() }
+        .onChange(of: activity) { if isCardio { mapWasShown = true } }
         // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
             if !worldMode, locator.lastLocation != nil {
@@ -576,10 +588,19 @@ struct TodayView: View {
             Spacer(minLength: Theme.Space.xs)
             activitySelector
             Spacer(minLength: Theme.Space.xs)
+            coachButton
             StreakChip(days: cachedStreak ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan).currentStreak)
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
+    }
+
+    /// The coach, one tap from home — same glass circle language as the bell. Free to talk; plan
+    /// changes gate on Pro at Apply time, inside the chat.
+    private var coachButton: some View {
+        BrandMark(size: 26)
+            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .mapSafeTap("Ask your coach") { Haptics.light(); coach.open() }
     }
 
     private var unreadCount: Int { appNotifications.filter { !$0.read }.count }

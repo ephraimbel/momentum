@@ -18,12 +18,10 @@ struct FeedMediaView: View {
         } else if item.type.isStrengthStyle, let muscles = item.muscles, !muscles.isEmpty {
             // The lift counterpart to the route map: the body, with worked muscles glowing iridescent.
             muscleMedia(muscles)
-        } else if let coords = item.routeCoordinates, coords.count > 1 {
-            // The actual map behind the route trace; the basemap varies per post (Strava-style).
-            RouteMapView(coordinates: coords, style: item.mapStyle, interactive: false)
-                .frame(height: height)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                .allowsHitTesting(false)
+        } else if item.routeCoordinates?.count ?? 0 > 1 {
+            // A cached STATIC snapshot of the route on its basemap — a live map engine per post is
+            // what made Community slow to populate and heavy to scroll.
+            FeedRouteMap(item: item, height: height)
         } else if item.type.isTimed {
             // Timed sports (pool swim, erg, yoga…) have no route or muscle map — a discipline card
             // gives the post a visual anchor so the feed reads consistently, not text-only.
