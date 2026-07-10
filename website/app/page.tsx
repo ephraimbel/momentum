@@ -11,6 +11,7 @@ export default function Home() {
         <Hero />
         <Proof />
         <Pillars />
+        <Gallery />
         <DeepDives />
         <Predictor />
         <Goals />
@@ -53,21 +54,26 @@ function Hero() {
       <div className="aura aura-1" aria-hidden />
       <div className="aura aura-2" aria-hidden />
       <div className="aura aura-3" aria-hidden />
+      {/* The self-drawing route — the app's welcome motif, redrawn across the header. */}
+      <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
+        <path d="M -60 470 C 180 380 260 560 470 470 S 760 300 980 400 S 1280 540 1520 380" />
+      </svg>
+      <div className="hero-runner" aria-hidden />
       <div className="wrap hero-grid">
         <div>
-          <p className="eyebrow">The adaptive running coach</p>
-          <h1 className="display">
+          <p className="eyebrow rise rise-1">The adaptive running coach</p>
+          <h1 className="display rise rise-2">
             A coach that
             <br />
             learns how
             <br />
             <span className="iri-text">you</span> run.
           </h1>
-          <p className="lede">
+          <p className="lede rise rise-3">
             momentum builds your training around your fitness, your recovery, and your life — then
             adapts it after every run. From your first 5K to your first ultra.
           </p>
-          <div className="hero-ctas">
+          <div className="hero-ctas rise rise-4">
             <a className="btn btn-ink" href="#download">
                Download for iPhone
             </a>
@@ -75,8 +81,8 @@ function Hero() {
               See how it works
             </a>
           </div>
-          <p className="hero-note">Track free forever · Pro comes with a 7-day free trial</p>
-          <div className="devices" aria-label="Works with">
+          <p className="hero-note rise rise-4">Track free forever · Pro comes with a 7-day free trial</p>
+          <div className="devices rise rise-4" aria-label="Works with">
             <span>iPhone</span>
             <span>Apple Watch</span>
             <span>Garmin</span>
@@ -84,7 +90,9 @@ function Hero() {
             <span>Apple Health</span>
           </div>
         </div>
-        <PhoneFrame src="/shots/hero-today.png" alt="momentum Today screen: your map, today's plan, and one Start button" priority />
+        <div className="rise rise-5">
+          <PhoneFrame src="/shots/today-map.png" alt="momentum Today screen: your map, today's plan, and one Start button" priority />
+        </div>
       </div>
     </section>
   );
@@ -170,6 +178,54 @@ function Pillars() {
               twinge instead of pretending it isn&apos;t there.
             </p>
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Gallery() {
+  const items = [
+    {
+      src: "/shots/plan.png",
+      alt: "Training plan with week chips, Base phase label, and a long-run session card",
+      h: "A periodized plan",
+      p: "Base, build, and taper — every week labeled with why it exists, capped by workload guardrails.",
+    },
+    {
+      src: "/shots/live-run.png",
+      alt: "Live guided run: warm-up step with target pace, distance remaining, live heart rate in zone 2",
+      h: "Coached mid-run",
+      p: "Step-by-step guidance with target paces, rep countdowns, and your live heart-rate zone.",
+    },
+    {
+      src: "/shots/coach.png",
+      alt: "Coach chat asking how training is trending",
+      h: "A coach you can ask",
+      p: "Pace, programming, or how a session felt — answers grounded in your actual training data.",
+    },
+  ];
+  return (
+    <section className="section" id="gallery" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head center" style={{ textAlign: "center" }}>
+            <p className="eyebrow">The whole journey</p>
+            <h2 className="display">Plan it. Run it. Understand it.</h2>
+          </div>
+        </Reveal>
+        <div className="gallery">
+          {items.map((it, i) => (
+            <Reveal key={it.h} delay={i * 100}>
+              <figure>
+                <PhoneFrame small src={it.src} alt={it.alt} />
+                <figcaption>
+                  <h4>{it.h}</h4>
+                  <p>{it.p}</p>
+                </figcaption>
+              </figure>
+            </Reveal>
+          ))}
         </div>
       </div>
     </section>
