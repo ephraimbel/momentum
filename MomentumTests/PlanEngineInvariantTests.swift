@@ -1,0 +1,194 @@
+import Testing
+import Foundation
+@testable import Momentum
+
+/// Property-based sweep over the whole plan-generation input space. Where the fixture tests pin
+/// specific behaviors, these assert the invariants that must hold for EVERY plan the engine can
+/// produce — any goal, any experience, any day count, any race distance, any runway from race week
+/// to 30 weeks out, any injury history, any intensity. If a combination violates safety or honesty,
+/// this suite names it.
+struct PlanEngineInvariantTests {
+
+    private let start = Date(timeIntervalSinceReferenceDate: 0)
+    private let cal = Calendar.current
+
+    private func race(weeksOut: Int) -> Date { cal.date(byAdding: .weekOfYear, value: weeksOut, to: start)! }
+
+    private func catalogFixture() -> [ExerciseCatalogItem] {
+        func item(_ n: String, _ m: MuscleGroup, _ cat: ExerciseCategory) -> ExerciseCatalogItem {
+            ExerciseCatalogItem(name: n, primaryMuscles: [m], secondaryMuscles: [],
+                                equipment: .barbell, category: cat, defaultRestS: 120)
+        }
+        return [item("Squat", .quads, .compound), item("Bench", .chest, .compound),
+                item("Row", .back, .compound), item("OHP", .shoulders, .compound),
+                item("RDL", .hamstrings, .compound), item("Curl", .biceps, .isolation),
+                item("Plank", .core, .isolation), item("Calf Raise", .calves, .isolation)]
+    }
+
+    /// Every hard safety/honesty invariant, checked against one generated plan.
+    private func assertInvariants(_ plan: GeneratedPlan, inputs: PlanInputs, label: String) {
+        #expect(!plan.weeks.isEmpty, "\(label): empty plan")
+        #expect(plan.weeks.count <= 24, "\(label): horizon exceeded")
+
+        let hasRunning = inputs.disciplines.contains(.running)
+        let raceWeeks = PlanEngine.weeksToRace(startDate: start, raceDate: inputs.raceDate, calendar: cal)
+        let raceInWindow = (raceWeeks ?? .max) <= plan.weeks.count
+
+        // Honesty of the macro shape.
+        if let rw = raceWeeks {
+            #expect(plan.weeks.count == min(24, max(1, rw)), "\(label): plan length ≠ runway")
+            if raceInWindow {
+                #expect(plan.weeks.last?.isTaper == true, "\(label): no taper before the race")
+                // Short runways never pretend there's a base/peak to build — only sharpening and taper.
+                if rw <= 3 {
+                    #expect(plan.weeks.allSatisfy { $0.isTaper || $0.phase == .build },
+                            "\(label): short runway grew a base/peak phase")
+                }
+            } else {
+                #expect(!plan.weeks.contains { $0.isTaper || $0.phase == .peak },
+                        "\(label): phantom taper/peak with race beyond window")
+            }
+        }
+
+        // The load-safety invariant, stated exactly as the product promises it: the finished plan is
+        // a fixed point of its own ACWR governor — re-running it finds NOTHING left to cap.
+        if hasRunning {
+            let factors = ACWRGovernor.capFactors(weeklyMeters: plan.weeks.map(\.runVolumeM),
+                                                  currentWeeklyM: inputs.currentWeeklyVolumeM ?? 0)
+            #expect(factors.allSatisfy { $0 >= 0.999 }, "\(label): a week still exceeds 1.3× chronic load")
+        }
+
+        var lastBuildVol: Double?
+        for week in plan.weeks {
+            // Scheduling invariants — every week, every combination.
+            let days = week.sessions.map(\.dayOffset)
+            #expect(days.allSatisfy { (0...6).contains($0) }, "\(label) w\(week.index): day offset out of week")
+            #expect(Set(days).count == days.count, "\(label) w\(week.index): two sessions share a day")
+            #expect(week.sessions.count == min(7, inputs.daysPerWeek), "\(label) w\(week.index): wrong session count")
+            #expect(PlanEngine.scheduleSatisfiesRecovery(week.sessions),
+                    "\(label) w\(week.index): hard run the day after a heavy lower lift")
+
+            // Down weeks (deload/taper) always dip below the last build week — a "recovery" week
+            // that grows is a lie. (Week-over-week ramp safety is the ACWR fixed-point check above.)
+            if week.isDeload || week.isTaper {
+                if let prev = lastBuildVol, hasRunning, prev > 0 {
+                    #expect(week.runVolumeM < prev, "\(label) w\(week.index): down week didn't dip")
+                }
+            } else if hasRunning {
+                lastBuildVol = week.runVolumeM
+            }
+
+            for s in week.sessions where s.discipline == .running {
+                // Pace sanity on every prescribed session.
+                if let p = s.targetPaceSPerKm {
+                    #expect(p.isFinite && p >= 120 && p <= 1200, "\(label) w\(week.index): insane pace \(p)")
+                }
+                // Long runs never exceed the race-appropriate cap.
+                if let raceM = inputs.raceDistanceM, s.runType == .long || s.runType == .progression {
+                    #expect((s.targetDistanceM ?? 0) <= PlanEngine.longRunPeak(forRaceM: raceM) + 1,
+                            "\(label) w\(week.index): long run above cap")
+                }
+                // Injury steering holds in every phase.
+                if !Set(inputs.injuryHistory).isDisjoint(with: PlanEngine.impactSensitiveAreas) {
+                    #expect(s.runType != .hills, "\(label) w\(week.index): hills despite impact-sensitive history")
+                }
+                if !Set(inputs.injuryHistory).isDisjoint(with: PlanEngine.speedSensitiveAreas) {
+                    #expect(s.runType != .strides, "\(label) w\(week.index): strides despite speed-sensitive history")
+                    #expect(s.intervals?.contains("@ 5K") != true, "\(label) w\(week.index): sprint reps despite history")
+                }
+            }
+            // Deload weeks never carry a quality running session.
+            if week.isDeload {
+                #expect(!week.sessions.contains { $0.isHardRun }, "\(label) w\(week.index): quality on a deload")
+            }
+        }
+
+        // Volume ceiling: with a seeded start, no week more than doubles it (+ rounding slack).
+        if hasRunning, let seeded = inputs.currentWeeklyVolumeM, seeded > 0 {
+            let maxVol = plan.weeks.map(\.runVolumeM).max() ?? 0
+            #expect(maxVol <= seeded * 2.0 + 10, "\(label): volume ceiling breached (\(maxVol) vs \(seeded))")
+        }
+    }
+
+    @Test func everyRunwayEveryLevelEveryDistanceHoldsInvariants() {
+        let catalog = catalogFixture()
+        let races: [(Double?, Int?)] = [(nil, nil), (5_000, 2), (5_000, 10), (10_000, 8), (21_097, 12),
+                                        (42_195, 2), (42_195, 16), (50_000, 20), (42_195, 30)]
+        for (raceM, weeksOut) in races {
+            for exp in [ExperienceLevel.new, .some, .experienced] {
+                for days in [2, 3, 4, 5, 6] {
+                    var inp = PlanInputs(disciplines: [.running], goal: raceM != nil ? .raceDistance : .endurance,
+                                         daysPerWeek: days, equipment: .fullGym, sessionMinutes: 45,
+                                         raceDate: weeksOut.map(race(weeksOut:)),
+                                         runningExperience: exp, liftingExperience: .some)
+                    inp.raceDistanceM = raceM
+                    let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: start)
+                    assertInvariants(plan, inputs: inp,
+                                     label: "race \(raceM.map { Int($0) } ?? 0)@\(weeksOut ?? 0)wk \(exp) \(days)d")
+                }
+            }
+        }
+    }
+
+    @Test func intensityInjuryAgeAndSeedingHoldInvariants() {
+        let catalog = catalogFixture()
+        for intensity in [PlanIntensity.gentle, .balanced, .aggressive] {
+            for injuries in [[], [InjuryArea.shins], [.hamstring], [.knee, .hamstring]] {
+                for age in [nil, 34, 57] as [Int?] {
+                    for seeded in [nil, 30_000.0] as [Double?] {
+                        var inp = PlanInputs(disciplines: [.running], goal: .raceDistance,
+                                             daysPerWeek: 4, equipment: .fullGym, sessionMinutes: 45,
+                                             raceDate: race(weeksOut: 12),
+                                             runningExperience: .some, liftingExperience: .some)
+                        inp.raceDistanceM = 10_000
+                        inp.intensity = intensity
+                        inp.injuryHistory = injuries
+                        inp.age = age
+                        inp.currentWeeklyVolumeM = seeded
+                        inp.longestRunM = seeded.map { $0 / 3 }
+                        let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: start)
+                        assertInvariants(plan, inputs: inp,
+                                         label: "\(intensity) inj\(injuries.count) age\(age ?? 0) seed\(Int(seeded ?? 0))")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func hybridPlansHoldInvariantsAcrossGoals() {
+        let catalog = catalogFixture()
+        for goal in [Goal.raceDistance, .endurance, .buildMuscle, .getStronger, .generalFitness, .stayConsistent] {
+            for days in [3, 4, 5, 6] {
+                var inp = PlanInputs(disciplines: [.running, .strength], goal: goal,
+                                     daysPerWeek: days, equipment: .fullGym, sessionMinutes: 60,
+                                     raceDate: goal == .raceDistance ? race(weeksOut: 10) : nil,
+                                     runningExperience: .some, liftingExperience: .some)
+                if goal == .raceDistance { inp.raceDistanceM = 21_097 }
+                let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: start)
+                assertInvariants(plan, inputs: inp, label: "hybrid \(goal) \(days)d")
+                // Hybrid weeks actually contain both disciplines when days allow it.
+                if days >= 3 {
+                    let w0 = plan.weeks[0].sessions
+                    #expect(w0.contains { $0.discipline == .running } && w0.contains { $0.discipline == .strength },
+                            "hybrid \(goal) \(days)d: a discipline vanished")
+                }
+            }
+        }
+    }
+
+    @Test func generationIsDeterministic() {
+        // Identical inputs → byte-identical plans. Adaptation, sync, and honest explanations all
+        // depend on this — no hidden randomness or date leakage.
+        var inp = PlanInputs(disciplines: [.running, .strength], goal: .raceDistance,
+                             daysPerWeek: 5, equipment: .fullGym, sessionMinutes: 60,
+                             raceDate: race(weeksOut: 14), runningExperience: .experienced,
+                             liftingExperience: .some)
+        inp.raceDistanceM = 42_195
+        inp.injuryHistory = [.shins]
+        inp.currentWeeklyVolumeM = 40_000
+        inp.longestRunM = 14_000
+        let a = PlanEngine.generate(profile: inp, catalog: catalogFixture(), startDate: start)
+        let b = PlanEngine.generate(profile: inp, catalog: catalogFixture(), startDate: start)
+        #expect(a == b)
+    }
+}
