@@ -33,7 +33,8 @@ final class StrengthLogUITests: XCTestCase {
         start.tap()
 
         // 2. The exercise library auto-opens on a free start — pick a seeded exercise and add it.
-        let bench = app.staticTexts["Barbell Bench Press"]
+        let bench = app.staticTexts["Barbell Bench Press"].firstMatch   // library may list it under
+        // more than one section (recents + all) — any instance is the same exercise
         XCTAssertTrue(bench.waitForExistence(timeout: 15), "Exercise library / seeded exercise not found.")
         bench.tap()
         let add = app.buttons["Add 1"]

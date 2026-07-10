@@ -25,8 +25,9 @@ final class MapStyleUITests: XCTestCase {
         layers.tap()
 
         // The sheet lists all six styles with previews.
-        XCTAssertTrue(app.staticTexts["MAP STYLE"].waitForExistence(timeout: 5), "Picker sheet didn't open.")
-        for label in ["Realistic", "Map", "Streets", "Outdoors", "Dark", "Satellite"] {
+        XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5), "Picker sheet didn't open.")
+        // Full set, both sections ("Map" became "Light"; Dusk/Night/3D Satellite joined 2026-07-10).
+        for label in ["Realistic", "Dusk", "Night", "3D Satellite", "Light", "Streets", "Outdoors", "Dark", "Satellite"] {
             XCTAssertTrue(app.buttons[label].firstMatch.exists
                           || app.buttons["\(label), selected"].firstMatch.exists,
                           "\(label) missing from picker.")
@@ -48,7 +49,7 @@ final class MapStyleUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(layers.waitForExistence(timeout: 20))
         layers.tap()
-        XCTAssertTrue(app.staticTexts["MAP STYLE"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Satellite, selected"].firstMatch.waitForExistence(timeout: 3),
                       "Style choice didn't persist across relaunch.")
         // Leave the app on Realistic for the athlete's next manual session.
@@ -80,7 +81,7 @@ final class MapStyleUITests: XCTestCase {
         let layers = app.buttons["Map style"]
         XCTAssertTrue(layers.waitForExistence(timeout: 5), "Layers button missing on heatmap.")
         layers.tap()
-        XCTAssertTrue(app.staticTexts["MAP STYLE"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5))
         dump(app, "verify_heatmap_sheet")
         let dark = app.buttons["Dark"].firstMatch
         if !dark.waitForExistence(timeout: 3) { app.swipeUp() }   // medium detent may clip the list
@@ -93,7 +94,7 @@ final class MapStyleUITests: XCTestCase {
 
         // Back to the default for the next session.
         layers.tap()
-        XCTAssertTrue(app.staticTexts["MAP STYLE"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5))
         app.buttons["Realistic"].firstMatch.tap()
     }
 }

@@ -242,8 +242,6 @@ struct MapStylePickerSheet: View {
         previewCenter ?? CLLocationCoordinate2D(latitude: 30.2672, longitude: -97.7431)
     }
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3)
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.lg) {
@@ -266,12 +264,21 @@ struct MapStylePickerSheet: View {
             Text(title)
                 .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
                 .foregroundStyle(Theme.inkTertiary)
-            LazyVGrid(columns: columns, spacing: Theme.Space.md) {
-                ForEach(options) { option in
-                    StylePreviewCell(option: option, center: center, selected: option == style) {
-                        guard option != style else { return }
-                        Haptics.light()
-                        style = option
+            // Eager Grid, deliberately not lazy: nine image cells cost nothing, every style stays
+            // in the accessibility tree even below the medium-detent fold, and there's no cell
+            // pop-in while the sheet scrolls.
+            Grid(horizontalSpacing: Theme.Space.sm, verticalSpacing: Theme.Space.md) {
+                ForEach(Array(stride(from: 0, to: options.count, by: 3)), id: \.self) { start in
+                    GridRow {
+                        ForEach(options[start..<min(start + 3, options.count)]) { option in
+                            StylePreviewCell(option: option, center: center, selected: option == style) {
+                                guard option != style else { return }
+                                Haptics.light()
+                                style = option
+                            }
+                        }
+                        // Pad the last row so partial rows keep three equal columns.
+                        ForEach(0..<(3 - min(3, options.count - start)), id: \.self) { _ in Color.clear }
                     }
                 }
             }

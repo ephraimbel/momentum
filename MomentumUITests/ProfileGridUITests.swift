@@ -24,7 +24,8 @@ final class ProfileGridUITests: XCTestCase {
             return false
         }
         app.launch()
-        app.tap()
+        // No blind center-tap here: on the redesigned profile the screen center lands on a grid
+        // tile, and the tap opened the immersive pager over everything ("Highlights" unhittable).
 
         // Profile is the tab root — the grid tab bar is present.
         let gridTab = app.buttons["Grid"]

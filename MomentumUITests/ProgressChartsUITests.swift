@@ -49,11 +49,16 @@ final class ProgressChartsUITests: XCTestCase {
         app.launch()
         app.tap()
 
-        let progressTab = app.tabBars.buttons["Progress"]
-        XCTAssertTrue(progressTab.waitForExistence(timeout: 15), "Progress tab not found.")
-        progressTab.tap()
+        // The consistency summary lives on Profile → Highlights (decision: consistency is a
+        // Profile section, not a Progress chart) — the original assertion scrolled the wrong tab.
+        let profileTab = app.tabBars.buttons["Profile"]
+        XCTAssertTrue(profileTab.waitForExistence(timeout: 15), "Profile tab not found.")
+        profileTab.tap()
+        let highlights = app.buttons["Highlights"]
+        XCTAssertTrue(highlights.waitForExistence(timeout: 10), "Highlights tab not found.")
+        highlights.tap()
 
-        // Scroll down until the collapsed heatmap element (value "N of M days active…") appears.
+        // Scroll down until the heatmap element (value "N of M days active…") appears.
         let summary = app.descendants(matching: .any)
             .matching(NSPredicate(format: "value CONTAINS[c] %@", "days active")).firstMatch
         var found = summary.waitForExistence(timeout: 3)
@@ -85,9 +90,10 @@ final class ProgressChartsUITests: XCTestCase {
         XCTAssertTrue(progressTab.waitForExistence(timeout: 15), "Progress tab not found.")
         progressTab.tap()
 
-        // The card's accessibility label is "Recovery, <band>" with a "Readiness N of 100" value.
+        // Anchor on the readiness VALUE: a bare "Recovery" label also matches the HR-zones Z1
+        // row ("Recovery · Active recovery"), whose value is empty.
         let card = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH 'Recovery'")).firstMatch
+            .matching(NSPredicate(format: "value CONTAINS 'Readiness'")).firstMatch
         var found = card.waitForExistence(timeout: 3)
         var attempts = 0
         while !found && attempts < 6 {
