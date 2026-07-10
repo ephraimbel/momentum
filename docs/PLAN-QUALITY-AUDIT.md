@@ -72,7 +72,7 @@ Grade by area:
 4. ~~**Finish the strength loop**~~ — **SHIPPED 2026-07-10.** The prefill now honors every PRD §9.2 scheme (`StrengthSessionEngine.plannedTarget`): *linear* adds load when target reps were hit, *percent* prescribes %1RM × the best e1RM shown last session (so load tracks the athlete's actual strength both up and down), *double* unchanged. And the autoregulated deload exists: two consecutive strength sessions at sustained near-max RPE (≥8.5 mean over ≥3 rated sets each) → the coming week's planned sets are cut ~40% with a no-shame note (`PlanCoaching.easeStrengthOnRPECreep`), sharing the ≤1-change/week gate.
 5. **Upgrade ACWR to EWMA** and use it in ongoing adaptation (not just a generation-time cap); implement the "≥3 misses in 9 days → rebuild at 70%" trigger and the 50–75% restore rule after gaps.
 6. **Collect resting HR at onboarding** (or pull from HealthKit before first plan) → Karvonen zones instead of %max; require 2–3 confirming quality sessions before pace bumps (currently single-run triggered, though bounded).
-7. **Masters adjustments:** age >~50 → default hard/easy/easy spacing, deload every 3rd week, prefer 4–5 days.
+7. ~~**Masters adjustments**~~ — **SHIPPED 2026-07-10** (partial, the deterministic core): age ≥ 50 (from onboarding birth year via `PlanInputs.age`) → deload every 3rd week instead of the intensity default; intensity itself never reduced by age (the evidence favors more absorption weeks, not softer work). Day-count preference nudges stay a future onboarding-copy concern.
 8. **Ultra + long-horizon no-race plans:** extend `RaceDistance`; give general-fitness a rolling periodized macrocycle instead of a flat 4-week block.
 
 ## 4. Onboarding: do we have everything?

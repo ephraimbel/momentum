@@ -110,7 +110,8 @@ enum PlanService {
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets,
             intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
-            injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)))
+            injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
+            age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) })
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,

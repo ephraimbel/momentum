@@ -379,6 +379,24 @@ struct PlanEngineTests {
         #expect(cruise?.targetPaceSPerKm == PlanEngine.pace(.tempo, p5k: 300))
     }
 
+    // MARK: Masters recovery (50+)
+
+    @Test func mastersDeloadEveryThirdWeek() {
+        // A 55-year-old keeps every intensity but absorbs more often: deload week 3, not week 4.
+        var inp = inputs(disciplines: [.running], goal: .endurance, days: 4)
+        inp.age = 55
+        let masters = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(masters.weeks[2].isDeload)
+        // A 30-year-old on the same settings deloads on the balanced cadence (week 4).
+        inp.age = 30
+        let young = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(!young.weeks[2].isDeload && young.weeks[3].isDeload)
+        // Unknown age → unchanged (never assume masters).
+        inp.age = nil
+        let unknown = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(!unknown.weeks[2].isDeload && unknown.weeks[3].isDeload)
+    }
+
     @Test func hybridPriorityShiftsRunLiftSplit() {
         func runDays(_ priority: HybridPriority?) -> Int {
             var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: 5)

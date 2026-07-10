@@ -100,9 +100,12 @@ enum PlanEngine {
         let ramp = injuryAreas.isEmpty
             ? profile.intensity.weeklyRamp
             : min(profile.intensity.weeklyRamp, PlanIntensity.balanced.weeklyRamp)
-        let buildWeeks = injuryAreas.isEmpty
+        var buildWeeks = injuryAreas.isEmpty
             ? profile.intensity.buildWeeksPerDownWeek
             : min(profile.intensity.buildWeeksPerDownWeek, PlanIntensity.balanced.buildWeeksPerDownWeek)
+        // Masters recovery (50+): keep the intensity, add recovery frequency — the evidence for older
+        // athletes favors more frequent absorption weeks over softer work. Deload every 3rd week.
+        if (profile.age ?? 0) >= 50 { buildWeeks = min(buildWeeks, 2) }
         let downEvery = buildWeeks + 1   // deload on the Nth week
         for w in 0..<totalWeeks {
             let isTaper = meso.taperWeeks > 0 && w >= totalWeeks - meso.taperWeeks
@@ -622,4 +625,7 @@ struct PlanInputs: Sendable {
     /// Past injury areas from onboarding — caps the ramp at balanced and steers quality selection
     /// away from each area's aggravating stimulus (the "safer ramp where you've been hurt" promise).
     var injuryHistory: [InjuryArea] = []
+    /// Age in years (from onboarding's birth year) — 50+ gets masters recovery: deload every 3rd
+    /// week instead of the intensity default. Intensity itself is never reduced by age.
+    var age: Int? = nil
 }
