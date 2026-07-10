@@ -1300,6 +1300,7 @@ struct ProgressScreen: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 identityHero(model, facts).reveal(0)
+                RecordsCard(distanceUnit: distanceUnit).reveal(0.05)
                 let nudges = AthleteNudges.generate(facts)
                 if !nudges.isEmpty { weeklyDigest(nudges).reveal(0.08) }
                 if !coachingEvents.isEmpty { adaptationHistory.reveal(0.10) }
@@ -1323,6 +1324,8 @@ struct ProgressScreen: View {
             guard let p = profiles.first else { return }
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
+            // One-time record backfill so histories that predate persist-on-save own their bests.
+            RecordsBook.backfillIfNeeded(in: context)
         }
     }
 
