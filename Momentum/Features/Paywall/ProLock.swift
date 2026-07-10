@@ -34,7 +34,9 @@ private struct ProLockModifier: ViewModifier {
                 Image(systemName: "sparkles").font(.system(size: 13, weight: .bold))
                 Text("Unlock with Pro").font(.rounded(Theme.FontSize.body, weight: .bold))
             }
-            .foregroundStyle(.white)
+            // Inverted pair, not fixed white: ink flips to near-white in dark mode, so a fixed
+            // white label vanished on it. Theme.background is always ink's opposite.
+            .foregroundStyle(Theme.background)
             .padding(.horizontal, Theme.Space.lg).padding(.vertical, 12)
             .background {
                 Capsule().fill(Theme.ink)

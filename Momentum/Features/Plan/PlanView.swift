@@ -85,6 +85,11 @@ struct PlanView: View {
         }
         .onAppear {
             #if DEBUG
+            // --plan-locked-week: land on next week (the Pro-locked state) for lock-pill verification.
+            if ProcessInfo.processInfo.arguments.contains("--plan-locked-week"),
+               let next = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: weekStart) {
+                weekStart = next
+            }
             // Open the first long run's detail (fuel-section verification; sim taps are unreliable).
             if ProcessInfo.processInfo.arguments.contains("--plan-detail-long"),
                let long = plan?.sessions.filter({ $0.runType == .long && $0.status == .planned })
