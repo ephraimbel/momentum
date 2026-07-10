@@ -59,13 +59,19 @@ struct RouteMapView: View {
         source.data = .geometry(.lineString(LineString(coordinates)))
         try? map.addSource(source)
 
+        // Full emissive strength: Standard-family styles (Realistic/Dusk/Night — and the paired
+        // dark looks) light custom layers with the 3D scene's lighting, which dims an unlit line
+        // to ~35% at night — the route read near-black instead of the brand purple. Emissive
+        // layers self-illuminate; classic flat styles ignore the property.
         let casing = LineLayer(id: "route-casing", source: "route-src")
             .lineColor(StyleColor(UIColor.white))
             .lineWidth(6).lineCap(.round).lineJoin(.round)
+            .lineEmissiveStrength(1)
         try? map.addLayer(casing)
 
         var line = LineLayer(id: "route-line", source: "route-src")
             .lineWidth(4).lineCap(.round).lineJoin(.round)
+            .lineEmissiveStrength(1)
         line.lineGradient = .expression(Exp(.interpolate) {
             Exp(.linear)
             Exp(.lineProgress)

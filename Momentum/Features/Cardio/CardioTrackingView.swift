@@ -203,6 +203,7 @@ struct CardioTrackingView: View {
                 var layer = LineLayer(id: "guide-line", source: "guide-src")
                     .lineColor(StyleColor(UIColor(guideColor)))
                     .lineWidth(4).lineCap(.round).lineJoin(.round)
+                    .lineEmissiveStrength(1)   // self-lit — night-lit Standard scenes dim unlit layers
                 layer.lineDasharray = .constant([1.6, 2.4])
                 try? map.addLayer(layer, layerPosition: belowPuck)
             }
@@ -222,10 +223,12 @@ struct CardioTrackingView: View {
             let casing = LineLayer(id: "trace-casing", source: "trace-src")
                 .lineColor(StyleColor(UIColor.white))
                 .lineWidth(8.5).lineCap(.round).lineJoin(.round)
+                .lineEmissiveStrength(1)
             try? map.addLayer(casing, layerPosition: belowPuck)
             let line = LineLayer(id: "trace-line", source: "trace-src")
                 .lineColor(StyleColor(UIColor(Theme.route)))
                 .lineWidth(5.5).lineCap(.round).lineJoin(.round)
+                .lineEmissiveStrength(1)
             try? map.addLayer(line, layerPosition: belowPuck)
             return
         }
