@@ -44,8 +44,9 @@ struct AthletePanel: View {
             }
             stage.frame(height: 400)
         }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        // Deliberately no card: the panel is built into the canvas — the figure stands in the
+        // app itself, not in a box. The platform below grounds it instead.
+        .padding(.vertical, Theme.Space.sm)
     }
 
     private var stage: some View {
@@ -91,12 +92,37 @@ struct AthletePanel: View {
                            startRadius: 0, endRadius: h * 0.5)
                 .position(x: body.midX, y: body.minY + body.height * 0.30)
         }
-        // Grounding at the feet: soft shadow in light, a light pool in dark.
-        Ellipse()
-            .fill(isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.10))
-            .frame(width: body.width * 0.80, height: 10)
-            .blur(radius: 6)
-            .position(x: body.midX, y: body.maxY - 4)
+        platform(body: body)
+    }
+
+    /// The pedestal — a perspective ellipse the figure stands on, lit like a product stage:
+    /// a soft light pool, a rim that catches light at the front and falls off behind, and one
+    /// quieter inner ring. Monochrome in both modes (the stage isn't earned progress).
+    private func platform(body: CGRect) -> some View {
+        let w = body.width * 1.5
+        let h = w * 0.30
+        let rim = LinearGradient(
+            colors: isDark ? [.white.opacity(0.55), .white.opacity(0.04)]
+                           : [.black.opacity(0.30), .black.opacity(0.03)],
+            startPoint: .bottom, endPoint: .top)
+        return ZStack {
+            // Light pool across the disc.
+            Ellipse()
+                .fill(RadialGradient(colors: isDark ? [.white.opacity(0.12), .clear]
+                                                    : [.black.opacity(0.07), .clear],
+                                     center: .center, startRadius: 0, endRadius: w * 0.5))
+                .frame(width: w, height: h)
+            // Front-lit rim + a quieter inner ring, both perspective ellipses.
+            Ellipse().stroke(rim, lineWidth: 1.2).frame(width: w, height: h)
+            Ellipse().stroke(rim, lineWidth: 0.8).frame(width: w * 0.64, height: h * 0.64)
+                .opacity(0.5)
+            // Contact shadow right under the feet so the figure doesn't float.
+            Ellipse()
+                .fill(isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.14))
+                .frame(width: body.width * 0.55, height: 8)
+                .blur(radius: 5)
+        }
+        .position(x: body.midX, y: body.maxY - 3)
     }
 
     private func figure(fig: CGRect) -> some View {
