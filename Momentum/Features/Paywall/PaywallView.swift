@@ -15,6 +15,7 @@ struct PaywallView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var selected: PaywallProduct.Period = .annual
     @State private var working = false
@@ -44,7 +45,7 @@ struct PaywallView: View {
         ScrollView {
             VStack(spacing: 0) {
                 lockup
-                    .padding(.top, Theme.Space.md)
+                    .padding(.top, Theme.Space.xl)
                 hero
                     .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
@@ -110,7 +111,9 @@ struct PaywallView: View {
 
     private var lockup: some View {
         VStack(spacing: Theme.Space.sm) {
-            Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 24)
+            // The wordmark must survive both canvases — black art on light, white art on dark.
+            Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
+                .resizable().interpolation(.high).scaledToFit().frame(height: 24)
             Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(.white)
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
                 .background(Capsule().fill(Theme.purple))
