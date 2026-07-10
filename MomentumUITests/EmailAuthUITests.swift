@@ -1,12 +1,15 @@
 import XCTest
 
 /// Live end-to-end proof of the email+password gate (PRD §8.11): create a real Supabase account
-/// from the sign-in page, land in onboarding, walk it to the plan reveal — which fires the
-/// @handle claim against the live backend (verified afterwards via psql).
+/// from the sign-in page, confirm it via the emailed deep link, land in onboarding, walk it to
+/// the plan reveal — which fires the @handle claim against the live backend (psql-verified).
 ///
-/// ⚠️ NETWORK: this test signs up a real user on the live project. Run it deliberately
-/// (`-only-testing:MomentumUITests/EmailAuthUITests`) against a FRESH install (uninstall first —
-/// a stored session skips the gate), and clean up the created user afterwards.
+/// ⚠️ NETWORK + COMPANION SCRIPT: this test signs up a real user on the live project, then
+/// WAITS at the "check your email" beat for the confirmation deep link. Run
+/// `scripts/e2e_email_confirm.sh <sim-udid>` in parallel — it generates the link via the admin
+/// API and opens it on the sim, which signs the athlete in and resumes the walk. Run the test
+/// deliberately (`-only-testing:MomentumUITests/EmailAuthUITests`) against a FRESH install
+/// (uninstall first — a stored session skips the gate), and clean up `e2e.*` users afterwards.
 final class EmailAuthUITests: XCTestCase {
 
     func testEmailSignUpThroughOnboardingToReveal() throws {
@@ -31,7 +34,8 @@ final class EmailAuthUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Create your account"].waitForExistence(timeout: 3))
         attach(app, "signin-create-mode")
 
-        // A unique throwaway address per run (autoconfirm is on — deliverability doesn't matter).
+        // A unique throwaway address per run (the confirmation link is fetched via the admin
+        // API by the companion script — deliverability doesn't matter).
         let stamp = Int(Date().timeIntervalSince1970) % 100_000_000
         let email = "e2e.momentum.\(stamp)@gmail.com"
         emailField.tap()
@@ -46,9 +50,17 @@ final class EmailAuthUITests: XCTestCase {
         XCTAssertTrue(create.isEnabled, "both boxes filled — submit should be enabled")
         create.tap()
 
-        // Live signup + session adoption + gate dismissal + onboarding auto-present.
+        // Confirmations are ON: the account exists but there's no session yet — the gate shows
+        // the "check your email" beat. This asserts the confirm-gated UX in its own right.
+        let confirmPrompt = app.staticTexts["Almost there — tap the link we just emailed you and you're in."]
+        XCTAssertTrue(confirmPrompt.waitForExistence(timeout: 30), "signup should show the confirm-email prompt")
+        attach(app, "signin-confirm-prompt")
+
+        // Now wait for the companion script to open the confirmation deep link on this sim —
+        // momentum://auth-callback signs the athlete in, the gate falls, onboarding presents.
         let nameTitle = app.staticTexts["What should we call you?"]
-        XCTAssertTrue(nameTitle.waitForExistence(timeout: 30), "signup should land in onboarding's name step")
+        XCTAssertTrue(nameTitle.waitForExistence(timeout: 120),
+                      "confirmation link should sign in and land in onboarding (is scripts/e2e_email_confirm.sh running?)")
 
         // iOS's "Save Password?" panel floats over onboarding after signup, sometimes proxied
         // via springboard, sometimes not (runs 3/8/9/10 each lost a different race against it).

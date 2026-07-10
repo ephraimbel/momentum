@@ -2,6 +2,10 @@ import SwiftUI
 import AuthenticationServices
 import CryptoKit
 import Supabase
+import os
+
+/// Auth-flow breadcrumbs (deep links especially) — a dropped callback is invisible without them.
+private let authLog = Logger(subsystem: "com.momentum.app", category: "auth")
 
 /// Sign in with Apple session (PRD §8.11) — the app's identity. Holds the stable Apple user
 /// identifier (persisted) and the athlete's name (Apple only hands it over on the *first*
@@ -198,16 +202,20 @@ final class AuthController {
         }
     }
 
-    /// Sign UP with email + password, then straight into the app (session is live immediately).
+    /// Sign UP with email + password. With confirmations on (launch config) the account exists
+    /// but has no session until they tap the emailed link — which deep-links back here via
+    /// momentum://auth-callback and `handleAuthCallback` signs them in.
     func signUpWithEmail(_ email: String, password: String) async -> EmailAuthOutcome {
         guard let client = SupabaseClientProvider.client else {
             return .failure("Sign-up isn't available offline.")
         }
         do {
-            let response = try await client.auth.signUp(email: email, password: password)
+            let response = try await client.auth.signUp(
+                email: email, password: password,
+                redirectTo: URL(string: "momentum://auth-callback"))
             guard case .session(let session) = response else {
-                // Only possible if email confirmations get turned on later.
-                return .failure("Check your email to confirm your account, then sign in.")
+                // Confirmations are on: the session arrives via the emailed link instead.
+                return .failure("Almost there — tap the link we just emailed you and you're in.")
             }
             adoptEmailSession(session)
             return .success
@@ -236,17 +244,50 @@ final class AuthController {
     /// True while a reset-link session wants a new password — RootView presents the sheet.
     var needsNewPassword = false
 
-    /// Handle the momentum://auth-callback deep link (password-reset emails land here; the OAuth
-    /// sheet handles its own callback internally). Creates the session and, for recovery links,
-    /// raises the set-new-password prompt.
+    /// Handle the momentum://auth-callback deep link — email-confirmation and password-reset
+    /// links land here (the OAuth sheet handles its own callback internally). Creates the
+    /// session and, for recovery links, raises the set-new-password prompt.
     func handleAuthCallback(_ url: URL) {
         guard let client = SupabaseClientProvider.client,
               url.absoluteString.contains("auth-callback") else { return }
+        authLog.info("auth callback received (fragment: \(url.fragment != nil, privacy: .public))")
         Task {
-            guard let session = try? await client.auth.session(from: url) else { return }
+            var session: Session?
+            do {
+                session = try await client.auth.session(from: url)
+            } catch {
+                authLog.info("session(from:) rejected the callback: \(error, privacy: .public)")
+            }
+            if session == nil, let (access, refresh) = Self.fragmentTokens(in: url) {
+                // GoTrue's /verify redirects with implicit-style fragment tokens; a PKCE-flow
+                // client rejects those in `session(from:)` — adopt them directly instead.
+                do {
+                    session = try await client.auth.setSession(accessToken: access, refreshToken: refresh)
+                } catch {
+                    authLog.error("setSession(fragment tokens) failed: \(error, privacy: .public)")
+                }
+            }
+            guard let session else {
+                authLog.error("auth callback yielded no session — link ignored")
+                return
+            }
+            authLog.info("auth callback adopted a session")
             adoptEmailSession(session)
             if url.absoluteString.contains("type=recovery") { needsNewPassword = true }
         }
+    }
+
+    /// `#access_token=…&refresh_token=…` out of a verify-redirect URL, or nil.
+    private static func fragmentTokens(in url: URL) -> (access: String, refresh: String)? {
+        guard let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.fragment else { return nil }
+        var params: [String: String] = [:]
+        for pair in fragment.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            params[String(parts[0])] = String(parts[1]).removingPercentEncoding ?? String(parts[1])
+        }
+        guard let access = params["access_token"], let refresh = params["refresh_token"] else { return nil }
+        return (access, refresh)
     }
 
     /// Set a new password on the live session (the reset sheet's save).
