@@ -28,7 +28,7 @@ struct PlanEngineInvariantTests {
     /// Every hard safety/honesty invariant, checked against one generated plan.
     private func assertInvariants(_ plan: GeneratedPlan, inputs: PlanInputs, label: String) {
         #expect(!plan.weeks.isEmpty, "\(label): empty plan")
-        #expect(plan.weeks.count <= 24, "\(label): horizon exceeded")
+        #expect(plan.weeks.count <= 52, "\(label): horizon exceeded")
 
         let hasRunning = inputs.disciplines.contains(.running)
         let raceWeeks = PlanEngine.weeksToRace(startDate: start, raceDate: inputs.raceDate, calendar: cal)
@@ -36,7 +36,7 @@ struct PlanEngineInvariantTests {
 
         // Honesty of the macro shape.
         if let rw = raceWeeks {
-            #expect(plan.weeks.count == min(24, max(1, rw)), "\(label): plan length ≠ runway")
+            #expect(plan.weeks.count == min(52, max(1, rw)), "\(label): plan length ≠ runway")
             if raceInWindow {
                 #expect(plan.weeks.last?.isTaper == true, "\(label): no taper before the race")
                 // Short runways never pretend there's a base/peak to build — only sharpening and taper.
@@ -103,17 +103,23 @@ struct PlanEngineInvariantTests {
             }
         }
 
-        // Volume ceiling: with a seeded start, no week more than doubles it (+ rounding slack).
+        // Volume ceiling: with a seeded start, the plan grows toward the race-appropriate peak (or
+        // 2× for no-race blocks) and never past it — and never more than 3.5× the start regardless.
         if hasRunning, let seeded = inputs.currentWeeklyVolumeM, seeded > 0 {
             let maxVol = plan.weeks.map(\.runVolumeM).max() ?? 0
-            #expect(maxVol <= seeded * 2.0 + 10, "\(label): volume ceiling breached (\(maxVol) vs \(seeded))")
+            let ceiling = inputs.raceDistanceM.map {
+                max(seeded, PlanFeasibility.peakWeeklyVolumeM(distanceM: $0, experience: inputs.runningExperience))
+            } ?? seeded * 2.0
+            #expect(maxVol <= ceiling + 10, "\(label): volume ceiling breached (\(maxVol) vs \(ceiling))")
+            #expect(maxVol <= seeded * 3.5 + 10, "\(label): asked to more than 3.5× the starting load")
         }
     }
 
     @Test func everyRunwayEveryLevelEveryDistanceHoldsInvariants() {
         let catalog = catalogFixture()
         let races: [(Double?, Int?)] = [(nil, nil), (5_000, 2), (5_000, 10), (10_000, 8), (21_097, 12),
-                                        (42_195, 2), (42_195, 16), (50_000, 20), (42_195, 30)]
+                                        (42_195, 2), (42_195, 16), (50_000, 20), (42_195, 30),
+                                        (42_195, 52), (42_195, 60)]
         for (raceM, weeksOut) in races {
             for exp in [ExperienceLevel.new, .some, .experienced] {
                 for days in [2, 3, 4, 5, 6] {

@@ -228,20 +228,41 @@ struct PlanEngineTests {
         #expect(plan.weeks.allSatisfy { w in w.sessions.contains { $0.intervals?.contains("race pace") == true } })
     }
 
+    @Test func marathonNextYearGetsTheWholeSeason() {
+        // A marathon 52 weeks out generates the entire season: base first, months of build with
+        // deloads, a peak, and the 3-week taper landing exactly on race week — while volume grows
+        // toward the marathon readiness peak (70 km/wk at this level) and then holds.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4, runExp: .some)
+        inp.raceDistanceM = 42_195
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 51, to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.currentWeeklyVolumeM = 30_000
+        inp.longestRunM = 12_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(plan.weeks.count == 52)
+        #expect(plan.weeks.first?.phase == .base)
+        #expect(plan.weeks.contains { $0.phase == .peak })
+        #expect(plan.weeks.suffix(3).allSatisfy { $0.isTaper })            // taper ends ON race week
+        let maxVol = plan.weeks.map(\.runVolumeM).max() ?? 0
+        #expect(maxVol > 30_000 * 1.8)                                     // actually grows over a year…
+        #expect(maxVol <= 70_000 + 100)                                    // …and holds at the marathon peak
+    }
+
     @Test func raceBeyondHorizonBuildsWithoutPhantomTaper() {
-        // A race 30 weeks out: the 24-week block is pure foundation — base + build + deloads,
-        // no taper stranded weeks before race day, and volume plateaus at ≤2× the starting load.
+        // A race 60 weeks out: the 52-week block is pure foundation — base + build + deloads,
+        // no taper stranded months before race day.
         var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
         inp.raceDistanceM = 42_195
-        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 30, to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 60, to: Date(timeIntervalSinceReferenceDate: 0))
         inp.currentWeeklyVolumeM = 30_000
         inp.longestRunM = 10_000
         let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
-        #expect(plan.weeks.count == 24)
+        #expect(plan.weeks.count == 52)
         #expect(!plan.weeks.contains { $0.isTaper || $0.phase == .taper || $0.phase == .peak })
         #expect(plan.weeks.first?.phase == .base)
         #expect(plan.weeks.contains { $0.phase == .recovery })             // deloads still land
-        #expect((plan.weeks.map(\.runVolumeM).max() ?? 0) <= 30_000 * 2 + 1)
+        // Volume grows toward the marathon readiness peak (90 km at this level) and holds there.
+        #expect((plan.weeks.map(\.runVolumeM).max() ?? 0)
+                <= PlanFeasibility.peakWeeklyVolumeM(distanceM: 42_195, experience: .experienced) + 100)
     }
 
     @Test func raceWeekPlanIsOneWeek() {

@@ -167,7 +167,9 @@ struct PlanFeasibility: Sendable {
     }
 
     /// Sensible peak weekly volume (meters) to be *ready* for a distance, scaled by experience.
-    private static func peakWeeklyVolumeM(distanceM: Double, experience: ExperienceLevel) -> Double {
+    /// Also the plan engine's build ceiling: long runways grow toward this and hold, so a year-long
+    /// marathon plan actually reaches marathon volume instead of plateauing at an arbitrary multiple.
+    static func peakWeeklyVolumeM(distanceM: Double, experience: ExperienceLevel) -> Double {
         let d = RaceDistance.nearest(toMeters: distanceM)
         let km: Double
         switch (d, experience) {

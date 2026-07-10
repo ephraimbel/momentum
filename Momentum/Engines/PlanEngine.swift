@@ -111,6 +111,19 @@ enum PlanEngine {
         // athletes favors more frequent absorption weeks over softer work. Deload every 3rd week.
         if (profile.age ?? 0) >= 50 { buildWeeks = min(buildWeeks, 2) }
         let downEvery = buildWeeks + 1   // deload on the Nth week
+
+        // Build ceiling: volume grows toward the race distance's readiness peak and then HOLDS —
+        // a year-long marathon plan reaches marathon volume; a no-race block never exceeds double
+        // its start. Clamped so a very low starting base can't be asked to quadruple in one plan.
+        let startWeeklyM = profile.currentWeeklyVolumeM ?? {
+            switch profile.runningExperience { case .new: 14_000; case .some: 26_000; case .experienced: 42_000 }
+        }()
+        let multCeiling: Double = {
+            guard hasCardio, let raceM = profile.raceDistanceM, startWeeklyM > 0 else { return 2.0 }
+            let peakTarget = PlanFeasibility.peakWeeklyVolumeM(distanceM: raceM,
+                                                               experience: profile.runningExperience)
+            return min(3.5, max(1.0, peakTarget / startWeeklyM))
+        }()
         for w in 0..<totalWeeks {
             let isTaper = meso.taperWeeks > 0 && w >= totalWeeks - meso.taperWeeks
             let isPeak = !isTaper && meso.peakWeeks > 0 && w >= totalWeeks - meso.taperWeeks - meso.peakWeeks
@@ -130,10 +143,10 @@ enum PlanEngine {
             } else if isDeload {
                 volumeMult = lastBuildMult * 0.7
             } else {
-                // Never more than double the block's starting volume: long runways plateau at a
-                // sane peak instead of compounding geometrically for 20+ weeks. (The ACWR governor
-                // guards the week-over-week rate; this guards the destination.)
-                volumeMult = min(pow(ramp, Double(buildIndex)), 2.0)
+                // Grow toward the ceiling, then hold: long runways plateau at the race-appropriate
+                // peak instead of compounding geometrically for months. (The ACWR governor guards
+                // the week-over-week rate; this guards the destination.)
+                volumeMult = min(pow(ramp, Double(buildIndex)), multCeiling)
                 lastBuildMult = volumeMult
                 buildIndex += 1
             }
@@ -178,12 +191,13 @@ enum PlanEngine {
         return max(0, calendar.dateComponents([.weekOfYear], from: startDate, to: race).weekOfYear ?? 0) + 1
     }
 
-    /// Any timeframe generates a real plan: a race next week gets a 1-week race-week block, a
-    /// distant race up to a 24-week horizon (the plan regenerates as the race nears, so the horizon
-    /// rolls forward — never a taper stranded weeks before race day).
+    /// Any timeframe generates a real plan: a race next week gets a 1-week race-week block, and a
+    /// marathon next YEAR gets the whole season — up to 52 weeks of base → build → peak → taper
+    /// landing exactly on race week. Beyond a year, the block is pure foundation and the horizon
+    /// rolls forward on regeneration — never a taper stranded before race day.
     static func weeksToGenerate(startDate: Date, raceDate: Date?, calendar: Calendar) -> Int {
         guard let toRace = weeksToRace(startDate: startDate, raceDate: raceDate, calendar: calendar) else { return 4 }
-        return max(1, min(24, toRace))
+        return max(1, min(52, toRace))
     }
 
     /// Mesocycle boundaries (base → build → peak → taper). Taper length follows the science by race
