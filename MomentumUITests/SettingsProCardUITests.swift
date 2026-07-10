@@ -22,5 +22,11 @@ final class SettingsProCardUITests: XCTestCase {
         XCTAssertTrue(pro.waitForExistence(timeout: 10), "Pro card missing from Settings.")
         XCTAssertTrue(app.staticTexts["Active"].exists, "Pro status line missing.")
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_procard.png"))
+
+        // Coach chat opens from here and carries the brand mark in its empty state.
+        app.staticTexts["Open coach chat"].firstMatch.tap()
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "Coach chat didn't open.")
+        try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_coachchat.png"))
     }
 }

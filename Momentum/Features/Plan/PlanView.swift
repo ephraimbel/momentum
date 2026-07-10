@@ -48,9 +48,8 @@ struct PlanView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         header
+                        weekStrip
                         weekHero
-                        hybridCard
-                        raceInsightSection
                         if isCurrentWeek { tuneSection }
                         VStack(spacing: Theme.Space.sm) {
                             ForEach(Array(days.enumerated()), id: \.element) { i, day in
@@ -58,6 +57,7 @@ struct PlanView: View {
                             }
                         }
                         .proLocked(.fullPlan, active: !isCurrentWeek)
+                        coachsRead
                     }
                     .padding(Theme.Space.md)
                     .padding(.bottom, Theme.Space.xxl)
@@ -161,20 +161,37 @@ struct PlanView: View {
         return HybridSequencing.weekInsight(items)
     }
 
-    /// the athlete's recent quality-session pacing. Both are quiet reads above the week.
+    /// The coach's read, grouped BELOW the week (the schedule is the page's job; analysis supports
+    /// it): race projection, quality-pace verdict, and the hybrid sequencing note.
     @ViewBuilder
-    private var raceInsightSection: some View {
-        if let plan {
-            if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
-                RacePredictionCard(raceDistanceM: raceM,
-                                   raceDate: profiles.first?.raceDate ?? plan.raceDate,
-                                   p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit)
-            }
-            let runs = PaceInsights.recentQualityRuns(plan)
-            if !runs.isEmpty {
-                PaceInsightCard(result: PaceInsights.evaluate(runs))
+    private var coachsRead: some View {
+        if hasCoachsRead {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                Text("COACH'S READ")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                    .foregroundStyle(Theme.inkTertiary)
+                    .padding(.top, Theme.Space.sm)
+                if let plan, let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
+                    RacePredictionCard(raceDistanceM: raceM,
+                                       raceDate: profiles.first?.raceDate ?? plan.raceDate,
+                                       p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit)
+                }
+                if let plan {
+                    let runs = PaceInsights.recentQualityRuns(plan)
+                    if !runs.isEmpty {
+                        PaceInsightCard(result: PaceInsights.evaluate(runs))
+                    }
+                }
+                hybridCard
             }
         }
+    }
+
+    private var hasCoachsRead: Bool {
+        guard let plan else { return false }
+        if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 { return true }
+        if !PaceInsights.recentQualityRuns(plan).isEmpty { return true }
+        return hybridWeekInsight != nil
     }
 
     private func delete(_ session: PlannedSession) {
@@ -188,19 +205,43 @@ struct PlanView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("Plan").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
-            Spacer()
-            if plan != nil {
-                Button { showSettings = true } label: {
-                    Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .frame(width: 40, height: 40).contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Plan").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
+                Spacer()
+                if plan != nil {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
+                            .frame(width: 40, height: 40).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("Plan settings")
                 }
-                .buttonStyle(.plain).accessibilityLabel("Plan settings")
+                addButton
             }
-            addButton
+            if let context = planContextLine {
+                Text(context)
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
         }
         .padding(.top, Theme.Space.sm)
+    }
+
+    /// One quiet line of what this plan is FOR — the race and its countdown when one is set, else
+    /// the goal. The plan page should never make you wonder what it's building toward.
+    private var planContextLine: String? {
+        guard let profile = profiles.first else { return nil }
+        if let raceM = profile.raceDistanceM, raceM > 0, let raceDate = profile.raceDate, raceDate > Date() {
+            let label = RaceDistance.nearest(toMeters: raceM).label
+            let weeks = Calendar.current.dateComponents([.weekOfYear], from: Date(), to: raceDate).weekOfYear ?? 0
+            let day = raceDate.formatted(.dateTime.month(.abbreviated).day())
+            return weeks >= 2 ? "\(label) · \(day) · \(weeks) weeks to go" : "\(label) · \(day) — race week"
+        }
+        guard let phases = plan?.weekPhases, !phases.isEmpty, let idx = planWeekIndex(of: currentWeekStart) else { return nil }
+        return "Training plan · week \(idx + 1) of \(phases.count)"
+    }
+
+    private var currentWeekStart: Date {
+        Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
     }
 
     private var addButton: some View {
@@ -213,21 +254,73 @@ struct PlanView: View {
         .accessibilityLabel("Add session")
     }
 
-    // MARK: Week hero — completion ring + switcher
+    // MARK: Week strip + hero
+
+    /// The plan's spine (Runna's signature): every training week as a chip — where you've been,
+    /// where you are, what's left. Tap to jump; the strip auto-centers on the selection. Falls back
+    /// to chevron paging when a plan has no derivable weeks (legacy/empty).
+    @ViewBuilder
+    private var weekStrip: some View {
+        let weeks = planWeekStarts
+        if weeks.count > 1 {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: Theme.Space.sm) {
+                        ForEach(Array(weeks.enumerated()), id: \.element) { i, start in
+                            weekChip(index: i, start: start)
+                                .id(i)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .onAppear {
+                    if let idx = planWeekIndex(of: weekStart) { proxy.scrollTo(idx, anchor: .center) }
+                }
+                .onChange(of: weekStart) {
+                    if let idx = planWeekIndex(of: weekStart) {
+                        withAnimation(Motion.standard) { proxy.scrollTo(idx, anchor: .center) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func weekChip(index: Int, start: Date) -> some View {
+        let selected = Calendar.current.isDate(start, inSameDayAs: weekStart)
+        let isPast = start < currentWeekStart
+        let isCurrent = Calendar.current.isDate(start, inSameDayAs: currentWeekStart)
+        return Button {
+            Haptics.selection()
+            withAnimation(Motion.standard) { weekStart = start }
+        } label: {
+            VStack(spacing: 2) {
+                Text("WK").font(.rounded(8, weight: .black)).tracking(0.8)
+                Text("\(index + 1)").font(.display(15, weight: .heavy)).monospacedDigit()
+            }
+            .foregroundStyle(selected ? Theme.background : (isPast ? Theme.inkTertiary : Theme.ink))
+            .frame(width: 44, height: 44)
+            .background {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? Theme.ink : Theme.surface)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(selected ? Color.clear : Theme.hairline)
+            }
+            .overlay(alignment: .bottom) {
+                // The current calendar week keeps a quiet anchor dot even when browsing elsewhere.
+                if isCurrent && !selected {
+                    Circle().fill(Theme.ink).frame(width: 3.5, height: 3.5).offset(y: -4)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Week \(index + 1)\(isCurrent ? ", current" : "")\(selected ? ", selected" : "")")
+    }
 
     private var weekHero: some View {
         let (done, total) = weekProgress
-        return HStack(spacing: Theme.Space.md) {
-            chevron("chevron.left") { shiftWeek(-1) }
-            ZStack {
-                ProgressRing(progress: total == 0 ? 0 : Double(done) / Double(total), lineWidth: 7)
-                    .frame(width: 60, height: 60)
-                VStack(spacing: -2) {
-                    Text("\(done)").font(.display(22, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                    Text("of \(total)").font(.rounded(9, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
                 Text(weekTitle).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
                     .contentTransition(.opacity)
                 if let phase = weekPhase {
@@ -241,17 +334,70 @@ struct PlanView: View {
                             if phase != .taper { Capsule().stroke(Theme.hairline) }
                         }
                 }
-                Text(weekPhase?.intent ?? weekSummary)
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .contentTransition(.opacity)
+                Spacer(minLength: 0)
+                if planWeekStarts.count <= 1 {
+                    chevron("chevron.left") { shiftWeek(-1) }
+                    chevron("chevron.right") { shiftWeek(1) }
+                }
             }
-            Spacer(minLength: 0)
-            chevron("chevron.right") { shiftWeek(1) }
+            Text(weekPhase?.intent ?? weekSummary)
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .contentTransition(.opacity)
+            // One slim bar tells the week's completion story; the numbers make it exact.
+            if total > 0 {
+                HStack(spacing: Theme.Space.sm) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Theme.hairline.opacity(0.7))
+                            Capsule()
+                                .fill(done == total ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                                .frame(width: max(5, geo.size.width * CGFloat(done) / CGFloat(total)))
+                        }
+                    }
+                    .frame(height: 5)
+                    Text("\(done) of \(total)")
+                        .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(Theme.inkTertiary)
+                        .fixedSize()
+                    if let volume = weekVolumeText {
+                        Text("· \(volume)")
+                            .font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .fixedSize()
+                    }
+                }
+            }
         }
         .padding(Theme.Space.lg)
         .background(card)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase — \($0.intent)" } ?? weekSummary)")
+        .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase — \($0.intent)" } ?? weekSummary), \(done) of \(total) sessions done")
+    }
+
+    /// The displayed week's planned running volume ("18.6 mi planned").
+    private var weekVolumeText: String? {
+        let meters = weekSessions.compactMap(\.targetDistanceM).reduce(0, +)
+        guard meters > 0 else { return nil }
+        return "\(Formatters.distance(meters: meters, unit: distanceUnit)) planned"
+    }
+
+    /// The Monday of every week the plan spans — the strip's data.
+    private var planWeekStarts: [Date] {
+        guard let plan, let first = plan.sessions.map(\.date).min(),
+              let last = plan.sessions.map(\.date).max(),
+              let start = Calendar.current.dateInterval(of: .weekOfYear, for: first)?.start else { return [] }
+        var out: [Date] = []
+        var d = start
+        while d <= last, out.count < 64 {
+            out.append(d)
+            guard let next = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: d) else { break }
+            d = next
+        }
+        return out
+    }
+
+    private func planWeekIndex(of week: Date) -> Int? {
+        planWeekStarts.firstIndex { Calendar.current.isDate($0, inSameDayAs: week) }
     }
 
     /// The macrocycle phase of the displayed week (nil off-plan or for legacy plans without phases).
@@ -359,6 +505,7 @@ struct PlanView: View {
 
     private func sessionCard(_ session: PlannedSession) -> some View {
         let done = session.status == .completed
+        let isToday = Calendar.current.isDateInToday(session.date)
         return HStack(spacing: Theme.Space.md) {
             // The card body opens the detail/adjust sheet…
             Button { editing = EditingSession(session: session) } label: {
@@ -367,7 +514,12 @@ struct PlanView: View {
                         .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
                         .frame(width: 36, height: 36)
                         .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let kind = sessionKindLabel(session) {
+                            Text(kind)
+                                .font(.rounded(9, weight: .black)).tracking(1)
+                                .foregroundStyle(Theme.inkTertiary)
+                        }
                         Text(PlanCoaching.brief(for: session, distanceUnit: distanceUnit))
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .multilineTextAlignment(.leading)
@@ -388,9 +540,22 @@ struct PlanView: View {
         .background {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             if done { RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.16) }
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            // Today's work wears the ink edge — the one card the athlete came here for.
+            RoundedRectangle(cornerRadius: Theme.Radius.card)
+                .stroke(isToday && !done ? Theme.ink : Theme.hairline, lineWidth: isToday && !done ? 1.5 : 1)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The session's TYPE as a quiet eyebrow ("TEMPO RUN", "LONG RUN", "STRENGTH") — the Runna
+    /// pattern: what KIND of day it is reads before the numbers do.
+    private func sessionKindLabel(_ session: PlannedSession) -> String? {
+        if session.discipline == .strength { return "STRENGTH" }
+        if let wt = session.workoutType, wt != .run, !wt.isStrengthStyle { return wt.title.uppercased() }
+        if let rt = session.runType {
+            return rt == .intervals ? "INTERVALS" : "\(rt.rawValue.uppercased()) RUN"
+        }
+        return nil
     }
 
     private func checkButton(_ session: PlannedSession, done: Bool) -> some View {
@@ -408,29 +573,26 @@ struct PlanView: View {
         .accessibilityLabel(done ? "Completed. Tap to undo." : "Mark done")
     }
 
-    /// A calm, low-emphasis rest day — slimmer than a session card so planned days stand out. No guilt.
+    /// A rest day is a non-event by design — a bare hairline row that recedes completely, so the
+    /// five of them in a normal week stop dominating the page. Still tappable to add a session.
     private func restRow(_ day: Date) -> some View {
         Button { presentAdd(for: day) } label: {
             HStack(spacing: Theme.Space.sm) {
-                Text("Rest day").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                Spacer()
-                Image(systemName: "plus").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                Text("Rest").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary.opacity(0.8))
+                Rectangle().fill(Theme.hairline.opacity(0.6)).frame(height: 0.5)
+                Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.inkTertiary.opacity(0.8))
             }
-            .padding(.horizontal, Theme.Space.md)
-            .frame(height: 42)
+            .frame(height: 54)
             .frame(maxWidth: .infinity)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface.opacity(0.55))
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline.opacity(0.7))
-            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Rest day — tap to add a session")
     }
 
     private var emptyState: some View {
         VStack(spacing: Theme.Space.lg) {
-            IridescentOrb(size: 72)
+            BrandMark(size: 72)
             Text("No plan yet").font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
             Text("Finish onboarding to get a unified weekly plan.")
                 .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.inkSecondary)

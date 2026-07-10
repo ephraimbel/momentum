@@ -122,7 +122,7 @@ struct ExerciseDetailView: View {
 
     private var emptyState: some View {
         VStack(spacing: Theme.Space.md) {
-            IridescentOrb(size: 64)
+            BrandMark(size: 64)
             Text("No history yet").font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
             Text("Log \(exerciseName) a few times and your strength curve appears here.")
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)

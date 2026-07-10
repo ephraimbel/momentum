@@ -997,7 +997,7 @@ struct OnboardingFlow: View {
     private var primersStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            IridescentOrb(size: 96)
+            BrandMark(size: 96)
             VStack(spacing: Theme.Space.sm) {
                 Text("You're all set")
                     .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)

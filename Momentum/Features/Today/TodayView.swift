@@ -465,7 +465,7 @@ struct TodayView: View {
                             .frame(maxWidth: .infinity)
                         lastStrengthReadout
                     } else {
-                        IridescentOrb(size: 124).padding(.top, Theme.Space.xl)   // timed sports keep the orb
+                        BrandMark(size: 124).padding(.top, Theme.Space.xl)   // timed sports show the brand mark
                     }
                 }
                 .frame(maxWidth: .infinity)

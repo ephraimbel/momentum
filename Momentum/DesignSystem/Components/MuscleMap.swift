@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A human-body muscle map (PRD §4.4) — the strength counterpart to `IridescentOrb`. Anatomically
+/// A human-body muscle map (PRD §4.4) — the strength-context brand visual (see also `BrandMark`). Anatomically
 /// detailed front + back figures whose muscles glow with the **earned iridescent** accent, intensity
 /// scaled by how much each muscle was worked. 100% Apple-native: real anatomical SVG paths (see
 /// `MuscleBodyData`, MIT) are parsed into SwiftUI `Path`s at runtime — no map/UI SDKs, no bitmap art.

@@ -44,7 +44,7 @@ struct CoachChatView: View {
                 }
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: Theme.Space.xs) {
-                        IridescentOrb(size: 22, glow: false)
+                        BrandMark(size: 22)
                         Text("Coach").font(.rounded(Theme.FontSize.body, weight: .bold))
                             .foregroundStyle(Theme.ink)
                     }
@@ -63,7 +63,7 @@ struct CoachChatView: View {
     private func welcomeHero(_ vm: CoachChatViewModel) -> some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
-            IridescentOrb(size: 88)
+            BrandMark(size: 88)
             VStack(spacing: Theme.Space.sm) {
                 Text("How can I help?")
                     .font(.display(28, weight: .black))
@@ -125,7 +125,7 @@ struct CoachChatView: View {
     private func bubble(_ msg: ChatMessage) -> some View {
         if msg.role == .coach {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
-                IridescentOrb(size: 26, glow: false)
+                BrandMark(size: 26)
                 Text(msg.text)
                     .font(.rounded(Theme.FontSize.body, weight: .medium))
                     .foregroundStyle(Theme.ink)
@@ -149,7 +149,7 @@ struct CoachChatView: View {
 
     private var typingIndicator: some View {
         HStack(alignment: .top, spacing: Theme.Space.sm) {
-            IridescentOrb(size: 26, glow: false)
+            BrandMark(size: 26)
             TypingDots()
                 .padding(Theme.Space.md)
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
