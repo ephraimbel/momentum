@@ -125,6 +125,9 @@ struct TodayView: View {
             }
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
+            // Publish/unpublish shared workouts as feed posts — same opportunistic-retry model
+            // (no-op for guests/dark builds; failures stay unstamped and retry on the next appear).
+            Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
             // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
             // load in the danger zone + the body agreeing forces a real cutback week (throttled to
             // one/week); otherwise two warning signs just ease *today's* quality session.
@@ -252,15 +255,10 @@ struct TodayView: View {
             Text("We'll start with a short recovery run and easy miles — quality work returns once you're settled.")
         }
         .sheet(isPresented: $showProfile) {
-            NavigationStack {
-                ProfileScreen()
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { showProfile = false }.fontWeight(.semibold)
-                        }
-                    }
-            }
-            .presentationDragIndicator(.visible)
+            // ProfileScreen hides the navigation bar (custom header), so a toolbar "Done" from out
+            // here would never render — the close control is the screen's own, via `onClose`.
+            NavigationStack { ProfileScreen(onClose: { showProfile = false }) }
+                .presentationDragIndicator(.visible)
         }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
@@ -536,12 +534,9 @@ struct TodayView: View {
     /// week lives with the plan in the deck, where data belongs.
     private var headerCard: some View {
         HStack(spacing: Theme.Space.sm) {
-            Button { Haptics.light(); showProfile = true } label: {
-                AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
-                    .background(Circle().fill(.regularMaterial).padding(-3))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Your profile")
+            AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
+                .background(Circle().fill(.regularMaterial).padding(-3))
+                .mapSafeTap("Your profile") { Haptics.light(); showProfile = true }
             bellButton
             Spacer(minLength: Theme.Space.xs)
             activitySelector
@@ -555,22 +550,21 @@ struct TodayView: View {
     private var unreadCount: Int { appNotifications.filter { !$0.read }.count }
 
     private var bellButton: some View {
-        Button { Haptics.light(); showNotifications = true } label: {
-            Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 44, height: 44).momentumGlass(in: Circle())
-                .overlay(alignment: .topTrailing) {
-                    if unreadCount > 0 {
-                        Text("\(min(unreadCount, 9))")
-                            .font(.rounded(9, weight: .black)).foregroundStyle(Theme.background)
-                            .frame(width: 17, height: 17)
-                            .background(Circle().fill(Theme.ink))
-                            .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
-                            .offset(x: 3, y: -3)
-                    }
+        Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .overlay(alignment: .topTrailing) {
+                if unreadCount > 0 {
+                    Text("\(min(unreadCount, 9))")
+                        .font(.rounded(9, weight: .black)).foregroundStyle(Theme.background)
+                        .frame(width: 17, height: 17)
+                        .background(Circle().fill(Theme.ink))
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                        .offset(x: 3, y: -3)
                 }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")")
+            }
+            .mapSafeTap("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")") {
+                Haptics.light(); showNotifications = true
+            }
     }
 
 
@@ -589,18 +583,18 @@ struct TodayView: View {
     }
 
     private var activitySelector: some View {
-        Button { Haptics.light(); showSportPicker = true } label: {
-            HStack(spacing: 6) {
-                Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
-                Text(activityShortLabel).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
-            }
-            .fixedSize()
-            .foregroundStyle(Theme.ink)
-            .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.pillV)
-            .momentumGlass()
+        HStack(spacing: 6) {
+            Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
+            Text(activityShortLabel).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
+            Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
         }
-        .buttonStyle(.plain)
+        .fixedSize()
+        .foregroundStyle(Theme.ink)
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.pillV)
+        .momentumGlass()
+        .mapSafeTap("Change activity — \(activityShortLabel) selected") {
+            Haptics.light(); showSportPicker = true
+        }
     }
 
     // MARK: Bottom panel
@@ -776,14 +770,11 @@ struct TodayView: View {
     }
 
     private var recenterButton: some View {
-        Button { recenterOnMe() } label: {
-            Image(systemName: "location.fill")
-                .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 44, height: 44)
-                .momentumGlass(in: Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Recenter on my location")
+        Image(systemName: "location.fill")
+            .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44)
+            .momentumGlass(in: Circle())
+            .mapSafeTap("Recenter on my location") { recenterOnMe() }
     }
 
     /// Snap the camera back to the **live** location puck and resume following it — even after the

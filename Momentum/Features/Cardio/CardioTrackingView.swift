@@ -168,7 +168,7 @@ struct CardioTrackingView: View {
             // manual pan or pinch drops the lock; the recenter arrow re-engages it.
             .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsUser = false })
             .simultaneousGesture(MagnifyGesture().onChanged { _ in followsUser = false })
-            .overlay(alignment: .bottomTrailing) { if phase == .tracking { recenterButton } }
+
         }
     }
 
@@ -269,17 +269,13 @@ struct CardioTrackingView: View {
     }
 
     private var recenterButton: some View {
-        Button { Haptics.light(); recenterOnUser() } label: {
-            // Filled when locked on the athlete, hollow once the user has panned away — so the arrow
-            // reads as "tap to snap back."
-            Image(systemName: followsUser ? "location.fill" : "location")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(followsUser ? Theme.ink : Theme.inkSecondary)
-                .frame(width: 40, height: 40).momentumGlass(in: Circle())
-        }
-        .padding(.trailing, Theme.Space.md)
-        .padding(.bottom, 220) // clear the stats panel
-        .accessibilityLabel("Recenter on me")
+        // Filled when locked on the athlete, hollow once the user has panned away — so the arrow
+        // reads as "tap to snap back."
+        Image(systemName: followsUser ? "location.fill" : "location")
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(followsUser ? Theme.ink : Theme.inkSecondary)
+            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .mapSafeTap("Recenter on me") { Haptics.light(); recenterOnUser() }
     }
 
     /// Lock the camera back onto the athlete at the tight running zoom (north-up). Falls back to
@@ -291,13 +287,11 @@ struct CardioTrackingView: View {
 
     private var topBar: some View {
         VStack {
-            HStack {
-                Button { phase == .tracking ? (confirmStop = true) : cancelAndDismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 38, height: 38).momentumGlass(in: Circle())
-                }
+            HStack(alignment: .top) {
+                Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 38, height: 38).momentumGlass(in: Circle())
+                    .mapSafeTap("Close") { phase == .tracking ? (confirmStop = true) : cancelAndDismiss() }
                 Spacer()
-                MapLayersButton(style: $mapStyle, previewCenter: routeCoords.last ?? lastKnownCoordinate)
                 if phase == .tracking, let vm {
                     HStack(spacing: 4) {
                         Image(systemName: vm.gpsLost ? "location.slash" : "location.fill")
@@ -306,6 +300,13 @@ struct CardioTrackingView: View {
                     }
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
                     .padding(.horizontal, 10).padding(.vertical, Theme.Space.chipV).momentumGlass()
+                }
+                // The right-side control column (matches Today): layers over recenter. Recenter lives
+                // HERE — the old bottom-right placement hid behind the stats panel, so an athlete who
+                // panned away had no visible way to lock back onto themselves.
+                VStack(spacing: Theme.Space.sm) {
+                    MapLayersButton(style: $mapStyle, previewCenter: routeCoords.last ?? lastKnownCoordinate)
+                    if phase == .tracking { recenterButton }
                 }
             }
             .padding(Theme.Space.md)

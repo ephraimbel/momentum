@@ -105,12 +105,10 @@ struct MapLayersButton: View {
     @State private var showPicker = false
 
     var body: some View {
-        Button { showPicker = true } label: {
-            Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 44, height: 44)
-                .momentumGlass(in: Circle())
-        }
-        .accessibilityLabel("Map style")
+        Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44)
+            .momentumGlass(in: Circle())
+            .mapSafeTap("Map style") { showPicker = true }
         .sheet(isPresented: $showPicker) {
             MapStylePickerSheet(style: $style, previewCenter: previewCenter,
                                 onWorld: onWorld.map { world in { showPicker = false; world() } })

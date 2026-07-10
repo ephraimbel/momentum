@@ -9,6 +9,9 @@ import SwiftData
 struct ProfileScreen: View {
     /// When pushed (e.g. tapping your own post in World) we show a back chevron; as a tab root we don't.
     var showsBackButton: Bool = false
+    /// Set when presented as a sheet (Today's avatar) — the screen hides the navigation bar, so an
+    /// outer toolbar "Done" can never render; the close affordance must live in this header.
+    var onClose: (() -> Void)? = nil
 
     @Query private var profiles: [UserProfile]
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
@@ -98,6 +101,10 @@ struct ProfileScreen: View {
                     .frame(width: 32, height: 32)
             }
             .accessibilityLabel("Settings")
+            if let onClose {
+                Button("Done") { onClose() }
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm).padding(.bottom, Theme.Space.sm)
