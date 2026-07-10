@@ -28,6 +28,7 @@ struct ProgressScreen: View {
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
     @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
+    @State private var showAllAdaptations = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
@@ -55,11 +56,26 @@ struct ProgressScreen: View {
     @State private var cachedFacts: AthleteFacts?
     @State private var cachedActivation: [MuscleGroup: Double]?
     @State private var cachedFormPoint: FitnessFreshness.Point?
+    /// Full-history weekly distance buckets — the season chart and volume delta read the
+    /// workouts themselves (snapshots only accumulate one per week of app use).
+    @State private var cachedWeekVolumes: [(week: Date, meters: Double)]?
 
     private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
     private var insights: ProgressInsights { cachedInsights ?? ProgressInsights(workouts: workouts) }
     private var recovery: RecoveryModel { cachedRecovery ?? RecoveryModel(workouts: workouts) }
     private var athleteFacts: AthleteFacts { cachedFacts ?? AthleteModelEngine(workouts: workouts, plan: plan).facts }
+    private var weekVolumes: [(week: Date, meters: Double)] { cachedWeekVolumes ?? computeWeekVolumes() }
+
+    private func computeWeekVolumes() -> [(week: Date, meters: Double)] {
+        let cal = Calendar.current
+        var buckets: [Date: Double] = [:]
+        for w in workouts {
+            guard let d = w.gps?.distanceM, d > 0,
+                  let start = cal.dateInterval(of: .weekOfYear, for: w.startedAt)?.start else { continue }
+            buckets[start, default: 0] += d
+        }
+        return buckets.map { ($0.key, $0.value) }.sorted { $0.week < $1.week }
+    }
 
     private func refreshAggregates() {
         cachedStats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
@@ -69,6 +85,7 @@ struct ProgressScreen: View {
         cachedFacts = AthleteModelEngine(workouts: workouts, plan: plan).facts
         cachedActivation = computeWeeklyMuscleActivation()
         cachedFormPoint = computeFormPoint()
+        cachedWeekVolumes = computeWeekVolumes()
     }
 
     var body: some View {
@@ -87,6 +104,7 @@ struct ProgressScreen: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView() }
+        .sheet(isPresented: $showAllAdaptations) { adaptationSheet }
         .sheet(item: $correcting) { item in
             if let profile = profiles.first {
                 CorrectionSheet(belief: item.value, category: item.category, noteID: item.noteID, profile: profile)
@@ -198,6 +216,9 @@ struct ProgressScreen: View {
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-records") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("records", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-growth") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("growth", anchor: .top) }
                 }
                 #endif
             }
@@ -1335,24 +1356,196 @@ struct ProgressScreen: View {
         var id: String { title }
     }
 
-    /// The former You tab, folded into Trends: identity, records, digest, adaptations, learned
-    /// beliefs, trajectory — the athlete's story, sitting under the body panel that summarizes it.
+    /// The former You tab, folded into Trends and rebuilt around growth: receipts first
+    /// (before → after deltas, the season, the record book), then the coach's moves, then the
+    /// beliefs behind the plan. Every line is computed from the athlete's own history — no
+    /// claim without its number, no number without a consequence.
     private var athleteStory: some View {
         let facts = athleteFacts
         let model = profiles.first?.athlete
         let items = learnedItems(facts, model)
+        let deltas = growthDeltas
+        // A digest item that can't cite a number doesn't render (receipts, not vibes).
+        let nudges = Array(AthleteNudges.generate(facts).filter { $0.text.contains(where: \.isNumber) }.prefix(2))
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
-            identityHero(model, facts)
+            if !deltas.isEmpty { growthCard(deltas).id("growth") }
+            seasonChart.id("season")
             RecordsCard(distanceUnit: distanceUnit).id("records")
-            let nudges = AthleteNudges.generate(facts)
+            if !coachingEvents.isEmpty { coachMoves }
             if !nudges.isEmpty { weeklyDigest(nudges) }
-            if !coachingEvents.isEmpty { adaptationHistory }
-            if confidentCount(facts) < 3 { learningState(facts) }
-            ForEach(Array(items.enumerated()), id: \.element.id) { _, item in
-                learnedCard(item)
-            }
-            if let model, model.snapshots.count >= 2 { trajectory(model) }
+            if !items.isEmpty { coachKnows(items, facts: facts) }
         }
+    }
+
+    // MARK: - How you've grown (before → after receipts from the weekly snapshots)
+
+    private struct GrowthDelta: Identifiable {
+        let label: String
+        let from: String
+        let to: String
+        let period: String
+        var id: String { label }
+    }
+
+    /// Only deltas that actually exist and actually moved. Nothing here is authored — pace,
+    /// volume, and strength are all measured from the athlete's snapshots.
+    private var growthDeltas: [GrowthDelta] {
+        let snaps = (profiles.first?.athlete?.snapshots ?? []).sorted { $0.weekStart < $1.weekStart }
+        var out: [GrowthDelta] = []
+        func since(_ d: Date) -> String { "since " + d.formatted(.dateTime.month(.abbreviated)) }
+        // Running fitness: Riegel-normalized 5K pace, first vs latest reading.
+        let paces = snaps.filter { ($0.p5kEquivSPerKm ?? 0) > 0 }
+        if let first = paces.first, let last = paces.last, first.weekStart < last.weekStart,
+           let p0 = first.p5kEquivSPerKm, let p1 = last.p5kEquivSPerKm,
+           abs(p1 - p0) / p0 >= 0.01 {
+            out.append(GrowthDelta(label: "5K PACE",
+                                   from: Formatters.pace(secPerKm: p0, unit: distanceUnit),
+                                   to: Formatters.pace(secPerKm: p1, unit: distanceUnit),
+                                   period: since(first.weekStart)))
+        }
+        // Weekly volume from the workouts themselves: 3-week averages at each end, so one
+        // big week can't fake a trend. The in-progress week is excluded — a half-finished
+        // week reads as a fake drop.
+        let nowWeek = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start
+        let vols = weekVolumes.filter { $0.week != nowWeek }
+        if vols.count >= 4 {
+            let head = vols.prefix(3), tail = vols.suffix(3)
+            let a = head.map(\.meters).reduce(0, +) / Double(head.count)
+            let b = tail.map(\.meters).reduce(0, +) / Double(tail.count)
+            if a > 0, abs(b - a) / a >= 0.10 {
+                out.append(GrowthDelta(label: "WEEKLY VOLUME",
+                                       from: Formatters.distance(meters: a, unit: distanceUnit),
+                                       to: Formatters.distance(meters: b, unit: distanceUnit),
+                                       period: "3-wk avg, \(since(vols.first!.week))"))
+            }
+        }
+        // Strength: the lift with the biggest measured e1RM gain between the ends.
+        if let firstL = snaps.first(where: { !$0.topE1RMByLift.isEmpty }),
+           let lastL = snaps.last(where: { !$0.topE1RMByLift.isEmpty }),
+           firstL.weekStart < lastL.weekStart {
+            var best: (lift: String, v0: Double, v1: Double)?
+            for (lift, v0) in firstL.topE1RMByLift {
+                guard v0 > 0, let v1 = lastL.topE1RMByLift[lift], (v1 - v0) / v0 >= 0.03 else { continue }
+                if v1 - v0 > (best.map { $0.v1 - $0.v0 } ?? 0) { best = (lift, v0, v1) }
+            }
+            if let best {
+                let unit = WeightUnit.default()
+                out.append(GrowthDelta(label: best.lift.uppercased(),
+                                       from: Formatters.weight(kg: best.v0, unit: unit),
+                                       to: Formatters.weight(kg: best.v1, unit: unit),
+                                       period: "est. 1RM, \(since(firstL.weekStart))"))
+            }
+        }
+        return Array(out.prefix(3))
+    }
+
+    private func growthCard(_ deltas: [GrowthDelta]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("HOW YOU'VE GROWN").font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            VStack(spacing: 0) {
+                ForEach(Array(deltas.enumerated()), id: \.element.id) { i, d in
+                    if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.md) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(d.label).font(.rounded(Theme.FontSize.label, weight: .bold))
+                                .tracking(1.1).foregroundStyle(Theme.inkTertiary)
+                            Text(d.period).font(.rounded(Theme.FontSize.label, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary)
+                        }
+                        Spacer(minLength: Theme.Space.sm)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(d.from).font(.rounded(15, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(Theme.inkTertiary)
+                            Image(systemName: "arrow.right").font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Theme.inkTertiary)
+                            // The after-value is earned progress — it wears the accent,
+                            // same treatment as the record book.
+                            Text(d.to).font(.display(18, weight: .black)).monospacedDigit()
+                                .foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 8).padding(.vertical, 2)
+                                .background(Capsule().fill(IridescentMaterial()).opacity(0.30))
+                        }
+                    }
+                    .padding(.vertical, Theme.Space.sm)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(d.label): \(d.from) to \(d.to), \(d.period)")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md)
+        .background(card)
+    }
+
+    /// The season: labeled weekly distance with record weeks dotted — the story the old naked
+    /// "trajectory" line never told.
+    @ViewBuilder
+    private var seasonChart: some View {
+        let weeks = weekVolumes
+        let unit = distanceUnit.resolved()
+        let divisor = unit == .imperial ? Formatters.metersPerMile : 1000.0
+        if weeks.count >= 4 {
+            let cal = Calendar.current
+            let prWeeks = Set((profiles.first?.prs ?? []).compactMap {
+                cal.dateInterval(of: .weekOfYear, for: $0.achievedAt)?.start
+            })
+            let recordWeeks = weeks.filter { prWeeks.contains($0.week) }
+            chartSection("Your season", subtitle: "Weekly \(unit == .imperial ? "miles" : "kilometers") · ● a record week") {
+                Chart {
+                    ForEach(weeks, id: \.week) { entry in
+                        BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                                y: .value("Distance", entry.meters / divisor))
+                            .foregroundStyle(Theme.ink.opacity(0.8))
+                            .cornerRadius(2)
+                    }
+                    ForEach(recordWeeks, id: \.week) { entry in
+                        PointMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                                  y: .value("Distance", entry.meters / divisor))
+                            .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
+                            .symbolSize(70)
+                    }
+                }
+                .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
+                .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+                .frame(height: 150)
+            }
+        }
+    }
+
+    /// What the plan is built on — the highest-confidence beliefs in one card, each with its
+    /// correction affordance. Beliefs support the story; they aren't the story.
+    private func coachKnows(_ items: [LearnedItem], facts: AthleteFacts) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("WHAT YOUR COACH KNOWS").font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(items.prefix(3).enumerated()), id: \.element.id) { i, item in
+                    if i > 0 {
+                        Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                            .padding(.vertical, Theme.Space.sm)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(item.title).font(.rounded(Theme.FontSize.label, weight: .bold))
+                                .tracking(1.1).foregroundStyle(Theme.inkTertiary)
+                            Spacer()
+                            confidencePip(item.confidence)
+                        }
+                        Text(item.value).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        notQuiteRightButton(value: item.value, category: item.category, noteID: item.noteID)
+                    }
+                }
+            }
+            if confidentCount(facts) < 3 {
+                Text("Based on \(workouts.count) workouts — this read sharpens as you train.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md)
+        .background(card)
     }
 
     /// The Athlete Panel's anchor stat — VO₂max, the fitness index. Device measurement wins;
@@ -1429,11 +1622,45 @@ struct ProgressScreen: View {
 
     /// The coaching timeline — every plan adaptation with its *why*, so the closed loop is legible: the
     /// plan doesn't quietly shift, it keeps the receipt. Monochrome (informational, not an earned accent).
-    private var adaptationHistory: some View {
-        let events = Array(coachingEvents.prefix(8))
-        return VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text("HOW YOUR PLAN ADAPTED").font(.rounded(Theme.FontSize.label, weight: .bold))
+    private var coachMoves: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("YOUR COACH'S MOVES").font(.rounded(Theme.FontSize.label, weight: .bold))
                 .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            adaptationList(Array(coachingEvents.prefix(3)))
+            if coachingEvents.count > 3 {
+                Button {
+                    Haptics.light(); showAllAdaptations = true
+                } label: {
+                    Text("See all \(coachingEvents.count) adaptations")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .background(Capsule().stroke(Theme.hairline))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    /// Every adaptation, in a sheet — the full receipt trail behind the capped card.
+    private var adaptationSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                Text("How your plan adapted").font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
+                adaptationList(Array(coachingEvents))
+            }
+            .padding(Theme.Space.md)
+        }
+        .background(Theme.background)
+        .presentationDetents([.large, .medium])
+    }
+
+    private func adaptationList(_ events: [CoachingEvent]) -> some View {
             VStack(spacing: 0) {
                 ForEach(Array(events.enumerated()), id: \.element.id) { i, event in
                     HStack(alignment: .top, spacing: Theme.Space.md) {
@@ -1460,13 +1687,6 @@ struct ProgressScreen: View {
                     }
                 }
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
     }
 
     private func eventRelativeDay(_ date: Date) -> String {
@@ -1475,31 +1695,6 @@ struct ProgressScreen: View {
         if cal.isDateInYesterday(date) { return "Yesterday" }
         let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: Date())).day ?? 0
         return days < 7 ? "\(days)d ago" : date.formatted(.dateTime.month().day())
-    }
-
-    private func identityHero(_ model: AthleteModel?, _ facts: AthleteFacts) -> some View {
-        // A pinned user correction wins; then any AI/onboarding identity note; then the seed.
-        let notes = model?.notes.filter { $0.isActive && $0.category == MemoryCategory.identity.rawValue } ?? []
-        let pinned = notes.first(where: { $0.pinned && $0.source == MemorySource.user.rawValue })
-        let text = pinned?.text
-            ?? notes.first?.text
-            ?? profiles.first.map { AthleteModelService.identitySeed($0) }
-            ?? "Getting to know you."
-        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("WHAT MOMENTUM KNOWS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-            Text(text).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            if profiles.first != nil {
-                notQuiteRightButton(value: text, category: .identity, noteID: pinned?.id)
-                    .padding(.top, 2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.32)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
     }
 
     /// A quiet "not quite right?" affordance that opens the correction sheet.
@@ -1513,20 +1708,6 @@ struct ProgressScreen: View {
                 .foregroundStyle(Theme.inkTertiary).underline()
         }
         .buttonStyle(.plain)
-    }
-
-    private func learningState(_ facts: AthleteFacts) -> some View {
-        let count = facts.signalSampleCounts[AthleteModelEngine.Signal.rhythm.rawValue] ?? 0
-        let need = max(1, 8 - count)
-        return HStack(spacing: Theme.Space.sm) {
-            Image(systemName: "sparkles").foregroundStyle(Theme.inkTertiary)
-            Text("Still learning your rhythm — about \(need) more session\(need == 1 ? "" : "s") and I'll have it.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background(card)
     }
 
     /// "This week with Momentum" — proactive nudges the model surfaces on its own (§9).
@@ -1553,23 +1734,6 @@ struct ProgressScreen: View {
         .background(card)
     }
 
-    private func learnedCard(_ item: LearnedItem) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            HStack {
-                Text(item.title).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
-                Spacer()
-                confidencePip(item.confidence)
-            }
-            Text(item.value).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            notQuiteRightButton(value: item.value, category: item.category, noteID: item.noteID)
-                .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background(card)
-    }
-
     private func confidencePip(_ c: Confidence) -> some View {
         let filled = c == .confident ? 3 : (c == .growing ? 2 : 1)
         return HStack(spacing: 3) {
@@ -1582,20 +1746,6 @@ struct ProgressScreen: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Confidence")
         .accessibilityValue("\(c.rawValue.capitalized), \(filled) of 3")
-    }
-
-    private func trajectory(_ model: AthleteModel) -> some View {
-        let snapshots = model.snapshots.sorted { $0.weekStart < $1.weekStart }
-        return chartSection("Your trajectory", subtitle: "Weekly load over time") {
-            Chart(snapshots, id: \.weekStart) { snap in
-                LineMark(x: .value("Week", snap.weekStart, unit: .weekOfYear),
-                         y: .value("Load", snap.weeklyLoad))
-                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .interpolationMethod(.catmullRom)
-            }
-            .chartXAxis(.hidden).chartYAxis(.hidden)
-            .frame(height: 130)
-        }
     }
 
     // MARK: You — fact → copy
