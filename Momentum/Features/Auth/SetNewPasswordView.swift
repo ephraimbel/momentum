@@ -21,8 +21,23 @@ struct SetNewPasswordView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, Theme.Space.sm)
 
-                box { SecureField("New password", text: $password).textContentType(.newPassword).focused($focused) }
-                box { SecureField("Confirm password", text: $confirm).textContentType(.newPassword) }
+                box {
+                    if Self.uiTestPlainFields {
+                        TextField("New password", text: $password)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .focused($focused)
+                    } else {
+                        SecureField("New password", text: $password).textContentType(.newPassword).focused($focused)
+                    }
+                }
+                box {
+                    if Self.uiTestPlainFields {
+                        TextField("Confirm password", text: $confirm)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    } else {
+                        SecureField("Confirm password", text: $confirm).textContentType(.newPassword)
+                    }
+                }
 
                 if let message {
                     Text(message)
@@ -65,6 +80,16 @@ struct SetNewPasswordView: View {
             }
             .onAppear { focused = true }
         }
+    }
+
+    /// Same UI-test escape hatch as SignInView: secure fields trip iOS AutoFill panels that
+    /// XCUITest can't dismiss, so tests get plain fields (DEBUG-only, real athletes never do).
+    private static var uiTestPlainFields: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--uitest-password")
+        #else
+        false
+        #endif
     }
 
     private func box<Content: View>(@ViewBuilder content: () -> Content) -> some View {

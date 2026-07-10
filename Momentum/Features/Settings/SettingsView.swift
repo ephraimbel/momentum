@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State private var connectingHealth = false
     @State private var importingHealth = false
     @State private var importMessage: String?
+    @State private var showingSignInOptions = false   // guest upgrade via Google/email (the gate's page)
     @State private var showCoachChat = false
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
@@ -160,22 +161,43 @@ struct SettingsView: View {
             .signInWithAppleButtonStyle(.black)
             .frame(height: 48)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            Button {
+                Haptics.light()
+                showingSignInOptions = true
+            } label: {
+                Text("More ways to sign in — Google or email")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             Text("Back up your training and sync across devices. Keeps everything you've logged so far.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(Theme.Space.lg)
         .background(card)
+        .fullScreenCover(isPresented: $showingSignInOptions) {
+            SignInView(startOnSignInPage: true)
+        }
+    }
+
+    /// The account row reflects how they actually signed in — Apple / Google / email.
+    private var accountProvider: (icon: String, label: String) {
+        let id = auth.userID ?? ""
+        if id.hasPrefix("email:") { return ("envelope.fill", "Email account") }
+        if id.hasPrefix("google:") { return ("globe", "Google account") }
+        return ("applelogo", "Sign in with Apple")
     }
 
     private var signedInAccountCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.md) {
-                Image(systemName: "applelogo").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
+                Image(systemName: accountProvider.icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(auth.displayName ?? "Signed in with Apple")
+                    Text(auth.displayName ?? auth.email ?? "Signed in")
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text("Sign in with Apple").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    Text(accountProvider.label).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 }
                 Spacer(minLength: 0)
             }

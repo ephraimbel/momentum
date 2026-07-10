@@ -45,6 +45,16 @@ final class AuthController {
     init(userID override: String? = nil) {
         if let override { userID = override; return }
         #if DEBUG
+        // Auth-flow UI tests: start signed OUT with a clean slate — local identity, the
+        // first-cloud-session marker, and any lingering keychain Supabase session all cleared.
+        if ProcessInfo.processInfo.arguments.contains("--reset-auth") {
+            UserDefaults.standard.removeObject(forKey: Self.userIDKey)
+            UserDefaults.standard.removeObject(forKey: Self.nameKey)
+            UserDefaults.standard.removeObject(forKey: Self.emailKey)
+            UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
+            if let client = SupabaseClientProvider.client { Task { try? await client.auth.signOut() } }
+            return
+        }
         // Demos + UI tests skip the gate so seeded flows run straight to the app.
         if ProcessInfo.processInfo.arguments.contains("--seed-demo") {
             userID = "demo-user"; displayName = "Demo Athlete"; return
@@ -198,6 +208,10 @@ final class AuthController {
             adoptEmailSession(session)
             return .success
         } catch {
+            let text = (error as? AuthError)?.message ?? ""
+            if text.localizedCaseInsensitiveContains("not confirmed") {
+                return .failure("Confirm your email first — check your inbox for the link we sent.")
+            }
             return .failure("That email and password don't match an account.")
         }
     }
@@ -223,6 +237,10 @@ final class AuthController {
             let text = (error as? AuthError)?.message ?? ""
             if text.localizedCaseInsensitiveContains("already registered") {
                 return .failure("That email already has an account — sign in instead.")
+            }
+            if text.localizedCaseInsensitiveContains("rate limit") {
+                // The mailer's hourly cap (tight until custom SMTP lands) — be honest about it.
+                return .failure("Too many sign-ups right now — give it a while and try again.")
             }
             if text.localizedCaseInsensitiveContains("password") {
                 return .failure("Passwords need at least 8 characters.")

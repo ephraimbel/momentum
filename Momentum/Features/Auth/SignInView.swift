@@ -10,27 +10,33 @@ import AuthenticationServices
 struct SignInView: View {
     @Environment(AuthController.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var showingSignIn = {
+    @Environment(\.dismiss) private var dismiss
+
+    /// True when presented as a cover (Settings → guest "more ways to sign in"): skips the
+    /// welcome hero and the back chevron dismisses the cover instead of returning to it.
+    private let presentedAsSheet: Bool
+
+    init(startOnSignInPage: Bool = false) {
+        presentedAsSheet = startOnSignInPage
+        var onSignInPage = startOnSignInPage
+        var creating = false
         #if DEBUG
         // Sim verification deep links: land straight on the sign-in beat (taps are unreliable).
-        ProcessInfo.processInfo.arguments.contains("--signin-page")
-            || ProcessInfo.processInfo.arguments.contains("--signin-create")
-        #else
-        false
+        let args = ProcessInfo.processInfo.arguments
+        onSignInPage = onSignInPage || args.contains("--signin-page") || args.contains("--signin-create")
+        creating = args.contains("--signin-create")
         #endif
-    }()
+        _showingSignIn = State(initialValue: onSignInPage)
+        _isCreatingAccount = State(initialValue: creating)
+    }
+
+    @State private var showingSignIn: Bool
     @State private var googleInFlight = false
 
     // Email + password (the classic boxes; @handle stays the social username — email only signs in)
     @State private var email = ""
     @State private var password = ""
-    @State private var isCreatingAccount = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--signin-create")
-        #else
-        false
-        #endif
-    }()
+    @State private var isCreatingAccount: Bool
     @State private var emailInFlight = false
     @State private var authMessage: String?
     @FocusState private var focusedField: Field?
@@ -38,7 +44,7 @@ struct SignInView: View {
 
     var body: some View {
         ZStack {
-            welcome
+            if !presentedAsSheet { welcome }
             if showingSignIn {
                 signInPage
                     .transition(reduceMotion
@@ -47,6 +53,10 @@ struct SignInView: View {
             }
         }
         .animation(.easeOut(duration: 0.28), value: showingSignIn)
+        // Presented from Settings (guest upgrade): a successful sign-in closes the cover.
+        .onChange(of: auth.userID) { _, id in
+            if presentedAsSheet, let id, id != AuthController.guestID { dismiss() }
+        }
     }
 
     // MARK: Beat 1 — the welcome (brand only)
@@ -121,16 +131,16 @@ struct SignInView: View {
 
             Button {
                 Haptics.light()
-                showingSignIn = false
+                if presentedAsSheet { dismiss() } else { showingSignIn = false }
             } label: {
-                Image(systemName: "chevron.left")
+                Image(systemName: presentedAsSheet ? "xmark" : "chevron.left")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(Theme.ink)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Back")
+            .accessibilityLabel(presentedAsSheet ? "Close" : "Back")
             .padding(.leading, Theme.Space.sm)
 
             // Scrolls so the whole column stays reachable with the keyboard up on small screens.
@@ -292,19 +302,24 @@ struct SignInView: View {
                     }
 
                     // The guest door stays open (guest-first principle) — quiet, never blocking.
-                    Button {
-                        Haptics.light()
-                        auth.continueAsGuest()
-                    } label: {
-                        Text("Continue without an account")
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                            .foregroundStyle(Theme.inkSecondary)
-                            .frame(height: 44)
-                            .contentShape(Rectangle())
+                    // Hidden when a guest opened this from Settings (they're already one).
+                    if !presentedAsSheet {
+                        Button {
+                            Haptics.light()
+                            auth.continueAsGuest()
+                        } label: {
+                            Text("Continue without an account")
+                                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                                .foregroundStyle(Theme.inkSecondary)
+                                .frame(height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, Theme.Space.sm)
+                        .padding(.bottom, Theme.Space.xl)
+                    } else {
+                        Spacer().frame(height: Theme.Space.xl)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.top, Theme.Space.sm)
-                    .padding(.bottom, Theme.Space.xl)
                 }
                 .padding(.horizontal, Theme.Space.xl)
             }
