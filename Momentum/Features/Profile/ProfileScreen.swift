@@ -28,9 +28,23 @@ struct ProfileScreen: View {
     @State private var immersive: ImmersiveStart?
 
     private var profile: UserProfile? { profiles.first }
-    private var stats: ProfileStats { ProfileStats(workouts: workouts, plan: profile?.plan) }
+
+    // Cached per data change — as computed vars these walked every workout (and its sets) on every
+    // property access, and the body touches them repeatedly. The fallback keeps the first frame
+    // correct before the refresh task lands.
+    @State private var cachedStats: ProfileStats?
+    @State private var cachedHighlights: ProfileHighlights?
+    private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profile?.plan) }
     private var highlights: ProfileHighlights {
-        ProfileHighlights(stats: stats, workouts: workouts, weightUnit: weightUnit, distanceUnit: distanceUnit)
+        cachedHighlights ?? ProfileHighlights(stats: stats, workouts: workouts,
+                                              weightUnit: weightUnit, distanceUnit: distanceUnit)
+    }
+
+    private func refreshAggregates() {
+        let fresh = ProfileStats(workouts: workouts, plan: profile?.plan)
+        cachedStats = fresh
+        cachedHighlights = ProfileHighlights(stats: fresh, workouts: workouts,
+                                             weightUnit: weightUnit, distanceUnit: distanceUnit)
     }
     private var weightUnit: WeightUnit { WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
@@ -97,6 +111,7 @@ struct ProfileScreen: View {
         #endif
         }
         .sheet(isPresented: $editing) { if let profile { EditProfileView(profile: profile) } }
+        .task(id: workouts.count) { refreshAggregates() }
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
                                   weightUnit: weightUnit, distanceUnit: distanceUnit)

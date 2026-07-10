@@ -43,6 +43,11 @@ struct TodayView: View {
     @State private var showLogWorkout = false
     @State private var showInjuryReport = false
     @State private var showCheckin = false
+    /// Throttles the appear-time orchestration — `onAppear` re-fires on every tab switch.
+    @State private var lastBootstrap: (at: Date, day: Date)?
+    /// The header streak, computed once per data change instead of on every body evaluation
+    /// (the map re-evaluates the body constantly while panning).
+    @State private var cachedStreak: Int?
     @State private var confirmResume = false
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
@@ -90,59 +95,7 @@ struct TodayView: View {
         .navigationBarHidden(true)
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .onAppear {
-            PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
-            // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
-            // notification permission on first run.
-            services.notifications.schedulePlannedReminders(plan)
-            // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
-            // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
-            services.notifications.scheduleWeeklyCheckIn()
-            let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
-            let plannedToday = !PlanCoaching.todaySessions(plan, on: Date()).isEmpty
-            let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
-            services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
-                                                       isPlannedDayToday: plannedToday,
-                                                       hasWorkedOutToday: workedOutToday)
-            // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
-            if let s = PlanCoaching.todaySessions(plan, on: Date()).first {
-                AppNotification.post(kind: .reminder, title: "Today's session is ready",
-                                     body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
-            }
-            AppNotification.post(kind: .system, title: "Welcome to momentum",
-                                 body: "Your plan is set. Tap Start whenever you're ready to move.",
-                                 in: context, dedupeToken: "welcome", daily: false)
-            // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
-            // carb-load → kit → race-day fueling), each posted once.
-            if let profile = profiles.first, let raceDate = profile.raceDate,
-               let distanceM = profile.raceDistanceM, distanceM > 0,
-               let daysOut = Calendar.current.dateComponents(
-                   [.day], from: Calendar.current.startOfDay(for: Date()),
-                   to: Calendar.current.startOfDay(for: raceDate)).day,
-               let briefing = RaceBriefing.build(distanceM: distanceM,
-                                                 p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
-                AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
-                                     in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
-            }
-            // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
-            Task { await services.sync.sync(workouts, in: context) }
-            // Publish/unpublish shared workouts as feed posts — same opportunistic-retry model
-            // (no-op for guests/dark builds; failures stay unstamped and retry on the next appear).
-            Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
-            // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
-            // load in the danger zone + the body agreeing forces a real cutback week (throttled to
-            // one/week); otherwise two warning signs just ease *today's* quality session.
-            Task {
-                let signals = await services.health.recoverySignals()
-                let acwr = ProgressInsights(workouts: workouts).acwr
-                if let cutback = RecoveryAdaptation.tripwire(acwr: acwr, signals: signals) {
-                    if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
-                }
-                let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
-                if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier,
-                                                            checkin: DailyCheckin.today(in: checkins)) {
-                    _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
-                }
-            }
+            bootstrapIfNeeded()
             // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
             // lands we switch to following the puck. We only *follow the puck* up front when location is
             // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
@@ -156,61 +109,14 @@ struct TodayView: View {
                     viewport = .camera(center: Self.defaultMapCenter, zoom: 11, pitch: mapStyle.explorePitch)
                 }
             }
-            #if DEBUG
-            // --world deep link: let the map bind, then fly out to the globe (same path as the button).
-            if worldMode {
-                worldMode = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { enterWorld() }
-            }
-            // --spots deep link: open "Spots near you" straight away for deterministic sim verification.
-            if ProcessInfo.processInfo.arguments.contains("--spots") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSpots = true }
-            }
-            // --notifications: open the bell inbox for verification.
-            if ProcessInfo.processInfo.arguments.contains("--notifications") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showNotifications = true }
-            }
-            if ProcessInfo.processInfo.arguments.contains("--today-profile") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showProfile = true }
-            }
-            if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
-            }
-            if ProcessInfo.processInfo.arguments.contains("--log-workout") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
-            }
-            if ProcessInfo.processInfo.arguments.contains("--injury-report") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showInjuryReport = true }
-            }
-            if ProcessInfo.processInfo.arguments.contains("--checkin") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showCheckin = true }
-            }
-            // --loop deep link: open the inline loop suggester straight away (deterministic verification).
-            if ProcessInfo.processInfo.arguments.contains("--loop") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
-            }
-            // --ui-test-structured-run: launch straight into a guided 6×400 m interval session so the
-            // structured-workout flow (step banner + Skip advancement + cues) is drivable deterministically.
-            if ProcessInfo.processInfo.arguments.contains("--ui-test-structured-run") {
-                let variety = ProcessInfo.processInfo.arguments.contains("--ui-test-variety")
-                let session = PlannedSession()
-                session.discipline = .running
-                session.runType = variety ? .hills : .intervals
-                session.targetDistanceM = 3000
-                session.targetPaceSPerKm = variety ? 380 : 300
-                session.intervals = variety ? "8×45sec hills" : "6×400m @ 5K pace"
-                session.date = Date()
-                context.insert(session)   // inserted so post-run crediting behaves like a real plan session
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    launch = .cardio(type: .run, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
-                }
-            }
-            #endif
+            runAppearDeepLinks()
             // Never prompt for location on arrival — the map opens at the last-known neighborhood and
             // the GPS ask happens contextually (Start a run, or tap recenter). If they've already
             // granted it, just pull a fresh fix to center on them.
             if locator.isAuthorized { locator.refreshLocation() }
         }
+        // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
+        .onChange(of: workouts.count) { cachedStreak = nil; lastBootstrap = nil; bootstrapIfNeeded() }
         // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
             if !worldMode, locator.lastLocation != nil {
@@ -283,6 +189,127 @@ struct TodayView: View {
                 onLoopHere: { point in pendingLoopStart = point; showSpots = false },
                 onClose: { showSpots = false })
         }
+    }
+
+    /// The expensive appear-time orchestration (plan reconciliation, reminders, inbox posts,
+    /// sync, recovery adaptation). `onAppear` re-fires on EVERY tab switch and sheet dismissal —
+    /// re-running all of this each time is why switching back to Today stuttered. It now runs when
+    /// it matters: first arrival, a new local day, a workout-count change, or after minutes away.
+    private func bootstrapIfNeeded() {
+        let day = Calendar.current.startOfDay(for: Date())
+        if let last = lastBootstrap, last.day == day,
+           Date().timeIntervalSince(last.at) < 240 { return }
+        lastBootstrap = (at: Date(), day: day)
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
+        // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
+        // notification permission on first run.
+        services.notifications.schedulePlannedReminders(plan)
+        // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
+        // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
+        services.notifications.scheduleWeeklyCheckIn()
+        let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
+        cachedStreak = stats.currentStreak
+        let plannedToday = !PlanCoaching.todaySessions(plan, on: Date()).isEmpty
+        let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
+        services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
+                                                   isPlannedDayToday: plannedToday,
+                                                   hasWorkedOutToday: workedOutToday)
+        // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
+        if let s = PlanCoaching.todaySessions(plan, on: Date()).first {
+            AppNotification.post(kind: .reminder, title: "Today's session is ready",
+                                 body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
+        }
+        AppNotification.post(kind: .system, title: "Welcome to momentum",
+                             body: "Your plan is set. Tap Start whenever you're ready to move.",
+                             in: context, dedupeToken: "welcome", daily: false)
+        // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
+        // carb-load → kit → race-day fueling), each posted once.
+        if let profile = profiles.first, let raceDate = profile.raceDate,
+           let distanceM = profile.raceDistanceM, distanceM > 0,
+           let daysOut = Calendar.current.dateComponents(
+               [.day], from: Calendar.current.startOfDay(for: Date()),
+               to: Calendar.current.startOfDay(for: raceDate)).day,
+           let briefing = RaceBriefing.build(distanceM: distanceM,
+                                             p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
+            AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
+                                 in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
+        }
+        // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
+        Task { await services.sync.sync(workouts, in: context) }
+        // Publish/unpublish shared workouts as feed posts — same opportunistic-retry model
+        // (no-op for guests/dark builds; failures stay unstamped and retry on the next appear).
+        Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
+        // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
+        // load in the danger zone + the body agreeing forces a real cutback week (throttled to
+        // one/week); otherwise two warning signs just ease *today's* quality session.
+        Task {
+            let signals = await services.health.recoverySignals()
+            let acwr = ProgressInsights(workouts: workouts).acwr
+            if let cutback = RecoveryAdaptation.tripwire(acwr: acwr, signals: signals) {
+                if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
+            }
+            let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
+            if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier,
+                                                        checkin: DailyCheckin.today(in: checkins)) {
+                _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
+            }
+        }
+    }
+
+    /// DEBUG deep links for deterministic sim verification — cheap string checks, so these stay in
+    /// every `onAppear` (unlike the throttled bootstrap above).
+    private func runAppearDeepLinks() {
+        #if DEBUG
+        // --world deep link: let the map bind, then fly out to the globe (same path as the button).
+        if worldMode {
+            worldMode = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { enterWorld() }
+        }
+        // --spots deep link: open "Spots near you" straight away for deterministic sim verification.
+        if ProcessInfo.processInfo.arguments.contains("--spots") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSpots = true }
+        }
+        // --notifications: open the bell inbox for verification.
+        if ProcessInfo.processInfo.arguments.contains("--notifications") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showNotifications = true }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--today-profile") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showProfile = true }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--log-workout") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--injury-report") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showInjuryReport = true }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--checkin") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showCheckin = true }
+        }
+        // --loop deep link: open the inline loop suggester straight away (deterministic verification).
+        if ProcessInfo.processInfo.arguments.contains("--loop") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
+        }
+        // --ui-test-structured-run: launch straight into a guided 6×400 m interval session so the
+        // structured-workout flow (step banner + Skip advancement + cues) is drivable deterministically.
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-structured-run") {
+            let variety = ProcessInfo.processInfo.arguments.contains("--ui-test-variety")
+            let session = PlannedSession()
+            session.discipline = .running
+            session.runType = variety ? .hills : .intervals
+            session.targetDistanceM = 3000
+            session.targetPaceSPerKm = variety ? 380 : 300
+            session.intervals = variety ? "8×45sec hills" : "6×400m @ 5K pace"
+            session.date = Date()
+            context.insert(session)   // inserted so post-run crediting behaves like a real plan session
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                launch = .cardio(type: .run, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+            }
+        }
+        #endif
     }
 
     // MARK: Plan confirmation
@@ -541,7 +568,7 @@ struct TodayView: View {
             Spacer(minLength: Theme.Space.xs)
             activitySelector
             Spacer(minLength: Theme.Space.xs)
-            StreakChip(days: ProfileStats(workouts: workouts, plan: profiles.first?.plan).currentStreak)
+            StreakChip(days: cachedStreak ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan).currentStreak)
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)

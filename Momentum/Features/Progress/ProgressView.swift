@@ -38,9 +38,28 @@ struct ProgressScreen: View {
     private var plan: TrainingPlan? { profiles.first?.plan }
 
     private var distanceUnit: DistanceUnit { .auto }
-    private var stats: ProfileStats { ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
-    private var insights: ProgressInsights { ProgressInsights(workouts: workouts) }
-    private var recovery: RecoveryModel { RecoveryModel(workouts: workouts) }
+
+    // These aggregates walk EVERY workout (and its sets). As computed vars they re-ran on every
+    // property access — `insights` alone is read 30+ times per body evaluation, so one tab switch
+    // recomputed the full ACWR/CTL/ATL/TSB pipeline dozens of times. Cached per data change instead;
+    // the fallback keeps the very first frame correct before the task lands.
+    @State private var cachedStats: ProfileStats?
+    @State private var cachedInsights: ProgressInsights?
+    @State private var cachedRecovery: RecoveryModel?
+    /// Workouts whose History row earned the PR badge — precomputed (detection fetches the full
+    /// history per call; running it per visible row made History scrolling stutter).
+    @State private var prBadgeIDs: Set<UUID>?
+
+    private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
+    private var insights: ProgressInsights { cachedInsights ?? ProgressInsights(workouts: workouts) }
+    private var recovery: RecoveryModel { cachedRecovery ?? RecoveryModel(workouts: workouts) }
+
+    private func refreshAggregates() {
+        cachedStats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
+        cachedInsights = ProgressInsights(workouts: workouts)
+        cachedRecovery = RecoveryModel(workouts: workouts)
+        prBadgeIDs = Set(workouts.filter { feedIsPRUncached($0) }.map(\.id))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,6 +78,7 @@ struct ProgressScreen: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView() }
+        .task(id: workouts.count) { refreshAggregates() }
     }
 
     private var header: some View {
@@ -732,6 +752,11 @@ struct ProgressScreen: View {
         return [Formatters.duration(s: w.durationS)]
     }
     private func feedIsPR(_ w: Workout) -> Bool {
+        prBadgeIDs?.contains(w.id) ?? false
+    }
+
+    /// One full detection pass — only ever run from `refreshAggregates`, never per row.
+    private func feedIsPRUncached(_ w: Workout) -> Bool {
         // The cardio detector early-returns [] for strength, so lifts need their own check — a bench
         // PR celebrated on the summary shouldn't vanish from the feed.
         if w.type.isStrengthStyle {
