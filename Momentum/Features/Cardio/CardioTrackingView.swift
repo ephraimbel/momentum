@@ -123,6 +123,8 @@ struct CardioTrackingView: View {
             if phase == .acquiring { withAnimation(Motion.standard) { acquireTimedOut = true } }
         }
         .onAppear {
+            if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
+
             // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
             // begins we follow the location puck (see `recenterOnUser`).
             if case .idle = viewport {

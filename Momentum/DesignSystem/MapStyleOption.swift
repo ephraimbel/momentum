@@ -16,6 +16,11 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     /// switching the style anywhere switches it everywhere and it survives relaunch.
     static let storageKey = "com.momentum.mapStyle"
 
+    /// Free tier gets the two defaults — Realistic and Light — one from each family; every other
+    /// style is Pro (`Feature.mapStyles`). The picker gates selection and the map views normalize
+    /// a persisted Pro style back to Realistic if entitlement lapses.
+    var requiresPro: Bool { !(self == .realistic || self == .standard) }
+
     /// The stored choice for surfaces that read the style once at init (summary route cards). Live
     /// surfaces use `@AppStorage(MapStyleOption.storageKey)` instead so they update in place.
     static var persisted: MapStyleOption {
@@ -247,6 +252,7 @@ struct MapStylePickerSheet: View {
     @Binding var style: MapStyleOption
     var previewCenter: CLLocationCoordinate2D? = nil
     var onWorld: (() -> Void)? = nil
+    @Environment(PaywallController.self) private var paywall
 
     /// Previews frame the athlete's area when the host map knows it; a scenic downtown otherwise.
     private var center: CLLocationCoordinate2D {
@@ -282,7 +288,10 @@ struct MapStylePickerSheet: View {
                 ForEach(Array(stride(from: 0, to: options.count, by: 3)), id: \.self) { start in
                     GridRow {
                         ForEach(options[start..<min(start + 3, options.count)]) { option in
-                            StylePreviewCell(option: option, center: center, selected: option == style) {
+                            let locked = option.requiresPro && !paywall.isEntitled(to: .mapStyles)
+                            StylePreviewCell(option: option, center: center,
+                                             selected: option == style, locked: locked) {
+                                if locked { paywall.present(for: .mapStyles); return }
                                 guard option != style else { return }
                                 Haptics.light()
                                 style = option
@@ -329,6 +338,7 @@ private struct StylePreviewCell: View {
     let option: MapStyleOption
     let center: CLLocationCoordinate2D
     let selected: Bool
+    var locked: Bool = false
     let onPick: () -> Void
 
     @State private var image: UIImage?
@@ -362,6 +372,11 @@ private struct StylePreviewCell: View {
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(Theme.background, Theme.ink)
                             .padding(5)
+                    } else if locked {
+                        Image(systemName: "lock.circle.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Theme.background, Theme.ink.opacity(0.75))
+                            .padding(5)
                     }
                 }
                 Text(option.label)
@@ -376,7 +391,8 @@ private struct StylePreviewCell: View {
         .task(id: option.id) {
             image = await MapStylePreviews.snapshot(option, center: center, size: Self.renderSize)
         }
-        .accessibilityLabel("\(option.label)\(selected ? ", selected" : "")")
+        .accessibilityLabel(locked ? "\(option.label) — locked, unlock with Pro"
+                                   : "\(option.label)\(selected ? ", selected" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

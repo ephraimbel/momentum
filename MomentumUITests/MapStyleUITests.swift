@@ -87,14 +87,22 @@ final class MapStyleUITests: XCTestCase {
         if !dark.waitForExistence(timeout: 3) { app.swipeUp() }   // medium detent may clip the list
         XCTAssertTrue(dark.waitForExistence(timeout: 3), "Dark option not reachable in picker.")
         dark.tap()
-        app.swipeDown(velocity: .fast)
+        // Dismiss by swiping the sheet itself (a bare app.swipeDown can land on the map and
+        // pitch the camera instead), and wait until it's actually gone before re-opening.
+        let sheetTitle = app.staticTexts["Map style"]
+        var dismissTries = 0
+        while sheetTitle.exists && dismissTries < 5 {
+            sheetTitle.swipeDown(velocity: .fast)
+            usleep(800_000)
+            dismissTries += 1
+        }
         sleep(3)   // style load + heat re-apply + tiles
         XCTAssertTrue(mapped.exists, "Heatmap stats vanished after style switch.")
         dump(app, "verify_heatmap_after_style_switch")
 
         // Back to the default for the next session.
         layers.tap()
-        XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5))
+        XCTAssertTrue(sheetTitle.waitForExistence(timeout: 5), "Picker didn't reopen for cleanup.")
         app.buttons["Realistic"].firstMatch.tap()
     }
 }

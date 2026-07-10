@@ -9,6 +9,7 @@ import UIKit
 struct ProgressScreen: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(PaywallController.self) private var paywallController
     @Query private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
     @Query(sort: \CoachingEvent.date, order: .reverse) private var coachingEvents: [CoachingEvent]
@@ -674,13 +675,18 @@ struct ProgressScreen: View {
     // MARK: - History (clean session feed)
 
     private var history: some View {
-        ScrollView {
+        // Free tier: the last 30 days (PRD §10 "limited history"); everything older is Pro.
+        let hasFullHistory = paywallController.isEntitled(to: .fullHistory)
+        let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
+        let visible = hasFullHistory ? workouts : workouts.filter { $0.startedAt >= cutoff }
+        let lockedCount = workouts.count - visible.count
+        return ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 historySummary().reveal(0)
                 // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a tab).
                 // Rescued from the retired standalone History screen during the lean-cleanup pass.
                 HeatmapHistoryCard(workouts: workouts, distanceUnit: distanceUnit).reveal(0.04)
-                ForEach(Array(monthGroups.enumerated()), id: \.element.key) { gi, group in
+                ForEach(Array(monthGroups(visible).enumerated()), id: \.element.key) { gi, group in
                     VStack(alignment: .leading, spacing: Theme.Space.sm) {
                         Text(group.key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
                             .tracking(0.8).foregroundStyle(Theme.inkSecondary).padding(.leading, 2)
@@ -694,6 +700,28 @@ struct ProgressScreen: View {
                         .background(card)
                     }
                     .reveal(min(0.28, 0.06 + Double(gi) * 0.05))
+                }
+                if lockedCount > 0 {
+                    Button { paywallController.present(for: .fullHistory) } label: {
+                        HStack(spacing: Theme.Space.sm) {
+                            Image(systemName: "lock.fill").font(.system(size: 13, weight: .bold))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(lockedCount) earlier workout\(lockedCount == 1 ? "" : "s")")
+                                    .font(.rounded(Theme.FontSize.body, weight: .bold))
+                                Text("Unlock your full history with Pro")
+                                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: "sparkles").font(.system(size: 14, weight: .bold))
+                        }
+                        .foregroundStyle(Theme.ink)
+                        .padding(Theme.Space.md)
+                        .background(card)
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(lockedCount) earlier workouts locked — unlock your full history with Pro")
                 }
                 if workouts.isEmpty {
                     Text("Your sessions land here as you train.")
@@ -733,8 +761,8 @@ struct ProgressScreen: View {
     }
 
     /// Workouts grouped by month, newest first.
-    private var monthGroups: [(key: String, items: [Workout])] {
-        let sorted = workouts.sorted { $0.startedAt > $1.startedAt }
+    private func monthGroups(_ source: [Workout]) -> [(key: String, items: [Workout])] {
+        let sorted = source.sorted { $0.startedAt > $1.startedAt }
         let fmt = Date.FormatStyle.dateTime.month(.wide).year()
         var order: [String] = []
         var map: [String: [Workout]] = [:]
@@ -1369,7 +1397,7 @@ struct ProgressScreen: View {
         let nudges = Array(AthleteNudges.generate(facts).filter { $0.text.contains(where: \.isNumber) }.prefix(2))
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             if !deltas.isEmpty { growthCard(deltas).id("growth") }
-            seasonChart.id("season")
+            seasonChart.id("season").proLocked(.advancedAnalytics)
             RecordsCard(distanceUnit: distanceUnit).id("records")
             if !coachingEvents.isEmpty { coachMoves }
             if !nudges.isEmpty { weeklyDigest(nudges) }

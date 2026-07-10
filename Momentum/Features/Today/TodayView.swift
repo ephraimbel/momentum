@@ -136,6 +136,11 @@ struct TodayView: View {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
+        // A persisted Pro style with no entitlement (lapse, restore on a new device) self-heals
+        // back to the free default rather than rendering a locked look.
+        .onAppear {
+            if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
+        }
         // Re-tilt the camera when switching to/from 3D Satellite (and other layers reset it flat).
         .onChange(of: mapStyle) {
             if !worldMode {
