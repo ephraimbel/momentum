@@ -7,13 +7,18 @@ import SwiftUI
 struct MedallionBadge: View {
     let icon: String
     var size: CGFloat = 92
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
-            // Base coin + drop shadow — the medal sits ABOVE the page.
+            // Base coin + separation from the page. The medal itself is FIXED pixels in both
+            // appearances — only the light around it adapts: a daylight drop shadow on the white
+            // page, and (since black shadows vanish on a black page) a soft ambient glow on the
+            // dark one, so the coin keeps the exact same floating depth.
             Circle()
                 .fill(Self.face)
-                .shadow(color: .black.opacity(0.16), radius: size * 0.09, y: size * 0.055)
+                .shadow(color: colorScheme == .dark ? .white.opacity(0.14) : .black.opacity(0.16),
+                        radius: size * 0.09, y: colorScheme == .dark ? 0 : size * 0.055)
 
             // Earned iridescent rim, machined: a bright edge line outside, a dark seat inside.
             Circle()
