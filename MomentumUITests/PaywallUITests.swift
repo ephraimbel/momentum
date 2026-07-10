@@ -13,7 +13,7 @@ final class PaywallUITests: XCTestCase {
         app.launchArguments = ["--seed-demo", "--debug-free", "--paywall"]
         app.launch()
 
-        let headline = app.staticTexts["Every run, coached."]
+        let headline = app.staticTexts["Run smarter.\nRace faster."]
         XCTAssertTrue(headline.waitForExistence(timeout: 15), "Paywall didn't present.")
         XCTAssertTrue(app.buttons["Start my 7-day free trial"].exists, "Trial CTA missing.")
         // One-screen contract: BOTH plans and the CTA are visible with no scrolling.

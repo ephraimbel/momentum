@@ -43,13 +43,13 @@ struct PaywallView: View {
                 lockup
                     .padding(.top, Theme.Space.lg)
                 hero
-                    .padding(.top, Theme.Space.lg)
+                    .padding(.top, Theme.Space.md + 2)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
                 featureList
-                    .padding(.top, Theme.Space.lg)
+                    .padding(.top, Theme.Space.md + 2)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
                 plans
-                    .padding(.top, Theme.Space.lg)
+                    .padding(.top, Theme.Space.md + 2)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
             .padding(.horizontal, Theme.Space.xl)
@@ -64,12 +64,9 @@ struct PaywallView: View {
                 fineprint
             }
             .padding(.horizontal, Theme.Space.xl)
-            .padding(.top, Theme.Space.sm)
-            .background {
-                // Frosted, not opaque — the iridescent flow stays alive beneath the CTA.
-                Rectangle().fill(.ultraThinMaterial).ignoresSafeArea(edges: .bottom)
-                Rectangle().fill(Theme.hairline).frame(height: 0.5).frame(maxHeight: .infinity, alignment: .top)
-            }
+            .padding(.top, Theme.Space.md)
+            // No bar, no chrome — the CTA sits directly on the flowing canvas (content fits one
+            // screen, so nothing ever scrolls beneath it).
             .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
         }
         .background { flowingBackground }
@@ -127,14 +124,16 @@ struct PaywallView: View {
 
     private var hero: some View {
         VStack(spacing: Theme.Space.sm) {
-            Text("Every run, coached.")
-                .font(.display(32, weight: .bold)).foregroundStyle(Theme.ink)
+            // Serif to match the wordmark above it (user call 2026-07-10) — the hero reads as one
+            // brand voice from lockup through subheader.
+            Text("Run smarter.\nRace faster.")
+                .font(.serif(31, weight: .semibold)).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center).lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The full adaptive engine, built around\nyour body, your goal, your life.")
+                .font(.serif(Theme.FontSize.caption + 2, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            Text("Built around your body, your goal, your life.")
-                .font(.rounded(Theme.FontSize.caption + 1, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(1).minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
     }
