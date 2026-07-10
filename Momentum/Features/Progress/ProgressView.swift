@@ -27,6 +27,7 @@ struct ProgressScreen: View {
     @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
+    @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
@@ -48,16 +49,26 @@ struct ProgressScreen: View {
     /// Workouts whose History row earned the PR badge — precomputed (detection fetches the full
     /// history per call; running it per visible row made History scrolling stutter).
     @State private var prBadgeIDs: Set<UUID>?
+    /// The athlete-model read and the week's muscle/load work also walk every workout (the
+    /// engine re-derives all its facts). Since the You merge they render inside Trends, so an
+    /// uncached read re-ran them on every body evaluation — that was the tab's load stutter.
+    @State private var cachedFacts: AthleteFacts?
+    @State private var cachedActivation: [MuscleGroup: Double]?
+    @State private var cachedFormPoint: FitnessFreshness.Point?
 
     private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
     private var insights: ProgressInsights { cachedInsights ?? ProgressInsights(workouts: workouts) }
     private var recovery: RecoveryModel { cachedRecovery ?? RecoveryModel(workouts: workouts) }
+    private var athleteFacts: AthleteFacts { cachedFacts ?? AthleteModelEngine(workouts: workouts, plan: plan).facts }
 
     private func refreshAggregates() {
         cachedStats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
         cachedInsights = ProgressInsights(workouts: workouts)
         cachedRecovery = RecoveryModel(workouts: workouts)
         prBadgeIDs = Set(workouts.filter { feedIsPRUncached($0) }.map(\.id))
+        cachedFacts = AthleteModelEngine(workouts: workouts, plan: plan).facts
+        cachedActivation = computeWeeklyMuscleActivation()
+        cachedFormPoint = computeFormPoint()
     }
 
     var body: some View {
@@ -85,7 +96,10 @@ struct ProgressScreen: View {
         .task(id: workouts.count) { refreshAggregates() }
         .onAppear {
             // Athlete-model upkeep (was the You tab's onAppear — idempotent, local-only).
-            guard let p = profiles.first else { return }
+            // Once per screen instance: ingest re-walks history, and paying that on every
+            // tab visit showed up as load stutter.
+            guard !didUpkeep, let p = profiles.first else { return }
+            didUpkeep = true
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
             RecordsBook.backfillIfNeeded(in: context)
@@ -230,7 +244,8 @@ struct ProgressScreen: View {
             }
     }
     /// Daily training load over the last 9 weeks → CTL/ATL/Form (Fitness/Fatigue/Form).
-    private var formPoint: FitnessFreshness.Point? {
+    private var formPoint: FitnessFreshness.Point? { cachedFormPoint ?? computeFormPoint() }
+    private func computeFormPoint() -> FitnessFreshness.Point? {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         guard let start = cal.date(byAdding: .day, value: -62, to: today) else { return nil }
@@ -1272,7 +1287,8 @@ struct ProgressScreen: View {
     // MARK: Weekly muscle coverage
 
     /// Trailing-7-day working-sets-by-muscle (PRD §22) across strength sessions.
-    private var weeklyMuscleActivation: [MuscleGroup: Double] {
+    private var weeklyMuscleActivation: [MuscleGroup: Double] { cachedActivation ?? computeWeeklyMuscleActivation() }
+    private func computeWeeklyMuscleActivation() -> [MuscleGroup: Double] {
         let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
         let recent = workouts.filter { $0.type.isStrengthStyle && $0.startedAt >= cutoff }
         return MuscleActivation.from(workouts: recent)
@@ -1322,7 +1338,7 @@ struct ProgressScreen: View {
     /// The former You tab, folded into Trends: identity, records, digest, adaptations, learned
     /// beliefs, trajectory — the athlete's story, sitting under the body panel that summarizes it.
     private var athleteStory: some View {
-        let facts = AthleteModelEngine(workouts: workouts, plan: plan).facts
+        let facts = athleteFacts
         let model = profiles.first?.athlete
         let items = learnedItems(facts, model)
         return VStack(alignment: .leading, spacing: Theme.Space.md) {

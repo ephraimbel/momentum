@@ -97,10 +97,12 @@ struct AthletePanel: View {
     @ViewBuilder
     private func backdrop(body: CGRect, h: CGFloat) -> some View {
         if isDark {
-            // Luminous variant: a faint aura behind the chest so the figure reads lit, not pasted.
-            RadialGradient(colors: [.white.opacity(0.07), .clear], center: .center,
-                           startRadius: 0, endRadius: h * 0.5)
-                .position(x: body.midX, y: body.minY + body.height * 0.30)
+            // Luminous variant: a static aura behind the figure so it reads lit, not pasted.
+            // This does the glow work a live `.shadow` used to do — blurring the animated
+            // figure every mesh tick cost a full offscreen pass 30×/sec and stuttered the tab.
+            RadialGradient(colors: [.white.opacity(0.10), .clear], center: .center,
+                           startRadius: 0, endRadius: h * 0.52)
+                .position(x: body.midX, y: body.minY + body.height * 0.32)
         }
         platform(body: body)
     }
@@ -127,9 +129,9 @@ struct AthletePanel: View {
     }
 
     private func figure(fig: CGRect) -> some View {
+        // No `.shadow` here: blurring a 30fps-animating mesh re-renders the whole figure
+        // offscreen every tick. The static aura in `backdrop` supplies the dark-mode glow.
         MuscleMapView(activation: activation, sides: [.front], sex: sex, forceStatic: reduceMotion)
-            .compositingGroup()
-            .shadow(color: isDark ? .white.opacity(0.28) : .clear, radius: 16)
             .frame(width: fig.width, height: fig.height)
             .position(x: fig.midX, y: fig.midY)
             .accessibilityHidden(true)   // the columns carry the data; the figure is scenery
