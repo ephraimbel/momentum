@@ -45,51 +45,73 @@ enum CommunityGenerator {
                                  rng: inout SeededRNG) -> FeedItem {
         let id = UUID(uuidString: "00000000-0000-0000-0001-\(String(format: "%012d", i))")!
         let reactions = rng.int(0...140)
-        let caption = rng.int(0...2) == 0 ? nil : rng.pick(captions)
+        let caption = rng.int(0...2) == 0 ? nil : rng.pick(captions(for: discipline))
         let style = feedStyles[rng.int(0...(feedStyles.count - 1))]
-        let route: [[Double]]? = discipline.isGPS ? loopRoute(lat: lat, lon: lon, rng: &rng) : nil
-        let (title, stat, pr) = content(for: discipline, rng: &rng)
+        // A REAL street-following loop from the bundled Directions fetch — never a synthetic
+        // shape over rooftops. If a city has no bundled loop, the post ships without a map
+        // (an honest gap beats an obviously fake trace).
+        let loop = discipline.isGPS ? CommunityRoutes.loop(city: city, discipline: discipline, rng: &rng) : nil
+        let (title, stat, pr) = content(for: discipline, routeKm: loop?.km, rng: &rng)
         let muscles = discipline.isStrengthStyle ? StrengthFeedMuscles.activation(forTitle: title, type: discipline) : nil
         let ai = rng.int(0...2) == 0 ? rng.pick(aiReads) : nil
         return FeedItem(id: id, authorName: name, authorHandle: handle, location: city,
                         isCommunity: true, type: discipline, date: date, title: title, caption: caption,
-                        statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: route, mapStyle: style,
+                        statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: loop?.pts, mapStyle: style,
                         baseReactions: reactions, aiRead: ai)
     }
 
-    /// A short, realistic-looking loop (~0.4–0.8 km) anchored on the city center (downtown = land), so
-    /// the feed map frames a real place and the trace stays on streets, not out over water. (Without
-    /// landcover data this is a small-radius + inland-anchor heuristic, not true land-snapping.)
-    static func loopRoute(lat: Double, lon: Double, rng: inout SeededRNG) -> [[Double]] {
-        let radius = rng.double(0.004, 0.0075)
-        var pts: [[Double]] = []
-        for step in 0...9 {
-            let angle = Double(step) / 9 * 2 * .pi
-            let wobble = rng.double(0.8, 1.05)
-            pts.append([lat + sin(angle) * radius * wobble, lon + cos(angle) * radius * wobble])
-        }
-        return pts
+    /// "MM:SS" / "H:MM:SS" from seconds — with real seconds, because real workouts don't all
+    /// end on a round minute.
+    static func durationString(seconds: Int) -> String {
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
-    private static func durStr(_ lo: Int, _ hi: Int, _ rng: inout SeededRNG) -> String {
-        let m = rng.int(lo...hi)
-        return m >= 60 ? "\(m / 60):\(String(format: "%02d", m % 60)):00" : "\(m):00"
+    /// "X.X mi · T" where T is derived from the route's TRUE length at a plausible pace for the
+    /// discipline — the map and the numbers always agree.
+    private static func gpsStat(km: Double, paceSecPerKm: Double, rng: inout SeededRNG) -> String {
+        let seconds = Int(km * paceSecPerKm + rng.double(0, 59))
+        return String(format: "%.1f mi · %@", km * 0.621371, durationString(seconds: seconds))
     }
 
-    private static func content(for discipline: WorkoutType, rng: inout SeededRNG) -> (String, String, String?) {
-        let pr: String? = rng.int(0...6) == 0 ? rng.pick(prLabels) : nil
+    /// PR badges must match the sport — a "Longest ride" on a run post is an instant fake tell.
+    private static func prLabel(for discipline: WorkoutType, rng: inout SeededRNG) -> String? {
+        guard rng.int(0...6) == 0 else { return nil }
         switch discipline {
-        case .run, .trailRun:
-            return (rng.pick(runTitles), String(format: "%.1f mi · %@", rng.double(2, 14), durStr(20, 130, &rng)), pr)
+        case .run, .trailRun: return rng.pick(["5K PR", "Fastest mile", "Longest run"])
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: return "Longest ride"
+        case .hike: return "Longest hike"
+        case .strength, .crossfit: return rng.pick(["e1RM PR", "Most volume"])
+        default: return nil
+        }
+    }
+
+    private static func content(for discipline: WorkoutType, routeKm: Double?,
+                                rng: inout SeededRNG) -> (String, String, String?) {
+        let pr = prLabel(for: discipline, rng: &rng)
+        switch discipline {
+        case .run:
+            // 4:40–7:10 /km ≈ 7:30–11:30 /mi — everyday-runner territory.
+            return (rng.pick(runTitles),
+                    gpsStat(km: routeKm ?? rng.double(3, 12), paceSecPerKm: rng.double(280, 430), rng: &rng), pr)
+        case .trailRun:
+            // Trails are slower: 5:35–8:20 /km.
+            return (rng.pick(runTitles),
+                    gpsStat(km: routeKm ?? rng.double(5, 15), paceSecPerKm: rng.double(335, 500), rng: &rng), pr)
         case .ride, .mountainBikeRide, .gravelRide, .eBikeRide:
-            return (rng.pick(rideTitles), String(format: "%.1f mi · %@", rng.double(8, 60), durStr(35, 180, &rng)), pr)
+            // 20–31 km/h ≈ 12–19 mph.
+            return (rng.pick(rideTitles),
+                    gpsStat(km: routeKm ?? rng.double(15, 45), paceSecPerKm: rng.double(116, 180), rng: &rng), pr)
         case .walk, .hike:
-            return (rng.pick(walkTitles), String(format: "%.1f mi · %@", rng.double(1, 8), durStr(20, 120, &rng)), pr)
+            // 10:00–14:30 /km ≈ 16–23 min/mi.
+            return (rng.pick(walkTitles),
+                    gpsStat(km: routeKm ?? rng.double(2, 8), paceSecPerKm: rng.double(600, 870), rng: &rng), pr)
         case .strength, .crossfit, .hiit:
             let vol = rng.int(4...22) * 1000
-            return (rng.pick(liftTitles), "\(vol.formatted()) lb · \(rng.int(8...26)) sets · \(durStr(35, 80, &rng))", pr)
+            let seconds = rng.int(35 * 60...80 * 60)
+            return (rng.pick(liftTitles), "\(vol.formatted()) lb · \(rng.int(8...26)) sets · \(durationString(seconds: seconds))", pr)
         default:
-            return (rng.pick(otherTitles), durStr(20, 70, &rng), pr)
+            return (rng.pick(otherTitles), durationString(seconds: rng.int(20 * 60...70 * 60)), pr)
         }
     }
 
@@ -127,15 +149,27 @@ enum CommunityGenerator {
         "Hybrid athlete — lift heavy, move fast.","Marathoner in training. Coffee, then miles.",
         "Just here to beat yesterday.","Consistency over intensity.","Weekend warrior, weekday grinder.",
         "Chasing PRs and good sunrises.","Run streak in progress.","Strong is the goal."]
-    private static let captions = [
-        "Felt strong today.","Tough one but worth it.","Negative split the whole way.",
-        "Legs heavy, heart full.","Dialed in.","Easy effort, big smile.","Beat my old time.","Showed up. That's the win."]
+    /// Captions must fit the sport — "negative split" on a lift post is another fake tell.
+    private static func captions(for discipline: WorkoutType) -> [String] {
+        if discipline.isStrengthStyle {
+            return neutralCaptions + [
+                "Heavy but moving well.", "All the reps in the bank.", "Bar felt light today.",
+                "Last set was a fight.", "Volume day done."]
+        }
+        if discipline.isGPS {
+            return neutralCaptions + [
+                "Negative split the whole way.", "Legs heavy, heart full.", "Easy effort, big smile.",
+                "Beat my old time.", "Perfect weather for it."]
+        }
+        return neutralCaptions
+    }
+    private static let neutralCaptions = [
+        "Felt strong today.", "Tough one but worth it.", "Dialed in.", "Showed up. That's the win."]
     private static let runTitles = ["Morning run","Tempo run","Long run","Easy miles","Sunrise tempo","Track session","Recovery jog"]
     private static let rideTitles = ["Morning ride","Hill repeats","Long ride","Gravel loop","Coffee ride","Interval ride"]
     private static let walkTitles = ["Recovery walk","Evening walk","Hike","Trail walk","Steps day"]
     private static let liftTitles = ["Push day","Pull day","Lower power","Upper hypertrophy","Full body","Leg day","Conditioning"]
     private static let otherTitles = ["Session","Flow","Pool intervals","Steady state","Open mat","Mobility"]
-    private static let prLabels = ["5K PR","e1RM PR","Longest run","Fastest mile","Most volume","Longest ride"]
     /// Sample "Momentum read" lines — the public AI read shown in a post's reading view (clearly
     /// community/sample content, never presented as analysis of a real stranger).
     private static let aiReads = [
