@@ -181,6 +181,11 @@ enum PlanCoaching {
         return future.count
     }
 
+    /// The goal race distance for "@ race pace" re-derivation — lives on the profile, not the plan.
+    private static func goalRaceDistanceM(in context: ModelContext) -> Double? {
+        (try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.raceDistanceM
+    }
+
     /// The outcome of a pace recalibration, so the caller can narrate/notify it ("you're getting faster").
     struct Recalibration: Sendable, Equatable {
         let oldP5kSPerKm: Double
@@ -227,7 +232,8 @@ enum PlanCoaching {
             where s.status == .planned && s.completedWorkout == nil
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals)
+            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
+                                                        raceDistanceM: goalRaceDistanceM(in: context))
             updated += 1
         }
         try? context.save()
@@ -257,7 +263,8 @@ enum PlanCoaching {
             where s.status == .planned && s.completedWorkout == nil
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals)
+            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
+                                                        raceDistanceM: goalRaceDistanceM(in: context))
             updated += 1
         }
         guard updated > 0 else { return 0 }   // nothing to change → don't move p5k either

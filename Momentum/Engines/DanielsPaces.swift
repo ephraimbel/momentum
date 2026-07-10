@@ -79,7 +79,13 @@ enum DanielsPaces {
 
     /// Marathon pace (s/km) — the M zone: what this athlete could actually race a marathon at.
     static func marathonPaceSPerKm(p5kSPerKm: Double) -> Double {
-        let raw = racePaceSPerKm(distanceM: 42_195, vdot: vdot(p5kSPerKm: p5kSPerKm)) ?? clamped(p5kSPerKm) + 40
+        racePaceSPerKm(distanceM: 42_195, p5kSPerKm: p5kSPerKm)
+    }
+
+    /// Predicted race pace (s/km, whole seconds) at any goal distance from the athlete's 5K —
+    /// powers goal-race-pace reps in peak/taper weeks.
+    static func racePaceSPerKm(distanceM d: Double, p5kSPerKm: Double) -> Double {
+        let raw = racePaceSPerKm(distanceM: d, vdot: vdot(p5kSPerKm: p5kSPerKm)) ?? clamped(p5kSPerKm)
         return max(120, raw.rounded())
     }
 

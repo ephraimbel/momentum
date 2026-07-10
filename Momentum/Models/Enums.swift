@@ -76,17 +76,21 @@ enum Goal: String, Codable, Sendable, CaseIterable {
     case loseFat, buildMuscle, getStronger, raceDistance, endurance, generalFitness, stayConsistent
 }
 /// Macrocycle phase of a plan week (ENDURANCE-FOCUS §6.1) — persisted per week so the Plan page reads
-/// like a coached block (Base → Build → Recovery → Taper), not a list of runs.
+/// like a coached block (Base → Build → Peak → Taper), not a list of runs.
 enum PlanPhase: String, Codable, Sendable {
-    case base, build, recovery, taper
+    case base, build, peak, recovery, taper
     var label: String {
-        switch self { case .base: "Base"; case .build: "Build"; case .recovery: "Recovery week"; case .taper: "Taper" }
+        switch self {
+        case .base: "Base"; case .build: "Build"; case .peak: "Peak"
+        case .recovery: "Recovery week"; case .taper: "Taper"
+        }
     }
     /// One line of coach's intent for the week header.
     var intent: String {
         switch self {
         case .base: "Laying the foundation — easy volume first"
         case .build: "The work phase — fitness is built here"
+        case .peak: "Biggest week, race-specific work — hold steady"
         case .recovery: "Planned down week — absorb the training"
         case .taper: "Sharpening up — arrive fresh"
         }

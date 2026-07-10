@@ -25,13 +25,18 @@ enum PlanEngine {
     }
 
     /// The pace a *persisted* session should target on (re)derivation — honors the rep intent encoded
-    /// in its `intervals` note, so recalibration keeps "@ 5K" reps at race pace and "@ threshold"
-    /// cruise reps at T instead of stamping every interval session with vVO₂max pace.
-    static func sessionPace(_ type: RunType, p5k: Double, intervals: String?) -> Double {
+    /// in its `intervals` note, so recalibration keeps "@ 5K" reps at race pace, "@ threshold" cruise
+    /// reps at T, and "@ race pace" blocks at the goal distance's predicted pace, instead of stamping
+    /// every interval session with vVO₂max pace.
+    static func sessionPace(_ type: RunType, p5k: Double, intervals: String?,
+                            raceDistanceM: Double? = nil) -> Double {
         if type == .intervals, let note = intervals?.lowercased() {
             // Threshold first — a rep distance like "1.5km" also contains "5k", so the anchored
             // "@ 5k" check must not win on threshold cruise reps.
             if note.contains("threshold") { return pace(.tempo, p5k: p5k) }
+            if note.contains("race pace") {
+                return DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 5_000, p5kSPerKm: p5k)
+            }
             if note.contains("@ 5k") { return pace(.race, p5k: p5k) }
         }
         return pace(type, p5k: p5k)
@@ -77,9 +82,11 @@ enum PlanEngine {
             runDays = days
         }
 
-        // Macrocycle.
+        // Macrocycle (PRD §9.1: base → build → peak → taper).
         let totalWeeks = weeksToGenerate(startDate: startDate, raceDate: profile.raceDate, calendar: calendar)
-        let taperWeeks = profile.raceDate != nil ? min(3, Int((0.15 * Double(totalWeeks)).rounded(.up))) : 0
+        let meso = mesocycle(totalWeeks: totalWeeks, raceDistanceM: profile.raceDistanceM,
+                             hasRace: profile.raceDate != nil)
+        let taperMults = taperMultipliers(weeks: meso.taperWeeks)
 
         var weeks: [GeneratedWeek] = []
         var buildIndex = 0
@@ -98,12 +105,21 @@ enum PlanEngine {
             : min(profile.intensity.buildWeeksPerDownWeek, PlanIntensity.balanced.buildWeeksPerDownWeek)
         let downEvery = buildWeeks + 1   // deload on the Nth week
         for w in 0..<totalWeeks {
-            let isTaper = taperWeeks > 0 && w >= totalWeeks - taperWeeks
-            let isDeload = !isTaper && (w % downEvery == downEvery - 1)
+            let isTaper = meso.taperWeeks > 0 && w >= totalWeeks - meso.taperWeeks
+            let isPeak = !isTaper && meso.peakWeeks > 0 && w >= totalWeeks - meso.taperWeeks - meso.peakWeeks
+            let isDeload = !isTaper && !isPeak && (w % downEvery == downEvery - 1)
+            let phase: PlanPhase = isTaper ? .taper
+                : isPeak ? .peak
+                : isDeload ? .recovery
+                : (w < meso.baseWeeks ? .base : .build)
             let volumeMult: Double
             if isTaper {
-                let into = w - (totalWeeks - taperWeeks)
-                volumeMult = [0.6, 0.45, 0.35][min(into, 2)]
+                // Bosquet 2007: exponential volume cut relative to the PEAK week (race week ~45–55%
+                // of peak), never relative to week one — a long plan's taper isn't a crash diet.
+                let into = w - (totalWeeks - meso.taperWeeks)
+                volumeMult = lastBuildMult * taperMults[min(into, taperMults.count - 1)]
+            } else if isPeak {
+                volumeMult = lastBuildMult          // hold the biggest load — no further ramp
             } else if isDeload {
                 volumeMult = lastBuildMult * 0.7
             } else {
@@ -114,18 +130,18 @@ enum PlanEngine {
 
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
-                                 goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload || isTaper,
+                                 goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload,
                                  raceDistanceM: profile.raceDistanceM, weekIndex: w,
                                  currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM,
-                                 injuryAreas: injuryAreas)
+                                 injuryAreas: injuryAreas, phase: phase)
                 : []
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
-                                   catalog: catalog, isDeload: isDeload, muscleFocus: Set(profile.muscleFocus))
+                                   catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus))
                 : []
             let scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
-            weeks.append(GeneratedWeek(index: w, isDeload: isDeload, isTaper: isTaper, sessions: scheduled))
+            weeks.append(GeneratedWeek(index: w, isDeload: isDeload, isTaper: isTaper, phase: phase, sessions: scheduled))
         }
 
         // Safety governor (ENDURANCE-FOCUS §6.2): no generated week may exceed 1.3× its trailing
@@ -152,13 +168,45 @@ enum PlanEngine {
         return max(4, min(16, (comps.weekOfYear ?? 4) + 1))
     }
 
+    /// Mesocycle boundaries (base → build → peak → taper). Taper length follows the science by race
+    /// distance — 5K/10K ≈ 1 week, half ≈ 2, marathon+ ≈ 3 (Bosquet 2007 meta: cut volume 41–60%,
+    /// KEEP intensity and frequency) — capped at a quarter of the plan so a short runway still gets
+    /// build weeks. Peak = 1–2 race-specific weeks holding the biggest volume before the taper, when
+    /// the plan is long enough to afford them. Base ≈ the first quarter. No race → one settling week,
+    /// then a rolling build.
+    static func mesocycle(totalWeeks: Int, raceDistanceM: Double?, hasRace: Bool)
+        -> (baseWeeks: Int, peakWeeks: Int, taperWeeks: Int) {
+        guard hasRace else { return (1, 0, 0) }
+        let byDistance: Int
+        switch raceDistanceM {
+        case .some(let d) where d < 13_000: byDistance = 1
+        case .some(let d) where d < 25_000: byDistance = 2
+        case .some: byDistance = 3
+        case .none: byDistance = min(3, Int((0.15 * Double(totalWeeks)).rounded(.up)))
+        }
+        let taper = min(byDistance, max(1, totalWeeks / 4))
+        let peak = totalWeeks - taper >= 8 ? 2 : (totalWeeks - taper >= 5 ? 1 : 0)
+        let base = max(1, min(Int((0.25 * Double(totalWeeks)).rounded()), totalWeeks - taper - peak - 1))
+        return (base, peak, taper)
+    }
+
+    /// Taper-week volume as a fraction of the PEAK week, per week into the taper (Bosquet 2007:
+    /// progressive exponential-style reduction; race week lands at ~45–55% of peak volume).
+    static func taperMultipliers(weeks: Int) -> [Double] {
+        switch weeks {
+        case ..<2: return [0.55]
+        case 2: return [0.65, 0.5]
+        default: return [0.7, 0.55, 0.45]
+        }
+    }
+
     // MARK: Cardio sessions
 
     static func cardioSessions(discipline: Discipline, runDays: Int, level: ExperienceLevel,
                                goal: Goal, p5k: Double, volumeMult: Double, isDeload: Bool,
                                raceDistanceM: Double? = nil, weekIndex: Int = 0,
                                currentWeeklyVolumeM: Double? = nil, longestRunM: Double? = nil,
-                               injuryAreas: Set<InjuryArea> = []) -> [GeneratedSession] {
+                               injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build) -> [GeneratedSession] {
         guard runDays > 0 else { return [] }
         var (easyBase, longBase, qualityBase): (Double, Double, Double)
         // Seed the starting week from the athlete's actual current load when they gave it — so the plan
@@ -211,15 +259,18 @@ enum PlanEngine {
             return s
         }
 
-        // Long run — a progression run every 3rd week for non-beginners (finish faster than you started).
+        // Long run — a progression run every 3rd week for non-beginners (finish faster than you
+        // started). Taper long runs stay plain and easy — freshness, not stimulus.
         if runDays >= 2 {
-            let longType: RunType = (weekIndex % 3 == 2 && level != .new && !isDeload) ? .progression : .long
+            let longType: RunType = (weekIndex % 3 == 2 && level != .new && !isDeload && phase != .taper)
+                ? .progression : .long
             out.append(makeRun(longType, longBase, hard: false, cap: longCap))
         }
-        // The week's main quality session, rotating through real variety (not "6×400 @ 5K" every week).
+        // The week's main quality session. Deload weeks skip it entirely; taper weeks KEEP it —
+        // taper science cuts volume, never intensity (the menu shrinks to a short race-pace touch).
         if runDays >= 3 && !isDeload && goal != .stayConsistent && isRunning {
             let q = qualityWorkout(weekIndex: weekIndex, raceDistanceM: raceDistanceM, level: level, p5k: p5k,
-                                   injuryAreas: injuryAreas)
+                                   injuryAreas: injuryAreas, phase: phase)
             out.append(makeRun(q.type, qualityBase, hard: true, intervals: q.intervals,
                                paceOverride: q.paceOverride, note: q.note))
         }
@@ -246,45 +297,79 @@ enum PlanEngine {
     /// Areas whose classic re-injury mechanism is maximal-speed running — no sprint-fast reps/strides.
     static let speedSensitiveAreas: Set<InjuryArea> = [.hamstring, .hip]
 
-    /// The week's main quality workout, rotated for variety by `weekIndex`. Short races sharpen with
-    /// VO₂/5K reps, hills, and fartlek; long races build threshold with cruise intervals, tempo, and
-    /// fartlek; beginners get gentle fartlek/strides/tempo. `paceOverride` carries a rep pace other
-    /// than the type's default zone: "@ 5K" reps run at race pace (the base `.intervals` zone is now
-    /// vVO₂max) and threshold cruise reps run at T.
+    /// The week's main quality workout — phase-aware and progressive, not a flat rotation:
+    ///  • **base** is pyramidal (Seiler/Lydiard): tempo, hills-for-strength, fartlek — no VO₂ or
+    ///    race-pace sharpening while the foundation is being laid.
+    ///  • **build** rotates the race-specific menu, and rep counts GROW with the week index
+    ///    (progressive overload of the stimulus, audit fix #3 — not "6×400 @ 5K" forever).
+    ///  • **peak** goes race-specific at full flight: race-pace reps + VO₂ for short races,
+    ///    threshold cruise + goal-race-pace blocks for long ones.
+    ///  • **taper** keeps intensity while volume falls (Bosquet): one short race-pace touch a week.
+    /// `paceOverride` carries a rep pace other than the type's default zone: "@ 5K" reps at race
+    /// pace, threshold cruise at T, "@ race pace" at the goal distance's predicted pace.
     ///
-    /// Injury history reshapes the menu instead of just softening it (ENDURANCE-FOCUS §8.2): lower-leg/
-    /// knee histories swap high-impact hill reps for tempo; hamstring/hip histories swap sprint-fast
-    /// reps and strides for threshold cruise work. The swap is explained on the session (`note`) —
-    /// personalization the athlete can see, never silent.
+    /// Injury history reshapes every phase's menu (ENDURANCE-FOCUS §8.2): lower-leg/knee histories
+    /// swap high-impact hill reps out; hamstring/hip histories swap sprint-fast reps and strides for
+    /// threshold cruise work. The swap is explained on the session (`note`) — never silent.
     static func qualityWorkout(weekIndex: Int, raceDistanceM: Double?, level: ExperienceLevel,
-                               p5k: Double, injuryAreas: Set<InjuryArea> = [])
+                               p5k: Double, injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build)
         -> (type: RunType, intervals: String?, paceOverride: Double?, note: String?) {
         let fiveK = pace(.race, p5k: p5k), threshold = pace(.tempo, p5k: p5k)
+        let goalRace = DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 5_000, p5kSPerKm: p5k)
         let avoidImpact = !injuryAreas.isDisjoint(with: impactSensitiveAreas)
         let avoidSpeed = !injuryAreas.isDisjoint(with: speedSensitiveAreas)
         let impactNote = "Kept quality flat and controlled — building carefully around your injury history."
         let speedNote = "Cruise reps instead of fast ones — protecting where you've been hurt before."
 
+        // Progressive overload within the block: rep counts climb with the calendar, capped at a
+        // sane ceiling. Interval strings drive the guided-run builder, so growth flows through.
+        let r400 = min(10, 6 + weekIndex / 3)
+        let rVO2 = min(6, 4 + weekIndex / 3)
+        let rHill = min(12, 8 + weekIndex / 3)
+        let rKm = min(7, 4 + weekIndex / 4)
+        let shortRace = (raceDistanceM ?? 5_000) <= 12_000
+
         var menu: [(RunType, String?, Double?, String?)]
-        switch level {
-        case .new:
+        if level == .new {
+            // Beginners keep the same gentle menu in every phase — consistency beats periodization
+            // until the habit and the tissues are established.
             menu = [(.fartlek, "6×(1min hard / 2min easy)", nil, nil),
                     avoidSpeed ? (.tempo, nil, nil, speedNote)
                                : (.strides, "6×20sec strides", nil, nil),
                     (.tempo, nil, nil, nil)]
-        default:
-            if (raceDistanceM ?? 5_000) <= 12_000 {   // 5K/10K → speed emphasis
-                menu = [avoidSpeed ? (.intervals, "4×1km @ threshold", threshold, speedNote)
-                                   : (.intervals, "6×400m @ 5K", fiveK, nil),
-                        (.intervals, "5×3min @ VO2", nil, nil),     // base intervals zone = I (vVO₂max)
-                        avoidImpact ? (.tempo, nil, nil, impactNote)
-                                    : (.hills, "8×45sec hills", nil, nil),
+        } else {
+            switch phase {
+            case .base:
+                menu = [(.tempo, nil, nil, nil),
+                        avoidImpact ? (.fartlek, "6×(2min hard / 90sec float)", nil, impactNote)
+                                    : (.hills, "\(rHill)×45sec hills", nil, nil),
                         (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
-            } else {                                    // half/marathon → threshold emphasis
-                menu = [(.intervals, "4×1km @ threshold", threshold, nil),
-                        (.tempo, nil, nil, nil),
-                        (.fartlek, "6×(2min hard / 90sec float)", nil, nil),
-                        (.intervals, "5×1km @ threshold", threshold, nil)]
+            case .peak:
+                menu = shortRace
+                    ? [avoidSpeed ? (.intervals, "\(rKm)×1km @ threshold", threshold, speedNote)
+                                  : (.intervals, "\(r400)×400m @ 5K", fiveK, nil),
+                       (.intervals, "\(rVO2)×3min @ VO2", nil, nil)]
+                    : [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),
+                       (.intervals, "3×2km @ race pace", goalRace, nil)]
+            case .taper:
+                menu = shortRace
+                    ? [avoidSpeed ? (.intervals, "3×1km @ threshold", threshold, speedNote)
+                                  : (.intervals, "4×400m @ 5K", fiveK, nil)]
+                    : [(.intervals, "3×1km @ race pace", goalRace, nil)]
+            default:   // .build (recovery weeks never request quality)
+                if shortRace {
+                    menu = [avoidSpeed ? (.intervals, "\(rKm)×1km @ threshold", threshold, speedNote)
+                                       : (.intervals, "\(r400)×400m @ 5K", fiveK, nil),
+                            (.intervals, "\(rVO2)×3min @ VO2", nil, nil),
+                            avoidImpact ? (.tempo, nil, nil, impactNote)
+                                        : (.hills, "\(rHill)×45sec hills", nil, nil),
+                            (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
+                } else {
+                    menu = [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),
+                            (.tempo, nil, nil, nil),
+                            (.fartlek, "6×(2min hard / 90sec float)", nil, nil),
+                            (.intervals, "\(min(8, 5 + weekIndex / 4))×1km @ threshold", threshold, nil)]
+                }
             }
         }
         let pick = menu[((weekIndex % menu.count) + menu.count) % menu.count]

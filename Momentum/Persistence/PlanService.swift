@@ -133,14 +133,9 @@ enum PlanService {
         trainingPlan.disciplines = profile.disciplines
         trainingPlan.raceDate = profile.raceDate
         trainingPlan.p5kSPerKm = plan.p5kSPerKm
-        // Persist the macrocycle (§6.1): taper/deload from the generator; the first two build weeks
-        // read as Base (the foundation), everything else as Build.
-        trainingPlan.weekPhases = plan.weeks.map { week in
-            if week.isTaper { PlanPhase.taper.rawValue }
-            else if week.isDeload { PlanPhase.recovery.rawValue }
-            else if week.index < 2 { PlanPhase.base.rawValue }
-            else { PlanPhase.build.rawValue }
-        }
+        // Persist the macrocycle (§6.1) exactly as the generator periodized it — base → build →
+        // peak → taper, with deloads as recovery. One source of truth: `GeneratedWeek.phase`.
+        trainingPlan.weekPhases = plan.weeks.map(\.phase.rawValue)
 
         let anchor = calendar.startOfDay(for: startDate)
         var sessions: [PlannedSession] = []

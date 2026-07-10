@@ -64,6 +64,9 @@ struct GeneratedWeek: Sendable, Equatable {
     var index: Int            // 0-based
     var isDeload: Bool
     var isTaper: Bool
+    /// Macrocycle phase (base → build → peak → taper, deloads = recovery) — computed at generation
+    /// so persistence and the Plan page never re-derive it.
+    var phase: PlanPhase = .build
     var sessions: [GeneratedSession]
 
     /// Total prescribed running distance for the week (meters) — for the ≤10%/wk invariant.
