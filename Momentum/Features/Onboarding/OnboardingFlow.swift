@@ -507,6 +507,9 @@ struct OnboardingFlow: View {
                 healthImport = .importing
                 Task {
                     _ = await services.health.requestAuthorization()
+                    // Same consent moment → also capture resting HR for Karvonen zones.
+                    let metrics = await services.health.importedBodyMetrics()
+                    if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
                     if let baseline = await services.health.runningBaseline() {
                         vm.importedBaseline = baseline
                         withAnimation(Motion.standard) { healthImport = .done(baseline) }
@@ -611,6 +614,11 @@ struct OnboardingFlow: View {
                 OversizedButton(title: "Connect Apple Health") {
                     Task {
                         _ = await services.health.requestAuthorization()
+                        // Grab resting HR (and body mass, if the athlete skipped it) while we have
+                        // consent — it upgrades HR zones to Karvonen from the very first plan.
+                        let metrics = await services.health.importedBodyMetrics()
+                        if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
+                        if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
                         goNext()
                     }
                 }

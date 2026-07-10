@@ -77,6 +77,11 @@ final class OnboardingViewModel {
     var paceFeel: PaceFeel? = nil
     var benchmark: RunBenchmark = .fiveK
     var recentRunSeconds: Double = 1800     // time for the chosen benchmark
+    /// Resting HR read from Apple Health at either consent moment (calibration import or the health
+    /// step) — persisted at finish so HR zones use Karvonen from the very first plan instead of the
+    /// much cruder %-of-max fallback.
+    var importedRestingHR: Int?
+
     // Health import (ENDURANCE-FOCUS §4) — the baseline estimated from their recent runs. Set by the
     // calibration step's import card; feeds the pace seed AND the current-volume inputs.
     var importedBaseline: BaselineEstimator.RunningBaseline? {
@@ -335,6 +340,8 @@ final class OnboardingViewModel {
         profile.heightCm = heightCm
         profile.birthYear = birthYear
         if let bodyMassKg { profile.bodyMassKg = bodyMassKg }
+        // Resting HR from Apple Health (when connected) → Karvonen HR zones from day one.
+        if let rhr = importedRestingHR { profile.restingHR = rhr }
         // Estimate max HR from age (Tanaka) when we have it and nothing better.
         if profile.maxHR == nil, let year = birthYear {
             let age = Calendar.current.component(.year, from: Date()) - year

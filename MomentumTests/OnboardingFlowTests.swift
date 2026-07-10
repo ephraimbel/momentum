@@ -51,6 +51,29 @@ struct OnboardingFlowTests {
         #expect(weekOneDays.count == 4)
     }
 
+    @Test func importedRestingHRUnlocksKarvonenZones() throws {
+        // Resting HR captured at the Health consent moment persists to the profile — and Karvonen
+        // zones differ measurably from the %-max fallback (plan-quality audit fix #6).
+        let pc = PersistenceController.inMemory()
+        let ctx = pc.container.mainContext
+        let vm = OnboardingViewModel()
+        vm.activities = [.run]
+        vm.goal = .endurance
+        vm.birthYear = Calendar.current.component(.year, from: Date()) - 30
+        vm.importedRestingHR = 52
+
+        let profile = vm.finish(in: ctx)
+        #expect(profile.restingHR == 52)
+        let maxHR = try #require(profile.maxHR)              // Tanaka estimate from age
+        let karvonen = try #require(HRZones.zones(maxHR: maxHR, restingHR: 52))
+        let percentMax = try #require(HRZones.zones(maxHR: maxHR, restingHR: nil))
+        #expect(karvonen[0].bpm.lowerBound > percentMax[0].bpm.lowerBound)   // Z1 floor rises off resting HR
+        // Nothing imported → profile stays nil and zones fall back (regression).
+        let bare = OnboardingViewModel()
+        bare.activities = [.run]
+        #expect(bare.finish(in: ctx).restingHR == nil)
+    }
+
     @Test func progressAdvancesAndSkipsEquipmentForNonLifters() {
         let vm = OnboardingViewModel()
         vm.activities = [.run]                        // no lifting
