@@ -8,7 +8,7 @@ import MapboxMaps
 /// choice persists app-wide (`storageKey`), so the style they pick on one map is the style they get
 /// on every map, every launch. Rendered by Mapbox.
 enum MapStyleOption: String, CaseIterable, Identifiable {
-    case standard, realistic, streets, outdoors, dark, satellite, standardSatellite
+    case standard, realistic, dusk, night, streets, outdoors, dark, satellite, standardSatellite
 
     var id: String { rawValue }
 
@@ -24,8 +24,10 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .standard: "Map"
+        case .standard: "Light"
         case .realistic: "Realistic"
+        case .dusk: "Dusk"
+        case .night: "Night"
         case .streets: "Streets"
         case .outdoors: "Outdoors"
         case .dark: "Dark"
@@ -38,6 +40,8 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         switch self {
         case .standard: "map"
         case .realistic: "building.2"
+        case .dusk: "sun.horizon.fill"
+        case .night: "moon.stars.fill"
         case .streets: "road.lanes"
         case .outdoors: "mountain.2.fill"
         case .dark: "moon.fill"
@@ -47,17 +51,22 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     }
 
     /// A curated set of Mapbox styles — all rendered by the Mapbox SDK:
-    /// • **Map** — Mapbox Light, the brand's muted canvas.
-    /// • **Realistic** — Mapbox Standard: 3D buildings, terrain, dynamic lighting.
+    /// • **Light** — Mapbox Light, the brand's muted monochrome canvas.
+    /// • **Realistic** — Mapbox Standard (day): 3D buildings, terrain, dynamic lighting.
+    /// • **Dusk** — Mapbox Standard at golden hour: warm low light, lit windows coming on.
+    /// • **Night** — Mapbox Standard after dark: the lit city, realistic night lighting.
     /// • **Streets** — Mapbox Streets: classic detailed, colorful street map.
     /// • **Outdoors** — Mapbox Outdoors: terrain, contour lines, hillshading (great for trails).
-    /// • **Dark** — Mapbox Dark: sleek night basemap.
+    /// • **Dark** — Mapbox Dark: sleek flat night basemap.
     /// • **Satellite** — Mapbox Satellite Streets: aerial imagery + roads/labels.
-    /// • **3D Satellite** — Mapbox Standard Satellite: aerial imagery with 3D terrain + buildings.
+    /// • **3D Satellite** — Mapbox Standard Satellite: aerial imagery draped over 3D terrain
+    ///   and buildings — satellite, but with real depth.
     var mapboxStyle: MapboxMaps.MapStyle {
         switch self {
         case .standard: .light
         case .realistic: .standard
+        case .dusk: .standard(lightPreset: .dusk)
+        case .night: .standard(lightPreset: .night)
         case .streets: .streets
         case .outdoors: .outdoors
         case .dark: .dark
@@ -66,11 +75,13 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Same base styles as a `StyleURI`, for UIKit `MapView`s (the heatmap) that load a style by URI.
+    /// Same base styles as a `StyleURI`, for UIKit `MapView`s (the heatmap) that load a style by
+    /// URI. A URI can't carry the Standard light preset — Dusk/Night fall back to Standard day
+    /// there, which only affects the heatmap backdrop.
     var styleURI: StyleURI {
         switch self {
         case .standard: .light
-        case .realistic: .standard
+        case .realistic, .dusk, .night: .standard
         case .streets: .streets
         case .outdoors: .outdoors
         case .dark: .dark
@@ -79,19 +90,101 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The styles offered in the layers picker, default first. Satellite (aerial imagery + labels)
-    /// is user-selectable (decision 2026-07-09 — brought back by request); route accents keep their
-    /// white halos over imagery via `isImagery`. `.standardSatellite` (3D) stays internal.
-    static let pickable: [MapStyleOption] = [.realistic, .standard, .streets, .outdoors, .dark, .satellite]
+    /// The Standard style's light preset, when this option is one of its moods — applied to
+    /// snapshot previews via the style-import config (the URI alone can't express it).
+    var standardLightPreset: String? {
+        switch self {
+        case .dusk: "dusk"
+        case .night: "night"
+        default: nil
+        }
+    }
+
+    /// The styles offered in the layers picker, grouped: the realistic Standard family first (the
+    /// hero looks), then the classic flat basemaps. Kept as two arrays so the picker can section them.
+    static let realisticSet: [MapStyleOption] = [.realistic, .dusk, .night, .standardSatellite]
+    static let classicSet: [MapStyleOption] = [.standard, .streets, .outdoors, .dark, .satellite]
+    static let pickable: [MapStyleOption] = realisticSet + classicSet
 
     /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
     /// than over the non-imagery basemaps.
     var isImagery: Bool { self == .satellite || self == .standardSatellite }
 
-    /// Camera tilt (degrees) for the explore map. 3D Satellite tilts so its 3D terrain + buildings
-    /// read as a real skyline; the flat styles stay top-down.
-    var explorePitch: CGFloat { self == .standardSatellite ? 55 : 0 }
+    /// True when the basemap itself is dark — floating chrome and route casings adapt.
+    var isDarkBase: Bool { self == .night || self == .dark }
+
+    /// Camera tilt (degrees) for the explore map. The 3D styles tilt so terrain + buildings read
+    /// as a real skyline; the flat styles stay top-down.
+    var explorePitch: CGFloat {
+        switch self {
+        case .standardSatellite: 55
+        case .dusk, .night: 45
+        default: 0
+        }
+    }
 }
+
+// MARK: - Preview snapshots
+
+/// Renders one static preview image per (style, area) via Mapbox's `Snapshotter` and caches it for
+/// the app's lifetime. The picker used to run a LIVE map engine per row — with nine styles that's
+/// nine GPU render loops behind a sheet animation, which is exactly where the jank came from. A
+/// snapshot is rendered once, joins in-flight requests, and every later open is instant.
+@MainActor
+enum MapStylePreviews {
+    private static var cache: [String: UIImage] = [:]
+    private static var active: [String: Snapshotter] = [:]
+    private static var tokens: [String: AnyCancelable] = [:]
+    private static var waiters: [String: [CheckedContinuation<UIImage?, Never>]] = [:]
+
+    /// The Snapshotter hard-draws the logo + attribution strip into the image with no opt-out.
+    /// Attribution lives on the live map this sheet floats over, so previews render this much
+    /// taller and crop the strip away — thumbnails are UI chrome, not a map.
+    private static let attributionStripPt: CGFloat = 28
+
+    static func snapshot(_ option: MapStyleOption, center: CLLocationCoordinate2D,
+                         size: CGSize) async -> UIImage? {
+        // Bucket the center (~2 km) so tiny GPS drift between opens doesn't defeat the cache.
+        let key = "\(option.rawValue)|\(Int(center.latitude * 50))|\(Int(center.longitude * 50))"
+        if let hit = cache[key] { return hit }
+
+        return await withCheckedContinuation { continuation in
+            waiters[key, default: []].append(continuation)
+            guard active[key] == nil else { return }   // join the in-flight render
+
+            let padded = CGSize(width: size.width, height: size.height + attributionStripPt)
+            let snapshotter = Snapshotter(options: MapSnapshotOptions(
+                size: padded, pixelRatio: UIScreen.main.scale))
+            active[key] = snapshotter
+            snapshotter.styleURI = option.styleURI
+            snapshotter.setCamera(to: CameraOptions(center: center, zoom: 13.8,
+                                                    pitch: option.explorePitch))
+            tokens[key] = snapshotter.onStyleLoaded.observeNext { _ in
+                if let preset = option.standardLightPreset {
+                    try? snapshotter.style.setStyleImportConfigProperty(
+                        for: "basemap", config: "lightPreset", value: preset)
+                }
+                snapshotter.start(overlayHandler: nil) { result in
+                    let image = (try? result.get()).map { cropBottomStrip($0, to: size) }
+                    if let image { cache[key] = image }
+                    (waiters.removeValue(forKey: key) ?? []).forEach { $0.resume(returning: image) }
+                    active[key] = nil
+                    tokens[key] = nil
+                }
+            }
+        }
+    }
+
+    private static func cropBottomStrip(_ image: UIImage, to size: CGSize) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let scale = image.scale
+        let rect = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
+        guard let cropped = cg.cropping(to: rect) else { return image }
+        return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
+    }
+}
+
+// MARK: - Layers control
 
 /// Strava-style layers control — a floating glass button that opens the style picker sheet. Shared
 /// by every map screen so the affordance is identical everywhere.
@@ -102,7 +195,12 @@ struct MapLayersButton: View {
     /// Center for the style preview thumbnails — pass the map's focus so previews show *your* area.
     var previewCenter: CLLocationCoordinate2D? = nil
 
+    #if DEBUG
+    // --map-picker: open the style sheet on arrival (sim verification of the picker itself).
+    @State private var showPicker = ProcessInfo.processInfo.arguments.contains("--map-picker")
+    #else
     @State private var showPicker = false
+    #endif
 
     var body: some View {
         Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
@@ -118,9 +216,9 @@ struct MapLayersButton: View {
     }
 }
 
-/// The map-style picker (Strava's layers sheet): one row per style with a live rounded-square
-/// preview of that base map next to its name, so you see what you're choosing before you choose it.
-/// Picking stays open — the map behind updates instantly, and the choice persists app-wide.
+/// The map-style picker: a clean two-section grid of static style previews (Apple Maps' chooser,
+/// momentum-styled). Realistic Standard moods lead; the classic basemaps follow. Picking stays
+/// open — the map behind updates instantly, and the choice persists app-wide.
 struct MapStylePickerSheet: View {
     @Binding var style: MapStyleOption
     var previewCenter: CLLocationCoordinate2D? = nil
@@ -131,81 +229,123 @@ struct MapStylePickerSheet: View {
         previewCenter ?? CLLocationCoordinate2D(latitude: 30.2672, longitude: -97.7431)
     }
 
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3)
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("MAP STYLE")
-                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
-                    .foregroundStyle(Theme.inkTertiary)
-                    .padding(.horizontal, Theme.Space.lg).padding(.top, Theme.Space.lg)
-                    .padding(.bottom, Theme.Space.sm)
-                ForEach(Array(MapStyleOption.pickable.enumerated()), id: \.element.id) { i, option in
-                    if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 1).padding(.leading, 84) }
-                    row(option)
-                }
-                if let onWorld {
-                    Rectangle().fill(Theme.hairline).frame(height: 1)
-                    Button(action: onWorld) {
-                        HStack(spacing: Theme.Space.md) {
-                            Image(systemName: "globe.americas.fill")
-                                .font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.ink)
-                                .frame(width: 56, height: 56)
-                                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surface))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.hairline))
-                            Text("World").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                            Spacer()
-                        }
-                        .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.sm)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("World — see everyone on momentum")
-                }
+            VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                Text("Map style")
+                    .font(.display(22, weight: .black)).foregroundStyle(Theme.ink)
+                    .padding(.top, Theme.Space.lg)
+                group("REALISTIC", MapStyleOption.realisticSet)
+                group("CLASSIC", MapStyleOption.classicSet)
+                if let onWorld { worldRow(onWorld) }
             }
-            .padding(.bottom, Theme.Space.lg)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.bottom, Theme.Space.xl)
         }
+        .scrollIndicators(.hidden)
         .background(Theme.background)
     }
 
-    private func row(_ option: MapStyleOption) -> some View {
-        let selected = option == style
-        return Button {
-            guard !selected else { return }
-            Haptics.light()
-            style = option
-        } label: {
-            HStack(spacing: Theme.Space.md) {
-                preview(option, selected: selected)
-                Text(option.label)
-                    .font(.rounded(Theme.FontSize.body, weight: selected ? .bold : .semibold))
-                    .foregroundStyle(Theme.ink)
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
+    private func group(_ title: String, _ options: [MapStyleOption]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(title)
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                .foregroundStyle(Theme.inkTertiary)
+            LazyVGrid(columns: columns, spacing: Theme.Space.md) {
+                ForEach(options) { option in
+                    StylePreviewCell(option: option, center: center, selected: option == style) {
+                        guard option != style else { return }
+                        Haptics.light()
+                        style = option
+                    }
                 }
             }
-            .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.sm)
+        }
+    }
+
+    private func worldRow(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "globe.americas.fill")
+                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Theme.surface))
+                    .overlay(Circle().stroke(Theme.hairline))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("World").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("Everyone on momentum, on the globe")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("World — see everyone on momentum")
+    }
+}
+
+/// One style card: the static snapshot preview with the name beneath; the selected card wears an
+/// ink border + a check badge. The snapshot loads once (cached app-wide), so reopening the sheet
+/// is instant and scrolling it never drops a frame.
+private struct StylePreviewCell: View {
+    let option: MapStyleOption
+    let center: CLLocationCoordinate2D
+    let selected: Bool
+    let onPick: () -> Void
+
+    @State private var image: UIImage?
+
+    /// Rendered a touch larger than display for crisp corners on 3x screens.
+    private static let renderSize = CGSize(width: 132, height: 100)
+
+    var body: some View {
+        Button(action: onPick) {
+            VStack(spacing: Theme.Space.xs) {
+                ZStack {
+                    if let image {
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .transition(.opacity)
+                    } else {
+                        Theme.surface
+                        Image(systemName: option.systemImage)
+                            .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                .frame(height: 82)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(selected ? Theme.ink : Theme.hairline, lineWidth: selected ? 2 : 1)
+                )
+                .overlay(alignment: .topTrailing) {
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Theme.background, Theme.ink)
+                            .padding(5)
+                    }
+                }
+                Text(option.label)
+                    .font(.rounded(Theme.FontSize.label, weight: selected ? .bold : .semibold))
+                    .foregroundStyle(selected ? Theme.ink : Theme.inkSecondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.2), value: image != nil)
+        .task(id: option.id) {
+            image = await MapStylePreviews.snapshot(option, center: center, size: Self.renderSize)
+        }
         .accessibilityLabel("\(option.label)\(selected ? ", selected" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    /// A small live render of the actual base style — rounded square, non-interactive. Live beats a
-    /// bundled screenshot: it's always faithful to the style, the region, and the season of imagery.
-    private func preview(_ option: MapStyleOption, selected: Bool) -> some View {
-        Map(initialViewport: .camera(center: center, zoom: 14.8, bearing: 0, pitch: option.explorePitch))
-            .mapStyle(option.mapboxStyle)
-            .ornamentOptions(MapChrome.hidden)
-            .allowsHitTesting(false)
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(selected ? Theme.ink : Theme.hairline, lineWidth: selected ? 2 : 1)
-            )
-            .accessibilityHidden(true)
     }
 }
