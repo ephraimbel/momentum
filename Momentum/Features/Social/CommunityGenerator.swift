@@ -150,8 +150,9 @@ enum CommunityGenerator {
             return (rng.pick(rideTitles),
                     gpsStat(km: routeKm ?? rng.double(15, 45), paceSecPerKm: rng.double(116, 180), rng: &rng), pr)
         case .walk, .hike:
-            // 10:00–14:30 /km ≈ 16–23 min/mi.
-            return (rng.pick(walkTitles),
+            // 10:00–14:30 /km ≈ 16–23 min/mi. Hike/trail titles only WITHOUT a route map — the
+            // bundled loops trace city streets, and "Trail walk" over downtown blocks reads fake.
+            return (rng.pick(routeKm == nil ? walkTitles : urbanWalkTitles),
                     gpsStat(km: routeKm ?? rng.double(2, 8), paceSecPerKm: rng.double(600, 870), rng: &rng), pr)
         case .strength, .crossfit, .hiit:
             let vol = rng.int(4...22) * 1000
@@ -215,6 +216,12 @@ enum CommunityGenerator {
                 "Last set was a fight.", "Volume day done.", "New gym, same work.",
                 "Grip gave out before the legs did lol", "Told myself 5 sets. Did 8."]
         }
+        if discipline == .walk || discipline == .hike {
+            // Walks don't negative-split or chase PRs — their captions are about the reset.
+            return neutralCaptions + [
+                "Nice reset.", "Podcast miles.", "Fresh air fixed it.", "Perfect weather for it.",
+                "Legs needed this.", "Slow on purpose."]
+        }
         if discipline.isGPS {
             return neutralCaptions + [
                 "Negative split the whole way.", "Legs heavy, heart full.", "Easy effort, big smile.",
@@ -232,6 +239,7 @@ enum CommunityGenerator {
     private static let trailTitles = ["Trail run","Ridge loop","Singletrack miles","Dirt hour","Trail tempo"]
     private static let easyRunTitles = ["Easy miles","Recovery jog","Easy run","Slow miles","Base miles"]
     private static let walkTitles = ["Recovery walk","Evening walk","Hike","Trail walk","Steps day"]
+    private static let urbanWalkTitles = ["Recovery walk","Evening walk","Morning walk","Neighborhood loop","Steps day"]
     private static let liftTitles = ["Push day","Pull day","Lower power","Upper hypertrophy","Full body","Leg day","Conditioning"]
     private static let swimTitles = ["Pool intervals","Morning laps","Easy swim","Swim session"]
     private static let rowTitles = ["Steady state","Erg intervals","Morning meters","Row session"]
