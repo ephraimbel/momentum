@@ -303,6 +303,52 @@ enum PlanCoaching {
         return rec   // `apply` already recorded `lastAdaptedAt` + saved
     }
 
+    /// Autoregulated strength deload (PRD §9.2's plan-level half): when the last two strength
+    /// sessions were sustained near-max effort (`StrengthSessionEngine.rpeCreep`), cut the coming
+    /// week's still-open strength prescriptions ~40% in sets so the work absorbs. Shares the
+    /// ≤1-change/week `lastAdaptedAt` gate with every other structural adaptation; no-shame, never
+    /// touches history or running sessions. Returns the note when it changed the plan.
+    @discardableResult
+    static func easeStrengthOnRPECreep(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
+                                       in context: ModelContext, calendar: Calendar = .current)
+        -> (headline: String, detail: String)? {
+        guard let plan else { return nil }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+
+        // The two most recent strength sessions' rated working-set RPEs, newest first.
+        let sessionRPEs: [[Double]] = workouts
+            .filter { $0.type.isStrengthStyle && $0.strength != nil }
+            .sorted { $0.startedAt > $1.startedAt }
+            .prefix(2)
+            .map { w in
+                (w.strength?.exercises ?? []).flatMap(\.sets)
+                    .filter { $0.isComplete && $0.type == .working }
+                    .compactMap(\.rpe)
+            }
+        guard StrengthSessionEngine.rpeCreep(recentSessionRPEs: sessionRPEs) else { return nil }
+
+        // ~40% fewer sets on the coming week's open strength days (PRD §9.2 deload).
+        let todayStart = calendar.startOfDay(for: today)
+        guard let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) else { return nil }
+        var changed = 0
+        for s in plan.sessions
+            where s.status == .planned && s.completedWorkout == nil && !s.strengthTargets.isEmpty
+                  && calendar.startOfDay(for: s.date) >= todayStart && s.date < horizon {
+            for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.6).rounded())) }
+            s.rationale = "Deload — your last sessions read near-max effort, so this week absorbs instead of adds."
+            changed += 1
+        }
+        guard changed > 0 else { return nil }
+        plan.lastAdaptedAt = today
+        try? context.save()
+        let note = (headline: "Strength deload week",
+                    detail: "Your effort's been pinned near max for two sessions, so I cut this week's sets about 40%. Strength is built in the recovery.")
+        CoachingEvent.record(kind: .ease, headline: note.headline, detail: note.detail,
+                             on: today, in: context, calendar: calendar)
+        return note
+    }
+
     /// Post-run RPE → adaptation — the *subjective* half of the closed loop (Runna's RPE prompt, but
     /// automatic). Called once the athlete rates a run: if it felt far harder than prescribed, ease the
     /// block; if an easy day felt brutal, insert recovery. Never auto-*raises* load (headroom is

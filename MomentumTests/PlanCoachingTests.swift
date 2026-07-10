@@ -389,4 +389,70 @@ struct PlanCoachingTests {
         #expect(PlanCoaching.adaptToEffort(workout, plan: plan, in: ctx) == nil)
         #expect(plan.lastAdaptedAt == nil)            // nothing changed
     }
+
+    // MARK: Strength RPE-creep deload (plan-quality audit #4 — the plan-level strength loop)
+
+    private func strengthWorkout(in ctx: ModelContext, daysAgo: Int, rpes: [Double]) -> Workout {
+        let w = Workout()
+        w.type = .strength
+        w.startedAt = Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date())!
+        let session = StrengthSession()
+        let ex = WorkoutExercise()
+        ex.sets = rpes.enumerated().map { i, r in
+            let e = SetEntry()
+            e.index = i; e.weightKg = 60; e.reps = 8; e.rpe = r
+            e.type = .working; e.isComplete = true
+            return e
+        }
+        session.exercises = [ex]
+        w.strength = session
+        ctx.insert(w)
+        return w
+    }
+
+    private func futureStrengthDay(in ctx: ModelContext, sets: Int) -> (PlannedSession, PlannedExercise) {
+        let s = PlannedSession()
+        s.date = Calendar.current.date(byAdding: .day, value: 2, to: Date())!
+        s.discipline = .strength
+        s.status = .planned
+        let pe = PlannedExercise(); pe.targetSets = sets
+        ctx.insert(pe)
+        s.strengthTargets = [pe]
+        return (s, pe)
+    }
+
+    @Test func rpeCreepDeloadsTheComingStrengthWeek() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let (future, pe) = futureStrengthDay(in: ctx, sets: 4)
+        let plan = makePlan(in: ctx, sessions: [future])
+
+        // Two sessions pinned near max ⇒ autoregulated deload: 4 sets → 2 (~40% cut), note attached.
+        let w1 = strengthWorkout(in: ctx, daysAgo: 3, rpes: [9, 9, 8.5, 9])
+        let w2 = strengthWorkout(in: ctx, daysAgo: 0, rpes: [9, 8.5, 9])
+        let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: [w1, w2], in: ctx)
+        #expect(note != nil)
+        #expect(pe.targetSets == 2)
+        #expect(future.rationale?.lowercased().contains("deload") == true)
+        #expect(plan.lastAdaptedAt != nil)
+
+        // Gated ≤1/week: a second pass can't compound the cut.
+        pe.targetSets = 4
+        #expect(PlanCoaching.easeStrengthOnRPECreep(plan, workouts: [w1, w2], in: ctx) == nil)
+        #expect(pe.targetSets == 4)
+    }
+
+    @Test func moderateEffortNeverTriggersStrengthDeload() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let (_, pe) = futureStrengthDay(in: ctx, sets: 4)
+        let plan = makePlan(in: ctx, sessions: [])
+
+        // Second session at sane effort ⇒ no creep, nothing changes.
+        let w1 = strengthWorkout(in: ctx, daysAgo: 3, rpes: [9, 9, 9])
+        let w2 = strengthWorkout(in: ctx, daysAgo: 0, rpes: [7, 7.5, 8])
+        #expect(PlanCoaching.easeStrengthOnRPECreep(plan, workouts: [w1, w2], in: ctx) == nil)
+        #expect(pe.targetSets == 4)
+        #expect(plan.lastAdaptedAt == nil)
+    }
 }

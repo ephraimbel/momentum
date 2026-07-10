@@ -96,6 +96,53 @@ actor StrengthSessionEngine {
         return SetTarget(weightKg: topWeight + stepKg, reps: repLow)
     }
 
+    /// Scheme-aware prefill for a *planned* exercise — the plan-level half of PRD §9.2's progression
+    /// spec, dispatched on the prescription's `progression` string:
+    ///  • **linear** (beginners): every completed set last session hit the target reps → add `stepKg`.
+    ///  • **percent** (strength focus): weight = %1RM × the best e1RM shown last session, rounded to
+    ///    the plate step — load advances automatically as e1RM grows, and backs off when it doesn't.
+    ///  • **double** / anything else: classic double progression (`progressedTarget`).
+    /// Pure and bounded; with no usable history each path degrades to repeating what's known.
+    static func plannedTarget(scheme: String, previousSets: [Int: SetTarget], index: Int,
+                              repLow: Int, repHigh: Int, targetPctRM: Double? = nil,
+                              stepKg: Double = 2.5) -> SetTarget {
+        let base = previousSets[index] ?? previousSets.sorted { $0.key < $1.key }.first?.value ?? SetTarget()
+        let completed = previousSets.values.filter { $0.weightKg != nil && $0.reps != nil }
+        switch scheme {
+        case "linear":
+            guard !completed.isEmpty, repLow > 0,
+                  completed.allSatisfy({ ($0.reps ?? 0) >= repLow }) else { return base }
+            let topWeight = completed.compactMap(\.weightKg).max() ?? base.weightKg ?? 0
+            return SetTarget(weightKg: topWeight + stepKg, reps: repLow)
+        case "percent":
+            let bestE1RM = completed
+                .compactMap { s -> Double? in
+                    guard let w = s.weightKg, let r = s.reps else { return nil }
+                    return StrengthMath.e1RM(weightKg: w, reps: r)
+                }
+                .max()
+            guard let pct = targetPctRM, pct > 0, let e1rm = bestE1RM, e1rm > 0 else {
+                return progressedTarget(previousSets: previousSets, index: index,
+                                        repLow: repLow, repHigh: repHigh, stepKg: stepKg)
+            }
+            let rounded = ((pct * e1rm) / stepKg).rounded() * stepKg
+            return SetTarget(weightKg: max(stepKg, rounded), reps: repLow)
+        default:
+            return progressedTarget(previousSets: previousSets, index: index,
+                                    repLow: repLow, repHigh: repHigh, stepKg: stepKg)
+        }
+    }
+
+    /// Autoregulated deload trigger (PRD §9.2): sustained RPE creep = the last TWO strength sessions
+    /// both averaged near-max rated effort (mean RPE ≥ 8.5 over ≥3 rated working sets each). One
+    /// brutal day never trips it — sustained means sustained.
+    static func rpeCreep(recentSessionRPEs: [[Double]], threshold: Double = 8.5, minRatedSets: Int = 3) -> Bool {
+        guard recentSessionRPEs.count >= 2 else { return false }
+        return recentSessionRPEs.prefix(2).allSatisfy { rpes in
+            rpes.count >= minRatedSets && rpes.reduce(0, +) / Double(rpes.count) >= threshold
+        }
+    }
+
     /// Default rest by category (§22): compound 150s, isolation 75s, otherwise 120s.
     /// A per-exercise override (or live user adjustment) wins.
     static func defaultRest(category: ExerciseCategory, override: Double? = nil) -> Double {

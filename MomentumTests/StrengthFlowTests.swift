@@ -168,4 +168,51 @@ struct StrengthFlowTests {
         let empty = StrengthSessionEngine.progressedTarget(previousSets: [:], index: 0, repLow: 8, repHigh: 12)
         #expect(empty.weightKg == nil && empty.reps == nil)
     }
+
+    // MARK: Scheme-aware progression (plan-quality audit #4 — every PRD §9.2 scheme, not just double)
+
+    @Test func linearAddsLoadWhenTargetRepsHit() {
+        // Linear (beginners): every completed set hit the target reps → +2.5 kg, same reps.
+        let prev: [Int: Target] = [0: .init(weightKg: 40, reps: 8), 1: .init(weightKg: 40, reps: 9)]
+        let t = StrengthSessionEngine.plannedTarget(scheme: "linear", previousSets: prev, index: 0,
+                                                    repLow: 8, repHigh: 12)
+        #expect(t.weightKg == 42.5 && t.reps == 8)
+        // One set short of target → repeat, no bump.
+        let short: [Int: Target] = [0: .init(weightKg: 40, reps: 8), 1: .init(weightKg: 40, reps: 6)]
+        let hold = StrengthSessionEngine.plannedTarget(scheme: "linear", previousSets: short, index: 0,
+                                                       repLow: 8, repHigh: 12)
+        #expect(hold.weightKg == 40)
+    }
+
+    @Test func percentSchemeTracksCurrentE1RM() {
+        // Percent (strength focus): 100 kg × 5 → e1RM 116.7 (Epley); 82% ≈ 95.7 → 95 kg plate-rounded.
+        let prev: [Int: Target] = [0: .init(weightKg: 100, reps: 5)]
+        let t = StrengthSessionEngine.plannedTarget(scheme: "percent", previousSets: prev, index: 0,
+                                                    repLow: 4, repHigh: 6, targetPctRM: 0.82)
+        #expect(t.weightKg == 95 && t.reps == 4)
+        // A stronger session raises the prescription with the e1RM (105×5 → e1RM 122.5 → 82% → 100 kg).
+        let stronger: [Int: Target] = [0: .init(weightKg: 105, reps: 5)]
+        let up = StrengthSessionEngine.plannedTarget(scheme: "percent", previousSets: stronger, index: 0,
+                                                     repLow: 4, repHigh: 6, targetPctRM: 0.82)
+        #expect(up.weightKg == 100)
+        // No %1RM on the prescription → degrades to double-progression semantics (5 < top of 6 → hold).
+        let fallback = StrengthSessionEngine.plannedTarget(scheme: "percent", previousSets: prev, index: 0,
+                                                           repLow: 4, repHigh: 6, targetPctRM: nil)
+        #expect(fallback.weightKg == 100)
+    }
+
+    @Test func unknownSchemeUsesDoubleProgression() {
+        let prev: [Int: Target] = [0: .init(weightKg: 60, reps: 12), 1: .init(weightKg: 60, reps: 12)]
+        let t = StrengthSessionEngine.plannedTarget(scheme: "double", previousSets: prev, index: 0,
+                                                    repLow: 8, repHigh: 12)
+        #expect(t.weightKg == 62.5 && t.reps == 8)
+    }
+
+    @Test func rpeCreepNeedsTwoSustainedNearMaxSessions() {
+        #expect(StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9, 8.5], [9, 8.5, 9]]))
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9, 9]]))               // one hard day
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9, 9], [7, 7.5, 8]]))  // second moderate
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9], [9, 9, 9]]))       // too few rated sets
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: []))
+    }
 }

@@ -80,6 +80,9 @@ struct WorkoutRunner: ViewModifier {
                 services.notifications.notifyPlanUpdated(
                     title: "Your paces just got faster",
                     body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: distanceUnit)).")
+            } else if workout.type.isStrengthStyle,
+                      let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context) {
+                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
             }
         }
         // Let the Athlete Model learn from this session (local, never blocks the summary).

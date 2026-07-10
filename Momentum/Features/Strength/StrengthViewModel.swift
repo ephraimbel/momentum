@@ -19,7 +19,15 @@ final class StrengthViewModel {
     /// Editable input per set id.
     var drafts: [UUID: Draft] = [:]
     private var previousByRow: [UUID: [Int: PreviousPerformance.PrevSet]] = [:]
-    private var plannedRepRange: [UUID: (low: Int, high: Int)] = [:]   // enables double-progression prefill
+    /// Planned prescription per exercise row — enables the scheme-aware progression prefill
+    /// (PRD §9.2: linear / double / percent, each advancing off last session's logged sets).
+    struct PlannedPrescription {
+        var repLow: Int
+        var repHigh: Int
+        var scheme: String = "double"
+        var pctRM: Double?
+    }
+    private var plannedPrescription: [UUID: PlannedPrescription] = [:]
     /// Muscle targeting per catalog exercise, captured at add-time — drives the live muscle map.
     private var musclesByExercise: [UUID: (primary: [MuscleGroup], secondary: [MuscleGroup])] = [:]
 
@@ -67,13 +75,13 @@ final class StrengthViewModel {
 
     // MARK: Mutations
 
-    func addExercise(_ exercise: Exercise, repRange: (low: Int, high: Int)? = nil) async {
+    func addExercise(_ exercise: Exercise, prescription: PlannedPrescription? = nil) async {
         let rowId = await engine.addExercise(exerciseId: exercise.id, name: exercise.name,
                                              category: exercise.category, defaultRestS: exercise.defaultRestS)
         musclesByExercise[exercise.id] = (exercise.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
                                           exercise.secondaryMuscles.compactMap(MuscleGroup.init(rawValue:)))
         previousByRow[rowId] = PreviousPerformance.lastSession(forExerciseId: exercise.id, in: context)
-        if let repRange { plannedRepRange[rowId] = repRange }   // planned ⇒ enable double-progression
+        if let prescription { plannedPrescription[rowId] = prescription }   // planned ⇒ scheme-aware progression
         await addSetInternal(rowId: rowId)
         await refresh()
     }
@@ -88,7 +96,9 @@ final class StrengthViewModel {
     func loadPlanned(_ session: PlannedSession) async {
         for pe in session.strengthTargets.sorted(by: { $0.order < $1.order }) {
             guard let exercise = pe.exercise else { continue }
-            await addExercise(exercise, repRange: (pe.targetRepLow, pe.targetRepHigh))
+            await addExercise(exercise, prescription: PlannedPrescription(
+                repLow: pe.targetRepLow, repHigh: pe.targetRepHigh,
+                scheme: pe.progression, pctRM: pe.targetPctRM))
             guard let rowId = exercises.last?.id else { continue }
             for _ in 1..<max(1, pe.targetSets) { await addSet(rowId: rowId) }
             if let row = exercises.first(where: { $0.id == rowId }) {
@@ -107,10 +117,13 @@ final class StrengthViewModel {
         var target = StrengthSessionEngine.SetTarget()
         if let prevRow = previousByRow[rowId], !prevRow.isEmpty {
             let prevTargets = prevRow.mapValues { StrengthSessionEngine.SetTarget(weightKg: $0.weightKg, reps: $0.reps) }
-            if let range = plannedRepRange[rowId] {
-                // Planned set: double-progress off last session (bump load once the range was topped out).
-                target = StrengthSessionEngine.progressedTarget(previousSets: prevTargets, index: nextIndex,
-                                                                repLow: range.low, repHigh: range.high)
+            if let rx = plannedPrescription[rowId] {
+                // Planned set: progress off last session per the prescribed scheme (linear adds load
+                // when target reps were hit; percent tracks %1RM off the shown e1RM; double bumps
+                // once the rep range was topped out).
+                target = StrengthSessionEngine.plannedTarget(scheme: rx.scheme, previousSets: prevTargets,
+                                                             index: nextIndex, repLow: rx.repLow,
+                                                             repHigh: rx.repHigh, targetPctRM: rx.pctRM)
             } else {
                 target = prevTargets[nextIndex] ?? StrengthSessionEngine.SetTarget()
             }

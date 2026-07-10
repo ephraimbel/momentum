@@ -736,7 +736,7 @@ Capabilities: Background Modes → **Location updates**; HealthKit; Sign in with
 - **Volume landmarks (hypertrophy guidance, tunable):** ~10–20 **working sets per muscle group per week**; strength-focus uses lower reps (3–6) at higher intensity, fewer sets; the engine balances sets across muscles toward the target range.
 - **Split templates by days/week:** 2–3 → Full Body; 4 → Upper/Lower; 5–6 → Push/Pull/Legs (or UL+) ; session length → exercise count (≈ minutes/10, compounds first).
 - **Exercise selection:** filtered by `equipment` and goal; compounds prioritized; balanced agonist/antagonist; substitutes offered when equipment is limited.
-- **Deload:** every 4–6 weeks or autoregulated (sustained RPE creep / missed reps) → reduce volume ~40% and/or intensity for a week.
+- **Deload:** every 4–6 weeks or autoregulated (sustained RPE creep / missed reps) → reduce volume ~40% and/or intensity for a week. *(Implemented 2026-07-10: `PlanCoaching.easeStrengthOnRPECreep` — two consecutive sessions at mean rated RPE ≥ 8.5 cut the coming week's planned sets ~40%, ≤1 structural change/week. Scheme progression is live in the session prefill: linear/percent/double via `StrengthSessionEngine.plannedTarget`.)*
 
 ### 9.3 Hybrid scheduling & recovery (the capability no competitor has)
 When a user trains both, the engine schedules across the week with recovery rules:
