@@ -82,7 +82,10 @@ struct CheckinSheet: View {
                 .background(Theme.background)
             }
         }
-        .presentationDetents([.medium, .large])
+        // Tall enough that ENERGY, LEGS, "Something hurts", AND Done are all visible without
+        // scrolling — at .medium the pain button hid below the fold, and a door you can't see is a
+        // door that doesn't exist.
+        .presentationDetents([.height(560), .large])
     }
 
     private func sectionLabel(_ text: String) -> some View {

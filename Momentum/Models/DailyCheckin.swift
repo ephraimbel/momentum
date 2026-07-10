@@ -9,7 +9,9 @@ final class DailyCheckin {
     enum Energy: String, Codable, Sendable, CaseIterable, Identifiable {
         case low, ok, full
         var id: String { rawValue }
-        var label: String { switch self { case .low: "Running on empty"; case .ok: "Alright"; case .full: "Full tank" } }
+        // Chip-length labels — all three must fit a third-width chip without scaling ("Running
+        // on empty" overflowed its card).
+        var label: String { switch self { case .low: "Drained"; case .ok: "Alright"; case .full: "Full tank" } }
         var icon: String { switch self { case .low: "battery.25percent"; case .ok: "battery.75percent"; case .full: "battery.100percent.bolt" } }
     }
     enum Legs: String, Codable, Sendable, CaseIterable, Identifiable {
