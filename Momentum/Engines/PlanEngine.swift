@@ -84,8 +84,12 @@ enum PlanEngine {
 
         // Macrocycle (PRD §9.1: base → build → peak → taper).
         let totalWeeks = weeksToGenerate(startDate: startDate, raceDate: profile.raceDate, calendar: calendar)
+        // A race past the block's horizon means this block is pure foundation — the race-specific
+        // peak/taper arrive when the plan regenerates closer in.
+        let raceInWindow = (weeksToRace(startDate: startDate, raceDate: profile.raceDate,
+                                        calendar: calendar) ?? .max) <= totalWeeks
         let meso = mesocycle(totalWeeks: totalWeeks, raceDistanceM: profile.raceDistanceM,
-                             hasRace: profile.raceDate != nil)
+                             hasRace: profile.raceDate != nil, raceInsideWindow: raceInWindow)
         let taperMults = taperMultipliers(weeks: meso.taperWeeks)
 
         var weeks: [GeneratedWeek] = []
@@ -126,7 +130,10 @@ enum PlanEngine {
             } else if isDeload {
                 volumeMult = lastBuildMult * 0.7
             } else {
-                volumeMult = pow(ramp, Double(buildIndex))
+                // Never more than double the block's starting volume: long runways plateau at a
+                // sane peak instead of compounding geometrically for 20+ weeks. (The ACWR governor
+                // guards the week-over-week rate; this guards the destination.)
+                volumeMult = min(pow(ramp, Double(buildIndex)), 2.0)
                 lastBuildMult = volumeMult
                 buildIndex += 1
             }
@@ -165,10 +172,18 @@ enum PlanEngine {
         return GeneratedPlan(p5kSPerKm: p5k, weeks: weeks)
     }
 
+    /// Weeks between now and the race, inclusive of race week (nil without a race date).
+    static func weeksToRace(startDate: Date, raceDate: Date?, calendar: Calendar) -> Int? {
+        guard let race = raceDate else { return nil }
+        return max(0, calendar.dateComponents([.weekOfYear], from: startDate, to: race).weekOfYear ?? 0) + 1
+    }
+
+    /// Any timeframe generates a real plan: a race next week gets a 1-week race-week block, a
+    /// distant race up to a 24-week horizon (the plan regenerates as the race nears, so the horizon
+    /// rolls forward — never a taper stranded weeks before race day).
     static func weeksToGenerate(startDate: Date, raceDate: Date?, calendar: Calendar) -> Int {
-        guard let race = raceDate else { return 4 }
-        let comps = calendar.dateComponents([.weekOfYear], from: startDate, to: race)
-        return max(4, min(16, (comps.weekOfYear ?? 4) + 1))
+        guard let toRace = weeksToRace(startDate: startDate, raceDate: raceDate, calendar: calendar) else { return 4 }
+        return max(1, min(24, toRace))
     }
 
     /// Mesocycle boundaries (base → build → peak → taper). Taper length follows the science by race
@@ -177,9 +192,15 @@ enum PlanEngine {
     /// build weeks. Peak = 1–2 race-specific weeks holding the biggest volume before the taper, when
     /// the plan is long enough to afford them. Base ≈ the first quarter. No race → one settling week,
     /// then a rolling build.
-    static func mesocycle(totalWeeks: Int, raceDistanceM: Double?, hasRace: Bool)
+    static func mesocycle(totalWeeks: Int, raceDistanceM: Double?, hasRace: Bool,
+                          raceInsideWindow: Bool = true)
         -> (baseWeeks: Int, peakWeeks: Int, taperWeeks: Int) {
         guard hasRace else { return (1, 0, 0) }
+        // Race beyond this block's horizon → pure foundation (base + build, deloads as earned) —
+        // never a phantom taper stranded weeks before race day.
+        guard raceInsideWindow else {
+            return (max(1, Int((0.25 * Double(totalWeeks)).rounded())), 0, 0)
+        }
         let byDistance: Int
         switch raceDistanceM {
         case .some(let d) where d < 13_000: byDistance = 1
@@ -188,6 +209,9 @@ enum PlanEngine {
         case .some: byDistance = 4                    // ultra — the deepest hole needs the longest climb out
         case .none: byDistance = min(3, Int((0.15 * Double(totalWeeks)).rounded(.up)))
         }
+        // Ultra-short runway (≤3 weeks): there's no building left to do — the honest block is a
+        // freshness taper that gets the athlete to the line ready to run the day well.
+        if totalWeeks <= 3 { return (0, 0, min(byDistance, totalWeeks)) }
         let taper = min(byDistance, max(1, totalWeeks / 4))
         let peak = totalWeeks - taper >= 8 ? 2 : (totalWeeks - taper >= 5 ? 1 : 0)
         let base = max(1, min(Int((0.25 * Double(totalWeeks)).rounded()), totalWeeks - taper - peak - 1))

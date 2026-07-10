@@ -210,6 +210,50 @@ struct PlanEngineTests {
         #expect(PlanEngine.mesocycle(totalWeeks: 4, raceDistanceM: nil, hasRace: false).taperWeeks == 0)
     }
 
+    // MARK: Any timeframe (short runways stay honest; long runways don't strand the taper)
+
+    @Test func twoWeekMarathonIsAnHonestFreshnessBlock() {
+        // A marathon in ~2 weeks: no building left to do — the whole block is a taper that holds
+        // volume BELOW current load and keeps one race-pace touch a week. Never a ramp, never a
+        // plan that extends past race day.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+        inp.raceDistanceM = 42_195
+        inp.raceDate = Calendar.current.date(byAdding: .day, value: 10, to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.currentWeeklyVolumeM = 30_000
+        inp.longestRunM = 10_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(plan.weeks.count <= 2)
+        #expect(plan.weeks.allSatisfy { $0.isTaper && $0.phase == .taper })
+        #expect(plan.weeks.allSatisfy { $0.runVolumeM < 30_000 })          // freshness, not building
+        #expect(plan.weeks.allSatisfy { w in w.sessions.contains { $0.intervals?.contains("race pace") == true } })
+    }
+
+    @Test func raceBeyondHorizonBuildsWithoutPhantomTaper() {
+        // A race 30 weeks out: the 24-week block is pure foundation — base + build + deloads,
+        // no taper stranded weeks before race day, and volume plateaus at ≤2× the starting load.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+        inp.raceDistanceM = 42_195
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 30, to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.currentWeeklyVolumeM = 30_000
+        inp.longestRunM = 10_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(plan.weeks.count == 24)
+        #expect(!plan.weeks.contains { $0.isTaper || $0.phase == .taper || $0.phase == .peak })
+        #expect(plan.weeks.first?.phase == .base)
+        #expect(plan.weeks.contains { $0.phase == .recovery })             // deloads still land
+        #expect((plan.weeks.map(\.runVolumeM).max() ?? 0) <= 30_000 * 2 + 1)
+    }
+
+    @Test func raceWeekPlanIsOneWeek() {
+        // A race in 3 days still gets a real plan: one race-week block of freshness.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 3)
+        inp.raceDistanceM = 5_000
+        inp.raceDate = Calendar.current.date(byAdding: .day, value: 3, to: Date(timeIntervalSinceReferenceDate: 0))
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(plan.weeks.count == 1)
+        #expect(plan.weeks[0].isTaper)
+    }
+
     @Test func ultraPlansGenerateEndToEnd() {
         // "From your first 5K to your first ultra" — a 50K plan periodizes with a 4-week taper,
         // threshold-emphasis quality, and the long run capped at 32 km.

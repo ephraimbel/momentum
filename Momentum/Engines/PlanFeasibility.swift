@@ -218,7 +218,7 @@ struct PlanFeasibility: Sendable {
                 opts.append("Run a \(shorter) now and build to the \(label) later")
             }
             return ("That's a very short runway",
-                    "A safe \(label) build from where you are is about \(weeksNeeded) weeks, and you have \(weeksAvailable). We won't pretend otherwise — pushing to close that gap sharply raises injury risk. Here's the honest way to do this well:",
+                    "A safe \(label) build from where you are is about \(weeksNeeded) weeks, and you have \(weeksAvailable). We won't pretend otherwise — cramming that gap sharply raises injury risk. We'll still coach every day between now and the start line — fresh legs, race-pace touches, a plan that gets you there ready to run the day well — but honestly, here are your best moves:",
                     opts)
         case .noRace:
             return ("A plan that grows with you", "", [])
