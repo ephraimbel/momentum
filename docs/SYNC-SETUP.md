@@ -1,5 +1,11 @@
 # Cloud sync setup — activating Supabase
 
+> **Superseded (2026-07-09, Slice 6):** setup now lives in
+> [SOCIAL-BACKEND-SETUP.md](SOCIAL-BACKEND-SETUP.md) — auth (Sign in with Apple → JWT) is wired,
+> the SQL below moved into versioned migrations (`supabase/migrations/`, applied with
+> `supabase db push`), and the config keys inject from `Secrets.xcconfig`. This file remains as
+> the reference for the sync *contract* (what `SyncEngine` uploads and why).
+
 Phase 4 ships the **sync foundation**: a deterministic, tested upload contract (`SyncEngine`) and a
 PostgREST push (`SyncService`) over URLSession — the same no-SDK approach `AIService`/`CoachChatService`
 already use for Edge Functions. It's a **no-op until configured**, so the app builds/tests without it.
