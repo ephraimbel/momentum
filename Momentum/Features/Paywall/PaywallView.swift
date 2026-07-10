@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// The Pro paywall (PRD §10) — a full-screen, considered moment, not a sheet. **Trust is a
-/// feature:** two plans, the 7-day trial on annual only, renewal terms in plain language before
-/// purchase, one-tap restore. Design language is the app's own: near-monochrome on the white
-/// canvas, Space Grotesk display type, hairline dividers, `Theme.purple` as the single sanctioned
-/// Pro accent — used sparingly, which is what makes it read premium.
+/// The Pro paywall (PRD §10) — full-screen and unmistakably premium (user direction 2026-07-10):
+/// the brand's animated iridescence flows softly through the whole canvas, the wordmark sits
+/// centered up top, and the FULL feature list spells out everything free is missing. **Trust stays
+/// a feature:** two plans, the 7-day trial on annual only, renewal terms in plain language before
+/// purchase, one-tap restore. Reduce Motion freezes the flow; legibility always wins (the wash is
+/// masked down where text lives).
 struct PaywallView: View {
     /// The locked feature that brought the user here — frames the subheadline.
     var feature: Feature = .aiCoach
@@ -22,34 +23,42 @@ struct PaywallView: View {
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
 
-    /// What Pro actually is — one line each, no marketing fluff. Icons stay ink (monochrome rule).
-    private static let benefits: [(String, String, String)] = [
-        ("figure.run", "Your full adaptive plan", "Recalibrated after every run — paces, load, recovery."),
-        ("waveform.path.ecg", "Coaching intelligence", "AI reads, pace reviews, and voice guidance live."),
-        ("shield.lefthalf.filled", "Protective training", "Recovery signals, workload guardrails, the injury loop."),
-        ("chart.xyaxis.line", "Advanced analytics", "Race predictions, trends, zones, and full history."),
+    /// The FULL list — everything Pro unlocks, one honest line each (Feature enum, spelled out).
+    /// Copy is sized to a single row on the smallest supported width — no truncation, ever.
+    private static let features: [(String, String)] = [
+        ("figure.run", "Your full adaptive training plan"),
+        ("brain.head.profile", "Chat with your AI coach"),
+        ("text.bubble", "Post-run AI reads"),
+        ("gauge.with.needle", "Pace insights & session reviews"),
+        ("waveform.path.ecg", "Recovery & injury-aware training"),
+        ("flag.checkered", "Race predictions, 5K to marathon"),
+        ("chart.xyaxis.line", "Advanced analytics & trends"),
+        ("trophy", "Full history & record book"),
+        ("speaker.wave.2", "Voice coaching on guided runs"),
+        ("metronome", "Cadence metronome"),
+        ("applewatch", "Watch premium"),
+        ("square.and.arrow.up", "Every share style"),
     ]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 0) {
                 lockup
-                    .padding(.top, Theme.Space.sm)
+                    .padding(.top, Theme.Space.md)
                 hero
                     .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
-                benefitList
+                featureList
                     .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
                 plans
-                    .padding(.top, Theme.Space.md)
+                    .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
             .padding(.horizontal, Theme.Space.xl)
             .padding(.bottom, Theme.Space.md)
         }
         .scrollIndicators(.hidden)
-        .scrollBounceBehavior(.basedOnSize)
         // Only the CTA is pinned — `safeAreaInset` insets the scroll content above it, so the plans
         // and features are never covered.
         .safeAreaInset(edge: .bottom) {
@@ -60,12 +69,13 @@ struct PaywallView: View {
             .padding(.horizontal, Theme.Space.xl)
             .padding(.top, Theme.Space.sm)
             .background {
-                Theme.background.ignoresSafeArea(edges: .bottom)
+                // Frosted, not opaque — the iridescent flow stays alive beneath the CTA.
+                Rectangle().fill(.ultraThinMaterial).ignoresSafeArea(edges: .bottom)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5).frame(maxHeight: .infinity, alignment: .top)
             }
             .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
         }
-        .background(Theme.background.ignoresSafeArea())
+        .background { flowingBackground }
         .overlay(alignment: .topTrailing) { closeButton }
         .interactiveDismissDisabled(working)
         .onAppear {
@@ -74,15 +84,38 @@ struct PaywallView: View {
         }
     }
 
-    // MARK: Brand lockup
+    // MARK: Background — the brand's holographic wash, alive but quiet
+
+    /// The animated iridescent mesh flows through the whole canvas, masked so it glows at the top
+    /// (behind the lockup + headline), thins where the reading happens, and warms up again under
+    /// the plans. Static under Reduce Motion (IridescentView handles it).
+    private var flowingBackground: some View {
+        ZStack {
+            Theme.background
+            IridescentView(intensity: 0.5)
+                .mask(
+                    LinearGradient(stops: [
+                        .init(color: .white,                 location: 0.00),
+                        .init(color: .white.opacity(0.55),   location: 0.22),
+                        .init(color: .white.opacity(0.16),   location: 0.45),
+                        .init(color: .white.opacity(0.16),   location: 0.72),
+                        .init(color: .white.opacity(0.45),   location: 1.00),
+                    ], startPoint: .top, endPoint: .bottom)
+                )
+        }
+        .ignoresSafeArea()
+    }
+
+    // MARK: Brand lockup — the wordmark, centered
 
     private var lockup: some View {
-        HStack(spacing: 8) {
-            Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 18)
-            Text("PRO").font(.rounded(10, weight: .black)).tracking(1.6).foregroundStyle(.white)
-                .padding(.horizontal, 7).padding(.vertical, 3)
+        VStack(spacing: Theme.Space.sm) {
+            Image("WordmarkBlack").resizable().interpolation(.high).scaledToFit().frame(height: 24)
+            Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(.white)
+                .padding(.horizontal, 10).padding(.vertical, 3.5)
                 .background(Capsule().fill(Theme.purple))
         }
+        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Momentum Pro")
         .accessibilityAddTraits(.isHeader)
@@ -91,39 +124,47 @@ struct PaywallView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("The coach that learns you.")
-                .font(.display(32, weight: .bold)).foregroundStyle(Theme.ink)
-                .lineSpacing(0).fixedSize(horizontal: false, vertical: true)
-            Text("Unlock \(feature.displayName) — and everything Pro.")
+        VStack(spacing: Theme.Space.xs + 2) {
+            Text("The coach that\nlearns you.")
+                .font(.display(34, weight: .bold)).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center).lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Unlock \(feature.displayName) — and everything below.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 
-    // MARK: Benefits — hairline editorial rows, monochrome
+    // MARK: The full feature list — everything free is missing
 
-    private var benefitList: some View {
+    private var featureList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(Self.benefits.enumerated()), id: \.offset) { i, item in
+            ForEach(Array(Self.features.enumerated()), id: \.offset) { i, item in
                 if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.md) {
+                HStack(spacing: Theme.Space.md) {
                     Image(systemName: item.0)
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(item.1)
-                            .font(.rounded(15, weight: .bold)).foregroundStyle(Theme.ink)
-                        Text(item.2)
-                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                            .lineLimit(1).minimumScaleFactor(0.85)
-                    }
-                    Spacer(minLength: 0)
+                        .frame(width: 24)
+                    Text(item.1)
+                        .font(.rounded(14.5, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.82)
+                    Spacer(minLength: Theme.Space.sm)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.purple)
                 }
-                .padding(.vertical, Theme.Space.sm + 2)
+                .padding(.vertical, Theme.Space.sm + 1)
                 .accessibilityElement(children: .combine)
             }
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .background {
+            // A barely-there glass card lifts the list off the wash without deadening it.
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.hairline)
         }
     }
 
@@ -172,7 +213,7 @@ struct PaywallView: View {
             .padding(.vertical, Theme.Space.md)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                shape.fill(Theme.background)
+                shape.fill(.ultraThinMaterial)
                 shape.stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: isSelected ? 1.5 : 1)
             }
             .shadow(color: .black.opacity(isSelected ? 0.07 : 0), radius: 18, y: 8)
