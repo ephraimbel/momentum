@@ -43,13 +43,13 @@ struct PaywallView: View {
                 lockup
                     .padding(.top, Theme.Space.lg)
                 hero
-                    .padding(.top, Theme.Space.md)
+                    .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
                 featureList
-                    .padding(.top, Theme.Space.md)
+                    .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
                 plans
-                    .padding(.top, Theme.Space.md)
+                    .padding(.top, Theme.Space.lg)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
             .padding(.horizontal, Theme.Space.xl)
@@ -86,20 +86,20 @@ struct PaywallView: View {
 
     // MARK: Background — the brand's holographic wash, alive but quiet
 
-    /// The animated iridescent mesh flows through the whole canvas, masked so it glows at the top
-    /// (behind the lockup + headline), thins where the reading happens, and warms up again under
-    /// the plans. Static under Reduce Motion (IridescentView handles it).
+    /// The animated iridescent mesh flows through the whole canvas — alive enough to notice, masked
+    /// so it glows at the top (behind the lockup + headline), stays present behind the reading, and
+    /// warms up again under the plans. Static under Reduce Motion (IridescentView handles it).
     private var flowingBackground: some View {
         ZStack {
             Theme.background
-            IridescentView(intensity: 0.5)
+            IridescentView(intensity: 0.72)
                 .mask(
                     LinearGradient(stops: [
                         .init(color: .white,                 location: 0.00),
-                        .init(color: .white.opacity(0.55),   location: 0.22),
-                        .init(color: .white.opacity(0.16),   location: 0.45),
-                        .init(color: .white.opacity(0.16),   location: 0.72),
-                        .init(color: .white.opacity(0.45),   location: 1.00),
+                        .init(color: .white.opacity(0.70),   location: 0.22),
+                        .init(color: .white.opacity(0.34),   location: 0.45),
+                        .init(color: .white.opacity(0.34),   location: 0.72),
+                        .init(color: .white.opacity(0.60),   location: 1.00),
                     ], startPoint: .top, endPoint: .bottom)
                 )
         }
@@ -113,9 +113,9 @@ struct PaywallView: View {
             // Always the white wordmark — this surface is permanently dark.
             Image("WordmarkWhite")
                 .resizable().interpolation(.high).scaledToFit().frame(height: 22)
-            Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(.white)
+            Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(Color(hex: "0E0E12"))
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
-                .background(Capsule().fill(Theme.purple))
+                .background(Capsule().fill(Theme.route))
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
@@ -126,15 +126,15 @@ struct PaywallView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(spacing: Theme.Space.xs) {
-            Text("The coach that learns you.")
-                .font(.display(24, weight: .bold)).foregroundStyle(Theme.ink)
+        VStack(spacing: Theme.Space.sm) {
+            Text("Every run, coached.")
+                .font(.display(32, weight: .bold)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
                 .lineLimit(1).minimumScaleFactor(0.8)
-            Text("Unlock \(feature.displayName) — and everything below.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            Text("Built around your body, your goal, your life.")
+                .font(.rounded(Theme.FontSize.caption + 1, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1).minimumScaleFactor(0.85)
         }
         .frame(maxWidth: .infinity)
     }
@@ -154,9 +154,9 @@ struct PaywallView: View {
                         .lineLimit(1).minimumScaleFactor(0.82)
                     Spacer(minLength: Theme.Space.sm)
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.purple)
+                        .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.route)
                 }
-                .padding(.vertical, Theme.Space.sm)
+                .padding(.vertical, Theme.Space.sm + 1)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -193,9 +193,9 @@ struct PaywallView: View {
                         .foregroundStyle(Theme.inkSecondary)
                     if p.isAnnual, p.trialDays > 0 {
                         Text("\(p.trialDays)-DAY FREE TRIAL")
-                            .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(.white)
+                            .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Color(hex: "0E0E12"))
                             .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Capsule().fill(Theme.purple))
+                            .background(Capsule().fill(Theme.route))
                     }
                     Spacer()
                     checkmark(on: isSelected)
@@ -213,7 +213,7 @@ struct PaywallView: View {
                 }
             }
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.vertical, Theme.Space.sm + 2)
+            .padding(.vertical, Theme.Space.sm + 3)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 shape.fill(.ultraThinMaterial)
