@@ -125,6 +125,33 @@ final class AuthFlowsUITests: XCTestCase {
         sleep(6)   // let the fire-and-forget claim land server-side before the orchestrator checks
     }
 
+    // 4 — in-app account deletion (App Store 5.1.1(v)): sign in, delete from Settings,
+    // land back on the gate. The orchestrator verifies the server side is empty afterwards.
+    func test4_deleteAccount() throws {
+        let app = launchAtGate()
+        signIn(app, email: email, password: pass)
+        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30), "sign-in should enter the app")
+
+        app.tabBars.buttons["Profile"].tap()
+        app.buttons["Settings"].firstMatch.tap()
+        let deleteRow = app.buttons["Delete account"]
+        XCTAssertTrue(deleteRow.waitForExistence(timeout: 10))
+        scrollTo(deleteRow, in: app)
+        attach(app, "delete-account-row")
+        deleteRow.tap()
+
+        // The confirmation dialog spells out exactly what goes and what stays.
+        let confirm = app.buttons["Delete my account"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation dialog should appear")
+        attach(app, "delete-account-dialog")
+        confirm.tap()
+
+        // Server delete + local sign-out → back at the gate.
+        XCTAssertTrue(app.buttons["Get started"].waitForExistence(timeout: 30),
+                      "account deletion should land back on the gate")
+        attach(app, "post-delete-gate")
+    }
+
     // MARK: helpers
 
     /// Fill the email/password boxes without submitting, clearing any prior values.

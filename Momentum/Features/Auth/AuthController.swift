@@ -317,6 +317,42 @@ final class AuthController {
         } catch { return false }
     }
 
+    /// Permanently delete the account server-side (App Store 5.1.1(v)): photos and avatar via
+    /// the Storage API (SQL deletes on storage are forbidden), then one RPC whose auth.users
+    /// delete cascades through every table — workouts, profile, posts, follows, comments —
+    /// and frees the @handle. Local data stays on this device (offline-first: the athlete
+    /// keeps their history, like a guest). Returns false with the account untouched on failure.
+    func deleteAccount() async -> Bool {
+        guard let client = SupabaseClientProvider.client,
+              let session = try? await client.auth.session else { return false }
+        let uid = session.user.id.uuidString.lowercased()
+        // Best-effort blob removal as the owner. Post photos live at {uid}/{postId}/n.jpg —
+        // a fixed two-level walk. Failures here don't block the delete: once the account row
+        // is gone, every storage policy resolves false and the blobs are unreachable.
+        _ = try? await client.storage.from("avatars").remove(paths: ["\(uid)/avatar.jpg"])
+        if let folders = try? await client.storage.from("post-photos").list(path: uid) {
+            for folder in folders {
+                if let files = try? await client.storage.from("post-photos").list(path: "\(uid)/\(folder.name)"),
+                   !files.isEmpty {
+                    _ = try? await client.storage.from("post-photos")
+                        .remove(paths: files.map { "\(uid)/\(folder.name)/\($0.name)" })
+                }
+            }
+        }
+        do {
+            try await client.rpc("delete_my_account").execute()
+        } catch {
+            authLog.error("deleteAccount RPC failed: \(error, privacy: .public)")
+            return false
+        }
+        authLog.info("account deleted server-side")
+        signOut()   // the server session is already void; this clears the local identity
+        // A future account on this device is a genuine first cloud session again — the
+        // re-mark/re-claim hook must refire for it.
+        UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
+        return true
+    }
+
     /// Persist local identity off a Supabase email session (mirrors the Google path: prefixed id
     /// so `refresh()` skips the Apple credential check).
     private func adoptEmailSession(_ session: Session) {

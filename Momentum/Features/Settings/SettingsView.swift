@@ -20,6 +20,9 @@ struct SettingsView: View {
     @State private var importingHealth = false
     @State private var importMessage: String?
     @State private var showingSignInOptions = false   // guest upgrade via Google/email (the gate's page)
+    @State private var confirmDeleteAccount = false
+    @State private var deletingAccount = false
+    @State private var deleteAccountFailed = false
     @State private var showCoachChat = false
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
@@ -213,10 +216,46 @@ struct SettingsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            Divider().overlay(Theme.hairline)
+            // App Store 5.1.1(v): account deletion, in-app, no support-ticket detour.
+            Button { confirmDeleteAccount = true } label: {
+                HStack(spacing: Theme.Space.md) {
+                    if deletingAccount {
+                        ProgressView().tint(.red).frame(width: 24)
+                    } else {
+                        Image(systemName: "person.crop.circle.badge.xmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(.red).frame(width: 24)
+                    }
+                    Text("Delete account").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(.red)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(deletingAccount)
+            if deleteAccountFailed {
+                Text("Couldn't delete the account — check your connection and try again.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .padding(.bottom, 8)
+            }
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.vertical, Theme.Space.xs)
         .background(card)
+        .confirmationDialog("Delete your account?", isPresented: $confirmDeleteAccount, titleVisibility: .visible) {
+            Button("Delete my account", role: .destructive) {
+                Task {
+                    deletingAccount = true
+                    deleteAccountFailed = false
+                    let ok = await auth.deleteAccount()
+                    deletingAccount = false
+                    deleteAccountFailed = !ok
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes your account, @handle, posts, and backups from momentum's servers. Workouts saved on this device stay here.")
+        }
     }
 
     // MARK: Data & privacy
