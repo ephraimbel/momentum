@@ -226,7 +226,13 @@ struct SettingsView: View {
     private var proCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             HStack(spacing: Theme.Space.md) {
-                IridescentOrb(size: 36)
+                // The app icon (glass runner), not the orb — this row is about the product you
+                // bought, so it wears the product's face.
+                Image("BrandIcon")
+                    .resizable().interpolation(.high).scaledToFit()
+                    .frame(width: 40, height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Momentum Pro").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
                     Text("Active").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
