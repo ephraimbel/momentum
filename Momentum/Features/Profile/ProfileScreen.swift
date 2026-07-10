@@ -37,7 +37,6 @@ struct ProfileScreen: View {
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
                 Group {
                     identity
-                    headlineStats
                     if let profile, !profile.bio.isEmpty {
                         Text(profile.bio)
                             .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
@@ -83,15 +82,16 @@ struct ProfileScreen: View {
 
     // MARK: Header (custom — matches Progress/World)
 
+    /// Quiet chrome only — no screen title. The athlete's name IS the page title; a "Profile"
+    /// headline above it just said the same thing twice.
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+        HStack(spacing: Theme.Space.md) {
             if showsBackButton {
                 Button { dismiss() } label: {
                     Image(systemName: "chevron.left").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
                 }
                 .accessibilityLabel("Back")
             }
-            Text("Profile").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
             Button { editing = true } label: {
                 Text("Edit").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -107,28 +107,68 @@ struct ProfileScreen: View {
             }
         }
         .padding(.horizontal, Theme.Space.md)
-        .padding(.top, Theme.Space.sm).padding(.bottom, Theme.Space.sm)
+        .padding(.top, Theme.Space.xs).padding(.bottom, Theme.Space.xs)
         .background(Theme.background)
     }
 
     // MARK: Identity
 
     private var identity: some View {
-        VStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: profile?.avatarData, name: displayName, size: 72)
+        VStack(spacing: Theme.Space.md) {
+            AvatarView(photo: profile?.avatarData, name: displayName, size: 76)
             VStack(spacing: 3) {
                 Text(displayName).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-                if let handle = handleText {
-                    Text(handle).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                if let location = profile.flatMap(SocialPrivacy.publicLocation) {
-                    Label(location, systemImage: "mappin.and.ellipse")
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                if handleText != nil || profile.flatMap(SocialPrivacy.publicLocation) != nil {
+                    HStack(spacing: 6) {
+                        if let handle = handleText {
+                            Text(handle).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        if handleText != nil, profile.flatMap(SocialPrivacy.publicLocation) != nil {
+                            Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
+                        }
+                        if let location = profile.flatMap(SocialPrivacy.publicLocation) {
+                            Label(location, systemImage: "mappin.and.ellipse")
+                                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        }
+                    }
                 }
             }
+            socialTrio
         }
         .frame(maxWidth: .infinity)
     }
+
+    /// The platform-standard counts row (posts · followers · following), momentum-styled: bare
+    /// numbers on the canvas, hairline-divided — no boxed card competing with the grid below. Every
+    /// workout is a post here; followers stay honest (the real backend count, never fabricated).
+    private var socialTrio: some View {
+        HStack(spacing: 0) {
+            trioCell("\(stats.totalWorkouts)", "Posts")
+            trioDivider
+            trioCell("\(followerCount)", "Followers")
+            trioDivider
+            trioCell("\(follows.count)", "Following")
+        }
+        .padding(.horizontal, Theme.Space.xl)
+    }
+
+    private func trioCell(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var trioDivider: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 28)
+    }
+
+    /// Honest presence: no fabricated audience. Until the social backend reports real followers,
+    /// this is simply zero.
+    private var followerCount: Int { 0 }
 
     private var displayName: String {
         let name = profile?.displayName.trimmingCharacters(in: .whitespaces) ?? ""
@@ -137,18 +177,6 @@ struct ProfileScreen: View {
     private var handleText: String? {
         guard let h = profile?.handle, !h.isEmpty else { return nil }
         return "@\(h)"
-    }
-
-    // MARK: Headline counts
-
-    private var headlineStats: some View {
-        StatGrid(cells: [
-            .init(value: "\(stats.totalWorkouts)", label: "Workouts"),
-            .init(value: "\(stats.currentStreak)", label: "Day streak"),
-            .init(value: "\(follows.count)", label: "Following"),
-        ], valueSize: 20)
-        .padding(.vertical, Theme.Space.md)
-        .background(card)
     }
 
     // MARK: Privacy chip

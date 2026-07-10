@@ -22,7 +22,7 @@ struct WorkoutTileMedia: View {
         case .muscle(let activation):
             muscleMedia(activation)
         case .snapshot(let ui):
-            Image(uiImage: ui).resizable().scaledToFill()
+            snapshotMedia(ui)
         case .route(let coords):
             routeMedia(coords)
         case .glyph:
@@ -61,6 +61,24 @@ struct WorkoutTileMedia: View {
     }
 
     // MARK: Renderers
+
+    /// The saved route snapshot, shown WHOLE. Snapshots are landscape (640×360) and tiles are
+    /// portrait (3:4) — `scaledToFill` cropped most of the route away, leaving a meaningless sliver
+    /// of line. Fit shows the full route exactly as it was framed when the run was saved; the same
+    /// image, blurred, fills the letterbox so the tile still reads edge-to-edge.
+    @ViewBuilder
+    private func snapshotMedia(_ ui: UIImage) -> some View {
+        if style == .immersive {
+            Image(uiImage: ui).resizable().scaledToFill()
+        } else {
+            ZStack {
+                Image(uiImage: ui).resizable().scaledToFill()
+                    .blur(radius: 14, opaque: true)
+                    .overlay(Theme.background.opacity(0.25))
+                Image(uiImage: ui).resizable().scaledToFit()
+            }
+        }
+    }
 
     @ViewBuilder
     private func muscleMedia(_ activation: [MuscleGroup: Double]) -> some View {
