@@ -266,7 +266,7 @@ function DeepDives() {
 
         <div className="duo flip">
           <div className="duo-media">
-            <PhoneFrame small src="/shots/hr-zones.png" alt="Heart-rate chart and time-in-zones from a run" />
+            <PhoneFrame small src="/shots/progress.png" alt="Progress trends: estimated VO2 max gauge and personalized heart-rate zones" />
           </div>
           <div>
             <p className="eyebrow">Your body, measured</p>

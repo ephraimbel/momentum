@@ -18,12 +18,26 @@ final class WebsiteShotsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo"]
         app.launch()
+        // A previous (crashed) run can leave the interrupted-workout marker — clear the recovery
+        // prompt so it never photobombs a marketing shot.
+        let discard = app.buttons["Discard"]
+        if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
         sleep(6)   // map tiles
         dump(app, "hero-today")
 
         app.buttons["Plan"].firstMatch.tap()
         sleep(3)
         dump(app, "plan")
+
+        // Profile grid — the athlete's wall of route/muscle art tiles.
+        app.buttons["Profile"].firstMatch.tap()
+        sleep(4)   // Mapbox route snapshots render into the tiles
+        dump(app, "profile-grid")
+
+        // Progress → Trends (fitness hero, zones, charts).
+        app.buttons["Progress"].firstMatch.tap()
+        sleep(3)
+        dump(app, "progress")
 
         app.buttons["Profile"].firstMatch.tap()
         let gear = app.buttons["Settings"].firstMatch

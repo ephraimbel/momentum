@@ -364,49 +364,130 @@ a {
   opacity: 0.4;
 }
 
-/* ——— phone frame ——— */
+/* ——— phone frame (realistic: titanium band → bezel → screen) ——— */
 
 .phone {
   position: relative;
   width: 100%;
   max-width: 340px;
   margin: 0 auto;
-  border-radius: 54px;
-  background: #0b0b0e;
-  padding: 10px;
+  border-radius: 58px;
+  padding: 3px;
+  /* brushed-titanium band: light catches top-left and bottom-right edges */
+  background: linear-gradient(
+    145deg,
+    #f2f3f7 0%,
+    #c7c9d1 16%,
+    #84868d 38%,
+    #5c5e64 50%,
+    #94969e 64%,
+    #d9dbe2 84%,
+    #f4f5f9 100%
+  );
   box-shadow:
-    0 60px 120px -40px rgba(14, 14, 18, 0.42),
-    0 24px 48px -24px rgba(14, 14, 18, 0.28),
-    inset 0 0 0 1.5px rgba(255, 255, 255, 0.12);
+    0 70px 130px -45px rgba(14, 14, 18, 0.45),
+    0 28px 56px -28px rgba(14, 14, 18, 0.3);
 }
 
-.phone::after {
-  /* dynamic island */
-  content: "";
-  position: absolute;
-  top: 22px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 96px;
-  height: 28px;
-  border-radius: 20px;
-  background: #0b0b0e;
-  z-index: 2;
+.phone-body {
+  border-radius: 55px;
+  background: #0a0a0d;
+  padding: 11px;
+  box-shadow: inset 0 0 3px rgba(255, 255, 255, 0.08);
 }
 
 .phone-screen {
+  position: relative;
   border-radius: 44px;
   overflow: hidden;
-  background: #fff;
+  background: #000;
 }
 
 .phone-screen img {
   width: 100%;
   height: auto;
+  display: block;
+}
+
+/* dynamic island — sits over the capture's own status area */
+.phone-island {
+  position: absolute;
+  top: 11px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 30%;
+  height: 27px;
+  border-radius: 18px;
+  background: #000;
+  z-index: 2;
+}
+
+/* glass: one soft diagonal sheen, never loud */
+.phone-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 44px;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0.05) 14%,
+    rgba(255, 255, 255, 0) 32%
+  );
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* side buttons, cut from the same titanium */
+.phone-btn {
+  position: absolute;
+  width: 3.5px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #babcc4, #7c7e85);
+}
+
+.pb-action {
+  left: -3px;
+  top: 17%;
+  height: 22px;
+}
+
+.pb-volup {
+  left: -3px;
+  top: 25%;
+  height: 42px;
+}
+
+.pb-voldn {
+  left: -3px;
+  top: 32.5%;
+  height: 42px;
+}
+
+.pb-power {
+  right: -3px;
+  top: 26%;
+  height: 64px;
+  background: linear-gradient(270deg, #babcc4, #7c7e85);
 }
 
 .phone-sm {
   max-width: 300px;
+  border-radius: 52px;
+}
+
+.phone-sm .phone-body {
+  border-radius: 49px;
+  padding: 10px;
+}
+
+.phone-sm .phone-screen,
+.phone-sm .phone-gloss {
+  border-radius: 39px;
+}
+
+.phone-sm .phone-island {
+  top: 10px;
+  height: 24px;
 }
 
 /* ——— proof band (engineering truths, tabular) ——— */
