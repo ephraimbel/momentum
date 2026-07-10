@@ -75,7 +75,7 @@ function Hero() {
               See how it works
             </a>
           </div>
-          <p className="hero-note">Free to start · your first adaptive week on us</p>
+          <p className="hero-note">Track free forever · Pro comes with a 7-day free trial</p>
           <div className="devices" aria-label="Works with">
             <span>iPhone</span>
             <span>Apple Watch</span>
@@ -362,12 +362,14 @@ function Pricing() {
           </Reveal>
           <Reveal delay={90}>
             <div className="plan plan-pro">
-              <span className="plan-badge">Most popular</span>
+              <span className="plan-badge">7-day free trial</span>
               <h3>momentum Pro</h3>
               <div className="plan-price">
-                $79.99 <small>/ year</small>
+                $119.99 <small>/ year</small>
               </div>
-              <p className="plan-cycle">or $11.99/month · cancel anytime</p>
+              <p className="plan-cycle">
+                7 days free, then $119.99/year (about $10/month) · or $19.99/month, cancel anytime
+              </p>
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
                 <li><span className="tick" aria-hidden />AI coach, post-run reads &amp; voice guidance</li>
@@ -375,7 +377,7 @@ function Pricing() {
                 <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
                 <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
               </ul>
-              <a className="btn btn-ink" href="#download">Start your free week</a>
+              <a className="btn btn-ink" href="#download">Start your 7-day free trial</a>
             </div>
           </Reveal>
         </div>
@@ -485,7 +487,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Yes — tracking every run, your training history, and your first adaptive week are free. momentum Pro unlocks the full adaptive plan, the AI coach, voice guidance, and advanced analytics.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $119.99/year with a 7-day free trial, or $19.99/month.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
@@ -541,7 +543,7 @@ function FinalCTA() {
           keep <span className="iri-text">moving.</span>
         </h2>
         <p className="lede center">
-          Your first week of adaptive training is free. Bring a goal — momentum will bring the plan.
+          Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
         </p>
         <a className="btn btn-ink" href="#">
            Download on the App Store
