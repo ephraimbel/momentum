@@ -175,10 +175,106 @@ final class AuthController {
         }
     }
 
+    // MARK: Email + password (the classic boxes on the sign-in page)
+
+    /// Plain-words error for the gate's inline message; nil = success.
+    enum EmailAuthOutcome: Equatable {
+        case success
+        case failure(String)
+    }
+
+    /// Sign IN with email + password. The @handle stays the social username — email is only
+    /// how the account authenticates (standard social-app split).
+    func signInWithEmail(_ email: String, password: String) async -> EmailAuthOutcome {
+        guard let client = SupabaseClientProvider.client else {
+            return .failure("Sign-in isn't available offline.")
+        }
+        do {
+            let session = try await client.auth.signIn(email: email, password: password)
+            adoptEmailSession(session)
+            return .success
+        } catch {
+            return .failure("That email and password don't match an account.")
+        }
+    }
+
+    /// Sign UP with email + password, then straight into the app (session is live immediately).
+    func signUpWithEmail(_ email: String, password: String) async -> EmailAuthOutcome {
+        guard let client = SupabaseClientProvider.client else {
+            return .failure("Sign-up isn't available offline.")
+        }
+        do {
+            let response = try await client.auth.signUp(email: email, password: password)
+            guard case .session(let session) = response else {
+                // Only possible if email confirmations get turned on later.
+                return .failure("Check your email to confirm your account, then sign in.")
+            }
+            adoptEmailSession(session)
+            return .success
+        } catch {
+            let text = (error as? AuthError)?.message ?? ""
+            if text.localizedCaseInsensitiveContains("already registered") {
+                return .failure("That email already has an account — sign in instead.")
+            }
+            if text.localizedCaseInsensitiveContains("password") {
+                return .failure("Passwords need at least 8 characters.")
+            }
+            return .failure("Couldn't create the account — check the email and try again.")
+        }
+    }
+
+    /// Send the password-reset email. The link comes back into the app via momentum://auth-callback,
+    /// which signs them in and prompts for a new password (see `handleAuthCallback`).
+    func sendPasswordReset(to email: String) async -> Bool {
+        guard let client = SupabaseClientProvider.client, !email.isEmpty else { return false }
+        do {
+            try await client.auth.resetPasswordForEmail(email, redirectTo: URL(string: "momentum://auth-callback"))
+            return true
+        } catch { return false }
+    }
+
+    /// True while a reset-link session wants a new password — RootView presents the sheet.
+    var needsNewPassword = false
+
+    /// Handle the momentum://auth-callback deep link (password-reset emails land here; the OAuth
+    /// sheet handles its own callback internally). Creates the session and, for recovery links,
+    /// raises the set-new-password prompt.
+    func handleAuthCallback(_ url: URL) {
+        guard let client = SupabaseClientProvider.client,
+              url.absoluteString.contains("auth-callback") else { return }
+        Task {
+            guard let session = try? await client.auth.session(from: url) else { return }
+            adoptEmailSession(session)
+            if url.absoluteString.contains("type=recovery") { needsNewPassword = true }
+        }
+    }
+
+    /// Set a new password on the live session (the reset sheet's save).
+    func updatePassword(_ password: String) async -> Bool {
+        guard let client = SupabaseClientProvider.client else { return false }
+        do {
+            _ = try await client.auth.update(user: UserAttributes(password: password))
+            return true
+        } catch { return false }
+    }
+
+    /// Persist local identity off a Supabase email session (mirrors the Google path: prefixed id
+    /// so `refresh()` skips the Apple credential check).
+    private func adoptEmailSession(_ session: Session) {
+        userID = "email:\(session.user.id.uuidString)"
+        UserDefaults.standard.set(userID, forKey: Self.userIDKey)
+        if let mail = session.user.email, !mail.isEmpty {
+            self.email = mail
+            UserDefaults.standard.set(mail, forKey: Self.emailKey)
+        }
+        markCloudSession()
+        Haptics.success()
+    }
+
     /// On launch, confirm the Apple credential is still valid; sign out if it was revoked. Skips the
-    /// demo + guest + Google sessions, which have no Apple credential to validate. Also restores the
-    /// Supabase session from the Keychain (refreshing the JWT if stale) so RLS'd calls work from
-    /// cold launch.
+    /// demo + guest + Google/email sessions, which have no Apple credential to validate. Also
+    /// restores the Supabase session from the Keychain (refreshing the JWT if stale) so RLS'd calls
+    /// work from cold launch.
     func refresh() {
         guard let userID, userID != "demo-user", userID != Self.guestID else { return }
         if let client = SupabaseClientProvider.client {
@@ -186,7 +282,7 @@ final class AuthController {
                 if (try? await client.auth.session) != nil { await self?.markCloudSession() }
             }
         }
-        guard !userID.hasPrefix("google:") else { return }   // Google sessions live in the Keychain
+        guard !userID.hasPrefix("google:"), !userID.hasPrefix("email:") else { return }   // Keychain sessions
         ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { [weak self] state, _ in
             guard state == .revoked || state == .notFound else { return }
             Task { @MainActor in self?.signOut() }

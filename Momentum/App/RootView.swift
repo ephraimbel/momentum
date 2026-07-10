@@ -47,6 +47,7 @@ struct RootView: View {
 
     private var mainBody: some View {
         @Bindable var paywall = paywall
+        @Bindable var auth = auth
         return Group {
             if !auth.isSignedIn {
                 // Login gate (PRD §8.11): Sign in with Apple before anything else.
@@ -56,9 +57,6 @@ struct RootView: View {
                     // Until onboarding is done, show a clean canvas — don't build the Today map yet,
                     // so it can't trigger a location prompt "up front" (PRD §4.1, §11 privacy).
                     if showOnboarding { Theme.background.ignoresSafeArea() } else { tabs }
-                }
-                .fullScreenCover(isPresented: $showOnboarding) {
-                    OnboardingFlow { showOnboarding = false }
                 }
                 // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
                 // Full screen (not a sheet): the paywall is a considered, premium moment — it owns
@@ -101,6 +99,16 @@ struct RootView: View {
                 CardioSaveView(workoutId: presented.id) { recoverySave = nil }
             }
         }
+        // Onboarding presents from THIS always-installed level, not from the signed-in branch:
+        // sign-in flips the branch and raises this flag in the same update, and a cover attached
+        // to a view being inserted that instant can silently fail to present (blank canvas).
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingFlow { showOnboarding = false }
+        }
+        // Supabase auth links (momentum://auth-callback) — today that's the password-recovery
+        // email; the link signs the athlete in, then `needsNewPassword` raises the sheet below.
+        .onOpenURL { auth.handleAuthCallback($0) }
+        .sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
             // One check per cold launch (onAppear re-fires on cover dismissals, when the marker may

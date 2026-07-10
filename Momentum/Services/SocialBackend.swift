@@ -1,6 +1,11 @@
 import Foundation
 import SwiftData
 import Supabase
+import os
+
+/// Quiet breadcrumbs for the best-effort paths — "silently kept local" and "silently lost" look
+/// identical without them (this is exactly how a swallowed claim failure hid during the E2E).
+private let socialLog = Logger(subsystem: "com.momentum.app", category: "social")
 
 /// The social network transport (docs/SOCIAL-BACKEND-SETUP.md). Everything is best-effort and
 /// offline-first: the UserDefaults stores remain the UI's source of truth; this pushes their
@@ -73,7 +78,10 @@ extension SocialBackending {
     /// handle claimed while they were offline) keeps the local handle and posts one deduped
     /// inbox notification pointing at Edit Profile — no-shame, no blocking.
     func claimProfile(_ profile: UserProfile, in context: ModelContext) async {
-        guard await isAvailable else { return }
+        guard await isAvailable else {
+            socialLog.info("claimProfile skipped: backend unavailable (guest or unconfigured)")
+            return
+        }
         var dto = SocialSyncEngine.profileDTO(for: profile)
         guard !dto.handle.isEmpty || !dto.displayName.isEmpty else { return }
         if let avatar = profile.avatarData, let path = await uploadAvatar(jpeg: avatar) {
@@ -81,6 +89,7 @@ extension SocialBackending {
         }
         do {
             try await pushProfile(dto)
+            socialLog.info("claimProfile: pushed @\(dto.handle, privacy: .public)")
         } catch SocialBackendError.handleTaken {
             AppNotification.post(
                 kind: .system,
@@ -92,6 +101,7 @@ extension SocialBackending {
             try? context.save()
         } catch {
             // Offline/transient — the profile stays local and re-claims on the next edit/sign-in.
+            socialLog.error("claimProfile push failed: \(error, privacy: .public)")
         }
     }
 

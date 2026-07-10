@@ -15,6 +15,7 @@ enum DemoSeed {
 
         let profile = UserProfile()
         profile.displayName = "Alex Rivera"
+        profile.handle = "alexrivera"   // display name and @handle are distinct (username vs name)
         profile.disciplines = ["running", "strength"]
         profile.goal = .buildMuscle
         profile.daysPerWeek = 4

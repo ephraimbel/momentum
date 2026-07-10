@@ -10,8 +10,31 @@ import AuthenticationServices
 struct SignInView: View {
     @Environment(AuthController.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var showingSignIn = false
+    @State private var showingSignIn = {
+        #if DEBUG
+        // Sim verification deep links: land straight on the sign-in beat (taps are unreliable).
+        ProcessInfo.processInfo.arguments.contains("--signin-page")
+            || ProcessInfo.processInfo.arguments.contains("--signin-create")
+        #else
+        false
+        #endif
+    }()
     @State private var googleInFlight = false
+
+    // Email + password (the classic boxes; @handle stays the social username — email only signs in)
+    @State private var email = ""
+    @State private var password = ""
+    @State private var isCreatingAccount = {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--signin-create")
+        #else
+        false
+        #endif
+    }()
+    @State private var emailInFlight = false
+    @State private var authMessage: String?
+    @FocusState private var focusedField: Field?
+    private enum Field { case email, password }
 
     var body: some View {
         ZStack {
@@ -110,85 +133,247 @@ struct SignInView: View {
             .accessibilityLabel("Back")
             .padding(.leading, Theme.Space.sm)
 
-            VStack(spacing: 0) {
-                Spacer(minLength: Theme.Space.xxl)
+            // Scrolls so the whole column stays reachable with the keyboard up on small screens.
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    BrandMark(size: 88)
+                        .elevation(Theme.Elevation.float)
+                        .padding(.top, Theme.Space.xxl)
 
-                BrandMark(size: 96)
-                    .elevation(Theme.Elevation.float)
-
-                VStack(spacing: Theme.Space.xs) {
-                    Text("Welcome to momentum")
-                        .font(.display(26, weight: .black))
-                        .foregroundStyle(Theme.ink)
-                    Text("Back up your training, claim your @handle, and join the community.")
-                        .font(.rounded(Theme.FontSize.body, weight: .medium))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.top, Theme.Space.lg)
-
-                VStack(spacing: Theme.Space.sm) {
-                    SignInWithAppleButton(.signIn) { request in
-                        auth.prepareAppleSignIn(request)
-                    } onCompletion: { result in
-                        if case .success(let authResult) = result,
-                           let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
-                            auth.signIn(credential: credential)
-                        }
+                    VStack(spacing: Theme.Space.xs) {
+                        Text(isCreatingAccount ? "Create your account" : "Welcome to momentum")
+                            .font(.display(26, weight: .black))
+                            .foregroundStyle(Theme.ink)
+                            .contentTransition(.opacity)
+                        Text("Back up your training, claim your @handle, and join the community.")
+                            .font(.rounded(Theme.FontSize.body, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .multilineTextAlignment(.center)
                     }
-                    .signInWithAppleButtonStyle(.black)
-                    .frame(height: 52)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .padding(.top, Theme.Space.lg)
 
-                    Button {
-                        guard !googleInFlight else { return }
-                        Haptics.light()
-                        googleInFlight = true
-                        Task {
-                            _ = await auth.signInWithGoogle()
-                            googleInFlight = false
+                    // The classic boxes: email + password, with sign-in ↔ create-account toggle.
+                    VStack(spacing: Theme.Space.sm) {
+                        field {
+                            TextField("Email", text: $email)
+                                .keyboardType(.emailAddress)
+                                .textContentType(.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .email)
+                                .submitLabel(.next)
+                                .onSubmit { focusedField = .password }
                         }
-                    } label: {
-                        HStack(spacing: Theme.Space.sm) {
-                            if googleInFlight {
-                                ProgressView().tint(Theme.ink)
-                            } else {
-                                Text("G")
-                                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                        field {
+                            Group {
+                                if Self.uiTestPlainPassword {
+                                    // UI tests: a plain field so iOS's password AutoFill (the
+                                    // "Use Strong Password?" takeover and the post-signup "Save
+                                    // Password?" panel, both untappable from XCUITest) never
+                                    // engages. Real athletes always get the SecureField below.
+                                    TextField("Password", text: $password)
+                                        .textInputAutocapitalization(.never)
+                                        .autocorrectionDisabled()
+                                } else {
+                                    SecureField("Password", text: $password)
+                                        .textContentType(isCreatingAccount ? .newPassword : .password)
+                                }
+                            }
+                            .focused($focusedField, equals: .password)
+                            .submitLabel(.go)
+                            .onSubmit { submitEmailAuth() }
+                        }
+                        if let authMessage {
+                            Text(authMessage)
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                                .foregroundStyle(Theme.inkSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .transition(.opacity)
+                        }
+                        Button {
+                            submitEmailAuth()
+                        } label: {
+                            Group {
+                                if emailInFlight {
+                                    ProgressView().tint(Theme.background)
+                                } else {
+                                    Text(isCreatingAccount ? "Create account" : "Sign in")
+                                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                                }
+                            }
+                            .foregroundStyle(Theme.background)
+                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(emailInFlight || email.isEmpty || password.isEmpty)
+                        .opacity(email.isEmpty || password.isEmpty ? 0.5 : 1)
+
+                        HStack {
+                            Button {
+                                Haptics.light()
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    isCreatingAccount.toggle()
+                                    authMessage = nil
+                                }
+                            } label: {
+                                Text(isCreatingAccount ? "Have an account? Sign in" : "New here? Create an account")
+                                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                                     .foregroundStyle(Theme.ink)
                             }
-                            Text("Continue with Google")
-                                .font(.system(size: 19, weight: .medium))
-                                .foregroundStyle(Theme.ink)
+                            .buttonStyle(.plain)
+                            Spacer(minLength: 0)
+                            if !isCreatingAccount {
+                                Button {
+                                    Haptics.light()
+                                    sendReset()
+                                } label: {
+                                    Text("Forgot password?")
+                                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                                        .foregroundStyle(Theme.inkSecondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
-                        .frame(maxWidth: .infinity).frame(height: 52)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+                        .padding(.top, 2)
+                    }
+                    .padding(.top, Theme.Space.xl)
+
+                    HStack(spacing: Theme.Space.sm) {
+                        Rectangle().fill(Theme.hairline).frame(height: 1)
+                        Text("or")
+                            .font(.rounded(Theme.FontSize.label, weight: .semibold))
+                            .foregroundStyle(Theme.inkTertiary)
+                        Rectangle().fill(Theme.hairline).frame(height: 1)
+                    }
+                    .padding(.vertical, Theme.Space.md)
+
+                    VStack(spacing: Theme.Space.sm) {
+                        SignInWithAppleButton(.signIn) { request in
+                            auth.prepareAppleSignIn(request)
+                        } onCompletion: { result in
+                            if case .success(let authResult) = result,
+                               let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
+                                auth.signIn(credential: credential)
+                            }
+                        }
+                        .signInWithAppleButtonStyle(.black)
+                        .frame(height: 52)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+
+                        Button {
+                            guard !googleInFlight else { return }
+                            Haptics.light()
+                            googleInFlight = true
+                            Task {
+                                _ = await auth.signInWithGoogle()
+                                googleInFlight = false
+                            }
+                        } label: {
+                            HStack(spacing: Theme.Space.sm) {
+                                if googleInFlight {
+                                    ProgressView().tint(Theme.ink)
+                                } else {
+                                    Text("G")
+                                        .font(.system(size: 19, weight: .bold, design: .rounded))
+                                        .foregroundStyle(Theme.ink)
+                                }
+                                Text("Continue with Google")
+                                    .font(.system(size: 19, weight: .medium))
+                                    .foregroundStyle(Theme.ink)
+                            }
+                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(googleInFlight)
+                        .accessibilityLabel("Continue with Google")
+                    }
+
+                    // The guest door stays open (guest-first principle) — quiet, never blocking.
+                    Button {
+                        Haptics.light()
+                        auth.continueAsGuest()
+                    } label: {
+                        Text("Continue without an account")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .frame(height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(googleInFlight)
-                    .accessibilityLabel("Continue with Google")
+                    .padding(.top, Theme.Space.sm)
+                    .padding(.bottom, Theme.Space.xl)
                 }
-                .padding(.top, Theme.Space.xl)
-
-                // The guest door stays open (guest-first principle) — quiet, never blocking.
-                Button {
-                    Haptics.light()
-                    auth.continueAsGuest()
-                } label: {
-                    Text("Continue without an account")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .frame(height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.top, Theme.Space.md)
-
-                Spacer()
-                Spacer()
+                .padding(.horizontal, Theme.Space.xl)
             }
-            .padding(.horizontal, Theme.Space.xl)
+            .scrollDismissesKeyboard(.interactively)
+        }
+    }
+
+    /// UI-test escape hatch (--uitest-password): even `.oneTimeCode` content types still trip
+    /// iOS's save-password heuristics intermittently, so tests swap in a plain TextField.
+    private static var uiTestPlainPassword: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--uitest-password")
+        #else
+        false
+        #endif
+    }
+
+    /// The boxed text-field chrome shared by the email and password inputs.
+    private func field<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .font(.rounded(Theme.FontSize.body, weight: .medium))
+            .foregroundStyle(Theme.ink)
+            .frame(height: 52)
+            .padding(.horizontal, Theme.Space.md)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+    }
+
+    private func submitEmailAuth() {
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !emailInFlight, !address.isEmpty, !password.isEmpty else { return }
+        guard address.contains("@"), address.contains(".") else {
+            authMessage = "That doesn't look like an email address."
+            return
+        }
+        if isCreatingAccount && password.count < 8 {
+            authMessage = "Passwords need at least 8 characters."
+            return
+        }
+        Haptics.light()
+        focusedField = nil
+        authMessage = nil
+        emailInFlight = true
+        let creating = isCreatingAccount
+        Task {
+            let outcome = creating
+                ? await auth.signUpWithEmail(address, password: password)
+                : await auth.signInWithEmail(address, password: password)
+            emailInFlight = false
+            if case .failure(let message) = outcome {
+                withAnimation(.easeOut(duration: 0.15)) { authMessage = message }
+            }
+            // Success dismisses the gate via auth.userID — nothing to do here.
+        }
+    }
+
+    private func sendReset() {
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard address.contains("@") else {
+            authMessage = "Enter your email above first, then tap Forgot password."
+            return
+        }
+        Task {
+            let sent = await auth.sendPasswordReset(to: address)
+            withAnimation(.easeOut(duration: 0.15)) {
+                authMessage = sent
+                    ? "Check \(address) for a reset link."
+                    : "Couldn't send a reset link — try again in a moment."
+            }
         }
     }
 }
