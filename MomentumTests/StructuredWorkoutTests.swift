@@ -100,7 +100,7 @@ struct StructuredWorkoutTests {
         let vo2 = StructuredWorkoutBuilder.build(from: session(.intervals, pace: 294, iv: "5×3min @ VO2"), p5kSPerKm: 300)
         #expect(vo2?.workStepCount == 5)
         #expect(vo2?.steps.first { $0.kind == .work }?.paceSPerKm == 294)
-        #expect(vo2?.steps.first { $0.kind == .recovery }?.paceSPerKm == 410)   // 300 + 110
+        #expect(vo2?.steps.first { $0.kind == .recovery }?.paceSPerKm == PlanEngine.pace(.recovery, p5k: 300))
 
         let hills = StructuredWorkoutBuilder.build(from: session(.hills, pace: 380, iv: "8×45sec hills"), p5kSPerKm: 300)
         #expect(hills?.workStepCount == 8)
@@ -115,8 +115,12 @@ struct StructuredWorkoutTests {
         #expect(strides?.workStepCount == 6)
 
         let prog = StructuredWorkoutBuilder.build(from: session(.progression, pace: 390, iv: nil, dist: 9000), p5kSPerKm: 300)
-        #expect(prog?.steps.count == 3)                       // easy → moderate → strong thirds
-        #expect(prog?.steps.last?.paceSPerKm == 315)          // strong = P5k + 15
+        #expect(prog?.steps.count == 3)                       // easy → marathon → threshold thirds
+        #expect(prog?.steps.last?.paceSPerKm == PlanEngine.pace(.tempo, p5k: 300))
+        // The middle third holds marathon pace — between easy and threshold at any fitness level.
+        let mid = prog?.steps[1].paceSPerKm ?? 0
+        #expect(mid == DanielsPaces.marathonPaceSPerKm(p5kSPerKm: 300))
+        #expect(mid < (prog?.steps.first?.paceSPerKm ?? 0) && mid > (prog?.steps.last?.paceSPerKm ?? 0))
     }
 
     // MARK: Per-rep capture (post-run breakdown)

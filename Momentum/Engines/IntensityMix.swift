@@ -34,7 +34,8 @@ enum IntensityMix {
 
     /// Minimum runs before the split means anything.
     static let minRuns = 4
-    /// Pace gate: faster than p5k + 50 s/km reads as a hard effort (easy runs live at ~p5k + 80).
+    /// Pace gate: faster than p5k + 50 s/km reads as a hard effort (easy runs live in the E zone,
+    /// slower than this at every VDOT; threshold/interval work is always faster).
     static let hardOffsetSPerKm = 50.0
 
     static func analyze(runs: [RunInput], p5kSPerKm: Double) -> Mix? {

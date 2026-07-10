@@ -721,7 +721,7 @@ Capabilities: Background Modes → **Location updates**; HealthKit; Sign in with
 
 ### 9.1 Running (carried from v2.x)
 - Estimate 5k pace `P5k` via **Riegel** (`T5k = T·(5000/D)^1.06`) from a recent effort, else level defaults (sometimes 360, regularly 300 s/km), recalibrated from first runs.
-- **Training paces** = offsets from `P5k` (s/km): recovery +110, easy +80, long +90, marathon +40, tempo +20, intervals +0. New runners use run/walk intervals.
+- **Training paces = Daniels/VDOT zones** (`DanielsPaces`, updated 2026-07-10 — supersedes the old fixed offsets): VDOT derived from `P5k` via the Daniels–Gilbert curves, then per-type paces at fractions of VO₂max — recovery 60%, long 64%, easy 66% (the E band), tempo = threshold (one-hour-race intensity, ~88.8%), intervals = vVO₂max (100%), marathon = the predicted marathon race pace at that VDOT (used by progression runs: E→M→T thirds). Curvilinear — the easy gap widens for slower runners. "@ 5K" reps carry a race-pace override; re-derivation preserves rep intent via `PlanEngine.sessionPace`. New runners use run/walk intervals.
 - **Volume**: start by level×days; progress ≤10%/week; deload (−30%) every 4th week; taper last `min(3, ceil(0.15·W))` weeks before a race. Phases base→build→peak→taper by weeks-to-race; no-race → 3-week build / 1-week deload macro.
 
 ### 9.2 Strength

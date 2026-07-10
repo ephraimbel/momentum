@@ -39,10 +39,38 @@ struct PlanEngineTests {
         #expect(abs(PlanEngine.riegelP5k(distanceM: 10000, timeS: 3000) - 288.3) < 1)
     }
 
-    @Test func paceOffsets() {
-        #expect(PlanEngine.pace(.easy, p5k: 300) == 380)
-        #expect(PlanEngine.pace(.intervals, p5k: 300) == 300)
-        #expect(PlanEngine.pace(.long, p5k: 300) == 390)
+    @Test func paceZonesFollowDaniels() {
+        // A 25:00 5K runner (p5k 300 → VDOT ≈ 38.3). Golden values from the Daniels–Gilbert curves.
+        #expect(abs(PlanEngine.pace(.easy, p5k: 300) - 397) <= 1)        // E band (66% VO₂max)
+        #expect(abs(PlanEngine.pace(.long, p5k: 300) - 407) <= 1)        // E band, easier end (64%)
+        #expect(abs(PlanEngine.pace(.recovery, p5k: 300) - 428) <= 1)    // E band floor (60%)
+        #expect(abs(PlanEngine.pace(.tempo, p5k: 300) - 314) <= 1)       // T ≈ one-hour-race intensity
+        #expect(abs(PlanEngine.pace(.intervals, p5k: 300) - 285) <= 1)   // I = vVO₂max, faster than 5K pace
+        #expect(PlanEngine.pace(.race, p5k: 300) == 300)                 // 5K race pace is the anchor
+        // Zone order is invariant at any fitness level: recovery > long > easy > tempo > intervals,
+        // with 5K race pace between tempo and intervals (5K ≈ 95% VO₂max sits above T, below I).
+        for p5k in [200.0, 240, 300, 360, 420, 500] {
+            #expect(PlanEngine.pace(.recovery, p5k: p5k) > PlanEngine.pace(.long, p5k: p5k))
+            #expect(PlanEngine.pace(.long, p5k: p5k) > PlanEngine.pace(.easy, p5k: p5k))
+            #expect(PlanEngine.pace(.easy, p5k: p5k) > PlanEngine.pace(.tempo, p5k: p5k))
+            #expect(PlanEngine.pace(.tempo, p5k: p5k) > p5k)
+            #expect(p5k > PlanEngine.pace(.intervals, p5k: p5k))
+        }
+        // Curvilinear personalization: the easy-pace gap widens for slower runners (the old flat
+        // "+80 s/km for everyone" is exactly what this replaces).
+        #expect(PlanEngine.pace(.easy, p5k: 420) - 420 > PlanEngine.pace(.easy, p5k: 240) - 240)
+    }
+
+    @Test func sessionPaceHonorsRepIntent() {
+        // Re-derivation (recalibration) must keep "@ 5K" reps at race pace and threshold cruise reps
+        // at T — only true VO₂ reps get the base interval zone.
+        #expect(PlanEngine.sessionPace(.intervals, p5k: 300, intervals: "6×400m @ 5K") == 300)
+        #expect(PlanEngine.sessionPace(.intervals, p5k: 300, intervals: "4×1km @ threshold")
+                == PlanEngine.pace(.tempo, p5k: 300))
+        #expect(PlanEngine.sessionPace(.intervals, p5k: 300, intervals: "5×3min @ VO2")
+                == PlanEngine.pace(.intervals, p5k: 300))
+        #expect(PlanEngine.sessionPace(.easy, p5k: 300, intervals: nil)
+                == PlanEngine.pace(.easy, p5k: 300))
     }
 
     @Test func spreadIsDistinct() {
@@ -151,8 +179,8 @@ struct PlanEngineTests {
     }
 
     @Test func shortRaceUsesSpeedLongRaceUsesThreshold() {
-        // Both prescribe reps, but the *pace* differs: short races sharpen at ~5K pace (P5k), long races
-        // build threshold (P5k + 20). (Default experience → P5k = 300 s/km.)
+        // Both prescribe reps, but the *pace* differs: short races sharpen at 5K race pace, long races
+        // build threshold (Daniels T). (Default experience → P5k = 300 s/km.)
         func week0QualityPace(_ raceM: Double) -> Double? {
             var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
             inp.raceDistanceM = raceM
@@ -160,8 +188,8 @@ struct PlanEngineTests {
                                            startDate: Date(timeIntervalSinceReferenceDate: 0))
             return plan.weeks[0].sessions.first { $0.discipline == .running && $0.isHardRun }?.targetPaceSPerKm
         }
-        #expect(week0QualityPace(5_000) == 300)     // 5K → speed reps at P5k
-        #expect(week0QualityPace(42_195) == 320)    // marathon → threshold reps (P5k + 20)
+        #expect(week0QualityPace(5_000) == 300)                                    // 5K → reps at race pace
+        #expect(week0QualityPace(42_195) == PlanEngine.pace(.tempo, p5k: 300))     // marathon → threshold reps
     }
 
     // MARK: Muscle focus
@@ -206,11 +234,14 @@ struct PlanEngineTests {
         let w0 = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 5000, level: .some, p5k: 300)
         let w1 = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 5000, level: .some, p5k: 300)
         #expect(w0.type != w1.type || w0.intervals != w1.intervals)
-        // The VO₂ week carries a faster-than-5K rep pace (P5k − 6).
-        #expect(w1.paceOverride == 294)
-        // A half-marathon plan emphasizes threshold (P5k + 20), not raw speed.
+        // "@ 5K" reps override to race pace (the base intervals zone is vVO₂max, faster than 5K).
+        #expect(w0.paceOverride == 300)
+        // The VO₂ week uses the base interval zone — no override needed.
+        #expect(w1.paceOverride == nil)
+        #expect(PlanEngine.pace(.intervals, p5k: 300) < 300)
+        // A half-marathon plan emphasizes threshold (Daniels T), not raw speed.
         let half = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 21_097, level: .some, p5k: 300)
-        #expect(half.paceOverride == 320)
+        #expect(half.paceOverride == PlanEngine.pace(.tempo, p5k: 300))
     }
 
     @Test func hybridPriorityShiftsRunLiftSplit() {

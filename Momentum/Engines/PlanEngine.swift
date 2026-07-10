@@ -17,18 +17,24 @@ enum PlanEngine {
         switch level { case .new: 360; case .some: 330; case .experienced: 300 }
     }
 
-    /// Training paces as offsets from P5k (s/km): recovery +110, easy +80, long +90, tempo +20,
-    /// intervals/race +0.
+    /// Training paces from Daniels/VDOT zones (see `DanielsPaces`): recovery/long/easy sit in the E
+    /// band (60/64/66% VO₂max), tempo at threshold (~one-hour-race intensity), intervals at vVO₂max.
+    /// Curvilinear — the easy gap widens for slower runners instead of a flat "+80 s/km for everyone".
     static func pace(_ type: RunType, p5k: Double) -> Double {
-        let offset: Double
-        switch type {
-        case .recovery: offset = 110
-        case .easy, .freeRun, .fartlek, .hills, .strides: offset = 80   // easy base; the hard bits live in the structure
-        case .long, .progression: offset = 90
-        case .tempo: offset = 20
-        case .intervals, .race: offset = 0
+        DanielsPaces.trainingPace(type, p5kSPerKm: p5k)
+    }
+
+    /// The pace a *persisted* session should target on (re)derivation — honors the rep intent encoded
+    /// in its `intervals` note, so recalibration keeps "@ 5K" reps at race pace and "@ threshold"
+    /// cruise reps at T instead of stamping every interval session with vVO₂max pace.
+    static func sessionPace(_ type: RunType, p5k: Double, intervals: String?) -> Double {
+        if type == .intervals, let note = intervals?.lowercased() {
+            // Threshold first — a rep distance like "1.5km" also contains "5k", so the anchored
+            // "@ 5k" check must not win on threshold cruise reps.
+            if note.contains("threshold") { return pace(.tempo, p5k: p5k) }
+            if note.contains("@ 5k") { return pace(.race, p5k: p5k) }
         }
-        return p5k + offset
+        return pace(type, p5k: p5k)
     }
 
     // MARK: Top-level generation
@@ -219,11 +225,12 @@ enum PlanEngine {
 
     /// The week's main quality workout, rotated for variety by `weekIndex`. Short races sharpen with
     /// VO₂/5K reps, hills, and fartlek; long races build threshold with cruise intervals, tempo, and
-    /// fartlek; beginners get gentle fartlek/strides/tempo. `paceOverride` carries a rep pace other than
-    /// 5K when set (VO₂ = P5k−6, threshold = P5k+20).
+    /// fartlek; beginners get gentle fartlek/strides/tempo. `paceOverride` carries a rep pace other
+    /// than the type's default zone: "@ 5K" reps run at race pace (the base `.intervals` zone is now
+    /// vVO₂max) and threshold cruise reps run at T.
     static func qualityWorkout(weekIndex: Int, raceDistanceM: Double?, level: ExperienceLevel,
                                p5k: Double) -> (type: RunType, intervals: String?, paceOverride: Double?) {
-        let vo2 = max(120, p5k - 6), threshold = p5k + 20
+        let fiveK = pace(.race, p5k: p5k), threshold = pace(.tempo, p5k: p5k)
         let menu: [(RunType, String?, Double?)]
         switch level {
         case .new:
@@ -232,8 +239,8 @@ enum PlanEngine {
                     (.tempo, nil, nil)]
         default:
             if (raceDistanceM ?? 5_000) <= 12_000 {   // 5K/10K → speed emphasis
-                menu = [(.intervals, "6×400m @ 5K", nil),
-                        (.intervals, "5×3min @ VO2", vo2),
+                menu = [(.intervals, "6×400m @ 5K", fiveK),
+                        (.intervals, "5×3min @ VO2", nil),     // base intervals zone = I (vVO₂max)
                         (.hills, "8×45sec hills", nil),
                         (.fartlek, "8×(1min hard / 1min float)", nil)]
             } else {                                    // half/marathon → threshold emphasis

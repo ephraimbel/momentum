@@ -82,10 +82,10 @@ enum StructuredWorkoutBuilder {
               let runType = session.runType,
               let pace = session.targetPaceSPerKm, pace > 0 else { return nil }
 
-        let p5k = p5kSPerKm ?? max(120, pace - offsetFromP5k(runType))
-        let easyPace = p5k + 80
-        let recoveryPace = p5k + 110
-        let vo2Pace = max(120, p5k - 6)   // ~3k effort for surges / by-feel hard bits
+        let p5k = p5kSPerKm ?? DanielsPaces.p5kSPerKm(fromPace: pace, type: runType)
+        let easyPace = PlanEngine.pace(.easy, p5k: p5k)
+        let recoveryPace = PlanEngine.pace(.recovery, p5k: p5k)
+        let vo2Pace = PlanEngine.pace(.intervals, p5k: p5k)   // vVO₂max — surges / by-feel hard bits
 
         switch runType {
         case .intervals:
@@ -121,18 +121,6 @@ enum StructuredWorkoutBuilder {
                                totalDurationS: session.targetDurationS)
             }
             return nil
-        }
-    }
-
-    /// Pace offset (s/km) from P5k per run type — mirrors `PlanEngine.pace`; used only to recover P5k
-    /// when the caller didn't pass it.
-    static func offsetFromP5k(_ t: RunType) -> Double {
-        switch t {
-        case .intervals, .race: 0
-        case .tempo: 20
-        case .easy, .freeRun, .fartlek, .hills, .strides: 80
-        case .long, .progression: 90
-        case .recovery: 110
         }
     }
 
@@ -214,12 +202,15 @@ enum StructuredWorkoutBuilder {
         return StructuredWorkout(title: "Easy run + \(reps) strides", steps: steps)
     }
 
-    // MARK: Progression — one continuous run split into thirds: easy → moderate → strong.
+    // MARK: Progression — one continuous run split into thirds: easy → marathon → threshold effort.
+    // The classic E→M→T ladder: each third steps up one Daniels zone, always in a faster-than-the-last
+    // order regardless of the athlete's VDOT (E 66% < M race intensity < T ~89% VO₂max).
 
     static func progression(totalDistanceM total: Double, easyPace: Double, p5k: Double) -> StructuredWorkout? {
         guard total >= 3000 else { return nil }
         let third = (total / 3).rounded()
-        let moderate = p5k + 40, strong = p5k + 15   // steady → ~10k–15k effort
+        let moderate = DanielsPaces.marathonPaceSPerKm(p5kSPerKm: p5k)
+        let strong = PlanEngine.pace(.tempo, p5k: p5k)
         return StructuredWorkout(title: "Progression run", steps: [
             WorkoutStep(kind: .work, target: .distance(third), paceSPerKm: easyPace, toleranceSPerKm: 25, title: "Easy"),
             WorkoutStep(kind: .work, target: .distance(third), paceSPerKm: moderate, toleranceSPerKm: 15, title: "Moderate"),

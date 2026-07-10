@@ -227,7 +227,7 @@ enum PlanCoaching {
             where s.status == .planned && s.completedWorkout == nil
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.pace(runType, p5k: bounded)
+            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals)
             updated += 1
         }
         try? context.save()
@@ -257,7 +257,7 @@ enum PlanCoaching {
             where s.status == .planned && s.completedWorkout == nil
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.pace(runType, p5k: newP5k)
+            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals)
             updated += 1
         }
         guard updated > 0 else { return 0 }   // nothing to change → don't move p5k either
