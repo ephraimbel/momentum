@@ -1,31 +1,28 @@
 import SwiftUI
 
-/// One data callout on the Athlete Panel — a labeled reading wired by a leader line to a point on
-/// the body (head → readiness, lungs → VO₂, heart → resting HR, core → load, legs → volume…).
-/// `anchor` is in unit coordinates of the figure's frame; `target` is the scroll id of the detail
-/// card the callout opens.
+/// One reading on the Athlete Panel — a labeled value; `target` is the scroll id of the detail
+/// card the reading opens when tapped.
 struct AthleteCallout: Identifiable {
-    enum Edge { case leading, trailing }
     let label: String
     let value: String
     let unit: String?
     let context: String
-    let anchor: CGPoint
-    let edge: Edge
-    let slot: CGFloat          // vertical position of the callout block, 0…1 of stage height
     let target: String
     var id: String { label }
 }
 
 /// The Athlete Panel — the Progress hero. The user's own anatomy (the same figure that lights up
-/// after strength work) standing on a stage, with this week's physiology read off the body via
-/// leader-line callouts. Adapts to both modes: in light it reads as a clean product-render (ink
-/// figure, soft floor shadow); in dark the figure becomes luminous on the true-black stage. Same
-/// geometry — only the lighting changes, like the medallions.
+/// after strength work) standing on a pool of light, flanked by two data columns composed like a
+/// spec sheet: one hero stat block on the left (VO₂max — the fitness index), a rail of compact
+/// readings on the right. Deliberately asymmetric — one anchor number balanced against a list.
+/// No leader lines: the columns carry the data; the body carries the training (worked muscles
+/// glow). Adapts to both modes: light reads as a product render, dark as a luminous stage.
 struct AthletePanel: View {
     let activation: [MuscleGroup: Double]
     var sex: BodySex = .neutral
-    let callouts: [AthleteCallout]
+    let hero: AthleteCallout
+    var sub: AthleteCallout?
+    let rail: [AthleteCallout]
     var onSelect: (String) -> Void = { _ in }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -52,29 +49,39 @@ struct AthletePanel: View {
     private var stage: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
-            // The figure owns the center column; callouts live in the side gutters. The anatomy
-            // aspect-fits (724×1448 viewBox) inside its frame, so anchors map onto the *fitted*
-            // body rect — not the frame — or the leader lines miss the body.
+            // The figure owns the center column; the data columns own the gutters.
             let fig = CGRect(x: w * 0.5 - w * 0.20, y: 6, width: w * 0.40, height: h - 26)
             let body = fittedBodyRect(in: fig)
             ZStack {
                 backdrop(body: body, h: h)
                 figure(fig: fig)
-                leaderLines(body: body, w: w, h: h)
-                // Fixed-height rows on an even grid — the two columns read as one spec sheet,
-                // left and right of the figure, instead of scattered blocks.
-                ForEach(callouts) { c in
-                    calloutView(c)
-                        .frame(width: w * 0.28, height: 72,
-                               alignment: c.edge == .leading ? .trailing : .leading)
-                        .position(x: c.edge == .leading ? w * 0.14 : w * 0.86, y: c.slot * h)
+                HStack(alignment: .top, spacing: 0) {
+                    // Left: the anchor stat — one big number, staggered down for composition.
+                    VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                        heroView(hero)
+                        if let sub { railRow(sub) }
+                    }
+                    .padding(.top, h * 0.16)
+                    .frame(width: w * 0.30, alignment: .topLeading)
+                    Spacer(minLength: 0)
+                    // Right: the rail — compact readings separated by hairlines.
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        ForEach(Array(rail.enumerated()), id: \.element.id) { i, c in
+                            if i > 0 {
+                                Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 0.5)
+                            }
+                            railRow(c)
+                        }
+                    }
+                    .padding(.top, h * 0.05)
+                    .frame(width: w * 0.30, alignment: .topLeading)
                 }
             }
         }
     }
 
-    /// Where the anatomy actually renders inside `fig` (aspect-fit, centered) — the space the
-    /// callout anchors are defined in.
+    /// Where the anatomy actually renders inside `fig` (aspect-fit, centered) — used to place
+    /// the light the figure stands in.
     private func fittedBodyRect(in fig: CGRect) -> CGRect {
         let aspect = BodyAnatomy.viewBoxWidth / BodyAnatomy.viewBoxHeight
         var size = CGSize(width: fig.width, height: fig.width / aspect)
@@ -99,8 +106,7 @@ struct AthletePanel: View {
     }
 
     /// The pedestal — pure light, no hardware: a soft pool of glow under the figure and a tight
-    /// contact shadow at the feet. No stroked rims (they read as furniture, not light).
-    /// Monochrome in both modes (the stage isn't earned progress).
+    /// contact shadow at the feet. Monochrome in both modes (the stage isn't earned progress).
     private func platform(body: CGRect) -> some View {
         let w = body.width * 1.3
         let h = w * 0.28
@@ -126,56 +132,55 @@ struct AthletePanel: View {
             .shadow(color: isDark ? .white.opacity(0.28) : .clear, radius: 16)
             .frame(width: fig.width, height: fig.height)
             .position(x: fig.midX, y: fig.midY)
-            .accessibilityHidden(true)   // the callouts carry the data; the figure is scenery
+            .accessibilityHidden(true)   // the columns carry the data; the figure is scenery
     }
 
-    // MARK: leader lines
+    // MARK: data columns
 
-    private func leaderLines(body: CGRect, w: CGFloat, h: CGFloat) -> some View {
-        Canvas { ctx, _ in
-            let line = Theme.ink.opacity(isDark ? 0.32 : 0.22)
-            for c in callouts {
-                let anchor = CGPoint(x: body.minX + c.anchor.x * body.width,
-                                     y: body.minY + c.anchor.y * body.height)
-                let startX = c.edge == .leading ? w * 0.28 : w * 0.72
-                let start = CGPoint(x: startX, y: c.slot * h)
-                var path = Path()
-                path.move(to: start)
-                path.addLine(to: anchor)
-                ctx.stroke(path, with: .color(line), lineWidth: 1)
-                // Tick at the callout end + a ringed dot on the body.
-                ctx.fill(Path(ellipseIn: CGRect(x: start.x - 1.5, y: start.y - 1.5, width: 3, height: 3)),
-                         with: .color(line))
-                ctx.fill(Path(ellipseIn: CGRect(x: anchor.x - 2, y: anchor.y - 2, width: 4, height: 4)),
-                         with: .color(Theme.ink.opacity(0.85)))
-                ctx.stroke(Path(ellipseIn: CGRect(x: anchor.x - 5, y: anchor.y - 5, width: 10, height: 10)),
-                           with: .color(line), lineWidth: 1)
-            }
-        }
-        .allowsHitTesting(false)
-    }
-
-    // MARK: callouts
-
-    private func calloutView(_ c: AthleteCallout) -> some View {
-        let leading = c.edge == .leading
-        return VStack(alignment: leading ? .trailing : .leading, spacing: 3) {
+    private func heroView(_ c: AthleteCallout) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             Text(c.label).font(.rounded(9, weight: .bold)).tracking(1.1)
                 .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1).minimumScaleFactor(0.8)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(c.value).font(.display(20, weight: .black)).monospacedDigit()
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(c.value).font(.display(34, weight: .black)).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.55)
                     .foregroundStyle(Theme.ink)
                 if let unit = c.unit {
-                    Text(unit).font(.rounded(10.5, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    Text(unit).font(.rounded(11, weight: .bold)).foregroundStyle(Theme.inkSecondary)
                 }
             }
             Text(c.context).font(.rounded(10, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { Haptics.light(); onSelect(c.target) }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(c.label): \(c.value)\(c.unit.map { " \($0)" } ?? ""), \(c.context)")
+        .accessibilityHint("Shows the detail card")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func railRow(_ c: AthleteCallout) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(c.label).font(.rounded(8.5, weight: .bold)).tracking(1.0)
+                .foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(c.value).font(.display(17, weight: .black)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.55)
+                    .foregroundStyle(Theme.ink)
+                if let unit = c.unit {
+                    Text(unit).font(.rounded(10, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            Text(c.context).font(.rounded(9.5, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1).minimumScaleFactor(0.75)
         }
-        .frame(maxWidth: .infinity, alignment: leading ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { Haptics.light(); onSelect(c.target) }
         .accessibilityElement(children: .ignore)

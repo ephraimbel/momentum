@@ -139,7 +139,7 @@ struct ProgressScreen: View {
                     // Every callout is a door into the detail card it summarizes.
                     AthletePanel(activation: weeklyMuscleActivation,
                                  sex: BodySex(profileSex: profiles.first?.sex),
-                                 callouts: panelCallouts) { target in
+                                 hero: panelHero, sub: panelSub, rail: panelRail) { target in
                         withAnimation(.easeOut(duration: 0.45)) { proxy.scrollTo(target, anchor: .top) }
                     }
                     .reveal(0)
@@ -1339,35 +1339,46 @@ struct ProgressScreen: View {
         }
     }
 
-    /// The Athlete Panel's six body-mapped readings. Anchors are unit coordinates on the figure:
-    /// head = readiness, lungs = VO₂max, heart = resting HR, core = training load, legs = week
-    /// volume, arm = muscle focus. Each targets the scroll id of the card that explains it.
-    private var panelCallouts: [AthleteCallout] {
+    /// The Athlete Panel's anchor stat — VO₂max, the fitness index. Device measurement wins;
+    /// context prefers the 8-week trend when the model has one.
+    private var panelHero: AthleteCallout {
+        if let vo2 = measuredVO2 ?? currentVO2 {
+            let context: String
+            if let cur = currentVO2, let old = vo2EightWeeksAgo, abs(cur - old) >= 0.3 {
+                context = String(format: "%+.1f vs 8 wks ago", cur - old)
+            } else {
+                context = measuredVO2 != nil ? "From your device" : "Estimated from pace"
+            }
+            return AthleteCallout(label: "VO₂ MAX", value: String(format: "%.1f", vo2), unit: nil,
+                                  context: context, target: "fitness")
+        }
+        return AthleteCallout(label: "VO₂ MAX", value: "—", unit: nil,
+                              context: "Needs a few runs", target: "fitness")
+    }
+
+    /// Under the hero: the week's distance — the "what you actually did" counterweight.
+    private var panelSub: AthleteCallout {
+        let weekM = insights.weeks.last?.distanceM ?? 0
+        return AthleteCallout(label: "THIS WEEK", value: Formatters.distance(meters: weekM, unit: distanceUnit),
+                              unit: nil,
+                              context: insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered",
+                              target: "charts")
+    }
+
+    /// The right-hand rail: readiness, load, resting heart, muscle focus — each targeting the
+    /// scroll id of the card that explains it.
+    private var panelRail: [AthleteCallout] {
         var out: [AthleteCallout] = []
         // Readiness — blended with Health signals when present, same as the form card.
-        let readinessValue: String
-        let readinessContext: String
         if recovery.hasData {
             let score = signals.blendedReadiness(base: recovery.score)
-            readinessValue = "\(score)"
-            readinessContext = RecoveryModel.band(score).rawValue
+            out.append(AthleteCallout(label: "READINESS", value: "\(score)", unit: "/100",
+                                      context: RecoveryModel.band(score).rawValue, target: "formRace"))
         } else {
-            readinessValue = "—"
-            readinessContext = "Learning your norm"
+            out.append(AthleteCallout(label: "READINESS", value: "—", unit: nil,
+                                      context: "Learning your norm", target: "formRace"))
         }
-        out.append(AthleteCallout(label: "READINESS", value: readinessValue, unit: recovery.hasData ? "/100" : nil,
-                                  context: readinessContext, anchor: CGPoint(x: 0.50, y: 0.095),
-                                  edge: .leading, slot: 0.14, target: "formRace"))
-        // VO₂max — lungs. Device measurement wins; else the pace-derived estimate.
-        if let vo2 = measuredVO2 ?? currentVO2 {
-            out.append(AthleteCallout(label: "VO₂ MAX", value: String(format: "%.1f", vo2), unit: nil,
-                                      context: measuredVO2 != nil ? "From your device" : "Estimated from pace",
-                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.14, target: "fitness"))
-        } else {
-            out.append(AthleteCallout(label: "VO₂ MAX", value: "—", unit: nil, context: "Needs a few runs",
-                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.14, target: "fitness"))
-        }
-        // Training load — core. ACWR with a no-shame band word.
+        // Training load — ACWR with a no-shame band word.
         if insights.chronic >= 1 {
             let word: String = switch insights.acwr {
             case ..<0.8:      "Fresh"
@@ -1375,36 +1386,27 @@ struct ProgressScreen: View {
             case 1.31..<1.51: "Pushing"
             default:          "High — absorb it"
             }
-            out.append(AthleteCallout(label: "TRAINING LOAD", value: String(format: "%.2f", insights.acwr), unit: nil,
-                                      context: word, anchor: CGPoint(x: 0.50, y: 0.385),
-                                      edge: .leading, slot: 0.47, target: "charts"))
+            out.append(AthleteCallout(label: "TRAINING LOAD", value: String(format: "%.2f", insights.acwr),
+                                      unit: nil, context: word, target: "charts"))
         } else {
-            out.append(AthleteCallout(label: "TRAINING LOAD", value: "—", unit: nil, context: "Building baseline",
-                                      anchor: CGPoint(x: 0.50, y: 0.385), edge: .leading, slot: 0.47, target: "charts"))
+            out.append(AthleteCallout(label: "TRAINING LOAD", value: "—", unit: nil,
+                                      context: "Building baseline", target: "charts"))
         }
         // Resting heart — from Apple Health when connected.
         if let rhr = signals.restingHR {
             out.append(AthleteCallout(label: "RESTING HEART", value: "\(rhr)", unit: "bpm",
-                                      context: signals.restingHRNote ?? "From Apple Health",
-                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.47, target: "hrZones"))
+                                      context: signals.restingHRNote ?? "From Apple Health", target: "hrZones"))
         } else {
-            out.append(AthleteCallout(label: "RESTING HEART", value: "—", unit: nil, context: "Connect Health",
-                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.47, target: "hrZones"))
+            out.append(AthleteCallout(label: "RESTING HEART", value: "—", unit: nil,
+                                      context: "Connect Health", target: "hrZones"))
         }
-        // Week volume — legs.
-        let weekM = insights.weeks.last?.distanceM ?? 0
-        out.append(AthleteCallout(label: "THIS WEEK", value: Formatters.distance(meters: weekM, unit: distanceUnit), unit: nil,
-                                  context: insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered",
-                                  anchor: CGPoint(x: 0.42, y: 0.60), edge: .leading, slot: 0.80, target: "charts"))
-        // Muscle focus — arm. Falls back to the intensity mix when the week was all cardio.
+        // Muscle focus — falls back to the intensity mix when the week was all cardio.
         if let top = weeklyMuscleActivation.filter({ $0.key != .fullBody && $0.value > 0 }).max(by: { $0.value < $1.value }) {
             out.append(AthleteCallout(label: "MUSCLE FOCUS", value: top.key.rawValue.capitalized, unit: nil,
-                                      context: "Most worked this week", anchor: CGPoint(x: 0.70, y: 0.30),
-                                      edge: .trailing, slot: 0.80, target: "muscleWeek"))
+                                      context: "Most worked this week", target: "muscleWeek"))
         } else {
             out.append(AthleteCallout(label: "WEEK FOCUS", value: "Endurance", unit: nil,
-                                      context: "All cardio this week", anchor: CGPoint(x: 0.58, y: 0.60),
-                                      edge: .trailing, slot: 0.80, target: "intensityMix"))
+                                      context: "All cardio this week", target: "intensityMix"))
         }
         return out
     }
