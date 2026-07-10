@@ -107,25 +107,14 @@ struct AthletePanel: View {
         platform(body: body)
     }
 
-    /// The pedestal — pure light, no hardware: a soft pool of glow under the figure and a tight
-    /// contact shadow at the feet. Monochrome in both modes (the stage isn't earned progress).
+    /// No platform — just a subtle grounding shadow at the feet so the figure doesn't float.
+    /// (A light pool and rims were tried and cut: too much furniture under the body.)
     private func platform(body: CGRect) -> some View {
-        let w = body.width * 1.3
-        let h = w * 0.28
-        return ZStack {
-            Ellipse()
-                .fill(RadialGradient(colors: isDark ? [.white.opacity(0.13), .clear]
-                                                    : [.black.opacity(0.06), .clear],
-                                     center: .center, startRadius: 0, endRadius: w * 0.5))
-                .frame(width: w, height: h)
-                .blur(radius: 2)
-            // Contact shadow right under the feet so the figure doesn't float.
-            Ellipse()
-                .fill(isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.12))
-                .frame(width: body.width * 0.5, height: 7)
-                .blur(radius: 5)
-        }
-        .position(x: body.midX, y: body.maxY - 3)
+        Ellipse()
+            .fill(isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.10))
+            .frame(width: body.width * 0.8, height: 10)
+            .blur(radius: 7)
+            .position(x: body.midX, y: body.maxY + 4)
     }
 
     private func figure(fig: CGRect) -> some View {
