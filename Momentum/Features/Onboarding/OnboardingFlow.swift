@@ -13,6 +13,7 @@ struct OnboardingFlow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(Services.self) private var services
     @Environment(AuthController.self) private var auth
+    @Environment(PaywallController.self) private var paywall
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     @State private var vm = OnboardingViewModel()
     @State private var profile: UserProfile?
@@ -107,13 +108,25 @@ struct OnboardingFlow: View {
                 vm.experience = .new; vm.weeklyRunVolumeM = 15_000
                 vm.step = .intensity
             }
+            // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
+            if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
+            if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
+            if args.contains("--onboarding-metrics") { vm.activities = [.run]; vm.step = .metrics }
+            if args.contains("--onboarding-race") { vm.activities = [.run]; vm.goal = .raceDistance; vm.step = .race }
+            if args.contains("--onboarding-musclefocus") { vm.activities = [.strength]; vm.goal = .buildMuscle; vm.step = .muscleFocus }
+            if args.contains("--onboarding-days") { vm.activities = [.run]; vm.step = .days }
+            if args.contains("--onboarding-preferreddays") { vm.activities = [.run]; vm.daysPerWeek = 4; vm.step = .preferredDays }
+            if args.contains("--onboarding-session") { vm.activities = [.run]; vm.step = .session }
+            if args.contains("--onboarding-equipment") { vm.activities = [.strength]; vm.step = .equipment }
+            if args.contains("--onboarding-why") { vm.activities = [.run]; vm.step = .why }
+            if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
             #endif
         }
         .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
         .fullScreenCover(isPresented: $showPaywall, onDismiss: { goNext() }) {
-            PaywallView(feature: .fullPlan)
+            PaywallView(feature: .fullPlan, hard: true)
         }
     }
 
@@ -204,7 +217,13 @@ struct OnboardingFlow: View {
         case .health: healthStep
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
-        case .reveal: PlanRevealView(vm: vm, profile: profile) { showPaywall = true }
+        case .reveal: PlanRevealView(vm: vm, profile: profile) {
+            // The hard gate (user call 2026-07-10): every new athlete meets the paywall after the
+            // plan reveal — the only ways forward are trial/subscribe/restore. Already entitled
+            // (restored subscribers, demo runs) sail straight through.
+            if paywall.isPro { goNext() }
+            else { paywall.onboardingGatePending = true; showPaywall = true }
+        }
         case .notifications: notificationsStep
         case .primers: primersStep
         }

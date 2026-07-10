@@ -59,8 +59,16 @@ enum BillingKeys {
 final class PaywallController: PaywallServing {
     static let entitlementKey = "com.momentum.pro.entitled"
     static let entitlementID = "pro"            // RevenueCat entitlement identifier (PRD §10)
+    static let onboardingGateKey = "com.momentum.pro.onboardingGatePending"
 
     private(set) var isPro: Bool
+
+    /// True once onboarding reached the hard paywall without a subscription — the app re-presents
+    /// the gate on every launch until the athlete is entitled, so force-quitting the paywall is
+    /// never a bypass. Cleared the moment any purchase/restore lands.
+    var onboardingGatePending: Bool = UserDefaults.standard.bool(forKey: onboardingGateKey) {
+        didSet { UserDefaults.standard.set(onboardingGatePending, forKey: Self.onboardingGateKey) }
+    }
     /// The locked feature that triggered the paywall — drives the host sheet. `nil` ⇒ not shown.
     var presentedFeature: Feature?
     /// Display offering; replaced with the store's localized prices once `configure()` loads them.
@@ -174,7 +182,10 @@ final class PaywallController: PaywallServing {
     private func setPro(_ value: Bool) {
         isPro = value
         UserDefaults.standard.set(value, forKey: Self.entitlementKey)
-        if value { presentedFeature = nil }
+        if value {
+            presentedFeature = nil
+            onboardingGatePending = false   // the hard gate is satisfied — never re-present
+        }
     }
 
     /// Local-only grant (no SDK): unlocks so the gate → paywall → unlock flow works offline/in tests.

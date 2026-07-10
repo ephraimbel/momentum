@@ -64,6 +64,13 @@ struct RootView: View {
                 .fullScreenCover(item: $paywall.presentedFeature) { feature in
                     PaywallView(feature: feature)
                 }
+                // The onboarding hard gate survives force-quit: if the athlete killed the app at
+                // the paywall instead of subscribing, it greets them again on launch — until entitled.
+                .fullScreenCover(isPresented: Binding(
+                    get: { paywall.onboardingGatePending && !paywall.isPro && !showOnboarding && !profiles.isEmpty },
+                    set: { _ in })) {
+                    PaywallView(feature: .fullPlan, hard: true)
+                }
                 #if DEBUG
                 .fullScreenCover(isPresented: $showRunDetail) {
                     // Prefer a run with a reps breakdown (this hook exists to verify guided-run

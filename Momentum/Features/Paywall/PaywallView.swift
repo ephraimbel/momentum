@@ -9,6 +9,10 @@ import SwiftUI
 struct PaywallView: View {
     /// The locked feature that brought the user here — frames the subheadline.
     var feature: Feature = .aiCoach
+    /// Hard placement (end of onboarding): no close affordance, no swipe-away — the only ways
+    /// forward are starting the trial, subscribing, or restoring. Contextual gates elsewhere stay
+    /// dismissible; trust copy (plain renewal terms, one-tap restore) is identical in both modes.
+    var hard: Bool = false
 
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
@@ -70,11 +74,11 @@ struct PaywallView: View {
             .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
         }
         .background { flowingBackground }
-        .overlay(alignment: .topTrailing) { closeButton }
+        .overlay(alignment: .topTrailing) { if !hard { closeButton } }
         // The paywall is a dark, cinematic moment regardless of the athlete's appearance setting
         // (user call 2026-07-10) — the wash reads best over true black.
         .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(working)
+        .interactiveDismissDisabled(working || hard)
         .onAppear {
             services.analytics.log(.paywallView(placement: feature.placement))
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
