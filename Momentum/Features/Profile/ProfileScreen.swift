@@ -85,7 +85,12 @@ struct ProfileScreen: View {
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--profile-scroll-badges") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    withAnimation { scroll.scrollTo("profile-badges", anchor: .bottom) }
+                    withAnimation { scroll.scrollTo("profile-badges", anchor: .top) }
+                }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--profile-scroll-consistency") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    withAnimation { scroll.scrollTo("profile-consistency", anchor: .bottom) }
                 }
             }
         }

@@ -85,40 +85,82 @@ struct ProfileGrid: View {
     // MARK: Highlights — the athlete's body of work
 
     private var highlightsContent: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
             lifetimeSection
+            if !highlights.items.isEmpty { bestsSection }
             if !stats.countsByType.isEmpty { trainSection }
             consistencySection
-            if !highlights.items.isEmpty { bestsSection }
         }
         .padding(.horizontal, Theme.Space.md)
-        .padding(.top, Theme.Space.md)
+        .padding(.top, Theme.Space.lg)
     }
 
+    /// The body of work as an editorial stat block, not a boxed strip: one hero number (distance —
+    /// this is a running app) with the supporting totals hairline-divided beneath, set straight on
+    /// the canvas. Rhymes with the identity trio above, so the whole page reads as one system.
     private var lifetimeSection: some View {
-        var cells: [StatGrid.Cell] = [
-            .init(value: Formatters.distance(meters: stats.totalDistanceM, unit: distanceUnit), label: "Distance"),
-            .init(value: Formatters.duration(s: stats.totalDurationS), label: "Time"),
-        ]
-        if stats.totalVolumeKg > 0 {
-            let vol = weightUnit == .lb ? stats.totalVolumeKg * Formatters.lbPerKg : stats.totalVolumeKg
-            cells.append(.init(value: "\(Formatters.compact(vol)) \(weightUnit == .lb ? "lb" : "kg")", label: "Volume"))
+        section("Lifetime") {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Formatters.distance(meters: stats.totalDistanceM, unit: distanceUnit))
+                        .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                    Text("distance covered")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                HStack(spacing: 0) {
+                    lifetimeCell(Formatters.duration(s: stats.totalDurationS), "Time moving")
+                    lifetimeDivider
+                    lifetimeCell("\(stats.totalWorkouts)", "Sessions")
+                    if stats.totalVolumeKg > 0 {
+                        let vol = weightUnit == .lb ? stats.totalVolumeKg * Formatters.lbPerKg : stats.totalVolumeKg
+                        lifetimeDivider
+                        lifetimeCell("\(Formatters.compact(vol)) \(weightUnit == .lb ? "lb" : "kg")", "Lifted")
+                    }
+                }
+            }
         }
-        return section("Lifetime") {
-            StatGrid(cells: cells, valueSize: 18).padding(.vertical, Theme.Space.md).background(card)
+    }
+
+    private func lifetimeCell(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.display(18, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.8)
+                .foregroundStyle(Theme.inkTertiary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var lifetimeDivider: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 30)
+            .padding(.trailing, Theme.Space.md)
     }
 
     private var trainSection: some View {
         section("How you train") {
-            DisciplineBreakdown(counts: stats.countsByType).padding(Theme.Space.md).background(card)
+            DisciplineBreakdown(counts: stats.countsByType)
+                .padding(Theme.Space.lg).background(card)
         }
     }
 
+    /// The GitHub-grade consistency graph: month axis, weekday hints, today ring — plus the one
+    /// number that summarizes it, set as the card's own headline.
     private var consistencySection: some View {
-        section("Consistency") {
-            ConsistencyHeatmap(countingDays: stats.countingDays).padding(Theme.Space.md).background(card)
+        let today = StreakCalculator.localDay(Date())
+        let active = (0..<(16 * 7)).filter { stats.countingDays.contains(today - $0) }.count
+        return section("Consistency") {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("\(active)").font(.display(22, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    Text("active days · last 16 weeks")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                ConsistencyHeatmap(countingDays: stats.countingDays, showsAxes: true)
+            }
+            .padding(Theme.Space.lg).background(card)
         }
+        .id("profile-consistency")
     }
 
     private var bestsSection: some View {
