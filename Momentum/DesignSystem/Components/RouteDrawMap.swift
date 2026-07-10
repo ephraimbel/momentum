@@ -17,6 +17,7 @@ struct RouteDrawMap: View {
     /// Show the live distance readout (the "this is a fitness app" signal). Off for embedded beats.
     var showsStats: Bool = false
     var headStyle: HeadStyle = .comet
+    @Environment(\.colorScheme) private var colorScheme
     /// Called once the route has finished drawing and the head has landed — lets the caller time a handoff.
     var onComplete: (() -> Void)? = nil
 
@@ -86,7 +87,7 @@ struct RouteDrawMap: View {
                 MapViewAnnotation(coordinate: head) { headDot }.allowOverlap(true)
             }
         }
-        .mapStyle(MapStyleOption.standard.mapboxStyle)
+        .mapStyle(MapStyleOption.standard.mapboxStyle(for: colorScheme))
         .ornamentOptions(MapChrome.hidden)
         .allowsHitTesting(false)
         .opacity(mapIn ? 1 : 0)

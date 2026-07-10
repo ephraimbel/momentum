@@ -22,6 +22,7 @@ struct CardioTrackingView: View {
     enum Phase { case acquiring, countdown, tracking }
 
     @Query private var workouts: [Workout]
+    @Environment(\.colorScheme) private var colorScheme
     @Query private var profiles: [UserProfile]   // for max HR → live zone banding
     @State private var phase: Phase = .acquiring
     @State private var countdown = 3
@@ -143,7 +144,7 @@ struct CardioTrackingView: View {
                 // `.onStyleLoaded` (BrandPuck.apply) — the SwiftUI `Puck2D` crashes on devices where
                 // Mapbox's default puck asset won't load.
             }
-            .mapStyle(mapStyle.mapboxStyle)
+            .mapStyle(mapStyle.mapboxStyle(for: colorScheme))
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
             .onStyleLoaded { _ in

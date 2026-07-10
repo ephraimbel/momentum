@@ -90,6 +90,19 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The style to actually RENDER for the app's current appearance (the Apple Maps behavior):
+    /// the adaptive looks follow dark mode — Realistic slides into its night lighting, the Light
+    /// basemap pairs with Dark — while deliberate looks (Dusk, Night, Streets, Outdoors, Dark,
+    /// the satellites) render exactly as chosen in either appearance.
+    func mapboxStyle(for scheme: ColorScheme) -> MapboxMaps.MapStyle {
+        guard scheme == .dark else { return mapboxStyle }
+        switch self {
+        case .realistic: return .standard(lightPreset: .night)
+        case .standard: return .dark
+        default: return mapboxStyle
+        }
+    }
+
     /// The Standard style's light preset, when this option is one of its moods — applied to
     /// snapshot previews via the style-import config (the URI alone can't express it).
     var standardLightPreset: String? {

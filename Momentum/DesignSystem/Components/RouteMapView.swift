@@ -12,6 +12,7 @@ struct RouteMapView: View {
     var style: MapStyleOption = .persisted
     var interactive: Bool = false
     var padding: CGFloat = 28
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         MapReader { proxy in
@@ -23,7 +24,7 @@ struct RouteMapView: View {
                     MapViewAnnotation(coordinate: finish) { finishPin }.allowOverlap(true)
                 }
             }
-            .mapStyle(style.mapboxStyle)
+            .mapStyle(style.mapboxStyle(for: colorScheme))
             .ornamentOptions(MapChrome.hidden)
             .onStyleLoaded { _ in addRouteLayers(proxy.map) }
             .allowsHitTesting(interactive)

@@ -10,6 +10,7 @@ struct SpotsView: View {
     @State private var vm: SpotsViewModel
     @State private var viewport: Viewport
     @Environment(\.openURL) private var openURL
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let distanceUnit: DistanceUnit
@@ -63,7 +64,7 @@ struct SpotsView: View {
                     .allowOverlap(true)
             }
         }
-        .mapStyle(MapStyleOption.persisted.mapboxStyle)   // follow the athlete's app-wide choice
+        .mapStyle(MapStyleOption.persisted.mapboxStyle(for: colorScheme))   // athlete's choice, appearance-aware
         .ornamentOptions(MapChrome.hidden)
         .onStyleLoaded { _ in BrandPuck.apply(to: proxy) }
         .ignoresSafeArea()

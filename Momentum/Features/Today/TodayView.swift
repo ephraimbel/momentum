@@ -8,6 +8,7 @@ import MapboxMaps
 /// the immersive recording cover (cardio) or the strength logger.
 struct TodayView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(Services.self) private var services
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
@@ -452,7 +453,7 @@ struct TodayView: View {
     /// land, soft clouds and an atmospheric halo over black space (globe projection at low zoom). It's
     /// brighter and livelier than satellite imagery (whose oceans read dark). The one place we leave the
     /// monochrome basemap — a *world* view should feel alive. The street map keeps the chosen explore style.
-    private var activeMapboxStyle: MapboxMaps.MapStyle { mapShowsGlobe ? .standard : mapStyle.mapboxStyle }
+    private var activeMapboxStyle: MapboxMaps.MapStyle { mapShowsGlobe ? .standard : mapStyle.mapboxStyle(for: colorScheme) }
 
     /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
     /// so lifting has its own identity (the brand orb + a quiet last-session readout), not a dead map.

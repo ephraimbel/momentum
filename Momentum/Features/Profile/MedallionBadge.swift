@@ -32,10 +32,13 @@ struct MedallionBadge: View {
                     .shadow(.inner(color: .white.opacity(1.0), radius: size * 0.025, y: -size * 0.025)))
 
             // Embossed icon: struck into the metal — light catches the top edge, shade falls below.
+            // FIXED ink, not Theme.ink: the medal is a physical object whose engraving doesn't
+            // re-anodize in dark mode (adaptive ink turned white-on-silver and vanished).
             Image(systemName: icon)
                 .font(.system(size: size * 0.34, weight: .bold))
                 .foregroundStyle(
-                    LinearGradient(colors: [Theme.ink.opacity(0.92), Theme.ink.opacity(0.65)],
+                    LinearGradient(colors: [Color(hex: "1C1C22").opacity(0.92),
+                                            Color(hex: "1C1C22").opacity(0.62)],
                                    startPoint: .top, endPoint: .bottom))
                 .shadow(color: .white.opacity(0.9), radius: 0.5, y: 0.8)
                 .shadow(color: .black.opacity(0.22), radius: 1, y: -0.6)

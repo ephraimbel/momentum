@@ -54,6 +54,8 @@ struct MomentumApp: App {
         MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
     }
 
+    @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -66,7 +68,10 @@ struct MomentumApp: App {
                 .environment(comments)
                 .environment(remoteFeed)
                 .tint(Theme.ink)
-                .preferredColorScheme(.light) // light/white is the hero aesthetic
+                // Appearance is the athlete's choice (Settings → Appearance). The design system was
+                // born dark-hero and re-cut light-hero — both palettes live in the asset catalog,
+                // so the whole app re-skins from the same tokens. `nil` follows the system.
+                .preferredColorScheme(AppAppearance(rawValue: appearanceRaw)?.colorScheme ?? nil)
         }
         .modelContainer(PersistenceController.shared.container)
     }

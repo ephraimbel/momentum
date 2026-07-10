@@ -27,6 +27,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                section("APPEARANCE") { AnyView(appearanceCard) }
                 section("SUBSCRIPTION") { paywall.isPro ? AnyView(proCard) : AnyView(freeCard) }
                 section("COACH") { AnyView(coachCard) }
                 section("APPLE HEALTH") { AnyView(healthCard) }
@@ -279,6 +280,39 @@ struct SettingsView: View {
     }
 
     // MARK: Building blocks
+
+    // MARK: Appearance
+
+    @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
+
+    /// Light is the daylight hero; Dark is the original true-black night look. One tap, app-wide.
+    private var appearanceCard: some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach(AppAppearance.allCases) { option in
+                let on = appearanceRaw == option.rawValue
+                Button {
+                    Haptics.selection()
+                    withAnimation(.easeOut(duration: 0.2)) { appearanceRaw = option.rawValue }
+                } label: {
+                    VStack(spacing: 5) {
+                        Image(systemName: option.systemImage).font(.system(size: 15, weight: .semibold))
+                        Text(option.label).font(.rounded(Theme.FontSize.caption, weight: .bold))
+                    }
+                    .foregroundStyle(on ? Theme.background : Theme.ink)
+                    .frame(maxWidth: .infinity).frame(height: 62)
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.card)
+                            .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                        if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(option.label) appearance")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+    }
 
     private func section(_ title: String, @ViewBuilder _ content: () -> AnyView) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
