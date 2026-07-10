@@ -26,8 +26,11 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var mapStyle: MapStyleOption = .standard
     /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
     var baseReactions: Int = 0
-    /// A photo the athlete attached (Strava-style). Takes priority over the route map.
-    var photoData: Data? = nil
+    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Take priority over
+    /// the route map; >1 renders as a swipeable carousel.
+    var photosData: [Data] = []
+    /// The hero photo — the first attached photo (convenience for tile/thumbnail contexts).
+    var photoData: Data? { photosData.first }
     /// The author's profile photo (the user's own posts); nil → initials avatar (community).
     var avatarData: Data? = nil
     /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
@@ -78,6 +81,12 @@ enum FeedAssembler {
         return (mine + community).sorted { $0.date > $1.date }
     }
 
+    /// Follow-scoped view of an assembled feed: the athlete's own posts plus posts from handles they
+    /// follow. Ordering is preserved (the assembled feed is already newest-first). Pure for testability.
+    static func scoped(_ feed: [FeedItem], following: Set<String>) -> [FeedItem] {
+        feed.filter { !$0.isCommunity || ($0.authorHandle.map(following.contains) ?? false) }
+    }
+
     /// Map a shared `Workout` into a feed card from the owner's point of view.
     static func item(from w: Workout, profile: UserProfile?) -> FeedItem {
         let weightUnit = WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg
@@ -100,7 +109,7 @@ enum FeedAssembler {
             muscles: muscles,
             routeLatLon: route,
             mapStyle: .standard,
-            photoData: w.photoData,
+            photosData: w.orderedPhotosData,
             avatarData: profile?.avatarData,
             aiRead: w.aiSummary)
     }

@@ -1,0 +1,629 @@
+/* ————————————————————————————————————————————————————————————————
+   momentum — brand system lifted 1:1 from the iOS app (Theme.swift)
+   ~95% monochrome; iridescence is the earned accent, always soft.
+   ———————————————————————————————————————————————————————————————— */
+
+:root {
+  --ink: #0e0e12;
+  --ink-2: #5b606b;
+  --ink-3: #9aa0ac;
+  --surface: #f4f5f8;
+  --bg: #ffffff;
+  --hairline: rgba(0, 0, 0, 0.075);
+  --route: #b8c0ff;
+
+  /* iridescent stops (periwinkle / mint / peach / lilac / ice) */
+  --iri-1: #b8c0ff;
+  --iri-2: #c8ffe0;
+  --iri-3: #ffd8c2;
+  --iri-4: #e6c2ff;
+  --iri-5: #c2f0ff;
+
+  --font-d: var(--font-display), "Space Grotesk", sans-serif;
+  --font-u: var(--font-ui), "Inter", -apple-system, sans-serif;
+
+  --radius-card: 20px;
+  --radius-pill: 999px;
+  --max: 1120px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-u);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--route);
+  color: var(--ink);
+}
+
+.wrap {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ——— type scale ——— */
+
+.display {
+  font-family: var(--font-d);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+
+.eyebrow {
+  font-family: var(--font-u);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.lede {
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.num {
+  font-family: var(--font-d);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ——— nav ——— */
+
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 32px;
+  align-items: center;
+}
+
+.nav-links a {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+  transition: color 0.15s ease;
+}
+
+.nav-links a:hover {
+  color: var(--ink);
+}
+
+.wordmark {
+  height: 22px;
+  width: auto;
+}
+
+.wordmark-footer {
+  height: 26px;
+  width: auto;
+}
+
+/* ——— buttons ——— */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-u);
+  font-size: 15px;
+  font-weight: 700;
+  padding: 14px 26px;
+  border-radius: var(--radius-pill);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-ink {
+  background: var(--ink);
+  color: #fff;
+}
+
+.btn-ink:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px rgba(14, 14, 18, 0.22);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+.btn-ghost:hover {
+  background: var(--surface);
+}
+
+.btn-sm {
+  padding: 9px 18px;
+  font-size: 13px;
+}
+
+/* ——— hero ——— */
+
+.hero {
+  position: relative;
+  padding: 168px 0 96px;
+  overflow: hidden;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.hero h1 {
+  font-size: clamp(44px, 6vw, 76px);
+  margin: 18px 0 22px;
+}
+
+.hero .lede {
+  max-width: 46ch;
+}
+
+.hero-ctas {
+  display: flex;
+  gap: 14px;
+  margin-top: 34px;
+  align-items: center;
+}
+
+.hero-note {
+  margin-top: 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+/* soft, blurred iridescent auras — the brand accent, never loud */
+.aura {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+}
+
+.aura-1 {
+  width: 560px;
+  height: 560px;
+  right: -160px;
+  top: -120px;
+  background: radial-gradient(closest-side, var(--iri-1) 0%, transparent 70%);
+  opacity: 0.5;
+}
+
+.aura-2 {
+  width: 480px;
+  height: 480px;
+  right: 260px;
+  top: 300px;
+  background: radial-gradient(closest-side, var(--iri-4) 0%, transparent 70%);
+  opacity: 0.32;
+}
+
+.aura-3 {
+  width: 420px;
+  height: 420px;
+  left: -180px;
+  bottom: -160px;
+  background: radial-gradient(closest-side, var(--iri-2) 0%, transparent 70%);
+  opacity: 0.4;
+}
+
+/* ——— phone frame ——— */
+
+.phone {
+  position: relative;
+  width: 100%;
+  max-width: 340px;
+  margin: 0 auto;
+  border-radius: 54px;
+  background: #0b0b0e;
+  padding: 10px;
+  box-shadow:
+    0 60px 120px -40px rgba(14, 14, 18, 0.42),
+    0 24px 48px -24px rgba(14, 14, 18, 0.28),
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.12);
+}
+
+.phone::after {
+  /* dynamic island */
+  content: "";
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 96px;
+  height: 28px;
+  border-radius: 20px;
+  background: #0b0b0e;
+  z-index: 2;
+}
+
+.phone-screen {
+  border-radius: 44px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.phone-screen img {
+  width: 100%;
+  height: auto;
+}
+
+.phone-sm {
+  max-width: 300px;
+}
+
+/* ——— proof band (engineering truths, tabular) ——— */
+
+.proof {
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+
+.proof-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  padding: 44px 0;
+}
+
+.proof-cell {
+  text-align: center;
+}
+
+.proof-cell .num {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.proof-cell p {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+/* ——— sections ——— */
+
+.section {
+  padding: 112px 0;
+}
+
+.section-head {
+  max-width: 640px;
+  margin-bottom: 64px;
+}
+
+.section-head h2 {
+  font-size: clamp(32px, 4.2vw, 48px);
+  margin: 14px 0 16px;
+}
+
+.center {
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+/* feature trio cards */
+.trio {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: 32px 28px;
+}
+
+.card h3 {
+  font-family: var(--font-d);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 18px 0 10px;
+}
+
+.card p {
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.glyph {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.glyph svg {
+  width: 20px;
+  height: 20px;
+  stroke: var(--ink);
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* alternating deep-dives */
+.duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 72px;
+  align-items: center;
+  padding: 72px 0;
+}
+
+.duo + .duo {
+  border-top: 1px solid var(--hairline);
+}
+
+.duo h3 {
+  font-family: var(--font-d);
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 14px 0 14px;
+}
+
+.duo p {
+  color: var(--ink-2);
+  font-size: 16.5px;
+  max-width: 44ch;
+}
+
+.duo ul {
+  margin-top: 22px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.duo li {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.tick {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: linear-gradient(120deg, var(--iri-1), var(--iri-4));
+  transform: translateY(-2px);
+}
+
+/* ——— manifesto (the no-shame method) ——— */
+
+.manifesto {
+  background: #0b0b0e;
+  color: #fff;
+  border-radius: 28px;
+  padding: 88px 64px;
+  position: relative;
+  overflow: hidden;
+}
+
+.manifesto .eyebrow {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.manifesto h2 {
+  font-size: clamp(30px, 4vw, 46px);
+  max-width: 21ch;
+  margin: 16px 0 0;
+}
+
+.manifesto-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+  margin-top: 64px;
+}
+
+.manifesto-grid h4 {
+  font-family: var(--font-d);
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.manifesto-grid p {
+  font-size: 14.5px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Iridescent gradient text. On white, the app's pastel stops wash out — so the light-background
+   variant deepens the same hues (periwinkle→mint→peach→lilac) enough to read while keeping the
+   holographic softness. On dark panels the true pastel stops are used (.iri-text-dark). */
+.iri-text {
+  background: linear-gradient(100deg, #6f7ff2 0%, #3ec98f 34%, #f2955e 62%, #b56fe8 88%, #58bfe8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.iri-text-dark {
+  background: linear-gradient(
+    100deg,
+    var(--iri-1) 0%,
+    var(--iri-2) 30%,
+    var(--iri-3) 55%,
+    var(--iri-4) 80%,
+    var(--iri-5) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.manifesto .aura-m {
+  position: absolute;
+  width: 640px;
+  height: 640px;
+  right: -220px;
+  bottom: -320px;
+  border-radius: 50%;
+  filter: blur(110px);
+  background: radial-gradient(closest-side, var(--iri-1) 0%, transparent 70%);
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+/* ——— final CTA ——— */
+
+.cta {
+  text-align: center;
+  padding: 128px 0 140px;
+  position: relative;
+  overflow: hidden;
+}
+
+.cta h2 {
+  font-size: clamp(40px, 6vw, 72px);
+  letter-spacing: -0.03em;
+}
+
+.cta .lede {
+  margin: 20px auto 36px;
+  max-width: 42ch;
+}
+
+/* ——— footer ——— */
+
+.footer {
+  border-top: 1px solid var(--hairline);
+  padding: 48px 0 56px;
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.footer p,
+.footer a {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.footer a:hover {
+  color: var(--ink);
+}
+
+.footer-links {
+  display: flex;
+  gap: 24px;
+}
+
+/* ——— responsive ——— */
+
+@media (max-width: 960px) {
+  .hero {
+    padding: 128px 0 64px;
+  }
+  .hero-grid,
+  .duo {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+  .duo.flip .duo-media {
+    order: -1;
+  }
+  .trio,
+  .manifesto-grid {
+    grid-template-columns: 1fr;
+  }
+  .proof-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .manifesto {
+    padding: 56px 28px;
+  }
+  .nav-links a:not(.btn) {
+    display: none;
+  }
+  .footer-inner {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .btn {
+    transition: none;
+  }
+}

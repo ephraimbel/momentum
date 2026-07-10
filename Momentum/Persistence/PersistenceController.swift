@@ -12,7 +12,7 @@ final class PersistenceController {
     /// All persisted model types. Keep in sync with `Models/`.
     static let models: [any PersistentModel.Type] = [
         UserProfile.self,
-        Workout.self, GPSDetail.self, LocationSample.self, Split.self, HeartRateSample.self,
+        Workout.self, WorkoutPhoto.self, GPSDetail.self, LocationSample.self, Split.self, HeartRateSample.self,
         StrengthSession.self, WorkoutExercise.self, SetEntry.self,
         Exercise.self,
         TrainingPlan.self, PlannedSession.self, PlannedExercise.self,

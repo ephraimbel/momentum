@@ -18,14 +18,50 @@ final class Workout {
     var aiSummary: String?
     var syncedAt: Date?
     var plannedSession: PlannedSession?
-    /// An optional photo the athlete attached to this workout (Strava-style). Stored outside the row
-    /// (external storage) since it's a large blob; only the public projection ever syncs.
+    /// Legacy single photo (pre multi-photo, 2026-07). Kept as-is for lightweight migration — never
+    /// rename/retype it. New photos go to `photos`; this field is folded in lazily on the next photo
+    /// edit (see `WorkoutPhotoSection`). Read through `orderedPhotosData`, not directly.
     @Attribute(.externalStorage) var photoData: Data?
 
     @Relationship(deleteRule: .cascade) var gps: GPSDetail?
     @Relationship(deleteRule: .cascade) var strength: StrengthSession?
+    /// Photos the athlete attached, Strava-style (cap `Workout.photoCap`, ordered; first is the hero).
+    /// Each is its own external-storage blob so grids can fault just the hero.
+    @Relationship(deleteRule: .cascade) var photos: [WorkoutPhoto] = []
 
     init() {}
+
+    /// UI cap on attached photos per workout (a calm, premium card — not an album).
+    static let photoCap = 5
+
+    /// The workout's photos in display order — the multi-photo set when present, else the legacy
+    /// single photo. First element is always the hero. Faults every blob — feed cards/pagers only;
+    /// grids and tiles must read `heroPhotoData` instead.
+    var orderedPhotosData: [Data] {
+        let ordered = photos.sorted { $0.order < $1.order }.map(\.data)
+        if !ordered.isEmpty { return ordered }
+        return photoData.map { [$0] } ?? []
+    }
+
+    /// The hero photo alone — faults a single blob (what grid tiles render while scrolling).
+    var heroPhotoData: Data? {
+        if let first = photos.min(by: { $0.order < $1.order }) { return first.data }
+        return photoData
+    }
+}
+
+/// One attached workout photo — a child row so each blob lives in its own external storage and is
+/// faulted only when actually rendered (the feed card / pager), never en masse by a workouts query.
+@Model
+final class WorkoutPhoto {
+    var id: UUID = UUID()
+    var order: Int = 0
+    @Attribute(.externalStorage) var data: Data = Data()
+
+    init(order: Int = 0, data: Data = Data()) {
+        self.order = order
+        self.data = data
+    }
 }
 
 @Model

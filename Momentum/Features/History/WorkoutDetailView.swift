@@ -51,27 +51,7 @@ struct WorkoutDetailView: View {
 
     /// Per-workout visibility — overrides the profile default for this one workout (PRD §11).
     private var visibilityRow: some View {
-        Menu {
-            Picker("Visibility", selection: visibility) {
-                ForEach(WorkoutPrivacy.allCases, id: \.self) { p in
-                    Label(p.label, systemImage: p.icon).tag(p)
-                }
-            }
-        } label: {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: workout.privacy.icon).font(.system(size: 13, weight: .semibold))
-                Text("Visible to \(workout.privacy.label.lowercased())")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-            }
-            .foregroundStyle(Theme.ink)
-            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-        }
-        .accessibilityLabel("Workout visibility, \(workout.privacy.label)")
+        ShareVisibilityRow(privacy: visibility)
     }
 
     private var visibility: Binding<WorkoutPrivacy> {

@@ -11,10 +11,10 @@ struct FeedMediaView: View {
 
     @ViewBuilder
     var body: some View {
-        if let data = item.photoData, let ui = UIImage(data: data) {
-            Image(uiImage: ui).resizable().scaledToFill()
-                .frame(maxWidth: .infinity).frame(height: height).clipped()
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        if !item.photosData.isEmpty {
+            // >1 photo pages horizontally — the pager needs hit testing, so a multi-photo block
+            // swallows taps (swipe to browse); the surrounding card still opens from title/stats.
+            PhotoCarousel(photosData: item.photosData, height: height)
         } else if item.type.isStrengthStyle, let muscles = item.muscles, !muscles.isEmpty {
             // The lift counterpart to the route map: the body, with worked muscles glowing iridescent.
             muscleMedia(muscles)

@@ -41,7 +41,7 @@ struct WorkoutTileMedia: View {
     }
 
     private var media: Media {
-        if let data = workout.photoData, let ui = UIImage(data: data) { return .photo(ui) }
+        if let data = workout.heroPhotoData, let ui = UIImage(data: data) { return .photo(ui) }
         if workout.type.isStrengthStyle, let session = workout.strength {
             let activation = MuscleActivation.from(session: session)
             if activation.values.contains(where: { $0 > 0 }) { return .muscle(activation) }

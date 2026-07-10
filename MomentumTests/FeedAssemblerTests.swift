@@ -78,4 +78,41 @@ struct FeedAssemblerTests {
         let item = FeedAssembler.item(from: w, profile: UserProfile())
         #expect(item.muscles?.isEmpty == false)
     }
+
+    // MARK: Following scope (CommunityView)
+
+    @Test func followingScopeKeepsOwnPostsAndFollowedHandles() {
+        let mine = [workout(.public, daysAgo: 0)]
+        let feed = FeedAssembler.feed(userWorkouts: mine, profile: UserProfile(), community: community)
+        guard let followedHandle = community.first?.authorHandle else {
+            Issue.record("community seed has no handles"); return
+        }
+        let scoped = FeedAssembler.scoped(feed, following: [followedHandle])
+        #expect(scoped.contains { !$0.isCommunity })                                  // own post kept
+        #expect(scoped.filter(\.isCommunity).allSatisfy { $0.authorHandle == followedHandle })
+        #expect(scoped.contains { $0.authorHandle == followedHandle })                // followed kept
+    }
+
+    @Test func followingScopeWithNoFollowsIsOwnPostsOnly() {
+        let mine = [workout(.friends, daysAgo: 0)]
+        let feed = FeedAssembler.feed(userWorkouts: mine, profile: UserProfile(), community: community)
+        let scoped = FeedAssembler.scoped(feed, following: [])
+        #expect(scoped.count == 1)
+        #expect(!scoped[0].isCommunity)
+    }
+
+    @Test func followingScopePreservesNewestFirstOrder() {
+        let feed = FeedAssembler.feed(userWorkouts: [], profile: UserProfile(), community: community)
+        let following = Set(community.compactMap(\.authorHandle))
+        let scoped = FeedAssembler.scoped(feed, following: following)
+        #expect(scoped.count > 1)
+        #expect(zip(scoped, scoped.dropFirst()).allSatisfy { $0.date >= $1.date })
+    }
+
+    @Test func privateWorkoutsNeverLeakIntoEitherScope() {
+        let mine = [workout(.private, daysAgo: 0)]
+        let feed = FeedAssembler.feed(userWorkouts: mine, profile: UserProfile(), community: community)
+        #expect(!feed.contains { !$0.isCommunity })                                   // everyone scope
+        #expect(!FeedAssembler.scoped(feed, following: []).contains { !$0.isCommunity })
+    }
 }

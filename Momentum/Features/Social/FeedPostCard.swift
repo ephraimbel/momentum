@@ -8,6 +8,9 @@ import UIKit
 /// posts carry a clear "Momentum community" badge.
 struct FeedPostCard: View {
     let item: FeedItem
+    /// Set by feed contexts (Community) to make a community byline tap open the author's profile.
+    /// nil in profile contexts — you're already on that person's page, so the byline stays inert.
+    var onOpenAuthor: ((String) -> Void)? = nil
     @Environment(ReactionStore.self) private var reactions
     @Environment(ModerationStore.self) private var moderation
     @Environment(CommentStore.self) private var comments
@@ -54,11 +57,17 @@ struct FeedPostCard: View {
 
     // MARK: Byline
 
-    // Cards render inside a profile (athlete or your own), so the byline isn't a navigation target —
-    // you're already on that person's page.
+    // In profile contexts the byline isn't a navigation target (you're already on that person's
+    // page). In the Community feed, `onOpenAuthor` makes a community byline open the athlete.
     private var authorRow: some View {
         HStack(spacing: Theme.Space.sm) {
-            authorIdentity
+            if let onOpenAuthor, item.isCommunity, let handle = item.authorHandle {
+                Button { onOpenAuthor(handle) } label: { authorIdentity }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("View \(item.authorName)'s profile")
+            } else {
+                authorIdentity
+            }
             Spacer(minLength: 0)
             Image(systemName: item.type.systemImage).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
         }
