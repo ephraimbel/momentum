@@ -13,17 +13,13 @@ final class PaywallUITests: XCTestCase {
         app.launchArguments = ["--seed-demo", "--debug-free", "--paywall"]
         app.launch()
 
-        let headline = app.staticTexts["The coach that\nlearns you."]
+        let headline = app.staticTexts["The coach that learns you."]
         XCTAssertTrue(headline.waitForExistence(timeout: 15), "Paywall didn't present.")
         XCTAssertTrue(app.buttons["Start my 7-day free trial"].exists, "Trial CTA missing.")
+        // One-screen contract: BOTH plans and the CTA are visible with no scrolling.
+        XCTAssertTrue(app.staticTexts["$119.99"].exists, "Annual price not on the first screen.")
+        XCTAssertTrue(app.staticTexts["$19.99"].exists, "Monthly price not on the first screen.")
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_paywall_top.png"))
-
-        app.swipeUp()
-        sleep(1)
-        // Both plans present with the decided pricing.
-        XCTAssertTrue(app.staticTexts["$119.99"].waitForExistence(timeout: 5), "Annual price missing.")
-        XCTAssertTrue(app.staticTexts["$19.99"].exists, "Monthly price missing.")
-        try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_paywall_plans.png"))
 
         // Selecting monthly flips the CTA to the no-trial wording.
         app.staticTexts["$19.99"].tap()

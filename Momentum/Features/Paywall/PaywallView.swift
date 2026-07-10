@@ -15,7 +15,6 @@ struct PaywallView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
 
     @State private var selected: PaywallProduct.Period = .annual
     @State private var working = false
@@ -24,40 +23,37 @@ struct PaywallView: View {
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
 
-    /// The FULL list — everything Pro unlocks, one honest line each (Feature enum, spelled out).
-    /// Copy is sized to a single row on the smallest supported width — no truncation, ever.
+    /// Everything Pro unlocks, organized to eight one-liners (related capabilities share a row) so
+    /// the whole paywall — list, both plans, CTA — fits one screen with no scroll. Copy is sized to
+    /// a single row; no truncation, ever.
     private static let features: [(String, String)] = [
         ("figure.run", "Your full adaptive training plan"),
-        ("brain.head.profile", "Chat with your AI coach"),
-        ("text.bubble", "Post-run AI reads"),
+        ("brain.head.profile", "AI coach chat & post-run reads"),
         ("gauge.with.needle", "Pace insights & session reviews"),
         ("waveform.path.ecg", "Recovery & injury-aware training"),
         ("flag.checkered", "Race predictions, 5K to marathon"),
-        ("chart.xyaxis.line", "Advanced analytics & trends"),
-        ("trophy", "Full history & record book"),
-        ("speaker.wave.2", "Voice coaching on guided runs"),
-        ("metronome", "Cadence metronome"),
-        ("applewatch", "Watch premium"),
-        ("square.and.arrow.up", "Every share style"),
+        ("chart.xyaxis.line", "Analytics, history & records"),
+        ("speaker.wave.2", "Voice coach & metronome"),
+        ("applewatch", "Watch premium & every share style"),
     ]
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
                 lockup
-                    .padding(.top, Theme.Space.xl)
-                hero
                     .padding(.top, Theme.Space.lg)
+                hero
+                    .padding(.top, Theme.Space.md)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
                 featureList
-                    .padding(.top, Theme.Space.lg)
+                    .padding(.top, Theme.Space.md)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
                 plans
-                    .padding(.top, Theme.Space.lg)
+                    .padding(.top, Theme.Space.md)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
             .padding(.horizontal, Theme.Space.xl)
-            .padding(.bottom, Theme.Space.md)
+            .padding(.bottom, Theme.Space.sm)
         }
         .scrollIndicators(.hidden)
         // Only the CTA is pinned — `safeAreaInset` insets the scroll content above it, so the plans
@@ -78,6 +74,9 @@ struct PaywallView: View {
         }
         .background { flowingBackground }
         .overlay(alignment: .topTrailing) { closeButton }
+        // The paywall is a dark, cinematic moment regardless of the athlete's appearance setting
+        // (user call 2026-07-10) — the wash reads best over true black.
+        .preferredColorScheme(.dark)
         .interactiveDismissDisabled(working)
         .onAppear {
             services.analytics.log(.paywallView(placement: feature.placement))
@@ -111,9 +110,9 @@ struct PaywallView: View {
 
     private var lockup: some View {
         VStack(spacing: Theme.Space.sm) {
-            // The wordmark must survive both canvases — black art on light, white art on dark.
-            Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
-                .resizable().interpolation(.high).scaledToFit().frame(height: 24)
+            // Always the white wordmark — this surface is permanently dark.
+            Image("WordmarkWhite")
+                .resizable().interpolation(.high).scaledToFit().frame(height: 22)
             Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(.white)
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
                 .background(Capsule().fill(Theme.purple))
@@ -127,11 +126,11 @@ struct PaywallView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(spacing: Theme.Space.xs + 2) {
-            Text("The coach that\nlearns you.")
-                .font(.display(34, weight: .bold)).foregroundStyle(Theme.ink)
-                .multilineTextAlignment(.center).lineSpacing(1)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: Theme.Space.xs) {
+            Text("The coach that learns you.")
+                .font(.display(24, weight: .bold)).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+                .lineLimit(1).minimumScaleFactor(0.8)
             Text("Unlock \(feature.displayName) — and everything below.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
@@ -148,16 +147,16 @@ struct PaywallView: View {
                 if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
                 HStack(spacing: Theme.Space.md) {
                     Image(systemName: item.0)
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .frame(width: 24)
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .frame(width: 22)
                     Text(item.1)
-                        .font(.rounded(14.5, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .font(.rounded(14, weight: .semibold)).foregroundStyle(Theme.ink)
                         .lineLimit(1).minimumScaleFactor(0.82)
                     Spacer(minLength: Theme.Space.sm)
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.purple)
                 }
-                .padding(.vertical, Theme.Space.sm + 1)
+                .padding(.vertical, Theme.Space.sm)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -203,17 +202,18 @@ struct PaywallView: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(p.priceText)
-                        .font(.display(26, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .font(.display(23, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
                     Text(p.isAnnual ? "/ year" : "/ month")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    Spacer()
+                    Text(p.isAnnual
+                         ? "≈ \(p.perMonthText ?? "$10.00 / mo") · save \(offering.annualSavingsPercent)%"
+                         : "No trial · cancel anytime")
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                Text(p.isAnnual
-                     ? "About \(p.perMonthText ?? "$10.00 / mo") · save \(offering.annualSavingsPercent)%"
-                     : "No trial · cancel anytime")
-                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
             }
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.vertical, Theme.Space.md)
+            .padding(.vertical, Theme.Space.sm + 2)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 shape.fill(.ultraThinMaterial)
@@ -242,22 +242,28 @@ struct PaywallView: View {
 
     // MARK: CTA
 
+    /// Compact primary action — 48pt, quieter than the 56pt OversizedButton so the plans above
+    /// keep the visual weight.
     private var cta: some View {
-        VStack(spacing: Theme.Space.sm) {
-            OversizedButton(title: ctaTitle, isEnabled: !working) {
-                Task {
-                    working = true
-                    let ok = await paywall.purchase(product)
-                    working = false
-                    if ok { services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly")) }
-                    if paywall.isPro { dismiss() }
-                }
+        Button {
+            Haptics.light()
+            Task {
+                working = true
+                let ok = await paywall.purchase(product)
+                working = false
+                if ok { services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly")) }
+                if paywall.isPro { dismiss() }
             }
-            Button("Restore purchases") {
-                Task { working = true; _ = await paywall.restore(); working = false; if paywall.isPro { dismiss() } }
-            }
-            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+        } label: {
+            Text(ctaTitle)
+                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                .frame(maxWidth: .infinity).frame(height: 48)
+                .foregroundStyle(Theme.background)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
         }
+        .buttonStyle(.plain)
+        .opacity(working ? 0.4 : 1)
+        .disabled(working)
     }
 
     private var ctaTitle: String {
@@ -267,29 +273,31 @@ struct PaywallView: View {
 
     // MARK: Fine print
 
+    /// One tiny line: honest renewal terms + the required links, nothing taller.
     private var fineprint: some View {
-        VStack(spacing: 6) {
+        HStack(spacing: Theme.Space.xs) {
             Text(renewalTerms)
-                .font(.rounded(Theme.FontSize.label, weight: .medium))
-                .foregroundStyle(Theme.inkTertiary)
-                .multilineTextAlignment(.center)
-            HStack(spacing: Theme.Space.xs) {
-                Button("Terms") { open("https://momentum.fit/terms") }
-                Text("·").foregroundStyle(Theme.inkTertiary)
-                Button("Privacy") { open("https://momentum.fit/privacy") }
+            Text("·")
+            Button("Restore") {
+                Task { working = true; _ = await paywall.restore(); working = false; if paywall.isPro { dismiss() } }
             }
-            .font(.rounded(Theme.FontSize.label, weight: .semibold))
-            .foregroundStyle(Theme.inkTertiary)
+            Text("·")
+            Button("Terms") { open("https://momentum.fit/terms") }
+            Text("·")
+            Button("Privacy") { open("https://momentum.fit/privacy") }
         }
-        .padding(.top, 2)
+        .font(.rounded(10, weight: .medium))
+        .foregroundStyle(Theme.inkTertiary)
+        .lineLimit(1).minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity)
     }
 
-    /// Plain-language renewal terms (the §10 honesty bar) — exact wording per plan.
+    /// Plain-language renewal terms (the §10 honesty bar), one short line per plan.
     private var renewalTerms: String {
         if product.isAnnual, product.trialDays > 0 {
-            return "Free for \(product.trialDays) days, then \(product.priceText)/year. Cancel anytime in Settings — we’ll remind you before it renews."
+            return "\(product.trialDays) days free, then \(product.priceText)/yr · cancel anytime"
         }
-        return "\(product.priceText)/month. Cancel anytime in Settings, no questions asked."
+        return "\(product.priceText)/mo · cancel anytime"
     }
 
     private var closeButton: some View {
