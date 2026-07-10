@@ -12,6 +12,8 @@ struct WatchStrengthView: View {
             if model.restEndsAt != nil { restOverlay }
         }
         .navigationTitle("Lift")
+        // The rest ring owns the screen — no back chevron floating over it.
+        .toolbar(model.restEndsAt != nil ? .hidden : .automatic, for: .navigationBar)
         .onAppear {
             #if DEBUG
             model.seedDemoIfRequested()
@@ -21,24 +23,29 @@ struct WatchStrengthView: View {
 
     private var logger: some View {
         ScrollView {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 HStack {
-                    Text("Lift").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(WatchTheme.ink)
-                    Spacer()
                     Text("\(model.completedSets) SET\(model.completedSets == 1 ? "" : "S")")
                         .font(.system(size: 11, weight: .bold)).tracking(0.8).monospacedDigit()
                         .foregroundStyle(WatchTheme.accent)
+                        .contentTransition(.numericText(countsDown: false))
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Capsule().fill(WatchTheme.accent.opacity(0.18)))
+                        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: model.completedSets)
+                    Spacer()
                 }
                 stepperCard(value: model.weightText, label: "Weight",
                             onMinus: { model.addWeight(-1) }, onPlus: { model.addWeight(1) })
                 stepperCard(value: "\(model.reps)", label: "Reps",
                             onMinus: { model.addReps(-1) }, onPlus: { model.addReps(1) })
                 Button(action: model.logSet) {
-                    Label("Log set", systemImage: "checkmark")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .frame(maxWidth: .infinity)
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark")
+                            .symbolEffect(.bounce, value: model.completedSets)
+                        Text("Log set")
+                    }
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(WatchTheme.accent)
@@ -55,7 +62,7 @@ struct WatchStrengthView: View {
             stepButton("minus", action: onMinus)
             VStack(spacing: 0) {
                 Text(value)
-                    .font(.system(size: 26, weight: .bold, design: .rounded)).monospacedDigit()
+                    .font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(WatchTheme.ink).minimumScaleFactor(0.7).lineLimit(1)
                 Text(label.uppercased())
                     .font(.system(size: 10, weight: .semibold)).tracking(0.5)
@@ -64,14 +71,14 @@ struct WatchStrengthView: View {
             .frame(maxWidth: .infinity)
             stepButton("plus", action: onPlus)
         }
-        .padding(.vertical, 6).padding(.horizontal, 8)
+        .padding(.vertical, 4).padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(WatchTheme.surface))
     }
 
     private func stepButton(_ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon).font(.system(size: 17, weight: .bold))
-                .frame(width: 42, height: 42)
+                .frame(width: 38, height: 38)
         }
         .buttonStyle(.plain)
         .background(Circle().fill(WatchTheme.control))
@@ -95,8 +102,14 @@ struct WatchStrengthView: View {
                     Text(Formatters.duration(s: remaining))
                         .font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
                         .foregroundStyle(WatchTheme.ink)
+                        .contentTransition(.numericText(countsDown: true))
+                        .animation(.smooth(duration: 0.3), value: Int(remaining))
                     Button("Skip") { model.skipRest() }
-                        .font(.system(size: 13, weight: .semibold)).tint(WatchTheme.control)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(WatchTheme.ink)
+                        .buttonStyle(.bordered)
+                        .tint(WatchTheme.control)
+                        .fixedSize()
                 }
                 .padding(26)
             }

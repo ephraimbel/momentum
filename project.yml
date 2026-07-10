@@ -145,10 +145,14 @@ targets:
       - path: MomentumWatch
       - path: Momentum/Models/Enums.swift          # shared: WorkoutType / Discipline
       - path: Momentum/Utilities/Formatters.swift   # shared: SI → display formatting
+      - path: Momentum/Engines/HRZones.swift        # shared: Karvonen zone model for the live zone gauge
+      - path: Momentum/Engines/RouteSmoothing.swift # shared: spline smoothing for the summary route trace
+      - path: Momentum/Engines/Geo.swift            # shared: haversine (RouteSmoothing dependency)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.watchkitapp
         CODE_SIGN_ENTITLEMENTS: MomentumWatch/MomentumWatch.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
@@ -162,6 +166,7 @@ targets:
           - workout-processing
         NSHealthShareUsageDescription: "momentum reads heart rate, distance, and energy during your workout to show live stats."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
+        NSLocationWhenInUseUsageDescription: "momentum uses your location to draw your live route on the map during a workout."
 
   MomentumTests:
     type: bundle.unit-test

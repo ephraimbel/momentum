@@ -24,6 +24,8 @@
 	<string>momentum reads heart rate, distance, and energy during your workout to show live stats.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>momentum saves your completed workouts to Apple Health.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>momentum uses your location to draw your live route on the map during a workout.</string>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKBackgroundModes</key>
