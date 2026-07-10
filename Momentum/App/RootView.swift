@@ -61,7 +61,9 @@ struct RootView: View {
                     OnboardingFlow { showOnboarding = false }
                 }
                 // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
-                .sheet(item: $paywall.presentedFeature) { feature in
+                // Full screen (not a sheet): the paywall is a considered, premium moment — it owns
+                // the whole canvas, like onboarding.
+                .fullScreenCover(item: $paywall.presentedFeature) { feature in
                     PaywallView(feature: feature)
                 }
                 #if DEBUG

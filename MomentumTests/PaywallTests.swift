@@ -51,6 +51,6 @@ struct PaywallTests {
         let offering = PaywallOffering.standard
         #expect(offering.annual.trialDays == 7)
         #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 50)   // $59.99/yr vs 12 × $9.99
+        #expect(offering.annualSavingsPercent == 50)   // $119.99/yr vs 12 × $19.99
     }
 }

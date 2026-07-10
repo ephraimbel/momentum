@@ -24,16 +24,17 @@ struct PaywallOffering: Sendable, Equatable {
     let monthly: PaywallProduct
     let annual: PaywallProduct
 
-    /// PRD §10 planned pricing — used until the live store supplies localized prices.
+    /// Planned pricing (decision 2026-07-09, matches the website): $119.99/yr with a 7-day trial,
+    /// $19.99/mo with no trial. Used until the live store supplies localized prices.
     static let standard = PaywallOffering(
         monthly: .init(id: "momentum_pro_monthly", period: .monthly,
-                       priceText: "$9.99", perMonthText: nil, trialDays: 0),
+                       priceText: "$19.99", perMonthText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
-                      priceText: "$59.99", perMonthText: "$5.00 / mo", trialDays: 7))
+                      priceText: "$119.99", perMonthText: "$10.00 / mo", trialDays: 7))
 
     /// "Save 50%" vs paying monthly for a year — shown on the annual plan.
     var annualSavingsPercent: Int {
-        let monthlyYear = 12 * 9.99, annualYear = 59.99
+        let monthlyYear = 12 * 19.99, annualYear = 119.99
         guard monthlyYear > 0 else { return 0 }
         return Int(((monthlyYear - annualYear) / monthlyYear * 100).rounded())
     }
