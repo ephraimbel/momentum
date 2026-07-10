@@ -11,10 +11,14 @@ enum Theme {
     static let background = Color("background")
     static let hairline = Color("hairline")
     static let route = Color("route")          // brightest live element
+    static let success = Color(hex: "34C759")  // "done" affordance (logged set ✓) — the one green accent
+    static let purple = Color(hex: "7C63F0")   // brand violet — the Pro/marketing accent (paywall, PRO badge)
 
     // MARK: Spacing (base 4pt)
     enum Space {
-        static let xs = 4.0, sm = 8.0, md = 16.0, lg = 24.0, xl = 32.0, xxl = 48.0
+        static let xxs = 2.0, xs = 4.0, sm = 8.0, md = 16.0, lg = 24.0, xl = 32.0, xxl = 48.0
+        static let chipV = 6.0   // capsule/chip vertical padding (PRBadge, gps pill, set row)
+        static let pillV = 10.0  // selector/teaser/coach pill vertical padding
     }
 
     // MARK: Radius
@@ -36,4 +40,37 @@ enum Theme {
         Color(hex: "E6C2FF"), // lilac
         Color(hex: "C2F0FF"), // ice
     ]
+
+    // MARK: Iridescent opacity — the earned accent is soft; these name the levels that were
+    // scattered as raw literals (0.16–0.55) across the app so every surface tints consistently.
+    enum IridescentOpacity: Double {
+        case faint = 0.16   // completed plan-session tint
+        case soft  = 0.18   // ambient pill backings (learning teaser)
+        case line  = 0.20   // earned-line capsule
+        case chip  = 0.22   // live chips (streak alive, coach)
+        case glyph = 0.25   // small glyph fills / chart area
+        case badge = 0.30   // icon-circle backings (plan/confirm glyphs)
+        case card  = 0.32   // earned cards (identity, learned beliefs)
+        case hero  = 0.55   // hero status fills (ACWR band)
+        var value: Double { rawValue }
+    }
+}
+
+// MARK: - Elevation
+// Light mode is the hero aesthetic (forced `.light`), so a single light-tuned shadow pair
+// reads cleanly: a quiet lift for resting cards, a deeper one for floating chrome/sheets.
+struct ShadowToken { let color: Color; let radius: CGFloat; let y: CGFloat }
+
+extension Theme {
+    enum Elevation {
+        static let card  = ShadowToken(color: .black.opacity(0.05), radius: 8,  y: 2)
+        static let float = ShadowToken(color: .black.opacity(0.10), radius: 18, y: 6)
+    }
+}
+
+extension View {
+    /// Apply a named elevation shadow (see `Theme.Elevation`).
+    func elevation(_ token: ShadowToken) -> some View {
+        shadow(color: token.color, radius: token.radius, y: token.y)
+    }
 }

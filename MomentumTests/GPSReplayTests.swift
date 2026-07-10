@@ -52,6 +52,43 @@ struct GPSReplayTests {
         #expect(error < 0.02, "distance \(p.distanceM)m vs 1000m → \(error * 100)% off")
     }
 
+    /// §13.11: "pace never jumps >30 s/km between 1s updates at steady effort." Drive a straight leg
+    /// at a steady ~2.5 m/s with one fix per second and realistic GPS position noise — the noise makes
+    /// the *instantaneous* pace swing well past 30 s/km between samples, so this only passes because
+    /// the EMA (α=0.2) keeps the *smoothed* pace continuous.
+    @Test func smoothedPaceNeverJumpsMoreThan30sPerKmAtSteadyEffort() {
+        var p = GPSProcessor(config: .forType(.run))
+        // Deterministic per-step lengths around 2.5m (all clear the 2m movement gate). Instantaneous
+        // pace = 1000/step ⇒ ranges ~345–455 s/km, i.e. ~110 s/km swings sample-to-sample.
+        let stepLengths = [2.2, 2.8, 2.3, 2.7, 2.5, 2.1, 2.9, 2.4]
+        var east = 0.0, t = 0.0
+        _ = p.ingest(fix(eastM: 0, northM: 0, t: t))   // anchor
+
+        var prevSmoothed: Double?
+        var maxInstJump = 0.0, prevInst: Double?
+        var maxSmoothedJump = 0.0
+        for i in 0..<80 {
+            let step = stepLengths[i % stepLengths.count]
+            east += step; t += 1   // one fix per second
+            guard case .accepted(let added) = p.ingest(fix(eastM: east, northM: 0, t: t)), added > 0
+            else { continue }
+
+            let inst = 1000.0 / step   // s/km implied by this 1s step
+            if let pi = prevInst { maxInstJump = max(maxInstJump, abs(inst - pi)) }
+            prevInst = inst
+
+            if let prev = prevSmoothed {
+                let jump = abs(p.smoothedPaceSPerKm - prev)
+                maxSmoothedJump = max(maxSmoothedJump, jump)
+                #expect(jump <= 30, "smoothed pace jumped \(jump) s/km between 1s updates")
+            }
+            prevSmoothed = p.smoothedPaceSPerKm
+        }
+        // The test is only meaningful if the raw signal actually swung past the bar the EMA enforces.
+        #expect(maxInstJump > 30, "instantaneous swing \(maxInstJump) — noise too small to be a real test")
+        #expect(maxSmoothedJump > 0, "smoothed pace never moved")
+    }
+
     @Test func rejectsNoiseWithoutCorruptingDistance() {
         var p = GPSProcessor(config: .forType(.run))
         var trace = squareLoop()

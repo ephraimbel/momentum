@@ -721,8 +721,9 @@ Capabilities: Background Modes → **Location updates**; HealthKit; Sign in with
 
 ### 9.1 Running (carried from v2.x)
 - Estimate 5k pace `P5k` via **Riegel** (`T5k = T·(5000/D)^1.06`) from a recent effort, else level defaults (sometimes 360, regularly 300 s/km), recalibrated from first runs.
-- **Training paces** = offsets from `P5k` (s/km): recovery +110, easy +80, long +90, marathon +40, tempo +20, intervals +0. New runners use run/walk intervals.
-- **Volume**: start by level×days; progress ≤10%/week; deload (−30%) every 4th week; taper last `min(3, ceil(0.15·W))` weeks before a race. Phases base→build→peak→taper by weeks-to-race; no-race → 3-week build / 1-week deload macro.
+- **Training paces = Daniels/VDOT zones** (`DanielsPaces`, updated 2026-07-10 — supersedes the old fixed offsets): VDOT derived from `P5k` via the Daniels–Gilbert curves, then per-type paces at fractions of VO₂max — recovery 60%, long 64%, easy 66% (the E band), tempo = threshold (one-hour-race intensity, ~88.8%), intervals = vVO₂max (100%), marathon = the predicted marathon race pace at that VDOT (used by progression runs: E→M→T thirds). Curvilinear — the easy gap widens for slower runners. "@ 5K" reps carry a race-pace override; re-derivation preserves rep intent via `PlanEngine.sessionPace`. New runners use run/walk intervals.
+- **Volume & phases** (updated 2026-07-10, `PlanEngine.mesocycle`): start by level×days; progress ≤10%/week; deload (−30%) every 4th week. Full periodization base→build→peak→taper: base ≈ first quarter (pyramidal quality — tempo/hills/fartlek, no sharpening), build rotates race-specific quality with rep counts that **grow** week over week, peak = 1–2 weeks holding max volume with race-specific work, taper is **distance-specific** (5K/10K 1 wk, half 2, marathon+ 3, capped at ¼ of plan) and cuts volume to ~45–70% of the peak week while **keeping intensity** (one short race-pace touch per taper week — Bosquet 2007). No-race → one settling week + rolling build/deload.
+- **Injury history shapes generation** (2026-07-10, ENDURANCE-FOCUS §8.2): onboarding injury areas cap the weekly ramp and deload cadence at balanced (an aggressive pick can't stack volume on a previously hurt body), and steer quality selection away from each area's aggravating stimulus — lower-leg/knee/IT histories swap high-impact hill reps for tempo; hamstring/hip histories swap sprint-fast reps and strides for threshold cruise work. Every swap carries a one-line rationale on the session — personalization is visible, never silent.
 
 ### 9.2 Strength
 - **e1RM (Epley):** `weight·(1+reps/30)`; track per lift; drives progression + PRs.
@@ -735,7 +736,7 @@ Capabilities: Background Modes → **Location updates**; HealthKit; Sign in with
 - **Volume landmarks (hypertrophy guidance, tunable):** ~10–20 **working sets per muscle group per week**; strength-focus uses lower reps (3–6) at higher intensity, fewer sets; the engine balances sets across muscles toward the target range.
 - **Split templates by days/week:** 2–3 → Full Body; 4 → Upper/Lower; 5–6 → Push/Pull/Legs (or UL+) ; session length → exercise count (≈ minutes/10, compounds first).
 - **Exercise selection:** filtered by `equipment` and goal; compounds prioritized; balanced agonist/antagonist; substitutes offered when equipment is limited.
-- **Deload:** every 4–6 weeks or autoregulated (sustained RPE creep / missed reps) → reduce volume ~40% and/or intensity for a week.
+- **Deload:** every 4–6 weeks or autoregulated (sustained RPE creep / missed reps) → reduce volume ~40% and/or intensity for a week. *(Implemented 2026-07-10: `PlanCoaching.easeStrengthOnRPECreep` — two consecutive sessions at mean rated RPE ≥ 8.5 cut the coming week's planned sets ~40%, ≤1 structural change/week. Scheme progression is live in the session prefill: linear/percent/double via `StrengthSessionEngine.plannedTarget`.)*
 
 ### 9.3 Hybrid scheduling & recovery (the capability no competitor has)
 When a user trains both, the engine schedules across the week with recovery rules:

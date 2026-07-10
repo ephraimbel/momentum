@@ -1,0 +1,55 @@
+import Foundation
+import SwiftData
+
+/// An in-app notification the athlete received from momentum — a workout reminder, a coaching nudge, a
+/// streak alert, an achievement. Every push the app surfaces is also recorded here so the bell opens a
+/// real inbox of everything, not a dead icon. Read state drives the unread badge.
+@Model
+final class AppNotification {
+    enum Kind: String, Codable, Sendable {
+        case reminder, coaching, streak, achievement, system
+
+        var systemImage: String {
+            switch self {
+            case .reminder: "bell.fill"
+            case .coaching: "figure.run"
+            case .streak: "flame.fill"
+            case .achievement: "trophy.fill"
+            case .system: "sparkles"
+            }
+        }
+    }
+
+    var id: UUID = UUID()
+    var date: Date = Date()
+    var kindRaw: String = Kind.system.rawValue
+    var title: String = ""
+    var body: String = ""
+    var read: Bool = false
+    /// Optional key to avoid re-posting the same notification (e.g. one workout reminder per day).
+    var dedupeToken: String?
+
+    var kind: Kind { Kind(rawValue: kindRaw) ?? .system }
+
+    init(kind: Kind, title: String, body: String, date: Date, dedupeToken: String? = nil) {
+        self.kindRaw = kind.rawValue
+        self.title = title
+        self.body = body
+        self.date = date
+        self.dedupeToken = dedupeToken
+    }
+
+    /// Record a notification in the inbox. When `dedupeToken` is set, skips if one with that token was
+    /// already posted the same day — so a daily reminder or a one-off welcome never stacks up.
+    static func post(kind: Kind, title: String, body: String, on date: Date = Date(),
+                     in context: ModelContext, dedupeToken: String? = nil, daily: Bool = true,
+                     calendar: Calendar = .current) {
+        if let token = dedupeToken {
+            let existing = (try? context.fetch(FetchDescriptor<AppNotification>())) ?? []
+            // `daily` → one per day; otherwise once ever (a welcome shouldn't reappear tomorrow).
+            if existing.contains(where: { $0.dedupeToken == token && (!daily || calendar.isDate($0.date, inSameDayAs: date)) }) { return }
+        }
+        context.insert(AppNotification(kind: kind, title: title, body: body, date: date, dedupeToken: dedupeToken))
+        try? context.save()
+    }
+}

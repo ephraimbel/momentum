@@ -11,7 +11,7 @@ struct CompletedWorkoutCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            banner.frame(height: 150).frame(maxWidth: .infinity).clipped()
+            banner.frame(height: 132).frame(maxWidth: .infinity).clipped()
             statsRow
         }
         .background(Theme.surface)
@@ -26,11 +26,11 @@ struct CompletedWorkoutCard: View {
 
     @ViewBuilder
     private var banner: some View {
-        if workout.type == .strength {
+        if workout.type.isStrengthStyle || workout.type.isTimed {
             ZStack {
                 LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
                                startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: "dumbbell.fill")
+                Image(systemName: workout.type.systemImage)
                     .font(.system(size: 44, weight: .bold))
                     .foregroundStyle(Theme.ink.opacity(0.85))
             }
@@ -46,8 +46,7 @@ struct CompletedWorkoutCard: View {
 
     @ViewBuilder
     private var routeSilhouette: some View {
-        let coords = (workout.gps?.samples ?? []).filter(\.accepted).sorted { $0.t < $1.t }
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let coords = workout.gps?.routeCoordinates(type: workout.type) ?? []
         if coords.count > 1 {
             RouteSilhouette(coords: coords)
                 .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
@@ -81,7 +80,7 @@ struct CompletedWorkoutCard: View {
     }
 
     private var statsText: String {
-        if workout.type == .strength, let s = workout.strength {
+        if workout.type.isStrengthStyle, let s = workout.strength {
             let vol = weightUnit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
             return "\(Int(vol)) \(weightUnit == .lb ? "lb" : "kg") · \(s.totalSets) sets · \(Formatters.duration(s: workout.durationS))"
         } else if let gps = workout.gps {

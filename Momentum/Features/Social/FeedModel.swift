@@ -1,0 +1,150 @@
+import Foundation
+import SwiftData
+import CoreLocation
+
+/// One card in the community feed. A value type so the user's own public workouts and the
+/// clearly-labeled "Momentum community" content render through the same card without inventing fake
+/// SwiftData workouts (community items are never written to the user's history/analytics).
+struct FeedItem: Identifiable, Sendable, Hashable {
+    let id: UUID
+    let authorName: String
+    let authorHandle: String?
+    let location: String?
+    let isCommunity: Bool          // drives the "Momentum community" badge (honest labeling)
+    let type: WorkoutType
+    let date: Date
+    let title: String
+    let caption: String?
+    let statLine: String
+    let prBadge: String?
+    /// Muscles worked (strength/HIIT) → rendered as a glowing `MuscleMapView`, the lift counterpart
+    /// to the route map. nil/empty for non-strength posts.
+    var muscles: [MuscleGroup: Double]? = nil
+    /// Real route coordinates [[lat, lon]] — rendered as a map+trace in the feed. nil → glyph media.
+    var routeLatLon: [[Double]]? = nil
+    /// Which basemap to show behind this post's route (variety across the feed).
+    var mapStyle: MapStyleOption = .standard
+    /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
+    var baseReactions: Int = 0
+    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Take priority over
+    /// the route map; >1 renders as a swipeable carousel.
+    var photosData: [Data] = []
+    /// The hero photo — the first attached photo (convenience for tile/thumbnail contexts).
+    var photoData: Data? { photosData.first }
+    /// The author's profile photo (the user's own posts); nil → initials avatar (community).
+    var avatarData: Data? = nil
+    /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
+    /// post's reading view. The user's own posts carry their `aiSummary`; community posts are seeded.
+    var aiRead: String? = nil
+
+    /// Route as map coordinates for `RouteMapView`.
+    var routeCoordinates: [CLLocationCoordinate2D]? {
+        routeLatLon.map { $0.map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) } }
+    }
+
+    /// The stat line split into the Strava-style metric strip (value + label). Derived from `statLine`
+    /// so the user's own posts and seeded community posts (same format) both render structured.
+    var metrics: [FeedMetric] {
+        statLine.components(separatedBy: " · ").compactMap { token in
+            let t = token.trimmingCharacters(in: .whitespaces)
+            guard !t.isEmpty else { return nil }
+            let lower = t.lowercased()
+            if lower.contains("/mi") || lower.contains("/km") { return FeedMetric(value: t, label: "Pace") }
+            if lower.contains("mi") || lower.contains("km")   { return FeedMetric(value: t, label: "Distance") }
+            if lower.contains("lb") || lower.contains("kg")   { return FeedMetric(value: t, label: "Volume") }
+            if lower.contains("set") {
+                let num = t.split(separator: " ").first.map(String.init) ?? t
+                return FeedMetric(value: num, label: "Sets")
+            }
+            if t.contains(":") { return FeedMetric(value: t, label: "Time") }
+            return FeedMetric(value: t, label: "")
+        }
+    }
+}
+
+/// One cell of a feed post's metric strip — a value over a quiet label (Strava's signature stat row).
+struct FeedMetric: Identifiable, Sendable, Hashable {
+    let value: String
+    let label: String
+    var id: String { label + value }
+}
+
+/// Pure, testable feed assembly (docs/SOCIAL-LAYER.md). Merges the athlete's **shared** workouts with
+/// the seeded community, newest first. Private workouts never appear; route geometry only when the
+/// athlete opted route maps in.
+enum FeedAssembler {
+    static func feed(userWorkouts: [Workout], profile: UserProfile?,
+                     community: [FeedItem], now: Date = Date()) -> [FeedItem] {
+        let mine = userWorkouts
+            .filter { SocialPrivacy.isShared($0) }
+            .map { item(from: $0, profile: profile) }
+        return (mine + community).sorted { $0.date > $1.date }
+    }
+
+    /// Follow-scoped view of an assembled feed: the athlete's own posts plus posts from handles they
+    /// follow. Ordering is preserved (the assembled feed is already newest-first). Pure for testability.
+    static func scoped(_ feed: [FeedItem], following: Set<String>) -> [FeedItem] {
+        feed.filter { !$0.isCommunity || ($0.authorHandle.map(following.contains) ?? false) }
+    }
+
+    /// Map a shared `Workout` into a feed card from the owner's point of view.
+    static func item(from w: Workout, profile: UserProfile?) -> FeedItem {
+        let weightUnit = WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg
+        let distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
+        let showRoute = profile.map { SocialPrivacy.showsRoute(w, profile: $0) } ?? false
+        let route: [[Double]]? = showRoute ? routeLatLon(w) : nil
+        let muscles: [MuscleGroup: Double]? = muscleMap(w)
+        return FeedItem(
+            id: w.id,
+            authorName: displayName(profile),
+            authorHandle: profile.flatMap { $0.handle.isEmpty ? nil : $0.handle },
+            location: profile.flatMap(SocialPrivacy.publicLocation),
+            isCommunity: false,
+            type: w.type,
+            date: w.startedAt,
+            title: w.title.isEmpty ? w.type.title : w.title,
+            caption: w.note.isEmpty ? nil : w.note,
+            statLine: statLine(w, weightUnit: weightUnit, distanceUnit: distanceUnit),
+            prBadge: nil,
+            muscles: muscles,
+            routeLatLon: route,
+            mapStyle: .standard,
+            photosData: w.orderedPhotosData,
+            avatarData: profile?.avatarData,
+            aiRead: w.aiSummary)
+    }
+
+    static func displayName(_ profile: UserProfile?) -> String {
+        let n = profile?.displayName.trimmingCharacters(in: .whitespaces) ?? ""
+        return n.isEmpty ? "You" : n
+    }
+
+    static func statLine(_ w: Workout, weightUnit: WeightUnit, distanceUnit: DistanceUnit) -> String {
+        if w.type.isStrengthStyle, let s = w.strength {
+            let vol = weightUnit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
+            return "\(Int(vol)) \(weightUnit == .lb ? "lb" : "kg") · \(s.totalSets) sets · \(Formatters.duration(s: w.durationS))"
+        } else if let gps = w.gps, gps.distanceM > 0 {
+            return "\(Formatters.distance(meters: gps.distanceM, unit: distanceUnit)) · \(Formatters.duration(s: w.durationS))"
+        }
+        return Formatters.duration(s: w.durationS)
+    }
+
+    /// Muscles a strength/HIIT workout worked — from real logged sets, with a title-based fallback so
+    /// a lift post always has a body to light up. nil for non-strength workouts.
+    static func muscleMap(_ w: Workout) -> [MuscleGroup: Double]? {
+        guard w.type.isStrengthStyle else { return nil }
+        if let session = w.strength {
+            let logged = MuscleActivation.from(session: session)
+            if !logged.isEmpty { return logged }
+        }
+        let title = w.title.isEmpty ? w.type.title : w.title
+        return StrengthFeedMuscles.activation(forTitle: title, type: w.type)
+    }
+
+    /// A workout's accepted GPS samples as real [[lat, lon]] coordinates for the feed map.
+    static func routeLatLon(_ w: Workout) -> [[Double]]? {
+        let pts = w.gps?.routeCoordinates(type: w.type) ?? []
+        guard pts.count > 1 else { return nil }
+        return pts.map { [$0.latitude, $0.longitude] }
+    }
+}

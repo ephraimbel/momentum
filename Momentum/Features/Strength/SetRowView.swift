@@ -7,21 +7,25 @@ struct SetRowView: View {
     let rowId: UUID
     let set: StrengthSessionEngine.LiveSet
 
+    @Environment(Services.self) private var services
     @FocusState private var focused: Field?
     private enum Field { case weight, reps, rpe }
 
     var body: some View {
         HStack(spacing: Theme.Space.sm) {
-            marker
-            field(.weight, placeholder: vm.weightUnitLabel, binding: bind(\.weight), width: 60)
-            Text("×").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-            field(.reps, placeholder: "reps", binding: bind(\.reps), width: 50)
-            field(.rpe, placeholder: "rpe", binding: bind(\.rpe), width: 42)
-            Spacer(minLength: 0)
+            // The logged set's data dims back; the ✓ itself stays full-brightness so "done" reads.
+            HStack(spacing: Theme.Space.sm) {
+                marker
+                field(.weight, placeholder: vm.weightUnitLabel, binding: bind(\.weight), width: 60)
+                Text("×").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                field(.reps, placeholder: "reps", binding: bind(\.reps), width: 50)
+                field(.rpe, placeholder: "rpe", binding: bind(\.rpe), width: 42)
+                Spacer(minLength: 0)
+            }
+            .opacity(set.isComplete ? 0.5 : 1)
             logButton
         }
         .padding(.vertical, 6)
-        .opacity(set.isComplete ? 0.55 : 1)
         .animation(Motion.lively, value: set.isComplete)
     }
 
@@ -56,16 +60,26 @@ struct SetRowView: View {
     private var logButton: some View {
         Button {
             focused = nil
-            Task { await vm.completeSet(rowId: rowId, setId: set.id) }
+            // Toggle: tap to log, tap again to un-log (correct a mis-tap mid-workout).
+            Task {
+                if set.isComplete { await vm.uncompleteSet(rowId: rowId, setId: set.id) }
+                else {
+                    // Log-a-set latency is a §13.1 quality bar (< 3s) — measure the persist round trip.
+                    let started = Date()
+                    await vm.completeSet(rowId: rowId, setId: set.id)
+                    services.analytics.log(.setLogged(latencyMs: Int(Date().timeIntervalSince(started) * 1000)))
+                }
+            }
         } label: {
             Image(systemName: set.isComplete ? "checkmark.circle.fill" : "checkmark.circle")
-                .font(.system(size: 26))
-                .foregroundStyle(set.isComplete ? Theme.ink : Theme.inkTertiary)
+                .font(.system(size: 26, weight: set.isComplete ? .bold : .regular))
+                .foregroundStyle(set.isComplete ? Theme.success : Theme.inkTertiary)
                 .symbolEffect(.bounce, value: set.isComplete)
+                .frame(width: 44, height: 44)   // ≥44pt hit area (HIG / quality bar) for a mid-set tap
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(set.isComplete)
-        .accessibilityLabel(set.isComplete ? "Set logged" : "Log set")
+        .accessibilityLabel(set.isComplete ? "Set logged. Double-tap to undo." : "Log set")
     }
 
     @ViewBuilder

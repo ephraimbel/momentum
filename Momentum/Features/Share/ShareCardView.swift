@@ -8,6 +8,7 @@ struct ShareCardView: View {
     var distanceUnit: DistanceUnit = .auto
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(Services.self) private var services
     @State private var format: ShareFormat = .story
 
     enum ShareFormat: String, CaseIterable, Identifiable {
@@ -49,6 +50,9 @@ struct ShareCardView: View {
                         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
                         .foregroundStyle(Theme.background)
                 }
+                .simultaneousGesture(TapGesture().onEnded {
+                    services.analytics.log(.shareCreated(style: format.rawValue))
+                })
             }
             .padding(Theme.Space.md)
             .background(Theme.background)

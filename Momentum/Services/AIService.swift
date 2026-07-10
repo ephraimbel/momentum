@@ -47,7 +47,9 @@ final class AIService: AIServing {
         var req = URLRequest(url: url, timeoutInterval: timeoutS)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        // Prefer the user's session JWT (edge functions verify JWTs); anon key for guests.
+        let token = await SupabaseClientProvider.accessToken() ?? bearer
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONEncoder().encode(body)
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
@@ -150,6 +152,16 @@ final class AIService: AIServing {
     }
 
     // MARK: - Configuration (absent in the default build → template path)
+
+    /// Whether the server read path is configured at all (vs. the always-present deterministic
+    /// fallback) — used by analytics to report the AI fallback rate (PRD §13.5).
+    static var isServerConfigured: Bool {
+        guard let base = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String,
+              !base.isEmpty,
+              let key = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String,
+              !key.isEmpty else { return false }
+        return true
+    }
 
     private var endpoint: URL? {
         guard let base = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String,

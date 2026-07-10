@@ -16,6 +16,28 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
+# Maps: Mapbox Maps SDK (replaces MapKit for all map rendering). The binary frameworks download
+# from api.mapbox.com via a DOWNLOADS:READ secret token in ~/.netrc (not committed); the runtime
+# public token is injected from the untracked Secrets.xcconfig (MBX_ACCESS_TOKEN) into Info.plist's
+# MBXAccessToken at build — never committed. Copy Secrets.xcconfig.example → Secrets.xcconfig and
+# fill in your pk.* token.
+packages:
+  MapboxMaps:
+    url: https://github.com/mapbox/mapbox-maps-ios.git
+    from: "11.0.0"
+  # Social backend + auth + storage (docs/SOCIAL-BACKEND-SETUP.md). Config-gated: the app ships
+  # dark until SUPABASE_URL/SUPABASE_ANON_KEY are set in Secrets.xcconfig.
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    from: "2.0.0"
+# Phase 3 billing SDKs — uncomment with the Momentum-target deps below to go live (PRD §10).
+#   RevenueCat:
+#     url: https://github.com/RevenueCat/purchases-ios
+#     from: "5.0.0"
+#   Superwall:
+#     url: https://github.com/superwall/Superwall-iOS
+#     from: "4.0.0"
+
 targets:
   Momentum:
     type: application
@@ -23,6 +45,10 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Momentum
+    # Injects MBX_ACCESS_TOKEN (the Mapbox runtime token) from the untracked Secrets.xcconfig.
+    configFiles:
+      Debug: Secrets.xcconfig
+      Release: Secrets.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app
@@ -41,13 +67,29 @@ targets:
           - location
         NSLocationWhenInUseUsageDescription: "momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed."
         NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
-        NSHealthShareUsageDescription: "momentum reads heart rate, body weight, and workout data to personalize your stats and coaching."
+        NSBluetoothAlwaysUsageDescription: "momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run."
+        NSHealthShareUsageDescription: "momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
+        NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
-        # Athlete Model / AI read (ATHLETE-MODEL.md §7). Empty → deterministic-template path (ships
-        # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
-        SupabaseURL: ""
-        SupabaseAnonKey: ""
+        # Mapbox runtime token — injected from Secrets.xcconfig (MBX_ACCESS_TOKEN) at build, so no
+        # token is committed. The Maps SDK reads MBXAccessToken automatically at init.
+        MBXAccessToken: "$(MBX_ACCESS_TOKEN)"
+        # Supabase (auth, social backend, sync, AI edge functions). Injected from the untracked
+        # Secrets.xcconfig — empty values → every network seam ships dark (deterministic
+        # templates, local-only social). Setup: docs/SOCIAL-BACKEND-SETUP.md.
+        SupabaseURL: "$(SUPABASE_URL)"
+        SupabaseAnonKey: "$(SUPABASE_ANON_KEY)"
+        # OAuth deep-link callback (Google sign-in via ASWebAuthenticationSession) — the scheme
+        # the Supabase web flow redirects back to (momentum://auth-callback).
+        CFBundleURLTypes:
+          - CFBundleURLName: com.momentum.app.auth
+            CFBundleURLSchemes:
+              - momentum
+        # Billing (PRD §10). Empty → local entitlement seam. Set these + link the SDKs to go live
+        # (docs/MONETIZATION-SETUP.md). Read by `BillingKeys`.
+        RevenueCatAPIKey: ""
+        SuperwallAPIKey: ""
         UILaunchScreen:
           UIColorName: background
         UIAppFonts:
@@ -58,15 +100,68 @@ targets:
           - SpaceGrotesk-Regular.ttf
           - SpaceGrotesk-Medium.ttf
           - SpaceGrotesk-Bold.ttf
-    # ── Later-phase dependencies (NOT in the Phase 0 build) ──────────────
-    # Add when their phase begins, then re-run `xcodegen generate`:
-    #   Phase 2/4 — supabase-swift  (https://github.com/supabase/supabase-swift)
-    #   Phase 3   — RevenueCat      (https://github.com/RevenueCat/purchases-ios)
-    #   Phase 3   — Superwall       (https://github.com/superwall/Superwall-iOS)
-    # dependencies:
-    #   - package: supabase-swift
+    dependencies:
+      - target: MomentumWidgets      # embeds the Live Activity / widget extension into the app
+      - target: MomentumWatch        # embeds the watchOS app into the phone app (PRD §8.10)
+        embed: true
+      - package: MapboxMaps          # map rendering (Today, live route, heatmap, route suggestion)
+      - package: Supabase            # auth (Sign in with Apple → JWT), social tables, photo storage
+    # ── Phase 3 billing (RevenueCat + Superwall) ─────────────────────────
+    # The integration code is already written behind `#if canImport(...)` (PaywallController);
+    # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
+    # `xcodegen generate`. Full runbook: docs/MONETIZATION-SETUP.md.
     #   - package: RevenueCat
     #   - package: Superwall
+
+  # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
+  # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity
+  # requirement). Regenerate with `xcodegen generate` after adding widget files.
+  MomentumWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MomentumWidgets
+      - path: Momentum/Features/Strength/RestActivityAttributes.swift   # shared with the app target
+      - path: Momentum/Features/Cardio/CardioActivityAttributes.swift   # shared with the app target
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.widgets
+    info:
+      path: MomentumWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # watchOS app (PRD §8.10 / §4.10) — on-wrist GPS cardio + strength logging. Shares only
+  # platform-agnostic logic from the phone (enums, formatters, pure math); its views are watch-native.
+  # Regenerate with `xcodegen generate` after adding watch files.
+  MomentumWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: MomentumWatch
+      - path: Momentum/Models/Enums.swift          # shared: WorkoutType / Discipline
+      - path: Momentum/Utilities/Formatters.swift   # shared: SI → display formatting
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.watchkitapp
+        CODE_SIGN_ENTITLEMENTS: MomentumWatch/MomentumWatch.entitlements
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    info:
+      path: MomentumWatch/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.momentum.app
+        WKBackgroundModes:
+          - workout-processing
+        NSHealthShareUsageDescription: "momentum reads heart rate, distance, and energy during your workout to show live stats."
+        NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
 
   MomentumTests:
     type: bundle.unit-test
@@ -81,12 +176,42 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.tests
         GENERATE_INFOPLIST_FILE: YES
 
+  # XCUITest target — drives the real app through the live-run flow to confirm the Pause/Resume
+  # control responds over the MapKit map (regression guard for the OversizedButton hit-testing fix).
+  MomentumUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MomentumUITests
+    dependencies:
+      - target: Momentum
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   Momentum:
     build:
       targets:
         Momentum: all
+        MomentumWidgets: all
+        MomentumWatch: all
         MomentumTests: [test]
+        MomentumUITests: [test]
     test:
       targets:
         - MomentumTests
+        - MomentumUITests
+
+  # UI-tests only — runs the live-run Pause regression check without compiling the unit-test target.
+  MomentumUITests:
+    build:
+      targets:
+        Momentum: all
+        MomentumWidgets: all
+        MomentumUITests: [test]
+    test:
+      targets:
+        - MomentumUITests

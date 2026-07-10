@@ -13,10 +13,68 @@ enum PlanService {
                            startDate: Date = Date(),
                            in context: ModelContext) -> TrainingPlan {
         let catalogItems = catalog(in: context)
-        let inputs = planInputs(from: profile)
+        let inputs = planInputs(from: profile, startDate: startDate)
         let generated = PlanEngine.generate(profile: inputs, catalog: catalogItems,
                                             calibration: calibration, startDate: startDate)
         return persist(generated, for: profile, startDate: startDate, in: context)
+    }
+
+    /// Add tracked cross-training the engine doesn't program (swim/row/yoga…) as one recurring
+    /// session per activity per week, on a day the structured plan didn't already use. Capped at
+    /// `totalDaysPerWeek` distinct workout days so the athlete's chosen day count is honored — extras
+    /// that don't fit are dropped rather than adding days. Each carries its precise `sportType`.
+    static func addCrossTraining(_ types: [WorkoutType], to plan: TrainingPlan, startDate: Date = Date(),
+                                 in context: ModelContext, totalDaysPerWeek: Int = 7,
+                                 calendar: Calendar = .current) {
+        guard !types.isEmpty else { return }
+        let anchor = calendar.startOfDay(for: startDate)
+        func dayIndex(_ d: Date) -> Int {
+            calendar.dateComponents([.day], from: anchor, to: calendar.startOfDay(for: d)).day ?? 0
+        }
+        let weekCount = (plan.sessions.map { dayIndex($0.date) / 7 }.max() ?? 3) + 1
+
+        for w in 0..<weekCount {
+            let weekRange = (w * 7)..<((w + 1) * 7)
+            var used = Set(plan.sessions.compactMap { s -> Int? in
+                let di = dayIndex(s.date); return weekRange.contains(di) ? di % 7 : nil
+            })
+            for type in types {
+                guard used.count < totalDaysPerWeek else { break }   // honor the chosen training-day count
+                guard let off = (0..<7).first(where: { !used.contains($0) }) else { break }
+                used.insert(off)
+                let s = PlannedSession()
+                s.date = calendar.date(byAdding: .day, value: w * 7 + off, to: anchor) ?? anchor
+                s.sportType = type.rawValue
+                s.discipline = type.discipline
+                s.targetDurationS = 1800   // a 30-min default the athlete can adjust
+                s.status = .planned
+                s.rationale = "Cross-training — your call."
+                plan.sessions.append(s)
+                context.insert(s)
+            }
+        }
+        try? context.save()
+    }
+
+    /// Rebuild the whole plan from `profile` — the one path used by both onboarding and the
+    /// "edit plan settings" sheet. Shares the day budget between structured work and tracked add-ons
+    /// (total distinct days ≤ daysPerWeek), preserves the calibrated 5k pace unless a fresh calibration
+    /// is supplied, and re-adds the athlete's cross-training. Starts the plan from `startDate`.
+    static func rebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
+                        startDate: Date = Date(), in context: ModelContext) {
+        let extras = profile.crossTraining.compactMap(WorkoutType.init(rawValue:))
+        let disciplines = profile.disciplines.compactMap(Discipline.init(rawValue:))
+        let userDays = profile.daysPerWeek
+        let structuredDays = max(1, min(userDays, max(disciplines.count, userDays - extras.count)))
+        // Preserve the existing calibrated pace across a rebuild unless a new calibration is given.
+        let seed = calibration ?? (profile.plan.map { CalibrationSeed(estimatedP5kSPerKm: $0.p5kSPerKm) } ?? .none)
+
+        profile.daysPerWeek = structuredDays
+        regenerate(for: profile, calibration: seed, startDate: startDate, in: context)
+        profile.daysPerWeek = userDays   // restore the athlete's actual choice (plan + display)
+        if let plan = profile.plan, !extras.isEmpty {
+            addCrossTraining(extras, to: plan, startDate: startDate, in: context, totalDaysPerWeek: userDays)
+        }
     }
 
     /// Snapshot the exercise library for the engine.
@@ -31,23 +89,36 @@ enum PlanService {
         }
     }
 
-    static func planInputs(from p: UserProfile) -> PlanInputs {
+    static func planInputs(from p: UserProfile, startDate: Date = Date(),
+                           calendar: Calendar = .current) -> PlanInputs {
         let disciplines = p.disciplines.compactMap(Discipline.init(rawValue:))
         func level(_ key: String) -> ExperienceLevel {
             ExperienceLevel(rawValue: p.experience[key] ?? "") ?? .some
         }
+        // Map preferred weekdays (1 = Sun … 7 = Sat) to in-week offsets from the plan's start day.
+        let anchorWeekday = calendar.component(.weekday, from: calendar.startOfDay(for: startDate))
+        let offsets = p.preferredDays.map { ((($0 - anchorWeekday) % 7) + 7) % 7 }
         return PlanInputs(
             disciplines: disciplines.isEmpty ? [.running] : disciplines,
             goal: p.goal, daysPerWeek: p.daysPerWeek, equipment: p.equipment,
             sessionMinutes: p.sessionMinutes, raceDate: p.raceDate,
             runningExperience: level(Discipline.running.rawValue),
-            liftingExperience: level(Discipline.strength.rawValue))
+            liftingExperience: level(Discipline.strength.rawValue),
+            raceDistanceM: p.raceDistanceM,
+            currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
+            hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
+            muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
+            preferredDayOffsets: offsets,
+            intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
+            injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
+            age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) })
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,
                         startDate: Date, in context: ModelContext,
                         calendar: Calendar = .current) -> TrainingPlan {
-        // Replace any existing plan.
+        // Replace any existing plan — but the athlete's name for it survives the rebuild.
+        let carriedName = profile.plan?.name ?? ""
         if let existing = profile.plan {
             context.delete(existing)
             profile.plan = nil
@@ -58,10 +129,14 @@ enum PlanService {
             uniquingKeysWith: { a, _ in a })
 
         let trainingPlan = TrainingPlan()
+        trainingPlan.name = carriedName
         trainingPlan.goal = profile.goal
         trainingPlan.disciplines = profile.disciplines
         trainingPlan.raceDate = profile.raceDate
         trainingPlan.p5kSPerKm = plan.p5kSPerKm
+        // Persist the macrocycle (§6.1) exactly as the generator periodized it — base → build →
+        // peak → taper, with deloads as recovery. One source of truth: `GeneratedWeek.phase`.
+        trainingPlan.weekPhases = plan.weeks.map(\.phase.rawValue)
 
         let anchor = calendar.startOfDay(for: startDate)
         var sessions: [PlannedSession] = []

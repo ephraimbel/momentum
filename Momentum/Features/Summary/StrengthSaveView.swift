@@ -11,11 +11,19 @@ struct StrengthSaveView: View {
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
-    @Query private var workouts: [Workout]
-    private var workout: Workout? { workouts.first { $0.id == workoutId } }
+    @Environment(Services.self) private var services
+    @Query private var profiles: [UserProfile]
+    // Read the just-finished workout from a FRESH context. The live session was persisted by a
+    // background @ModelActor; the app's main context can still hold a stale copy (Today's @Query
+    // cached the workout mid-session with no/partial sets, and SwiftData doesn't merge cross-context
+    // to-many appends). A new context faults relationships straight from the store, so the logged
+    // sets, muscles worked, and split-based naming all show correctly.
+    @State private var reader: FinishedWorkoutReader?
+    private var workout: Workout? { reader?.workout }
 
     @State private var title = ""
     @State private var desc = ""
+    @State private var visibility: WorkoutPrivacy = .private
     @State private var celebrating = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -24,14 +32,15 @@ struct StrengthSaveView: View {
         NavigationStack {
             ScrollView {
                 if let workout {
-                    VStack(spacing: Theme.Space.xl) {
-                        editor
+                    // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
+                    VStack(spacing: Theme.Space.lg) {
                         StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
                                                celebratePRs: true, showsHeader: false)
+                        editor
                     }
                     .padding(Theme.Space.md)
                 } else {
-                    ContentUnavailableView("Workout not found", systemImage: "questionmark")
+                    ProgressView().padding(.top, Theme.Space.xxl)
                 }
             }
             .background(Theme.background)
@@ -40,7 +49,7 @@ struct StrengthSaveView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }.fontWeight(.bold)
+                    Button("Save") { save() }.fontWeight(.bold).disabled(workout == nil)
                 }
             }
         }
@@ -49,10 +58,16 @@ struct StrengthSaveView: View {
                 CompletionCelebration(title: "Workout saved") { onDone() }
             }
         }
-        .onAppear {
-            guard let workout else { return }
-            title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
-            desc = workout.note
+        .task {
+            guard reader == nil else { return }
+            let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)
+            self.reader = reader
+            if let workout = reader.workout {
+                title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
+                desc = workout.note
+                // The share moment starts from the athlete's chosen default (never silently public).
+                visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
+            }
         }
     }
 
@@ -64,23 +79,34 @@ struct StrengthSaveView: View {
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
             Divider().overlay(Theme.hairline)
-            TextField("How did it go?", text: $desc, axis: .vertical)
+            TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
+            Divider().overlay(Theme.hairline)
+            ShareVisibilityRow(privacy: $visibility, boxed: false, showsHint: true)
         }
-        .padding(Theme.Space.lg)
+        .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
     }
 
     private func save() {
         focus = nil
-        if let workout {
-            workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-            try? context.save()
+        // Commit through the reader's own context (where `workout` lives) so the write persists.
+        reader?.commit {
+            $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.privacy = visibility
         }
+        // Persist the records this session set (fresh context — the logged sets are complete there).
+        if let reader, let workout = reader.workout {
+            let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)
+            PersonalRecord.persist(hits.compactMap { hit in
+                hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
+            }, workout: workout, in: reader.context)
+        }
+        if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
         Haptics.success()
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
     }
@@ -88,6 +114,8 @@ struct StrengthSaveView: View {
     /// Names the workout by its split ("Push Day", "Leg Day", …); falls back to time-of-day when
     /// there are no classifiable working sets yet.
     private static func defaultTitle(_ w: Workout) -> String {
+        // Crossfit/HIIT name themselves by the sport — split-naming ("Push Day") is for weight training.
+        if w.type != .strength, w.type.isStrengthStyle { return w.type.title }
         // Prefer the plan's intended split (so a half-finished day still names itself by the plan).
         if let planned = w.plannedSession, planned.discipline == .strength {
             let split = StrengthSplit.title(forPlanned: planned)
@@ -104,5 +132,41 @@ struct StrengthSaveView: View {
         case 17..<21: return "Evening Workout"
         default: return "Night Workout"
         }
+    }
+}
+
+/// Loads one finished workout in a private `ModelContext` (retained for the view's lifetime) so its
+/// relationships are read — and edits written — fresh against the store, bypassing any stale
+/// main-context cache left over from observing the workout while it was still being captured.
+@Observable
+final class FinishedWorkoutReader {
+    let workout: Workout?
+    let context: ModelContext   // retained so `workout`'s faults stay resolvable; save views
+    // also detect + persist PRs through it (same-context rule for relationship reads)
+
+    init(container: ModelContainer, workoutId: UUID) {
+        let context = ModelContext(container)
+        self.context = context
+        self.workout = (try? context.fetch(FetchDescriptor<Workout>()))?.first { $0.id == workoutId }
+    }
+
+    func commit(title: String, note: String) {
+        commit { $0.title = title; $0.note = note }
+    }
+
+    /// General edit hook: mutate the fresh-context workout, then persist through the same context
+    /// (writes made through any other context wouldn't see these relationships resolved).
+    func commit(_ mutate: (Workout) -> Void) {
+        guard let workout else { return }
+        mutate(workout)
+        try? context.save()
+    }
+
+    /// Explicit user discard — deletes through the fresh context so the cascade sees the full,
+    /// non-stale relationship graph.
+    func delete() {
+        guard let workout else { return }
+        context.delete(workout)
+        try? context.save()
     }
 }

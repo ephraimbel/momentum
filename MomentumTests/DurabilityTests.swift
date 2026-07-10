@@ -55,6 +55,31 @@ struct DurabilityTests {
         ActiveWorkoutMarker.clear()
     }
 
+    @Test func heartRateReadingsPersistDurablyAndAverageAttaches() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+
+        await store.beginWorkout(type: .run, startedAt: start)
+        for (i, bpm) in [120, 140, 160].enumerated() {
+            await store.persistHeartRate(t: start.addingTimeInterval(Double(i) * 5), bpm: bpm)
+        }
+        await store.persistHeartRate(t: start, bpm: 0)   // a zero reading is dropped, not stored
+
+        // Durable mid-capture, exactly like GPS samples: visible from a fresh read.
+        let pending = try #require(WorkoutRecovery.pendingWorkout(in: container.mainContext))
+        #expect(pending.gps?.hrSamples.count == 3)
+        #expect(pending.gps?.hrSamples.map(\.bpm).sorted() == [120, 140, 160])
+
+        await store.attachHR(140)
+        await store.finishWorkout(distanceM: 1000, durationS: 300,
+                                  elevationGainM: 0, smoothedPaceSPerKm: 300)
+        let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
+        #expect(all.first { $0.id == pending.id }?.gps?.avgHR == 140)
+        ActiveWorkoutMarker.clear()
+    }
+
     @Test func strengthCapturePersistsSetsAndRecovers() async throws {
         ActiveWorkoutMarker.clear()
         let container = try makeContainer()
@@ -65,11 +90,11 @@ struct DurabilityTests {
 
         let store = StrengthWorkoutStore(modelContainer: container)
         let start = Date(timeIntervalSinceReferenceDate: 0)
-        await store.beginWorkout(startedAt: start)
+        await store.beginWorkout(type: .strength, startedAt: start)
         let rowId = UUID()
         await store.persistExercise(rowId: rowId, catalogExerciseId: exId, order: 0, supersetGroup: nil)
-        await store.persistSetComplete(rowId: rowId, setIndex: 0, weightKg: 60, reps: 8, rpe: 8, type: .working)
-        await store.persistSetComplete(rowId: rowId, setIndex: 1, weightKg: 60, reps: 8, rpe: 8.5, type: .working)
+        await store.persistSetComplete(rowId: rowId, setId: UUID(), setIndex: 0, weightKg: 60, reps: 8, rpe: 8, type: .working)
+        await store.persistSetComplete(rowId: rowId, setId: UUID(), setIndex: 1, weightKg: 60, reps: 8, rpe: 8.5, type: .working)
 
         let pending = WorkoutRecovery.pendingWorkout(in: container.mainContext)
         #expect(pending?.strength?.exercises.count == 1)

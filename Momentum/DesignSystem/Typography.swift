@@ -22,6 +22,13 @@ extension Font {
     static func rounded(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         .custom(BrandFont.inter(for: weight), size: size)
     }
+
+    /// Elegant serif that harmonizes with the serif **momentum** wordmark logo — used for brand
+    /// taglines (e.g. "keep moving" under the wordmark). → system serif (New York); no bundled serif
+    /// ships, and New York is the closest system match to the rounded-serif logo.
+    static func serif(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .serif)
+    }
 }
 
 /// Maps a SwiftUI `Font.Weight` to the PostScript name of the matching bundled static instance.

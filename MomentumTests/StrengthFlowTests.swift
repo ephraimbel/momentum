@@ -58,6 +58,53 @@ struct StrengthFlowTests {
         ActiveWorkoutMarker.clear()
     }
 
+    /// Fresh count of persisted sets straight from the store (a new context avoids stale caches).
+    private func persistedSetCount(_ container: ModelContainer) throws -> Int {
+        try ModelContext(container).fetch(FetchDescriptor<SetEntry>()).count
+    }
+
+    @Test func togglingSetUnlogsThenRelogsWithoutDuplicate() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let squat = Exercise(name: "Squat", primaryMuscles: [.quads], equipment: .barbell, category: .compound)
+        container.mainContext.insert(squat)
+        try container.mainContext.save()
+
+        let vm = StrengthViewModel(container: container, weightUnit: .kg)
+        await vm.start()
+        await vm.addExercise(squat)
+        let row = try #require(vm.exercises.first)
+        let set = try #require(row.sets.first)
+        vm.drafts[set.id] = .init(weight: "100", reps: "5", rpe: "")
+
+        // Tap ✓ → logged once, persisted once, rest timer running.
+        await vm.completeSet(rowId: row.id, setId: set.id)
+        #expect(vm.completedSetCount == 1)
+        #expect(vm.liveVolumeKg == 500)
+        #expect(vm.restEndsAt != nil)
+        #expect(try persistedSetCount(container) == 1)
+
+        // Tap ✓ again → un-logged: volume back to zero, rest cleared, durable row removed.
+        await vm.uncompleteSet(rowId: row.id, setId: set.id)
+        #expect(vm.completedSetCount == 0)
+        #expect(vm.liveVolumeKg == 0)
+        #expect(vm.restEndsAt == nil)
+        #expect(try persistedSetCount(container) == 0)
+
+        // Tap ✓ once more → re-logged with NO duplicate row (upsert by setId).
+        await vm.completeSet(rowId: row.id, setId: set.id)
+        #expect(vm.completedSetCount == 1)
+        #expect(vm.liveVolumeKg == 500)
+        #expect(try persistedSetCount(container) == 1)
+
+        let id = await vm.finish()
+        let workout = try container.mainContext.fetch(FetchDescriptor<Workout>()).first { $0.id == id }
+        #expect(workout?.strength?.totalSets == 1)
+        #expect(workout?.strength?.totalVolumeKg == 500)
+        #expect(try persistedSetCount(container) == 1)   // exactly one set on disk, not two
+        ActiveWorkoutMarker.clear()
+    }
+
     @Test func prefillFromPreviousSession() async throws {
         ActiveWorkoutMarker.clear()
         let container = try makeContainer()
@@ -85,5 +132,87 @@ struct StrengthFlowTests {
         #expect(draft.reps == "8")
         _ = await vm2.finish()
         ActiveWorkoutMarker.clear()
+    }
+
+    // MARK: Double progression (P2 — strength progresses on performance)
+
+    typealias Target = StrengthSessionEngine.SetTarget
+
+    @Test func toppingTheRangeBumpsLoadAndResetsReps() {
+        // Last session: 3×12 @ 60 kg, range 8–12 ⇒ every set topped out ⇒ earn +2.5 kg, reps → 8.
+        let prev: [Int: Target] = [0: .init(weightKg: 60, reps: 12),
+                                   1: .init(weightKg: 60, reps: 12),
+                                   2: .init(weightKg: 60, reps: 12)]
+        let t = StrengthSessionEngine.progressedTarget(previousSets: prev, index: 0, repLow: 8, repHigh: 12)
+        #expect(t.weightKg == 62.5)
+        #expect(t.reps == 8)
+    }
+
+    @Test func fallingShortHoldsTheLoad() {
+        // One set short of the top ⇒ no bump; repeat last session's numbers for that set.
+        let prev: [Int: Target] = [0: .init(weightKg: 60, reps: 12),
+                                   1: .init(weightKg: 60, reps: 12),
+                                   2: .init(weightKg: 60, reps: 9)]
+        let t = StrengthSessionEngine.progressedTarget(previousSets: prev, index: 0, repLow: 8, repHigh: 12)
+        #expect(t.weightKg == 60)
+        #expect(t.reps == 12)
+    }
+
+    @Test func bodyweightOrNoHistoryDoesNotBump() {
+        // No load logged (bodyweight) ⇒ never a load bump; falls back to the prior numbers.
+        let prev: [Int: Target] = [0: .init(weightKg: nil, reps: 15), 1: .init(weightKg: nil, reps: 15)]
+        let t = StrengthSessionEngine.progressedTarget(previousSets: prev, index: 0, repLow: 8, repHigh: 12)
+        #expect(t.weightKg == nil)
+        #expect(t.reps == 15)
+        // Empty history ⇒ empty target.
+        let empty = StrengthSessionEngine.progressedTarget(previousSets: [:], index: 0, repLow: 8, repHigh: 12)
+        #expect(empty.weightKg == nil && empty.reps == nil)
+    }
+
+    // MARK: Scheme-aware progression (plan-quality audit #4 — every PRD §9.2 scheme, not just double)
+
+    @Test func linearAddsLoadWhenTargetRepsHit() {
+        // Linear (beginners): every completed set hit the target reps → +2.5 kg, same reps.
+        let prev: [Int: Target] = [0: .init(weightKg: 40, reps: 8), 1: .init(weightKg: 40, reps: 9)]
+        let t = StrengthSessionEngine.plannedTarget(scheme: "linear", previousSets: prev, index: 0,
+                                                    repLow: 8, repHigh: 12)
+        #expect(t.weightKg == 42.5 && t.reps == 8)
+        // One set short of target → repeat, no bump.
+        let short: [Int: Target] = [0: .init(weightKg: 40, reps: 8), 1: .init(weightKg: 40, reps: 6)]
+        let hold = StrengthSessionEngine.plannedTarget(scheme: "linear", previousSets: short, index: 0,
+                                                       repLow: 8, repHigh: 12)
+        #expect(hold.weightKg == 40)
+    }
+
+    @Test func percentSchemeTracksCurrentE1RM() {
+        // Percent (strength focus): 100 kg × 5 → e1RM 116.7 (Epley); 82% ≈ 95.7 → 95 kg plate-rounded.
+        let prev: [Int: Target] = [0: .init(weightKg: 100, reps: 5)]
+        let t = StrengthSessionEngine.plannedTarget(scheme: "percent", previousSets: prev, index: 0,
+                                                    repLow: 4, repHigh: 6, targetPctRM: 0.82)
+        #expect(t.weightKg == 95 && t.reps == 4)
+        // A stronger session raises the prescription with the e1RM (105×5 → e1RM 122.5 → 82% → 100 kg).
+        let stronger: [Int: Target] = [0: .init(weightKg: 105, reps: 5)]
+        let up = StrengthSessionEngine.plannedTarget(scheme: "percent", previousSets: stronger, index: 0,
+                                                     repLow: 4, repHigh: 6, targetPctRM: 0.82)
+        #expect(up.weightKg == 100)
+        // No %1RM on the prescription → degrades to double-progression semantics (5 < top of 6 → hold).
+        let fallback = StrengthSessionEngine.plannedTarget(scheme: "percent", previousSets: prev, index: 0,
+                                                           repLow: 4, repHigh: 6, targetPctRM: nil)
+        #expect(fallback.weightKg == 100)
+    }
+
+    @Test func unknownSchemeUsesDoubleProgression() {
+        let prev: [Int: Target] = [0: .init(weightKg: 60, reps: 12), 1: .init(weightKg: 60, reps: 12)]
+        let t = StrengthSessionEngine.plannedTarget(scheme: "double", previousSets: prev, index: 0,
+                                                    repLow: 8, repHigh: 12)
+        #expect(t.weightKg == 62.5 && t.reps == 8)
+    }
+
+    @Test func rpeCreepNeedsTwoSustainedNearMaxSessions() {
+        #expect(StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9, 8.5], [9, 8.5, 9]]))
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9, 9]]))               // one hard day
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9, 9], [7, 7.5, 8]]))  // second moderate
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: [[9, 9], [9, 9, 9]]))       // too few rated sets
+        #expect(!StrengthSessionEngine.rpeCreep(recentSessionRPEs: []))
     }
 }

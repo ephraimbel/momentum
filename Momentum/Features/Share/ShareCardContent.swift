@@ -43,7 +43,7 @@ struct ShareCardContent: View {
 
     @ViewBuilder
     private var hero: some View {
-        if workout.type == .strength, let s = workout.strength {
+        if workout.type.isStrengthStyle, let s = workout.strength {
             let volume = weightUnit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
             VStack(alignment: .leading, spacing: size.height * 0.01) {
                 bigStat("\(Int(volume))", weightUnit == .lb ? "lb volume" : "kg volume")
@@ -58,6 +58,15 @@ struct ShareCardContent: View {
                 bigStat(distanceString(gps), distanceUnit.resolved() == .imperial ? "miles" : "km")
                 accentBar
                 Text(secondary(gps))
+                    .font(.rounded(size.width * 0.045, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        } else {
+            // Timed activity — duration is the hero.
+            VStack(alignment: .leading, spacing: size.height * 0.01) {
+                bigStat(Formatters.duration(s: workout.durationS), "elapsed")
+                accentBar
+                Text(workout.type.title)
                     .font(.rounded(size.width * 0.045, weight: .medium))
                     .foregroundStyle(.white.opacity(0.8))
             }
@@ -88,8 +97,7 @@ struct ShareCardContent: View {
 
     @ViewBuilder
     private func routeSilhouette(_ gps: GPSDetail) -> some View {
-        let coords = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let coords = gps.routeCoordinates(type: workout.type)
         if coords.count > 1 {
             RouteSilhouette(coords: coords)
                 .stroke(.white, style: StrokeStyle(lineWidth: size.width * 0.012, lineCap: .round, lineJoin: .round))

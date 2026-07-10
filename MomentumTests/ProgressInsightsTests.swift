@@ -37,10 +37,42 @@ struct ProgressInsightsTests {
         #expect(i.recommendation == .hold)
     }
 
+    @Test func weeklyPaceIsDistanceWeightedAndRunningOnly() {
+        func pacedRun(daysAgo: Int, distanceM: Double, durationS: Double) -> Workout {
+            let w = Workout(); w.type = .run
+            w.startedAt = Date().addingTimeInterval(-Double(daysAgo) * 86_400)
+            w.durationS = durationS
+            let g = GPSDetail(); g.distanceM = distanceM; w.gps = g
+            return w
+        }
+        let strength = Workout()                       // must NOT affect running pace
+        strength.type = .strength
+        strength.startedAt = Date().addingTimeInterval(-86_400); strength.durationS = 3600
+
+        // This week: 5 km in 1500 s (300/km) + 5 km in 1700 s (340/km).
+        // Distance-weighted = (1500+1700) / 10 km = 320 s/km.
+        let i = ProgressInsights(workouts: [
+            pacedRun(daysAgo: 1, distanceM: 5000, durationS: 1500),
+            pacedRun(daysAgo: 2, distanceM: 5000, durationS: 1700),
+            strength,
+        ])
+        #expect(abs(i.weeks.last!.avgPaceSPerKm - 320) < 0.5)
+    }
+
     @Test func eightWeekSeriesIsProduced() {
         let i = ProgressInsights(workouts: [run(daysAgo: 2, minutes: 40)])
         #expect(i.weeks.count == 8)
-        #expect(i.weeks.last!.load > 0)   // current week has the workout
+        #expect(i.weeks.last!.load > 0)   // recent workout lands in the latest (rolling 7-day) bar
+    }
+
+    /// The latest bar is a rolling 7-day window ending now, so a recent workout always shows there —
+    /// regardless of weekday (the old calendar-week bucket left it empty early in the week).
+    @Test func latestBarIsRollingSevenDays() {
+        #expect(ProgressInsights(workouts: [run(daysAgo: 6, minutes: 30)]).weeks.last!.load > 0)
+
+        let older = ProgressInsights(workouts: [run(daysAgo: 8, minutes: 30)])
+        #expect(older.weeks.last!.load == 0)                          // outside the last 7 days…
+        #expect(older.weeks.dropLast().contains { $0.load > 0 })      // …but still in an earlier bar
     }
 
     // MARK: applying a recommendation to the plan

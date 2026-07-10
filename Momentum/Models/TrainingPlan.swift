@@ -4,11 +4,19 @@ import SwiftData
 @Model
 final class TrainingPlan {
     var id: UUID = UUID()
+    /// The athlete's own name for this block ("Austin Marathon") — shown as the Plan page title and
+    /// stamped on plan sessions surfacing elsewhere (Today's banner), so plan work is unmistakable.
+    /// Empty = unnamed; UI falls back to "Plan". Survives rebuilds (PlanService.persist carries it).
+    var name: String = ""
     var goal: Goal = Goal.generalFitness
     var disciplines: [String] = []
     var raceDate: Date?
     var p5kSPerKm: Double = 360       // calibrated running pace (if running)
     var createdAt: Date = Date()
+    var lastAdaptedAt: Date?          // last automatic load adaptation — gates auto-adapt to ≤1/week
+    /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from the first session) —
+    /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
+    var weekPhases: [String] = []
     @Relationship(deleteRule: .cascade) var sessions: [PlannedSession] = []
 
     init() {}
@@ -20,6 +28,10 @@ final class PlannedSession {
     var id: UUID = UUID()
     var date: Date = Date()           // local day
     var discipline: Discipline = Discipline.running
+    /// The precise sport (WorkoutType rawValue) when the athlete planned a specific one — swim, row,
+    /// yoga, tennis, etc. `discipline` stays the coaching/analytics bucket; this carries the exact
+    /// activity for display + matching. `nil` for AI-prescribed run/ride/walk/strength sessions.
+    var sportType: String?
     var runType: RunType?
     var targetDistanceM: Double?
     var targetDurationS: Double?
@@ -31,6 +43,11 @@ final class PlannedSession {
     var completedWorkout: Workout?
 
     init() {}
+}
+
+extension PlannedSession {
+    /// The exact planned sport, if one was chosen (else nil → falls back to `discipline` for display).
+    var workoutType: WorkoutType? { sportType.flatMap(WorkoutType.init(rawValue:)) }
 }
 
 @Model

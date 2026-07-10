@@ -15,8 +15,10 @@ struct ExerciseCatalogItem: Sendable, Equatable {
 
 /// Optional calibration seeds gathered in onboarding (§26).
 struct CalibrationSeed: Sendable, Equatable {
-    /// A recent run effort → Riegel-seeded 5k pace.
+    /// A recent run effort over any known distance → Riegel-seeded 5k pace (most precise).
     var recentRun: (distanceM: Double, timeS: Double)?
+    /// A self-reported "by feel" 5k-pace estimate (s/km) for athletes with no recent time to enter.
+    var estimatedP5kSPerKm: Double?
     /// Known lift e1RMs by exercise name (kg).
     var lifts: [String: Double] = [:]
 
@@ -26,6 +28,7 @@ struct CalibrationSeed: Sendable, Equatable {
     static func == (a: CalibrationSeed, b: CalibrationSeed) -> Bool {
         a.recentRun?.distanceM == b.recentRun?.distanceM
             && a.recentRun?.timeS == b.recentRun?.timeS
+            && a.estimatedP5kSPerKm == b.estimatedP5kSPerKm
             && a.lifts == b.lifts
     }
 }
@@ -61,6 +64,9 @@ struct GeneratedWeek: Sendable, Equatable {
     var index: Int            // 0-based
     var isDeload: Bool
     var isTaper: Bool
+    /// Macrocycle phase (base → build → peak → taper, deloads = recovery) — computed at generation
+    /// so persistence and the Plan page never re-derive it.
+    var phase: PlanPhase = .build
     var sessions: [GeneratedSession]
 
     /// Total prescribed running distance for the week (meters) — for the ≤10%/wk invariant.

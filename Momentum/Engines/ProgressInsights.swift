@@ -19,6 +19,7 @@ struct ProgressInsights {
         let weekStart: Date
         let load: Double
         let distanceM: Double
+        let avgPaceSPerKm: Double   // distance-weighted, running only; 0 = no runs that week
     }
 
     let acute: Double
@@ -29,17 +30,11 @@ struct ProgressInsights {
     let weeks: [WeekPoint]            // last 8 weeks, oldest → newest
     let loadTrendPct: Double          // this week vs prior 3-week average
     let distanceTrendPct: Double
+    let paceTrendPct: Double          // running pace: negative = faster (improving)
     let hasData: Bool
 
     init(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current) {
-        func load(_ w: Workout) -> Double {
-            let minutes = w.durationS / 60
-            let intensity = Double(w.perceivedEffort ?? Self.defaultIntensity(w.type))
-            if minutes > 0 { return minutes * intensity }
-            // Fallback when duration is missing: rough distance-based load for cardio.
-            if let d = w.gps?.distanceM, d > 0 { return (d / 1000) * 6 }
-            return 0
-        }
+        let load = TrainingLoad.session   // canonical session-RPE load (PRD §4.8)
 
         let acuteCut = calendar.date(byAdding: .day, value: -7, to: now)!
         let chronicCut = calendar.date(byAdding: .day, value: -28, to: now)!
@@ -64,16 +59,23 @@ struct ProgressInsights {
             }
         }
 
-        // Weekly series (last 8 weeks).
-        let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
+        // Weekly series — eight rolling 7-day windows ending at `now`, oldest → newest. Rolling (not
+        // calendar) windows keep the most-recent bar aligned with the ACWR acute window, so a recent
+        // workout always shows up in the latest bar. A fixed calendar "this week" can be near-empty
+        // early in the week (e.g. a Sunday) and disagree with the acute load the headline reports.
         var series: [WeekPoint] = []
         for i in stride(from: 7, through: 0, by: -1) {
-            guard let start = calendar.date(byAdding: .weekOfYear, value: -i, to: thisWeekStart),
-                  let end = calendar.date(byAdding: .weekOfYear, value: 1, to: start) else { continue }
-            let inWeek = workouts.filter { $0.startedAt >= start && $0.startedAt < end }
+            guard let end = calendar.date(byAdding: .day, value: -7 * i, to: now),
+                  let start = calendar.date(byAdding: .day, value: -7, to: end) else { continue }
+            let inWeek = workouts.filter { $0.startedAt > start && $0.startedAt <= end }
             let wkLoad = inWeek.reduce(0) { $0 + load($1) }
             let wkDist = inWeek.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
-            series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist))
+            // Distance-weighted average running pace for the week (running only).
+            let runs = inWeek.filter { $0.type.discipline == .running }
+            let runDist = runs.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+            let runDur = runs.reduce(0) { $0 + $1.durationS }
+            let wkPace = runDist > 0 ? runDur / (runDist / 1000) : 0
+            series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist, avgPaceSPerKm: wkPace))
         }
         weeks = series
 
@@ -88,9 +90,17 @@ struct ProgressInsights {
         }
         loadTrendPct = trend { $0.load }
         distanceTrendPct = trend { $0.distanceM }
-    }
 
-    private static func defaultIntensity(_ type: WorkoutType) -> Int {
-        switch type { case .run: 7; case .ride: 6; case .hike: 6; case .strength: 6; case .walk: 4 }
+        // Pace trend over weeks that actually had runs (zero-run weeks would skew it). Latest paced
+        // week vs the average of the prior (≤3) paced weeks; negative ⇒ faster.
+        let paced = series.filter { $0.avgPaceSPerKm > 0 }
+        if paced.count >= 2 {
+            let current = paced.last!.avgPaceSPerKm
+            let prior = paced.dropLast().suffix(3).map(\.avgPaceSPerKm)
+            let avg = prior.reduce(0, +) / Double(prior.count)
+            paceTrendPct = avg > 0 ? (current - avg) / avg * 100 : 0
+        } else {
+            paceTrendPct = 0
+        }
     }
 }

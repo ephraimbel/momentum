@@ -17,7 +17,9 @@ struct ProfileStats {
     let longestRunM: Double
     let longestDurationS: Double
 
-    init(workouts: [Workout], calendar: Calendar = .current) {
+    /// `plan` feeds the rest-day half of the streak rule: days the plan deliberately leaves empty
+    /// count, so following a 4-day/week plan perfectly never resets the streak on the weekend.
+    init(workouts: [Workout], plan: TrainingPlan? = nil, calendar: Calendar = .current) {
         var counting = Set<Int>()
         var counts: [WorkoutType: Int] = [:]
         var distance = 0.0, volume = 0.0, duration = 0.0
@@ -35,7 +37,7 @@ struct ProfileStats {
                 counting.insert(StreakCalculator.localDay(w.startedAt, calendar: calendar))
             }
 
-            if w.type == .strength, let s = w.strength {
+            if w.type.isStrengthStyle, let s = w.strength {
                 volume += s.totalVolumeKg
                 for row in s.exercises {
                     guard let name = row.exercise?.name else { continue }
@@ -50,9 +52,17 @@ struct ProfileStats {
         }
 
         let today = StreakCalculator.localDay(Date(), calendar: calendar)
+        // Planned rest days count toward the STREAK too (PRD §21) — otherwise every plan with two
+        // adjacent rest days resets a perfectly-compliant athlete's streak. They stay out of
+        // `countingDays` (the consistency heatmap shows days you actually moved).
+        var streakDays = counting
+        if let plan {
+            let sessionDays = Set(plan.sessions.map { StreakCalculator.localDay($0.date, calendar: calendar) })
+            streakDays.formUnion(StreakCalculator.plannedRestDays(sessionDays: sessionDays, today: today))
+        }
         self.countingDays = counting
-        self.currentStreak = StreakCalculator.currentStreak(countingDays: counting, today: today)
-        self.longestStreak = StreakCalculator.longestStreak(countingDays: counting)
+        self.currentStreak = StreakCalculator.currentStreak(countingDays: streakDays, today: today)
+        self.longestStreak = StreakCalculator.longestStreak(countingDays: streakDays)
         self.totalWorkouts = workouts.count
         self.countsByType = counts
         self.totalDistanceM = distance

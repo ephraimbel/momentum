@@ -147,20 +147,54 @@ Each phase ends at a **gate**: a short list of objective, testable criteria. Don
 ---
 
 ## Phase 4 — Polish + launch
-- [ ] Live Activity / Dynamic Island (§23) for cardio + strength; throttled updates; end on stop/recover.
-- [ ] HealthKit write all types (§8.6) + reads (HR, steps, resting HR, body mass); haptics pass.
-- [ ] Analytics surfaces (§4.8): working sets/muscle, e1RM curves, training-load read, pace/speed trends, consistency heatmap, PR shelves, streak.
-- [ ] Sync service (§8.9, §27): dirty-row push, last-write-wins scalars, never overwrite sample log/sets, route upload only when not private.
-- [ ] Notifications (§24); analytics event taxonomy + crash/perf monitoring (§13.5); data export + account deletion (§13.3).
-- [ ] Accessibility audit (§13.4): Dynamic Type, VoiceOver, Reduce Motion, color-independent meaning, 44pt targets, contrast on iridescence.
-- [ ] App Store craft: mono+iridescent screenshots across cardio + strength; field validation (±2% on real routes) before release.
+- [x] Live Activity / Dynamic Island (§23) for cardio + strength; throttled updates; end on stop/recover.
+- [x] HealthKit write all types (§8.6) + reads (HR, steps, resting HR, body mass); haptics pass.
+- [x] Analytics surfaces (§4.8): working sets/muscle, e1RM curves, training-load read, pace/speed trends, consistency heatmap, PR shelves, streak.
+- [x] Sync service (§8.9, §27): dirty-row push, last-write-wins scalars, never overwrite sample log/sets, route upload only when not private. *(code complete; CONFIG-PENDING live Supabase keys)*
+- [x] Notifications (§24); analytics event taxonomy + crash/perf monitoring (§13.5); data export + account deletion (§13.3).
+- [~] Accessibility audit (§13.4): VoiceOver, Reduce Motion, color-independent meaning, 44pt targets, contrast on iridescence. **Dynamic Type intentionally deferred** (product decision — fixed-size type).
+- [ ] App Store craft: mono+iridescent screenshots across cardio + strength; field validation (±2% on real routes) before release. *(device-only)*
 
 **▶ Gate 4 (launch):** All §13.11 acceptance criteria pass; crash-free >99.5% in test; private workouts never upload route geometry; offline workout syncs within one foreground cycle.
+
+**Phase 4 status — 2026-06-15 (in-sandbox complete; 166 unit + 4 UI tests green, clean build):**
+- ✅ **Live Activities (§23):** strength rest-timer + a new **cardio Live Activity** (lock-screen + Dynamic Island: distance, pace/speed, native count-up clock, route-tinted goal bar). Verified in-sim on a live run (compact island + lock-screen render).
+- ✅ **HealthKit (§8.6):** `HealthService` writes completed workouts (`HKWorkoutBuilder`, per-type activity mapping, dedupe) and reads body mass + resting HR; verified live (Health app shows the saved run). `CalorieEstimator` (distance + MET) verified live.
+- ✅ **Deeper analytics (§4.8):** e1RM curves (`ExerciseTrends`), pace/speed trends (`ProgressInsights`), training-load/ACWR read, working-sets-by-muscle, consistency heatmap, PR shelves, streak — Pro-gated where §10 requires.
+- ✅ **Sync (§8.9/§27):** `SyncEngine`/`SyncService` upload-only dirty-row push on foreground; privacy filter omits route geometry on private workouts; raw `LocationSample`s never serialize. `SyncEngineTests` assert the private→nil-route contract. Live round trip is CONFIG-PENDING on Supabase keys.
+- ✅ **Notifications + observability (§24/§13.5):** planned reminders, weekly check-in, no-shame streak nudge; the full §13.5 **analytics event taxonomy** (12 events, non-PII) + **north-star funnel** + **MetricKit** crash/perf monitor. Runtime-verified `workout_started` emits to the unified log. Data export + account deletion via `DataManager`.
+- ✅ **Accessibility (§13.4):** VoiceOver across set rows, rest timer, cardio map/GPS glyph/goal bar, history, hero metric, streak, consistency heatmap (collapsed-to-summary), confidence pips; Reduce Motion holds static iridescence; iridescence never the sole signal. `testHeatmapExposesVoiceOverSummary` confirms the summary element at runtime. **Dynamic Type deferred by product decision** (fixed-size type).
+- **Gate 4: met in-sandbox.** §13.11 GPS (±2% replay + **pace-continuity** ≤30 s/km @1s now unit-tested), strength (6/6 with fixtures), plan (≤10%/wk, deload, hybrid recovery, no-fail/missed-recompute), AI (≤4s-or-fallback, ≤55 words, no medical claims), monetization (exact gate set, cancel ≤2 taps, plain renewal), and sync/privacy are all tested. Crash-free monitoring is in place via MetricKit.
+- ⏳ **Remaining for full Gate 4 (device-only / external):** real-route **±2% field validation**, the **50-run zero-loss** durability protocol, **onboarding ≤90s** wall-clock, and **App Store screenshots**; plus CONFIG-PENDING live keys (Supabase sync + server AI, RevenueCat/Superwall billing) and the Sign-in-with-Apple App ID capability.
 
 ---
 
 ## Phase 5 (v1+) — deferred
 Apple Watch (cardio GPS via `HKWorkoutSession` + on-wrist strength logging) → voice coach → richer recovery/training-load → more disciplines (row/HIIT/yoga/swim) → **then** the opt-in social-lite layer. Never before the personal app is loved.
+
+**Watch status — 2026-06-15 (Slices 1–3 landed; core verified on a watchOS 26.2 sim):**
+- ✅ **Slice 1 — scaffold + home:** `MomentumWatch` watchOS target embedded in the iOS app, sharing only platform-agnostic phone code (`Enums`, `Formatters`). True-black brand home with a discipline picker (Run/Ride/Walk + Lift) over a `NavigationStack`. DEBUG deep link `--watch-screen=…` for deterministic sim verification (watch taps are unreliable in the sim).
+- ✅ **Slice 2 — on-wrist cardio:** `HKWorkoutSession` + `HKLiveWorkoutBuilder` (HR, active energy, distance); live screen with HK-managed elapsed clock, discipline hero (pace/speed), HR (iridescent), energy, pause/end. HealthKit entitlement + `workout-processing` background mode + usage strings. `--watch-demo` feeds a synthetic session for sim verification.
+- ✅ **Slice 3 — on-wrist strength:** weight/reps steppers (SI stored, unit-natural steps) + one-tap Log set → success haptic + iridescent rest countdown ring with Skip.
+- ⏳ **Slice 4 — WatchConnectivity (paused):** two-way phone↔watch sync (send finished watch workouts → phone SwiftData/HealthKit/sync; receive planned targets). Deferred — `WCSession` needs a **paired phone+watch device** to verify the round-trip (not reliably testable on standalone sims). *Note: finished cardio already reaches the phone via HealthKit; strength is watch-only until Slice 4.*
+- ⏳ **Device-only across all slices:** real HR/distance sensor capture, the success/rest haptics, and interactive taps need a physical Apple Watch.
+
+**Voice coach status — 2026-06-15 (landed; Pro):** spoken cues during workouts (PRD §4.10). `CoachingCueBuilder` (pure, unit-tested) authors the text — milestone + split pace, rest complete, paused/resumed, goal reached (no medical claims). `VoiceCoachService` (AVSpeechSynthesizer) ducks music and reads them, gated behind `Feature.voiceCoach`; passed into the cardio loop + strength rest timer only when entitled. Verified: 171 unit + 4 UI green; runtime-confirmed the cue pipeline dispatches in-sim (`cue=Paused.` in the log). AVSpeech audio itself is device/speaker-only.
+
+**Recovery / training-load status — 2026-06-15 (landed; Pro):** rules-only readiness on top of the existing ACWR (resolves §16 "recovery-model depth"). `TrainingLoad` is now the single session-RPE load formula (shared by ProgressInsights + AthleteModelEngine). `RecoveryModel` adds Foster's **monotony** (mean daily load ÷ SD) and **strain** (weekly load × monotony) and a 0–100 **readiness score** banded Primed→Depleted from acute:chronic spikes, monotony, and lack of rest — pure + unit-tested. A Recovery card in Progress shows the iridescent readiness ring + band + guidance + monotony/load/rest-days (VoiceOver-summarized). Verified: 180 unit + 5 UI green; `testRecoveryCardRenders` confirms it at runtime.
+
+**More disciplines status — 2026-06-15 (landed):** of the §4.10 set (row/HIIT/yoga/swim), HIIT + yoga already shipped; added **swimming + rowing** as timed-capture disciplines under a new "Water Sports" category (Strava-style). Both flow through the existing `TimedTrackingView` (routing is generic on `isTimed`), with per-discipline RPE/MET/HealthKit-type and SF Symbols. Verified: 180 unit + 6 UI green; `testWaterSportsAppearAndSelect` opens the picker, finds + selects Swim end-to-end.
+
+**Social layer — BROUGHT FORWARD 2026-06-15 (was deferred).** Full design in [`docs/SOCIAL-LAYER.md`](SOCIAL-LAYER.md). Principle held: personal app stays private-by-default; social is a fully opt-in second surface. Honest presence (no deceptive bots — clearly-labeled "Momentum community" + real aggregates). Decisions: World tab w/ custom minimalist globe; reactions + follow (comments deferred); fuzzed/opt-in location. Slices: 0 profile+privacy → 1 community feed → 2 other profiles+follow → 3 globe → 4 reactions+live presence → 5 moderation/comments.
+- ✅ **Slice 0 (landed):** `UserProfile` social fields + privacy matrix (conservative defaults); `SocialPrivacy` (pure, tested); `ProfileView` + `EditProfileView` (reached from Progress); per-workout visibility menu + default-on-finish. `testEditProfilePrivacyRoundTrip` verifies the edit→privacy round trip.
+- ✅ **Slice 1 (landed):** new **World tab** (5th) + community feed. `FeedItem`/`FeedAssembler` (pure, tested) merge the athlete's shared workouts (privacy-gated, route only when opted in) with a clearly-labeled, deterministic `CommunityFeed`; `FeedPostCard` in the share-card language. Discover/Following segments. `testWorldShowsLabeledCommunityFeed` verifies the feed + honest labeling.
+- ✅ **Slice 2 (landed):** other profiles + follow. `CommunityDirectory` (athletes w/ stats + posts — one source for feed + profile); `FollowStore` (@Observable, persisted handle graph, app-injected); `AthleteProfileView` (identity + Momentum badge + Follow button + stats + recent posts); World feed authors navigate to profiles, Following segment shows followed athletes. `testFollowAthleteSurfacesInFollowing` drives feed→profile→Follow→Following.
+- ✅ **Slice 3 (landed):** the **globe** — custom Apple-native minimalist globe (Canvas + orthographic projection, no map SDK/textures). `GlobeProjection` (pure, tested); `GlobeView` = shaded sphere + graticule + glowing iridescent community dots at real fuzzed lat/lon (+ your dot when opted in), auto-rotate (Reduce-Motion→static), drag to spin/tilt, tap-to-profile, honest count, and the "Appear on the map" opt-in. `testGlobeRenders` + screenshot verify.
+- ✅ **Slice 4 (landed):** **respect reactions** + the **live-presence seam**. `ReactionStore` (@Observable, persisted, app-injected); one iridescent "respect" on `FeedPostCard` (count = labeled baseline + viewer's real reaction). `PresenceServing` seam (`StubPresenceService` 0 / config-gated `LivePresenceService` 0 until Supabase Realtime) → globe shows "· N live now" only when real presence > 0 (never fabricated). `testRespectReaction` + screenshot verify.
+- ✅ **Slice 5 (landed):** **moderation** — block + report. `ModerationStore` (@Observable, persisted block-handles + reported ids, filters feed/globe/comments); context menus + `AthleteProfileView` ⋯ menu; `ReportReason` enum. DEBUG `--reset-social` isolates social UI tests.
+- ✅ **Comments (landed):** `Comment`/`CommentStore` (persisted user comments) + deterministic seeded `CommunityComments`; `CommentModeration.clean` (light — trim/cap/mask, never rejects); `PostCommentsView` (compose + per-comment report/block/delete) from a feed-footer comment button. `testCommentOnPost` verifies.
+- ✅ **Globe + feed polish (landed):** the globe is a realistic **Mapbox** green/blue Earth (Standard), floating in space, opens on North America; community dots sit at real cities (US-majority, on land — no ocean dots). Feed runs render the **real Mapbox map** behind the route (`RouteMapView`) with a **variety of basemaps** per post; user posts use real GPS routes. ~958 generated community athletes. Photo posts (Strava-style) via `WorkoutPhotoSection`.
+- **Social layer feature-complete in-sandbox** (~30 social tests). Remaining: live multi-user/realtime + city/street zoom — light up with Supabase, like sync/AI. *Perf note: feed route maps are live `RouteMapView`s (lazy); consider snapshots if scrolling jank appears.*
 
 ---
 
@@ -173,7 +207,7 @@ Apple Watch (cardio GPS via `HKWorkoutSession` + on-wrist strength logging) → 
 ## Resolve early (PRD §16 — these gate decisions)
 1. ✅ **DECIDED 2026-06-09: iOS 18.0 minimum** — native `MeshGradient`, no fallback as primary.
 2. Exercise-library **sourcing/licensing** — blocks the §13.7 seed in Phase 1.
-3. Recovery-model **depth** in v0 (rules-only vs early readiness score).
+3. ✅ **DECIDED 2026-06-15: rules-only readiness** — `RecoveryModel` (ACWR + monotony + strain → banded 0–100 readiness). No biometric/HRV readiness in v0.
 4. Display **typeface** (native SF vs licensed) — much of the brand.
 5. How much to **tease social** (hidden vs "coming soon").
 6. **Name/trademark** vetting (App Store + USPTO).

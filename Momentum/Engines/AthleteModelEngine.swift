@@ -109,7 +109,7 @@ struct AthleteModelEngine {
         // Per-lift e1RM trend over 8 weeks.
         f.e1rmTrendByExercise = e1rmTrends(inWindow(sorted, from: -56, to: 0, now: now, calendar: calendar))
         let strengthSessions56 = inWindow(sorted, from: -56, to: 0, now: now, calendar: calendar)
-            .filter { $0.type == .strength }.count
+            .filter { $0.type.isStrengthStyle }.count
         f.signalSampleCounts[Signal.strengthProgress.rawValue] = strengthSessions56
 
         // Weekly strength volume: last 28d vs prior 28d.
@@ -184,7 +184,7 @@ struct AthleteModelEngine {
     /// Per-exercise % change in best e1RM, oldest→newest half-split, over the given workouts.
     private static func e1rmTrends(_ ws: [Workout]) -> [String: Double] {
         var series: [String: [(date: Date, e1rm: Double)]] = [:]
-        for w in ws where w.type == .strength {
+        for w in ws where w.type.isStrengthStyle {
             guard let s = w.strength else { continue }
             for row in s.exercises {
                 guard let name = row.exercise?.name else { continue }
@@ -210,18 +210,6 @@ struct AthleteModelEngine {
         ws.reduce(0) { $0 + ($1.strength?.totalVolumeKg ?? 0) }
     }
 
-    /// Local copy of the ACWR load formula (kept private in `ProgressInsights`) for tertile splits.
-    private static func load(_ w: Workout) -> Double {
-        let minutes = w.durationS / 60
-        let intensity = Double(w.perceivedEffort ?? defaultIntensity(w.type))
-        if minutes > 0 { return minutes * intensity }
-        if let d = w.gps?.distanceM, d > 0 { return (d / 1000) * 6 }
-        return 0
-    }
-
-    private static func defaultIntensity(_ type: WorkoutType) -> Int {
-        switch type { case .run: 7; case .ride: 6; case .hike: 6; case .strength: 6; case .walk: 4 }
-    }
 
     /// **v1 heuristic** (gated to low confidence): the lowest ACWR preceding a "strain event" —
     /// a missed session or an easy run that felt hard (RPE ≥ 7). Clamped to a sane band; defaults
@@ -250,11 +238,11 @@ struct AthleteModelEngine {
         let easyPaces = sorted.filter { isEasyRun($0) }.compactMap { $0.gps?.avgPaceSPerKm }.filter { $0 > 0 }
         guard !easyPaces.isEmpty else { return 1 }
         let baseline = median(easyPaces)
-        let loads = sorted.map { load($0) }.filter { $0 > 0 }.sorted()
+        let loads = sorted.map { TrainingLoad.session($0) }.filter { $0 > 0 }.sorted()
         guard loads.count >= 3 else { return 1 }
         let tertile = loads[Int(Double(loads.count) * 2 / 3)]
         var gaps: [Double] = []
-        for (i, w) in sorted.enumerated() where load(w) >= tertile {
+        for (i, w) in sorted.enumerated() where TrainingLoad.session(w) >= tertile {
             for next in sorted[(i + 1)...] where isEasyRun(next) {
                 guard let p = next.gps?.avgPaceSPerKm, p > 0 else { continue }
                 let days = (next.startedAt.timeIntervalSince(w.startedAt)) / 86_400
@@ -273,7 +261,7 @@ struct AthleteModelEngine {
         var bestE1RM: [String: Double] = [:]
         var longestRun = 0.0
         for w in sorted {
-            if w.type == .strength, let s = w.strength {
+            if w.type.isStrengthStyle, let s = w.strength {
                 for row in s.exercises {
                     guard let name = row.exercise?.name else { continue }
                     let working = row.sets.filter { $0.isComplete && $0.type == .working }

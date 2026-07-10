@@ -41,6 +41,10 @@ actor GPSTrackingEngine {
         let movingTimeS: TimeInterval
         let elevationGainM: Double
         let route: [Coordinate]
+        /// The latest Kalman-corrected position — fresher than `route.last` (which only advances
+        /// past the 2 m move gate). Drives the on-map puck so the dot, the camera, and the trace
+        /// all follow the SAME filtered track: a rejected GPS spike can't teleport any of them.
+        let tip: Coordinate?
     }
 
     enum Const {
@@ -49,6 +53,7 @@ actor GPSTrackingEngine {
         static let checkpointIntervalS = 5.0
         static let liveActivityUpdateS = 3.0
         static let gpsLostTimeoutS = 8.0   // no accepted fix for this long → GPSLost (keep timing)
+        static let maxFixAgeS = 10.0       // drop fixes older than this (e.g. a cached background fix)
     }
 
     let type: WorkoutType
@@ -63,6 +68,10 @@ actor GPSTrackingEngine {
     /// Accumulated *moving* time (excludes paused spans).
     private(set) var movingTimeS: TimeInterval = 0
     private var lastMovingMark: Date?
+    /// A manual Resume (from either a manual or an *auto* pause) suppresses auto-pause until the athlete
+    /// actually moves again — so Resume always works, even standing still, and never re-auto-pauses on
+    /// the very next stationary fix. Cleared the moment real movement is detected.
+    private var autoPauseSuppressed = false
 
     init(type: WorkoutType, sink: GPSWorkoutSink = NoopGPSWorkoutSink()) {
         self.type = type
@@ -79,7 +88,9 @@ actor GPSTrackingEngine {
         LiveSnapshot(state: state, distanceM: processor.distanceM,
                      smoothedPaceSPerKm: processor.smoothedPaceSPerKm,
                      movingTimeS: movingTimeS, elevationGainM: processor.elevationGainM,
-                     route: route)
+                     route: route,
+                     tip: route.isEmpty ? nil : Coordinate(lat: processor.filteredLat,
+                                                           lon: processor.filteredLon))
     }
 
     func begin(now: Date = Date()) async {
@@ -94,14 +105,18 @@ actor GPSTrackingEngine {
     /// Ingest a raw location fix. Drives accept/reject, distance, auto-pause, and persistence.
     func ingest(_ fix: GPSProcessor.Fix, now: Date = Date()) async {
         guard state != .idle, state != .saving, state != .summary else { return }
+        // Drop stale fixes (e.g. a cached location delivered on return from background) — a runner
+        // covers ~40m in 10s, so an old position would distort both the route and the distance.
+        guard now.timeIntervalSince(fix.t) <= Const.maxFixAgeS else { return }
 
         if state == .acquiring { state = .tracking }
 
         let result = processor.ingest(fix)
         let accepted = result != .rejected
-        // Build the route: the first accepted fix (anchor) plus every real move.
+        // Build the route from the Kalman-corrected position (not the raw fix): the first accepted
+        // fix (anchor) plus every real move.
         if case .accepted(let added) = result, added > 0 || route.isEmpty {
-            route.append(Coordinate(lat: fix.lat, lon: fix.lon))
+            route.append(Coordinate(lat: processor.filteredLat, lon: processor.filteredLon))
         }
         await sink.persistSample(fix, accepted: accepted)
 
@@ -113,14 +128,18 @@ actor GPSTrackingEngine {
 
         // Auto-pause / resume (manual pause is sticky and not overridden here).
         if state != .paused {
-            let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now)
-            if pausedBySpeed, state == .tracking {
+            let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now,
+                                                          currentlyPaused: state == .autoPaused)
+            if !pausedBySpeed {
+                // Real movement → a manual-resume override is done its job; normal auto-pause resumes.
+                autoPauseSuppressed = false
+                if state == .autoPaused { state = .tracking }
+                else if state == .gpsLost, accepted { state = .tracking }
+            } else if state == .tracking, !autoPauseSuppressed {
+                // Stationary and not manually overridden → auto-pause.
                 state = .autoPaused
-            } else if !pausedBySpeed, state == .autoPaused {
-                state = .tracking
-            } else if state == .gpsLost, accepted {
-                state = .tracking
             }
+            // else: stationary but the athlete manually resumed → stay tracking (Resume always wins).
         }
 
         if let last = lastCheckpoint, now.timeIntervalSince(last) >= Const.checkpointIntervalS {
@@ -131,8 +150,23 @@ actor GPSTrackingEngine {
         }
     }
 
-    func pause() { if state == .tracking || state == .autoPaused { state = .paused } }
-    func resume() { if state == .paused { state = .tracking; lastMovingMark = Date() } }
+    /// Manual Pause. Also honored while `.acquiring` (recording armed but no fix yet — e.g. location
+    /// denied, where the state never leaves acquiring) and `.gpsLost`, so the button is never a silent
+    /// no-op while the elapsed clock runs.
+    func pause() {
+        if state == .tracking || state == .autoPaused || state == .acquiring || state == .gpsLost {
+            state = .paused
+        }
+    }
+    /// Manual Resume — works from a manual *or* an auto pause, and holds off auto-pause until the athlete
+    /// moves again, so the button always responds even when they're standing still.
+    func resume() {
+        if state == .paused || state == .autoPaused {
+            state = .tracking
+            lastMovingMark = Date()
+            autoPauseSuppressed = true
+        }
+    }
     func markGPSLost() { if state == .tracking { state = .gpsLost } }
 
     /// `durationOverrideS` lets the view model supply its continuous elapsed-time clock (which

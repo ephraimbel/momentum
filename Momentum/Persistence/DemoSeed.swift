@@ -8,74 +8,225 @@ import CoreLocation
 @MainActor
 enum DemoSeed {
     static func seedIfRequested(_ context: ModelContext) {
+        seedInterruptedWorkoutIfRequested(context)
         guard ProcessInfo.processInfo.arguments.contains("--seed-demo") else { return }
         let existing = (try? context.fetch(FetchDescriptor<UserProfile>())) ?? []
         guard existing.isEmpty else { return }
 
         let profile = UserProfile()
+        profile.displayName = "Alex Rivera"
+        profile.handle = "alexrivera"   // display name and @handle are distinct (username vs name)
         profile.disciplines = ["running", "strength"]
         profile.goal = .buildMuscle
         profile.daysPerWeek = 4
         profile.experience = ["running": "some", "strength": "some"]
+        profile.weightUnit = WeightUnit.default().rawValue   // locale display units (lb in US/UK)
+        profile.maxHR = 188                                  // HR zones (Karvonen) render personalized
+        profile.restingHR = 52
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
+        // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
+            profile.plan?.name = "Austin Marathon"
+        }
 
-        let bench = (try? context.fetch(FetchDescriptor<Exercise>()))?.first(where: { $0.name == "Barbell Bench Press" })
+        // A small demo lift library with real muscle mapping, so strength posts light the body map
+        // (chest/back/legs/shoulders) instead of falling back to a glyph.
+        let lifts = demoLifts()
+        lifts.forEach(context.insert)
 
         // ~5 weeks of history with a gently building trend, so Progress charts + ACWR populate.
+        var runIndex = 0
         for daysAgo in [0, 2, 4, 7, 9, 11, 14, 16, 18, 21, 24, 26, 30, 33] {
             let start = Date().addingTimeInterval(Double(-daysAgo) * 86_400 - 3 * 3600)
             let week = Double(daysAgo) / 7
             if daysAgo % 4 == 0 {
                 let sw = Workout(); sw.type = .strength; sw.startedAt = start
                 sw.durationS = 2700 + Double(14 - daysAgo) * 20
-                let session = StrengthSession()
-                session.totalVolumeKg = 4800 + (5 - week) * 250
-                session.totalSets = 16
-                if let bench {
-                    let row = WorkoutExercise(); row.exercise = bench
-                    let set = SetEntry(); set.weightKg = 62 + (5 - week) * 2; set.reps = 6; set.isComplete = true; set.type = .working
-                    row.sets = [set]; session.exercises = [row]
-                }
-                sw.strength = session; context.insert(sw)
+                sw.strength = strengthSession(lifts: lifts, week: week)
+                context.insert(sw)
             } else {
                 let run = Workout(); run.type = .run; run.startedAt = start
                 let dist = 5000 + (5 - week) * 400 + Double((daysAgo * 137) % 1200)
-                run.durationS = dist / 1000 * 290
+                let pace = 290 + week * 9   // an improving athlete: older runs slower, recent faster
+                run.durationS = dist / 1000 * pace
                 let gps = GPSDetail(); gps.distanceM = dist; gps.elevationGainM = 30 + Double(daysAgo % 5) * 8
-                gps.avgPaceSPerKm = 290
-                gps.samples = loopSamples(start: start)   // every run gets a route to draw
+                gps.avgPaceSPerKm = pace
+                gps.samples = loopSamples(start: start, variant: runIndex)   // a distinct route per run
+                gps.hrSamples = hrTrace(start: start, durationS: run.durationS, variant: runIndex)
+                gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
                 run.gps = gps; context.insert(run)
+                runIndex += 1
             }
+        }
+        // Give the most recent run a guided-session rep breakdown so the summary's Reps section shows.
+        if let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
+            .filter({ $0.type == .run && $0.gps != nil })
+            .sorted(by: { $0.startedAt > $1.startedAt }).first, let gps = recent.gps {
+            let achieved: [Double] = [296, 302, 291, 315, 305, 288]   // 6×400 @ 5K pace (300); one slow rep
+            let reps = achieved.enumerated().map { i, a in
+                RepResult(repIndex: i + 1, repTotal: achieved.count, title: nil, targetPaceSPerKm: 300,
+                          achievedPaceSPerKm: a, distanceM: 400, durationS: a * 0.4)
+            }
+            gps.structuredRepsData = try? JSONEncoder().encode(reps)
+            // Link a prescribed session so the post-run read names it ("your speed session done ✓").
+            let ps = PlannedSession()
+            ps.discipline = .running; ps.runType = .intervals; ps.date = recent.startedAt
+            ps.status = .completed; ps.intervals = "6×400m @ 5K"
+            context.insert(ps); recent.plannedSession = ps
+        }
+        // A few coaching-history entries so the "How your plan adapted" timeline populates.
+        let cal = Calendar.current
+        let demoEvents: [(CoachingEvent.Kind, String, String, Int)] = [
+            (.recalibrate, "Your paces got faster", "That tempo showed real fitness, so I sharpened your target paces by about 6 s/km. You've earned it.", 2),
+            (.recover, "Banking some recovery", "Your easy run felt like an honest 8/10 — that's your body asking for rest, so your next session is now a recovery day.", 9),
+            (.ease, "Eased your week", "Your recent load spiked, so I trimmed this week's volume to keep you fresh and healthy.", 16),
+        ]
+        for (kind, h, d, daysAgo) in demoEvents {
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+            context.insert(CoachingEvent(kind: kind, headline: h, detail: d, date: date))
+        }
+        // A few inbox notifications so the bell has real content.
+        let demoNotifs: [(AppNotification.Kind, String, String, Int)] = [
+            (.reminder, "Today's session is ready", "Long run · 6.2 mi at an easy pace.", 0),
+            (.streak, "3-day streak going", "Keep it alive — a session today makes it four.", 1),
+            (.coaching, "Your paces got faster", "That tempo showed real fitness, so I sharpened your target paces by about 6 s/km.", 2),
+            (.achievement, "New longest run", "You just logged your longest run yet. Nice work.", 4),
+        ]
+        for (kind, title, body, daysAgo) in demoNotifs {
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+            context.insert(AppNotification(kind: kind, title: title, body: body, date: date))
         }
         try? context.save()
 
-        // Render a real route snapshot for today's run so the Strava-style image is visible.
-        if let todayGPS = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
-            .first(where: { $0.type == .run && !($0.gps?.samples.isEmpty ?? true) })?.gps {
-            let coords = todayGPS.samples.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-            Task { @MainActor in
+        // Render a real Mapbox route snapshot for every run so each grid tile shows the actual map +
+        // route (the production path — real runs snapshot on finish). Sequential to be gentle on the GPU.
+        let runs = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
+            .filter { $0.type == .run && !($0.gps?.samples.isEmpty ?? true) }
+        Task { @MainActor in
+            for run in runs {
+                guard let gps = run.gps else { continue }
+                // SwiftData to-many relationships come back UNORDERED on refetch — connect the dots
+                // by timestamp or the snapshot draws a scribble instead of the route.
+                let coords = gps.samples.sorted { $0.t < $1.t }
+                    .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                 if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
-                    todayGPS.mapSnapshotData = data
+                    gps.mapSnapshotData = data
                     try? context.save()
                 }
             }
         }
     }
 
-    /// ~24 samples tracing a rough loop near SF for a believable route.
-    private static func loopSamples(start: Date) -> [LocationSample] {
-        let centerLat = 37.7694, centerLon = -122.4862, r = 0.004
-        return (0..<24).map { i in
-            let a = Double(i) / 24 * 2 * .pi
+    // MARK: Strength
+
+    /// Four compound lifts spanning the body so the muscle map reads as a full-body session.
+    /// `--recovery-demo`: simulate a run the app died in the middle of — a half-loop of samples,
+    /// checkpointed aggregates, and the live marker still set — so the cold-launch "unfinished
+    /// workout found" prompt can be exercised on the simulator without killing a live recording.
+    private static func seedInterruptedWorkoutIfRequested(_ context: ModelContext) {
+        guard ProcessInfo.processInfo.arguments.contains("--recovery-demo"),
+              ActiveWorkoutMarker.pendingID == nil else { return }
+        let start = Date().addingTimeInterval(-40 * 60)
+        let w = Workout()
+        w.type = .run
+        w.startedAt = start
+        w.durationS = 22 * 60                                  // the last 5s checkpoint that stuck
+        let gps = GPSDetail()
+        gps.distanceM = 4_200
+        gps.avgPaceSPerKm = (22 * 60) / 4.2
+        gps.samples = loopSamples(start: start, variant: 2)
+        w.gps = gps
+        context.insert(w)
+        try? context.save()
+        ActiveWorkoutMarker.set(w.id)
+    }
+
+    private static func demoLifts() -> [Exercise] {
+        [
+            Exercise(name: "Barbell Bench Press", primaryMuscles: [.chest], secondaryMuscles: [.triceps, .shoulders],
+                     equipment: .barbell, category: .compound),
+            Exercise(name: "Barbell Row", primaryMuscles: [.back], secondaryMuscles: [.biceps],
+                     equipment: .barbell, category: .compound),
+            Exercise(name: "Back Squat", primaryMuscles: [.quads, .glutes], secondaryMuscles: [.hamstrings],
+                     equipment: .barbell, category: .compound),
+            Exercise(name: "Overhead Press", primaryMuscles: [.shoulders], secondaryMuscles: [.triceps],
+                     equipment: .barbell, category: .compound),
+        ]
+    }
+
+    private static func strengthSession(lifts: [Exercise], week: Double) -> StrengthSession {
+        let session = StrengthSession()
+        var volume = 0.0, sets = 0
+        for lift in lifts {
+            let row = WorkoutExercise(); row.exercise = lift
+            let base = 60 + (5 - week) * 2                     // heavier as the athlete builds
+            let entries = (0..<4).map { _ -> SetEntry in
+                let s = SetEntry(); s.weightKg = base; s.reps = 6; s.isComplete = true; s.type = .working
+                volume += base * 6; sets += 1
+                return s
+            }
+            row.sets = entries
+            session.exercises.append(row)
+        }
+        session.totalVolumeKg = volume
+        session.totalSets = sets
+        return session
+    }
+
+    /// A believable HR trace for a seeded run — a ~2 min warm-up ramp into a steady aerobic effort
+    /// with a slow wander, one reading every 5 s — so the HR chart + time-in-zones render from local
+    /// data exactly like a live-captured run (R3).
+    private static func hrTrace(start: Date, durationS: Double, variant: Int) -> [HeartRateSample] {
+        let steady = 148.0 + Double(variant % 4) * 5     // effort varies run to run
+        var out: [HeartRateSample] = []
+        var t = 0.0
+        while t <= durationS {
+            let ramp = min(1.0, t / 120)
+            let bpm = 95 + (steady - 95) * ramp + 5 * sin(t / 47 + Double(variant)) + 2 * sin(t / 9)
+            let s = HeartRateSample()
+            s.t = start.addingTimeInterval(t)
+            s.bpm = Int(bpm.rounded())
+            out.append(s)
+            t += 5
+        }
+        return out
+    }
+
+    // MARK: Routes
+
+    /// A distinct 2-lap loop (shape + location vary by `variant`) with realistic per-sample speed and
+    /// rolling altitude, so the post-run pace/elevation/splits charts have believable data to draw.
+    private static func loopSamples(start: Date, variant: Int) -> [LocationSample] {
+        // Scatter each run around a different Austin neighbourhood so the maps look different.
+        let centers = [(30.2672, -97.7431), (30.2849, -97.7341), (30.2530, -97.7594),
+                       (30.2711, -97.7539), (30.2456, -97.7688)]
+        let (centerLat, centerLon) = centers[variant % centers.count]
+        let r = 0.0032 + Double(variant % 3) * 0.0008        // vary the size
+        let squash = 1.15 + Double(variant % 4) * 0.18       // vary the aspect so no two are identical
+        let wobble = 0.00035                                  // gentle irregularity → not a perfect circle
+        let laps = 2, perLap = 44, n = laps * perLap
+        var out: [LocationSample] = []
+        var elapsed = 0.0
+        var prevLat = 0.0, prevLon = 0.0
+        for i in 0..<n {
+            let a = Double(i) / Double(perLap) * 2 * .pi
+            let lat = centerLat + r * sin(a) + wobble * sin(a * 3 + Double(variant))
+            let lon = centerLon + r * cos(a) * squash + wobble * cos(a * 2)
+            // Cruise ~3.1 m/s (≈5:22/km) with rolling variation + a surge each lap.
+            let speed = 3.1 + 0.5 * sin(a * 2 + Double(variant)) + 0.25 * sin(a * 5)
+            if i > 0 { elapsed += Geo.distance(lat1: prevLat, lon1: prevLon, lat2: lat, lon2: lon) / max(1.5, speed) }
             let s = LocationSample()
-            s.t = start.addingTimeInterval(Double(i) * 70)
-            s.lat = centerLat + r * sin(a)
-            s.lon = centerLon + r * cos(a) * 1.3
+            s.t = start.addingTimeInterval(elapsed)
+            s.lat = lat; s.lon = lon
+            s.speedMS = speed
+            s.altitudeM = 150 + 20 * sin(a) + 7 * cos(a * 3 + Double(variant))   // rolling hills
             s.accuracyM = 6
             s.accepted = true
-            return s
+            out.append(s)
+            prevLat = lat; prevLon = lon
         }
+        return out
     }
 }
 #endif

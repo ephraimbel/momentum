@@ -10,6 +10,10 @@ enum StrengthPRs {
         let exerciseName: String
         let label: String      // e.g. "e1RM PR", "Heaviest"
         let detail: String     // e.g. "84 kg"
+        // Typed record info so the save flow can persist a PersonalRecord (nil = display-only).
+        var prType: PRType? = nil
+        var value: Double = 0
+        var exercise: Exercise? = nil
     }
 
     static func detect(for workout: Workout, weightUnit: WeightUnit, in context: ModelContext) -> [Hit] {
@@ -17,7 +21,7 @@ enum StrengthPRs {
 
         // Historical bests per exercise id from strictly-earlier strength workouts.
         let all = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-        let prior = all.filter { $0.type == .strength && $0.startedAt < workout.startedAt }
+        let prior = all.filter { $0.type.isStrengthStyle && $0.startedAt < workout.startedAt }
         var bestE1RM: [UUID: Double] = [:]
         var bestWeight: [UUID: Double] = [:]
         for w in prior {
@@ -45,11 +49,13 @@ enum StrengthPRs {
 
             if e1rm > (bestE1RM[ex.id] ?? 0) + 0.01 {
                 hits.append(Hit(exerciseName: ex.name, label: "e1RM PR",
-                                detail: weightString(kg: e1rm, unit: weightUnit)))
+                                detail: weightString(kg: e1rm, unit: weightUnit),
+                                prType: .bestE1RM, value: e1rm, exercise: ex))
             }
             if heaviest > (bestWeight[ex.id] ?? 0) + 0.01 {
                 hits.append(Hit(exerciseName: ex.name, label: "Heaviest",
-                                detail: weightString(kg: heaviest, unit: weightUnit)))
+                                detail: weightString(kg: heaviest, unit: weightUnit),
+                                prType: .heaviestWeight, value: heaviest, exercise: ex))
             }
         }
         return hits

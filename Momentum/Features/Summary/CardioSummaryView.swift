@@ -1,43 +1,6 @@
 import SwiftUI
-import MapKit
+import CoreLocation
 import SwiftData
-
-/// Post-workout summary screen for cardio (PRD §4.3 finish, §4.6): presented cover with Done.
-/// Renders `CardioSummaryContent`, reused by `WorkoutDetailView`.
-struct CardioSummaryView: View {
-    let workoutId: UUID
-    var distanceUnit: DistanceUnit = .auto
-    var onDone: () -> Void
-
-    @Query private var workouts: [Workout]
-    private var workout: Workout? { workouts.first { $0.id == workoutId } }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                if let workout {
-                    CardioSummaryContent(workout: workout, distanceUnit: distanceUnit)
-                        .padding(Theme.Space.md)
-                } else {
-                    ContentUnavailableView("Workout not found", systemImage: "questionmark")
-                }
-            }
-            .background(Theme.background)
-            .navigationTitle(workout?.type.title ?? "Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { onDone() }.fontWeight(.semibold)
-                }
-                if let workout {
-                    ToolbarItem(placement: .topBarLeading) {
-                        ShareButton(workout: workout, distanceUnit: distanceUnit)
-                    }
-                }
-            }
-        }
-    }
-}
 
 /// Reusable cardio summary body: route map, distance/pace/elevation, per-unit splits.
 struct CardioSummaryContent: View {
@@ -45,6 +8,11 @@ struct CardioSummaryContent: View {
     var distanceUnit: DistanceUnit = .auto
     /// Show the user's title/description header (off in the save editor, which has editable fields).
     var showsHeader: Bool = true
+    /// Allow attaching/replacing the workout photo (post-workout only; read-only in history).
+    var canEditPhoto: Bool = false
+
+    @Environment(\.modelContext) private var context
+    @State private var hits: [CardioAchievements.Hit] = []
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -52,15 +20,43 @@ struct CardioSummaryContent: View {
 
     var body: some View {
         if let gps = workout.gps {
-            VStack(spacing: Theme.Space.xl) {
+            // Reveal-first: lead with the mastery payoff (hero distance + any "you got better" win),
+            // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
+            VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
-                routeMap(gps).reveal(0)
-                headline(workout, gps).reveal(0.08)
-                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.18)
-                splitsSection(gps).reveal(0.28)
+                headline(workout, gps).reveal(0)
+                if !hits.isEmpty {
+                    achievementsSection.reveal(0.10)
+                    EarnedShareButton(workout: workout, distanceUnit: distanceUnit, title: "Share your run").reveal(0.16)
+                }
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.20)
+                routeMap(gps).reveal(0.22)
+                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
+                PlanProposalCard().reveal(0.34)
+                repsSection(gps).reveal(0.35)   // a structured run's headline: how each rep landed
+                SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(0.36)
+                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit).reveal(0.38)
+                TimeInZonesCard(workout: workout).reveal(0.39)
+                splitsSection(gps).reveal(0.40)
+            }
+            .task {
+                hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
             }
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// One self-relative line that frames the run as progress — the top achievement, if any.
+    private var competenceText: String? {
+        hits.first.map { "\($0.label) · \($0.detail)" }
+    }
+
+    private var achievementsSection: some View {
+        VStack(spacing: Theme.Space.sm) {
+            ForEach(hits) { hit in
+                PRBadge(text: "\(hit.label) · \(hit.detail)", celebrate: true)
+            }
         }
     }
 
@@ -79,16 +75,17 @@ struct CardioSummaryContent: View {
 
     @ViewBuilder
     private func routeMap(_ gps: GPSDetail) -> some View {
-        let coords = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let coords = gps.routeCoordinates(type: workout.type)
         if coords.count > 1 {
-            Map(interactionModes: []) {
-                MapPolyline(coordinates: coords)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-            }
-            .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
-            .frame(height: 220)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            RouteMapView(coordinates: RouteSmoothing.smooth(coords))
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                // When the map-matched route lands post-finish (nil→present), the coordinates change
+                // underneath RouteMapView. Its route line is added imperatively once on style-load (a
+                // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
+                // identity on match-presence forces one clean remount, re-running style-load with the
+                // snapped route.
+                .id(gps.matchedRouteData != nil)
         }
     }
 
@@ -99,10 +96,12 @@ struct CardioSummaryContent: View {
             CountUpHero(target: distanceTarget,
                         format: { String(format: "%.2f", $0) },
                         label: isImperial ? "Miles" : "Kilometers")
-            HStack(spacing: Theme.Space.xl) {
+            if let competenceText { EarnedLine(text: competenceText) }
+            HStack(spacing: Theme.Space.lg) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
                 stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")
                 stat("\(Int(gps.elevationGainM)) m", "Elevation")
+                if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
         }
         .padding(.vertical, Theme.Space.md)
@@ -137,6 +136,53 @@ struct CardioSummaryContent: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Per-rep adherence breakdown for a guided structured run — how each rep landed vs its target pace.
+    @ViewBuilder
+    private func repsSection(_ gps: GPSDetail) -> some View {
+        let reps = gps.structuredReps
+        if !reps.isEmpty {
+            let paced = reps.filter { $0.verdict != .noTarget }
+            let onPace = paced.filter { $0.verdict == .onPace }.count
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack {
+                    Text("REPS").font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                    Spacer()
+                    if !paced.isEmpty {
+                        Text("\(onPace)/\(paced.count) on pace").font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                ForEach(Array(reps.enumerated()), id: \.offset) { _, rep in
+                    HStack(spacing: Theme.Space.sm) {
+                        Text(rep.label).foregroundStyle(Theme.ink).frame(width: 92, alignment: .leading)
+                        Spacer()
+                        Text(Formatters.pace(secPerKm: rep.achievedPaceSPerKm, unit: distanceUnit))
+                            .monospacedDigit().foregroundStyle(Theme.ink)
+                        repVerdictChip(rep.verdict)
+                    }
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func repVerdictChip(_ v: RepResult.Verdict) -> some View {
+        let label: String
+        switch v {
+        case .onPace: label = "on"; case .tooFast: label = "fast"; case .tooSlow: label = "slow"; case .noTarget: label = "—"
+        }
+        let filled = v == .onPace
+        return Text(label).font(.rounded(Theme.FontSize.label, weight: .bold))
+            .foregroundStyle(filled ? Theme.background : Theme.inkSecondary)
+            .frame(width: 48, height: 24)
+            .background {
+                Capsule().fill(filled ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                if !filled { Capsule().stroke(Theme.hairline) }
+            }
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

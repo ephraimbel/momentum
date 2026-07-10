@@ -15,11 +15,26 @@ enum WorkoutReadTemplates {
 
     static func read(for workout: Workout, planned: Bool, weightUnit: WeightUnit = .default(),
                      distanceUnit: DistanceUnit = .auto) -> WorkoutRead {
-        let read = workout.type == .strength
-            ? strength(workout, weightUnit: weightUnit, planned: planned)
-            : cardio(workout, distanceUnit: distanceUnit, planned: planned)
+        let read: WorkoutRead
+        if workout.type.isStrengthStyle {
+            read = strength(workout, weightUnit: weightUnit, planned: planned)
+        } else if workout.type.isTimed {
+            read = timed(workout, planned: planned)
+        } else {
+            read = cardio(workout, distanceUnit: distanceUnit, planned: planned)
+        }
         return WorkoutRead(narrative: sanitize(read.narrative), insights: read.insights,
                            planAdjustment: read.planAdjustment)
+    }
+
+    // MARK: Timed
+
+    private static func timed(_ workout: Workout, planned: Bool) -> WorkoutRead {
+        let mins = Int((workout.durationS / 60).rounded())
+        let sport = workout.type.title
+        var narrative = mins > 0 ? "\(sport), \(mins) min." : "\(sport) logged."
+        narrative += planned ? " That's today's session ✓." : " Nice work, saved."
+        return WorkoutRead(narrative: narrative, insights: [], planAdjustment: nil)
     }
 
     // MARK: Strength
@@ -41,11 +56,13 @@ enum WorkoutReadTemplates {
             }
         }
 
-        var narrative = "Strong work — \(Int(volume)) \(unit) across \(session.totalSets) sets."
+        // Lead with the concrete fact (the data-anchored line), then the read, then the plan tie-in —
+        // a specific opener earns trust where generic praise ("Strong work.") reads as filler (research).
+        var narrative = "\(Int(volume)) \(unit) across \(session.totalSets) sets."
         if bestE1RM > 0 {
-            narrative += " \(bestName) topped \(Formatters.weight(kg: bestW, unit: weightUnit)) × \(bestReps)."
+            narrative += " \(bestName) topped \(Formatters.weight(kg: bestW, unit: weightUnit)) × \(bestReps), a strong top end."
         }
-        narrative += planned ? " Counts toward today's plan ✓ — right on track." : " Logged and saved."
+        narrative += planned ? " Counts toward today's plan ✓, right on track." : " Logged and saved."
 
         var insights = [WorkoutRead.Insight(label: "Volume", value: "\(Int(volume)) \(unit)", note: "")]
         if bestE1RM > 0 {
@@ -73,13 +90,54 @@ enum WorkoutReadTemplates {
 
         var narrative = "\(typeWord) of \(dist) \(metric)."
         if let trend = splitTrend(gps) { narrative += " \(trend)." }
-        narrative += planned ? " That's today's session ✓ — base is building." : " Nice work — saved."
+        // Close the coaching loop: name the prescribed session + how it landed, not just "session ✓".
+        if planned, let clause = coachingClause(runType: workout.plannedSession?.runType, reps: gps.structuredReps) {
+            narrative += " \(clause)"
+        } else if planned {
+            narrative += " That's today's session ✓, base is building."
+        } else {
+            narrative += " Nice work, saved."
+        }
 
         let insights = [
             WorkoutRead.Insight(label: "Distance", value: dist, note: ""),
             WorkoutRead.Insight(label: "Elevation", value: "\(Int(gps.elevationGainM)) m", note: ""),
         ]
         return WorkoutRead(narrative: narrative, insights: insights, planAdjustment: nil)
+    }
+
+    /// The coaching tie-in for a prescribed run — names the session and, for a guided one, how the reps
+    /// landed. Turns "today's session ✓" into a read that shows the plan understood what you just did.
+    /// Pure + testable. nil for a free run with no prescription.
+    static func coachingClause(runType: RunType?, reps: [RepResult]) -> String? {
+        guard let rt = runType else { return nil }
+        let name: String
+        switch rt {
+        case .intervals:   name = "speed session"
+        case .tempo:       name = "tempo"
+        case .fartlek:     name = "fartlek"
+        case .hills:       name = "hill session"
+        case .strides:     name = "strides"
+        case .progression: name = "progression run"
+        case .long:        name = "long run"
+        case .recovery:    name = "recovery run"
+        case .easy:        name = "easy run"
+        case .race:        name = "race"
+        case .freeRun:     return nil
+        }
+        var clause = "That's your \(name) done ✓"
+        let paced = reps.filter { $0.verdict != .noTarget }
+        if !paced.isEmpty {
+            let on = paced.filter { $0.verdict == .onPace }.count
+            clause += ". \(on) of \(paced.count) reps on pace"
+        } else if rt == .long {
+            clause += ", aerobic base building"
+        } else if rt.isQuality {
+            clause += ", the hard work's banked"
+        } else if rt == .recovery || rt == .easy {
+            clause += ", easy as prescribed"
+        }
+        return clause + "."
     }
 
     /// "Negative split" if the back half was quicker than the front half.
@@ -96,7 +154,7 @@ enum WorkoutReadTemplates {
             if s.t <= midTime { distFirst += d } else { distSecond += d }
             prev = s
         }
-        if distSecond > distFirst * 1.03 { return "You sped up — a negative split" }
+        if distSecond > distFirst * 1.03 { return "You sped up into a negative split" }
         if distFirst > distSecond * 1.03 { return "Even, honest effort" }
         return "Steady throughout"
     }
@@ -106,10 +164,26 @@ enum WorkoutReadTemplates {
         let banned = ["injur", "pain", "diagnos", "medical", "rehab"]
         let lower = text.lowercased()
         if banned.contains(where: { lower.contains($0) }) {
-            return "Session saved — momentum's got the details."
+            return "Session saved, momentum's got the details."
         }
+        // Em/en dashes read as generic-AI slop; convert to clean sentence punctuation.
+        let cleaned = deDash(text)
         // Trim to <= 55 words defensively.
-        let words = text.split(separator: " ")
-        return words.count <= 55 ? text : words.prefix(55).joined(separator: " ") + "…"
+        let words = cleaned.split(separator: " ")
+        return words.count <= 55 ? cleaned : words.prefix(55).joined(separator: " ") + "…"
+    }
+
+    /// Replace em/en dashes with sentence punctuation; leave hyphens in compound words alone.
+    static func deDash(_ s: String) -> String {
+        guard s.contains("—") || s.contains("–") else { return s }
+        let pieces = s.replacingOccurrences(of: "–", with: "—")
+            .components(separatedBy: "—")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return pieces.enumerated().reduce("") { acc, e in
+            let (idx, p) = e
+            let capped = idx == 0 ? p : p.prefix(1).uppercased() + p.dropFirst()
+            return idx == 0 ? capped : acc + ". " + capped
+        }
     }
 }

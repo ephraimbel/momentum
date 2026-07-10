@@ -12,15 +12,15 @@ enum ProgressNarrator {
         let acwr = String(format: "%.1f", insights.acwr)
         switch insights.recommendation {
         case .start:
-            return "Early days — consistency first. Hit your planned days this week and I'll start reading your trend."
+            return "Early days, so consistency first. Hit your planned days this week and I'll start reading your trend."
         case .increase:
-            return "You've got room to grow — your training is below your usual load. Let's add about 10% next week.\(streakLine(streak))"
+            return "You've got room to grow. Your training is below your usual load, so let's add about 10% next week.\(streakLine(streak))"
         case .hold:
-            return "You're building well — load is \(trendWord(insights.loadTrendPct)) and well-absorbed. Hold here, then we'll nudge it up.\(streakLine(streak))"
+            return "You're building well. Load is \(trendWord(insights.loadTrendPct)) and well-absorbed, so hold here, then we'll nudge it up.\(streakLine(streak))"
         case .ease:
-            return "You're pushing hard — this week is \(acwr)× your normal load. Keep the next couple of sessions easy to absorb the work."
+            return "You're pushing hard. This week is \(acwr)× your normal load, so keep the next couple of sessions easy to absorb the work."
         case .rest:
-            return "Sharp jump — this week is \(acwr)× your normal load. Take a rest day; that's where the gains land."
+            return "That's a sharp jump. This week is \(acwr)× your normal load, so take a rest day; that's where the gains land."
         }
     }
 
@@ -42,6 +42,6 @@ enum ProgressNarrator {
     }
 
     private static func streakLine(_ streak: Int) -> String {
-        streak >= 3 ? " \(streak)-day streak — keep it rolling." : ""
+        streak >= 3 ? " \(streak)-day streak, keep it rolling." : ""
     }
 }

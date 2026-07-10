@@ -53,7 +53,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
               let workoutID, let workout = self[workoutID, as: Workout.self] else { return }
         detail.distanceM = distanceM
         detail.elevationGainM = elevationGainM
-        if type == .ride {
+        if type.discipline == .cycling {   // all bike variants report speed, not pace
             detail.avgSpeedMS = durationS > 0 ? distanceM / durationS : 0
         } else {
             detail.avgPaceSPerKm = smoothedPaceSPerKm
@@ -70,6 +70,48 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         detail.mapSnapshotData = data
         try? modelContext.save()
     }
+
+    /// Attach the Mapbox map-matched route (JSON `[[lat, lon]]`) once matching lands post-finish
+    /// (§8.5). Display surfaces prefer it over the raw trace; the raw `samples` are untouched.
+    func attachMatchedRoute(_ data: Data) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.matchedRouteData = data
+        try? modelContext.save()
+    }
+
+    /// Attach the run's average cadence (steps/min) captured from CoreMotion (R3). Written at finish;
+    /// nil/zero is simply not stored so imported or motion-less runs stay blank.
+    func attachCadence(_ stepsPerMin: Int) {
+        guard stepsPerMin > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.avgCadence = stepsPerMin
+        try? modelContext.save()
+    }
+
+    /// Persist one live heart-rate reading the moment it arrives (R3) — same durability contract as
+    /// `persistSample`, so a force-quit keeps every beat captured so far. Powers the post-run HR
+    /// chart + time-in-zones for runs recorded by us.
+    func persistHeartRate(t: Date, bpm: Int) {
+        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        let sample = HeartRateSample()
+        sample.t = t
+        sample.bpm = bpm
+        detail.hrSamples.append(sample)
+        try? modelContext.save()
+    }
+
+    /// Attach the run's average heart rate (bpm) from the live source — a BLE strap or a Watch
+    /// workout session via Health (R3). Written at finish; sourceless runs stay blank.
+    func attachHR(_ bpm: Int) {
+        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.avgHR = bpm
+        try? modelContext.save()
+    }
+
+    func attachStructuredReps(_ data: Data) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        detail.structuredRepsData = data
+        try? modelContext.save()
+    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row
@@ -80,10 +122,11 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
     private var workoutID: PersistentIdentifier?
     private var sessionID: PersistentIdentifier?
     private var rowIDs: [UUID: PersistentIdentifier] = [:]
+    private var setIDs: [UUID: PersistentIdentifier] = [:]   // live setId → persisted SetEntry
 
-    func beginWorkout(startedAt: Date) {
+    func beginWorkout(type: WorkoutType, startedAt: Date) {
         let workout = Workout()
-        workout.type = .strength
+        workout.type = type
         workout.startedAt = startedAt
         let session = StrengthSession()
         workout.strength = session
@@ -105,19 +148,35 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         rowIDs[rowId] = row.persistentModelID
     }
 
-    func persistSetComplete(rowId: UUID, setIndex: Int,
+    func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) {
         guard let rowPID = rowIDs[rowId], let row = self[rowPID, as: WorkoutExercise.self] else { return }
-        let set = SetEntry()
+        // Upsert by live setId so re-logging the same set (after an uncheck) updates its row rather
+        // than creating a duplicate.
+        let set: SetEntry
+        if let pid = setIDs[setId], let existing = self[pid, as: SetEntry.self] {
+            set = existing
+        } else {
+            set = SetEntry()
+            set.restS = row.exercise?.defaultRestS ?? 120
+            row.sets.append(set)
+        }
         set.index = setIndex
         set.weightKg = weightKg
         set.reps = reps
         set.rpe = rpe
         set.type = type
         set.isComplete = true
-        set.restS = row.exercise?.defaultRestS ?? 120
-        row.sets.append(set)
+        set.completedAt = Date()   // lets cold-launch recovery reconstruct an honest duration
         try? modelContext.save()
+        setIDs[setId] = set.persistentModelID
+    }
+
+    func persistSetIncomplete(setId: UUID) {
+        guard let pid = setIDs[setId], let set = self[pid, as: SetEntry.self] else { return }
+        modelContext.delete(set)
+        try? modelContext.save()
+        setIDs[setId] = nil
     }
 
     func scheduleRest(seconds: Double, exerciseName: String) {
@@ -133,6 +192,17 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         workout.durationS = durationS
         workout.elapsedS = durationS
         try? modelContext.save()
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// User discarded: delete the in-progress workout (cascades to its session/exercises/sets) and
+    /// clear the recovery marker so nothing lingers.
+    func discardWorkout() {
+        if let workoutID, let workout = self[workoutID, as: Workout.self] {
+            modelContext.delete(workout)
+            try? modelContext.save()
+        }
+        workoutID = nil; sessionID = nil; rowIDs = [:]
         ActiveWorkoutMarker.clear()
     }
 
