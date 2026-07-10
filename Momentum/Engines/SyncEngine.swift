@@ -43,7 +43,9 @@ enum SyncEngine {
         let isPrivate = w.privacy == .private
         let route: [[Double]]? = {
             guard !isPrivate, let gps = w.gps else { return nil }            // private ⇒ geometry stays home
-            let path = gps.samples.filter(\.accepted).map { [$0.lat, $0.lon] }
+            // Sort by time: SwiftData to-many relationships are unordered on fetch, and an
+            // unordered path uploads as a scribble.
+            let path = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }.map { [$0.lat, $0.lon] }
             return path.count > 1 ? path : nil
         }()
         return WorkoutSyncDTO(

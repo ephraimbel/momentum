@@ -105,7 +105,10 @@ enum DemoSeed {
         Task { @MainActor in
             for run in runs {
                 guard let gps = run.gps else { continue }
-                let coords = gps.samples.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                // SwiftData to-many relationships come back UNORDERED on refetch — connect the dots
+                // by timestamp or the snapshot draws a scribble instead of the route.
+                let coords = gps.samples.sorted { $0.t < $1.t }
+                    .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                 if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
                     gps.mapSnapshotData = data
                     try? context.save()
