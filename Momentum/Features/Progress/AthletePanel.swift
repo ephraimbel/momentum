@@ -61,10 +61,13 @@ struct AthletePanel: View {
                 backdrop(body: body, h: h)
                 figure(fig: fig)
                 leaderLines(body: body, w: w, h: h)
+                // Fixed-height rows on an even grid — the two columns read as one spec sheet,
+                // left and right of the figure, instead of scattered blocks.
                 ForEach(callouts) { c in
                     calloutView(c)
-                        .frame(width: w * 0.27)
-                        .position(x: c.edge == .leading ? w * 0.135 : w * 0.865, y: c.slot * h)
+                        .frame(width: w * 0.28, height: 72,
+                               alignment: c.edge == .leading ? .trailing : .leading)
+                        .position(x: c.edge == .leading ? w * 0.14 : w * 0.86, y: c.slot * h)
                 }
             }
         }
@@ -95,31 +98,23 @@ struct AthletePanel: View {
         platform(body: body)
     }
 
-    /// The pedestal — a perspective ellipse the figure stands on, lit like a product stage:
-    /// a soft light pool, a rim that catches light at the front and falls off behind, and one
-    /// quieter inner ring. Monochrome in both modes (the stage isn't earned progress).
+    /// The pedestal — pure light, no hardware: a soft pool of glow under the figure and a tight
+    /// contact shadow at the feet. No stroked rims (they read as furniture, not light).
+    /// Monochrome in both modes (the stage isn't earned progress).
     private func platform(body: CGRect) -> some View {
-        let w = body.width * 1.5
-        let h = w * 0.30
-        let rim = LinearGradient(
-            colors: isDark ? [.white.opacity(0.55), .white.opacity(0.04)]
-                           : [.black.opacity(0.30), .black.opacity(0.03)],
-            startPoint: .bottom, endPoint: .top)
+        let w = body.width * 1.3
+        let h = w * 0.28
         return ZStack {
-            // Light pool across the disc.
             Ellipse()
-                .fill(RadialGradient(colors: isDark ? [.white.opacity(0.12), .clear]
-                                                    : [.black.opacity(0.07), .clear],
+                .fill(RadialGradient(colors: isDark ? [.white.opacity(0.13), .clear]
+                                                    : [.black.opacity(0.06), .clear],
                                      center: .center, startRadius: 0, endRadius: w * 0.5))
                 .frame(width: w, height: h)
-            // Front-lit rim + a quieter inner ring, both perspective ellipses.
-            Ellipse().stroke(rim, lineWidth: 1.2).frame(width: w, height: h)
-            Ellipse().stroke(rim, lineWidth: 0.8).frame(width: w * 0.64, height: h * 0.64)
-                .opacity(0.5)
+                .blur(radius: 2)
             // Contact shadow right under the feet so the figure doesn't float.
             Ellipse()
-                .fill(isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.14))
-                .frame(width: body.width * 0.55, height: 8)
+                .fill(isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.12))
+                .frame(width: body.width * 0.5, height: 7)
                 .blur(radius: 5)
         }
         .position(x: body.midX, y: body.maxY - 3)
@@ -164,21 +159,21 @@ struct AthletePanel: View {
 
     private func calloutView(_ c: AthleteCallout) -> some View {
         let leading = c.edge == .leading
-        return VStack(alignment: leading ? .trailing : .leading, spacing: 2) {
+        return VStack(alignment: leading ? .trailing : .leading, spacing: 3) {
             Text(c.label).font(.rounded(9, weight: .bold)).tracking(1.1)
                 .foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.8)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(c.value).font(.display(22, weight: .black)).monospacedDigit()
+                Text(c.value).font(.display(20, weight: .black)).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.55)
                     .foregroundStyle(Theme.ink)
                 if let unit = c.unit {
-                    Text(unit).font(.rounded(11, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    Text(unit).font(.rounded(10.5, weight: .bold)).foregroundStyle(Theme.inkSecondary)
                 }
             }
             Text(c.context).font(.rounded(10, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
-                .lineLimit(2)
-                .multilineTextAlignment(leading ? .trailing : .leading)
+                .lineLimit(1).minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: leading ? .trailing : .leading)
         .contentShape(Rectangle())

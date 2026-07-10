@@ -1357,15 +1357,15 @@ struct ProgressScreen: View {
         }
         out.append(AthleteCallout(label: "READINESS", value: readinessValue, unit: recovery.hasData ? "/100" : nil,
                                   context: readinessContext, anchor: CGPoint(x: 0.50, y: 0.095),
-                                  edge: .leading, slot: 0.10, target: "formRace"))
+                                  edge: .leading, slot: 0.14, target: "formRace"))
         // VO₂max — lungs. Device measurement wins; else the pace-derived estimate.
         if let vo2 = measuredVO2 ?? currentVO2 {
             out.append(AthleteCallout(label: "VO₂ MAX", value: String(format: "%.1f", vo2), unit: nil,
                                       context: measuredVO2 != nil ? "From your device" : "Estimated from pace",
-                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.10, target: "fitness"))
+                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.14, target: "fitness"))
         } else {
             out.append(AthleteCallout(label: "VO₂ MAX", value: "—", unit: nil, context: "Needs a few runs",
-                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.10, target: "fitness"))
+                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.14, target: "fitness"))
         }
         // Training load — core. ACWR with a no-shame band word.
         if insights.chronic >= 1 {
@@ -1377,19 +1377,19 @@ struct ProgressScreen: View {
             }
             out.append(AthleteCallout(label: "TRAINING LOAD", value: String(format: "%.2f", insights.acwr), unit: nil,
                                       context: word, anchor: CGPoint(x: 0.50, y: 0.385),
-                                      edge: .leading, slot: 0.45, target: "charts"))
+                                      edge: .leading, slot: 0.47, target: "charts"))
         } else {
             out.append(AthleteCallout(label: "TRAINING LOAD", value: "—", unit: nil, context: "Building baseline",
-                                      anchor: CGPoint(x: 0.50, y: 0.385), edge: .leading, slot: 0.45, target: "charts"))
+                                      anchor: CGPoint(x: 0.50, y: 0.385), edge: .leading, slot: 0.47, target: "charts"))
         }
         // Resting heart — from Apple Health when connected.
         if let rhr = signals.restingHR {
             out.append(AthleteCallout(label: "RESTING HEART", value: "\(rhr)", unit: "bpm",
                                       context: signals.restingHRNote ?? "From Apple Health",
-                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.45, target: "hrZones"))
+                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.47, target: "hrZones"))
         } else {
             out.append(AthleteCallout(label: "RESTING HEART", value: "—", unit: nil, context: "Connect Health",
-                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.45, target: "hrZones"))
+                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.47, target: "hrZones"))
         }
         // Week volume — legs.
         let weekM = insights.weeks.last?.distanceM ?? 0
