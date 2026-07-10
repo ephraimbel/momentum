@@ -24,6 +24,7 @@ struct CardioSaveView: View {
     @State private var desc = ""
     @State private var sportType: WorkoutType = .run
     @State private var effort: Int?
+    @State private var visibility: WorkoutPrivacy = .private
     @State private var celebrating = false
     @State private var confirmDiscard = false
     @FocusState private var focus: Field?
@@ -77,6 +78,8 @@ struct CardioSaveView: View {
                 desc = workout.note
                 sportType = workout.type
                 effort = workout.perceivedEffort
+                // The share moment starts from the athlete's chosen default (never silently public).
+                visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
             }
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
@@ -96,7 +99,7 @@ struct CardioSaveView: View {
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
             Divider().overlay(Theme.hairline)
-            TextField("How did it go?", text: $desc, axis: .vertical)
+            TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
@@ -105,6 +108,8 @@ struct CardioSaveView: View {
             sportRow
             Divider().overlay(Theme.hairline)
             effortRow
+            Divider().overlay(Theme.hairline)
+            ShareVisibilityRow(privacy: $visibility, boxed: false, showsHint: true)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -175,6 +180,7 @@ struct CardioSaveView: View {
                 $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
                 $0.type = sportType
                 $0.perceivedEffort = effort
+                $0.privacy = visibility
                 // Recompute on the fresh context so the estimate sees the complete GPS detail.
                 $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
             }

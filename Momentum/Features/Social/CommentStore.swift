@@ -10,6 +10,9 @@ final class CommentStore {
     private let defaults: UserDefaults
     private(set) var byPost: [String: [Comment]]
 
+    /// Wired once in `MomentumApp`; nil in tests/previews → the store stays purely local.
+    @ObservationIgnored var backend: (any SocialBackending)?
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         SocialDebug.resetIfRequested(defaults, keys: [Self.key])
@@ -33,11 +36,40 @@ final class CommentStore {
                               authorHandle: authorHandle, isCommunity: false, text: text, date: now)
         byPost[postID.uuidString, default: []].append(comment)
         persist()
+        // Fire-and-forget; the client-generated id makes the server upsert idempotent. Comments
+        // on seeded posts have no server post row and no-op under the FK/RLS.
+        let backend = backend
+        Task { await backend?.pushComment(comment) }
         return comment
     }
 
     func delete(_ comment: Comment) {
         byPost[comment.postID.uuidString]?.removeAll { $0.id == comment.id }
+        persist()
+        let backend = backend
+        Task { await backend?.deleteComment(id: comment.id) }
+    }
+
+    /// Pull the thread for one post and merge it in (called when a post's comments open).
+    func pullRemote(for postID: UUID) {
+        let backend = backend
+        Task {
+            guard let remote = await backend?.pullComments(postID: postID) else { return }
+            merge(remote: remote, for: postID)
+        }
+    }
+
+    /// Merge remote comments for a post — dedup by id (own pushed comments come back too),
+    /// oldest first, persisted so the thread reads offline next time.
+    func merge(remote: [Comment], for postID: UUID) {
+        guard !remote.isEmpty else { return }
+        let key = postID.uuidString
+        var list = byPost[key] ?? []
+        let existing = Set(list.map(\.id))
+        let fresh = remote.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        list = (list + fresh).sorted { $0.date < $1.date }
+        byPost[key] = list
         persist()
     }
 

@@ -1,15 +1,28 @@
 import SwiftUI
 import AuthenticationServices
+import CryptoKit
+import Supabase
 
-/// Sign in with Apple session (PRD §8.11) — the app's identity for now. Holds the stable Apple user
+/// Sign in with Apple session (PRD §8.11) — the app's identity. Holds the stable Apple user
 /// identifier (persisted) and the athlete's name (Apple only hands it over on the *first*
-/// authorization, so we keep it). No passwords; private by default. The Supabase session/JWT for
-/// owner-scoped cloud sync layers on top of this later (see docs/SYNC-SETUP.md).
+/// authorization, so we keep it). No passwords; private by default. When Supabase is configured,
+/// a successful Apple sign-in is bridged to a Supabase session (`signInWithIdToken`) whose JWT
+/// satisfies owner-only RLS for sync/social (docs/SOCIAL-BACKEND-SETUP.md); guests and the
+/// unconfigured app skip the bridge entirely and stay local-only.
 @MainActor
 @Observable
 final class AuthController {
     private static let userIDKey = "com.momentum.auth.userID"
     private static let nameKey = "com.momentum.auth.name"
+    private static let cloudSessionKey = "com.momentum.auth.hadCloudSession"
+
+    /// The raw nonce for the in-flight Apple request. Apple gets its SHA-256 hash; Supabase gets
+    /// the raw value — the pair is how the identity token is bound to this one request.
+    private var pendingRawNonce: String?
+
+    /// Fired once, on the very first Supabase session this install ever gets — the hook that
+    /// claims guest-era local data (re-marks workouts dirty so they upload under the new uid).
+    var onFirstCloudSession: (() -> Void)?
 
     /// Sentinel userID for a guest (account-less, local-only) session.
     static let guestID = "guest"
@@ -36,8 +49,7 @@ final class AuthController {
 
     /// Persist a successful Apple sign-in. `fullName` arrives only on the first authorization.
     /// Note: when upgrading from a guest, the local SwiftData (profile, workouts, plan) is keyed to
-    /// the device container — it carries over untouched, so no re-onboarding. TODO(sync): when Supabase
-    /// is on, claim/upload that local data under this Apple owner id on first sign-in from guest.
+    /// the device container — it carries over untouched, so no re-onboarding.
     func signIn(userID: String, fullName: PersonNameComponents?, email: String?) {
         self.userID = userID
         UserDefaults.standard.set(userID, forKey: Self.userIDKey)
@@ -46,6 +58,57 @@ final class AuthController {
             UserDefaults.standard.set(formatted, forKey: Self.nameKey)
         }
         Haptics.success()
+    }
+
+    // MARK: Supabase bridge (docs/SOCIAL-BACKEND-SETUP.md)
+
+    /// Configure the in-flight Apple request: scopes + the SHA-256-hashed nonce (Supabase later
+    /// verifies the raw one against the identity token). No-op nonce when unconfigured — plain
+    /// local sign-in keeps working with no backend.
+    func prepareAppleSignIn(_ request: ASAuthorizationAppleIDRequest) {
+        request.requestedScopes = [.fullName, .email]
+        guard SupabaseClientProvider.isConfigured else { return }
+        let raw = Self.randomNonce()
+        pendingRawNonce = raw
+        request.nonce = SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Credential-based entry point: persists identity locally (exactly as before), then bridges
+    /// the Apple identity token to a Supabase session so RLS'd sync/social light up.
+    func signIn(credential: ASAuthorizationAppleIDCredential) {
+        signIn(userID: credential.user, fullName: credential.fullName, email: credential.email)
+        guard SupabaseClientProvider.isConfigured,
+              let tokenData = credential.identityToken,
+              let idToken = String(data: tokenData, encoding: .utf8) else { return }
+        let rawNonce = pendingRawNonce
+        pendingRawNonce = nil
+        Task { await bridgeToSupabase(idToken: idToken, rawNonce: rawNonce) }
+    }
+
+    private func bridgeToSupabase(idToken: String, rawNonce: String?) async {
+        guard let client = SupabaseClientProvider.client else { return }
+        do {
+            _ = try await client.auth.signInWithIdToken(
+                credentials: OpenIDConnectCredentials(provider: .apple, idToken: idToken, nonce: rawNonce))
+            markCloudSession()
+        } catch {
+            // Stay signed in locally; the bridge retries on the next explicit sign-in. Offline-first:
+            // nothing in the app blocks on this.
+        }
+    }
+
+    /// First-ever cloud session on this install → fire the guest-data claim hook exactly once.
+    private func markCloudSession() {
+        guard !UserDefaults.standard.bool(forKey: Self.cloudSessionKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.cloudSessionKey)
+        onFirstCloudSession?()
+    }
+
+    /// A CSPRNG nonce string (hex) for the Apple↔Supabase token binding.
+    private static func randomNonce(length: Int = 32) -> String {
+        var bytes = [UInt8](repeating: 0, count: length)
+        _ = SecRandomCopyBytes(kSecRandomDefault, length, &bytes)
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Enter the app without an account — local-only (no cloud backup/sync/social). The athlete can
@@ -63,12 +126,21 @@ final class AuthController {
         displayName = nil
         UserDefaults.standard.removeObject(forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
+        if let client = SupabaseClientProvider.client {
+            Task { try? await client.auth.signOut() }
+        }
     }
 
     /// On launch, confirm the Apple credential is still valid; sign out if it was revoked. Skips the
-    /// demo + guest sessions, which have no Apple credential to validate.
+    /// demo + guest sessions, which have no Apple credential to validate. Also restores the Supabase
+    /// session from the Keychain (refreshing the JWT if stale) so RLS'd calls work from cold launch.
     func refresh() {
         guard let userID, userID != "demo-user", userID != Self.guestID else { return }
+        if let client = SupabaseClientProvider.client {
+            Task { [weak self] in
+                if (try? await client.auth.session) != nil { await self?.markCloudSession() }
+            }
+        }
         ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { [weak self] state, _ in
             guard state == .revoked || state == .notFound else { return }
             Task { @MainActor in self?.signOut() }

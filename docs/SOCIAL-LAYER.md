@@ -152,8 +152,14 @@ Social is **free** (growth/virality per PRD §10). Pro stays the AI coach + adva
 - **Slice 4 — Reactions + live presence** (Realtime). Reactions shipped local (`ReactionStore`).
 - **Slice 5 — Moderation tooling + comments** *(shipped local)*: report/block (`ModerationStore`) +
   flat 280-char comments (`CommentStore`); server-side enforcement waits for Slice 6.
-- **Slice 6 — Supabase backend** *(the follow-up phase)*: Supabase Auth session (Sign in with Apple →
-  JWT), SQL migrations + RLS for `profiles`/`posts`/`follows`/`reactions`/`comments`/`reports`,
-  Storage buckets for post photos/avatars, Realtime presence, and social notifications
-  (`AppNotification` social kinds + targetID deep-links). Everything above swaps its UserDefaults
-  store for the network without UI changes.
+- **Slice 6 — Supabase backend** *(built 2026-07-09; lights up on project setup —
+  docs/SOCIAL-BACKEND-SETUP.md)*: Supabase Auth session (Sign in with Apple → JWT via
+  `AuthController`/`SupabaseClientProvider`), versioned migrations + RLS (`supabase/migrations/` —
+  profiles/posts/follows/blocks/reactions/comments/reports; blocks enforced server-side both
+  directions; `feed_page` keyset RPC), Storage (public `avatars`, private `post-photos` +
+  per-viewer signed URLs), the publish sweep (`postPublishedAt` + client-side redaction +
+  `RouteTrimmer` end-trimming — precise start/end never leave the device), and the four stores
+  pushing/pulling through `SocialBackending` with zero UI changes. Remote athletes show **real
+  data only** (`CommunityAthlete.isSample == false` hides the synthesized body-of-work).
+  **Still deferred:** Realtime presence (globe) and social notifications (`AppNotification`
+  social kinds + targetID deep-links).

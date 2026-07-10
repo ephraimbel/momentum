@@ -37,9 +37,9 @@
 	<key>RevenueCatAPIKey</key>
 	<string></string>
 	<key>SupabaseAnonKey</key>
-	<string></string>
+	<string>$(SUPABASE_ANON_KEY)</string>
 	<key>SupabaseURL</key>
-	<string></string>
+	<string>$(SUPABASE_URL)</string>
 	<key>SuperwallAPIKey</key>
 	<string></string>
 	<key>UIAppFonts</key>

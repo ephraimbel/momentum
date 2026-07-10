@@ -27,6 +27,7 @@ final class Services {
     let voiceCoach: any VoiceCoachServing
     let presence: any PresenceServing
     let spots: any SpotsProviding
+    let social: any SocialBackending
 
     init(
         location: any LocationServing,
@@ -41,7 +42,8 @@ final class Services {
         analytics: any AnalyticsServing = StubAnalyticsService(),
         voiceCoach: any VoiceCoachServing = StubVoiceCoachService(),
         presence: any PresenceServing = StubPresenceService(),
-        spots: any SpotsProviding = StubSpotsProvider()
+        spots: any SpotsProviding = StubSpotsProvider(),
+        social: any SocialBackending = StubSocialBackend()
     ) {
         self.location = location
         self.motion = motion
@@ -56,6 +58,7 @@ final class Services {
         self.voiceCoach = voiceCoach
         self.presence = presence
         self.spots = spots
+        self.social = social
     }
 
     /// The default wiring used by the running app. The real app injects the live `PaywallController`
@@ -75,7 +78,8 @@ final class Services {
             analytics: AnalyticsService(),
             voiceCoach: VoiceCoachService(),
             presence: LivePresenceService(),
-            spots: CachingSpotsProvider(wrapping: MapboxSpotsProvider())
+            spots: CachingSpotsProvider(wrapping: MapboxSpotsProvider()),
+            social: SupabaseSocialBackend()
         )
     }
 }

@@ -47,7 +47,9 @@ final class AIService: AIServing {
         var req = URLRequest(url: url, timeoutInterval: timeoutS)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        // Prefer the user's session JWT (edge functions verify JWTs); anon key for guests.
+        let token = await SupabaseClientProvider.accessToken() ?? bearer
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONEncoder().encode(body)
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {

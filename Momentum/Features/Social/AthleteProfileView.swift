@@ -29,18 +29,23 @@ struct AthleteProfileView: View {
                         .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
                 headlineStats
-                section("How you train") {
-                    DisciplineBreakdown(counts: athlete.disciplineCounts)
-                        .padding(Theme.Space.lg).background(card)
-                }
-                section("Consistency") {
-                    ConsistencyHeatmap(countingDays: athlete.consistencyDays)
-                        .padding(Theme.Space.lg).background(card)
-                }
-                if !records.prs.isEmpty || records.longestRunM > 0 || records.longestDurationS > 0 {
-                    section("Personal records") {
-                        PRShelf(strengthPRs: records.prs, longestRunM: records.longestRunM,
-                                longestDurationS: records.longestDurationS, weightUnit: weightUnit, distanceUnit: distanceUnit)
+                // The rich body-of-work scaffold is deterministic SAMPLE content — honest only
+                // for badged community athletes. Real network athletes show real data only
+                // (identity, posts, honest counts); their history isn't ours to invent.
+                if athlete.isSample {
+                    section("How you train") {
+                        DisciplineBreakdown(counts: athlete.disciplineCounts)
+                            .padding(Theme.Space.lg).background(card)
+                    }
+                    section("Consistency") {
+                        ConsistencyHeatmap(countingDays: athlete.consistencyDays)
+                            .padding(Theme.Space.lg).background(card)
+                    }
+                    if !records.prs.isEmpty || records.longestRunM > 0 || records.longestDurationS > 0 {
+                        section("Personal records") {
+                            PRShelf(strengthPRs: records.prs, longestRunM: records.longestRunM,
+                                    longestDurationS: records.longestDurationS, weightUnit: weightUnit, distanceUnit: distanceUnit)
+                        }
                     }
                 }
                 if !athlete.posts.isEmpty {
@@ -72,7 +77,7 @@ struct AthleteProfileView: View {
         }
         .confirmationDialog("Report \(athlete.name)?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
-                Button(reason.rawValue) { athlete.posts.forEach { moderation.report($0.id) }; Haptics.success() }
+                Button(reason.rawValue) { athlete.posts.forEach { moderation.reportPost($0.id, reason: reason) }; Haptics.success() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -82,11 +87,11 @@ struct AthleteProfileView: View {
 
     private var identity: some View {
         VStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: nil, name: athlete.name, size: 84)
+            AvatarView(photo: athlete.avatarData, name: athlete.name, size: 84)
             VStack(spacing: 3) {
                 HStack(spacing: 6) {
                     Text(athlete.name).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-                    communityBadge
+                    if athlete.isSample { communityBadge }
                 }
                 Text("@\(athlete.handle)").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 if let location = athlete.location {
@@ -99,11 +104,16 @@ struct AthleteProfileView: View {
     }
 
     private var headlineStats: some View {
-        StatGrid(cells: [
-            .init(value: "\(athlete.totalWorkouts)", label: "Workouts"),
-            .init(value: "\(athlete.dayStreak)", label: "Day streak"),
-            .init(value: Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit), label: "Distance"),
-        ], valueSize: 20)
+        // Real athletes: only counts we actually know (their visible posts). Sample athletes
+        // keep the full strip — their whole body of work is seeded content.
+        StatGrid(cells: athlete.isSample
+            ? [
+                .init(value: "\(athlete.totalWorkouts)", label: "Workouts"),
+                .init(value: "\(athlete.dayStreak)", label: "Day streak"),
+                .init(value: Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit), label: "Distance"),
+            ]
+            : [.init(value: "\(athlete.posts.count)", label: "Shared workouts")],
+            valueSize: 20)
         .padding(.vertical, Theme.Space.lg)
         .background(card)
     }

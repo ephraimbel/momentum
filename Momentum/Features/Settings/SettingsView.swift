@@ -147,12 +147,13 @@ struct SettingsView: View {
                 Spacer(minLength: 0)
             }
             SignInWithAppleButton(.signIn) { request in
-                request.requestedScopes = [.fullName, .email]
+                auth.prepareAppleSignIn(request)   // scopes + Supabase nonce when configured
             } onCompletion: { result in
                 if case .success(let authResult) = result,
                    let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
-                    // Upgrading from guest keeps all local data (see AuthController.signIn).
-                    auth.signIn(userID: credential.user, fullName: credential.fullName, email: credential.email)
+                    // Upgrading from guest keeps all local data (see AuthController.signIn);
+                    // when Supabase is configured this also bridges to a cloud session (JWT).
+                    auth.signIn(credential: credential)
                 }
             }
             .signInWithAppleButtonStyle(.black)

@@ -12,6 +12,7 @@ struct StrengthSaveView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Query private var profiles: [UserProfile]
     // Read the just-finished workout from a FRESH context. The live session was persisted by a
     // background @ModelActor; the app's main context can still hold a stale copy (Today's @Query
     // cached the workout mid-session with no/partial sets, and SwiftData doesn't merge cross-context
@@ -22,6 +23,7 @@ struct StrengthSaveView: View {
 
     @State private var title = ""
     @State private var desc = ""
+    @State private var visibility: WorkoutPrivacy = .private
     @State private var celebrating = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -63,6 +65,8 @@ struct StrengthSaveView: View {
             if let workout = reader.workout {
                 title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
                 desc = workout.note
+                // The share moment starts from the athlete's chosen default (never silently public).
+                visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
             }
         }
     }
@@ -75,11 +79,13 @@ struct StrengthSaveView: View {
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
             Divider().overlay(Theme.hairline)
-            TextField("How did it go?", text: $desc, axis: .vertical)
+            TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
+            Divider().overlay(Theme.hairline)
+            ShareVisibilityRow(privacy: $visibility, boxed: false, showsHint: true)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -88,8 +94,11 @@ struct StrengthSaveView: View {
     private func save() {
         focus = nil
         // Commit through the reader's own context (where `workout` lives) so the write persists.
-        reader?.commit(title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                       note: desc.trimmingCharacters(in: .whitespacesAndNewlines))
+        reader?.commit {
+            $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.privacy = visibility
+        }
         // Persist the records this session set (fresh context — the logged sets are complete there).
         if let reader, let workout = reader.workout {
             let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)

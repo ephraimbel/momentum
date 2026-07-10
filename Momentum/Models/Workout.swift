@@ -17,6 +17,11 @@ final class Workout {
     var privacy: WorkoutPrivacy = WorkoutPrivacy.private
     var aiSummary: String?
     var syncedAt: Date?
+    /// When this workout's social post was last published (nil = not published). The publish
+    /// sweep (`SocialSyncEngine.publishActions`) treats it exactly like `syncedAt`: shared+nil →
+    /// publish; private+set → unpublish (privacy downgrade deletes the post). Cleared on first
+    /// cloud sign-in so guest-era history re-publishes under the new account. Additive-only.
+    var postPublishedAt: Date?
     var plannedSession: PlannedSession?
     /// Legacy single photo (pre multi-photo, 2026-07). Kept as-is for lightweight migration — never
     /// rename/retype it. New photos go to `photos`; this field is folded in lazily on the next photo

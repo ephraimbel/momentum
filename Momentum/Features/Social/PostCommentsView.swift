@@ -46,6 +46,7 @@ struct PostCommentsView: View {
             .navigationTitle("Comments")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .onAppear { comments.pullRemote(for: item.id) }   // merge the server thread (no-op offline)
         }
     }
 
@@ -73,7 +74,7 @@ struct PostCommentsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contextMenu {
-            Button { moderation.report(comment.id); Haptics.success() } label: { Label("Report", systemImage: "flag") }
+            Button { moderation.reportComment(comment.id, reason: .other); Haptics.success() } label: { Label("Report", systemImage: "flag") }
             if comment.isCommunity, let h = comment.authorHandle {
                 Button(role: .destructive) { moderation.block(h); Haptics.medium() } label: {
                     Label("Block \(comment.authorName)", systemImage: "hand.raised")

@@ -25,6 +25,11 @@ packages:
   MapboxMaps:
     url: https://github.com/mapbox/mapbox-maps-ios.git
     from: "11.0.0"
+  # Social backend + auth + storage (docs/SOCIAL-BACKEND-SETUP.md). Config-gated: the app ships
+  # dark until SUPABASE_URL/SUPABASE_ANON_KEY are set in Secrets.xcconfig.
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    from: "2.0.0"
 # Phase 3 billing SDKs — uncomment with the Momentum-target deps below to go live (PRD §10).
 #   RevenueCat:
 #     url: https://github.com/RevenueCat/purchases-ios
@@ -70,10 +75,11 @@ targets:
         # Mapbox runtime token — injected from Secrets.xcconfig (MBX_ACCESS_TOKEN) at build, so no
         # token is committed. The Maps SDK reads MBXAccessToken automatically at init.
         MBXAccessToken: "$(MBX_ACCESS_TOKEN)"
-        # Athlete Model / AI read (ATHLETE-MODEL.md §7). Empty → deterministic-template path (ships
-        # dark). To enable: set the project URL + anon key, then deploy `workout-analysis`.
-        SupabaseURL: ""
-        SupabaseAnonKey: ""
+        # Supabase (auth, social backend, sync, AI edge functions). Injected from the untracked
+        # Secrets.xcconfig — empty values → every network seam ships dark (deterministic
+        # templates, local-only social). Setup: docs/SOCIAL-BACKEND-SETUP.md.
+        SupabaseURL: "$(SUPABASE_URL)"
+        SupabaseAnonKey: "$(SUPABASE_ANON_KEY)"
         # Billing (PRD §10). Empty → local entitlement seam. Set these + link the SDKs to go live
         # (docs/MONETIZATION-SETUP.md). Read by `BillingKeys`.
         RevenueCatAPIKey: ""
@@ -93,13 +99,13 @@ targets:
       - target: MomentumWatch        # embeds the watchOS app into the phone app (PRD §8.10)
         embed: true
       - package: MapboxMaps          # map rendering (Today, live route, heatmap, route suggestion)
+      - package: Supabase            # auth (Sign in with Apple → JWT), social tables, photo storage
     # ── Phase 3 billing (RevenueCat + Superwall) ─────────────────────────
     # The integration code is already written behind `#if canImport(...)` (PaywallController);
     # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
     # `xcodegen generate`. Full runbook: docs/MONETIZATION-SETUP.md.
     #   - package: RevenueCat
     #   - package: Superwall
-    # Phase 2/4 — supabase-swift (https://github.com/supabase/supabase-swift) when sync lands.
 
   # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
   # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity

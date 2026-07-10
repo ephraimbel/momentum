@@ -9,9 +9,12 @@ struct EditProfileView: View {
     @Bindable var profile: UserProfile
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
 
     @State private var handle: String = ""
     @State private var pickedAvatar: PhotosPickerItem?
+    @State private var avatarChanged = false
+    @State private var handleTaken = false
 
     var body: some View {
         NavigationStack {
@@ -35,6 +38,11 @@ struct EditProfileView: View {
             }
             .onAppear { handle = profile.handle }
             .onChange(of: pickedAvatar) { _, item in Task { await loadAvatar(item) } }
+            .alert("That handle is taken", isPresented: $handleTaken) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Another athlete already uses @\(handle). Pick a different one — your other changes are saved.")
+            }
         }
     }
 
@@ -65,6 +73,7 @@ struct EditProfileView: View {
     private func loadAvatar(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
         profile.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
+        avatarChanged = true
         try? context.save()
         Haptics.success()
     }
@@ -266,6 +275,30 @@ struct EditProfileView: View {
         profile.bio = profile.bio.trimmingCharacters(in: .whitespaces)
         profile.city = profile.city.trimmingCharacters(in: .whitespaces)
         try? context.save()
-        dismiss()
+        pushToBackend()
+    }
+
+    /// Offline-first: the local save above already succeeded; this pushes the public projection
+    /// up when a session exists. A taken handle keeps the sheet open so it can be changed —
+    /// every other outcome (offline, guest, dark build) just leaves the row to sync later.
+    private func pushToBackend() {
+        let backend = services.social
+        let avatarData = avatarChanged ? profile.avatarData : nil
+        var dto = SocialSyncEngine.profileDTO(for: profile)
+        Task {
+            guard await backend.isAvailable else { dismiss(); return }
+            if let avatarData, let path = await backend.uploadAvatar(jpeg: avatarData) {
+                dto.avatarPath = path
+            }
+            do {
+                try await backend.pushProfile(dto)
+                dismiss()
+            } catch SocialBackendError.handleTaken {
+                Haptics.medium()
+                handleTaken = true
+            } catch {
+                dismiss()   // transient/offline — profile stays local, re-pushed on next edit
+            }
+        }
     }
 }

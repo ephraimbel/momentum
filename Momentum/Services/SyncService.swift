@@ -24,9 +24,11 @@ final class SyncService: SyncServing {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(bearer, forHTTPHeaderField: "apikey")
-            // TODO(Sync auth): owner-only RLS needs the *user's* session JWT (Supabase Auth via Sign
-            // in with Apple). The anon key alone won't satisfy `user_id = auth.uid()`.
-            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+            // Owner-only RLS needs the user's session JWT — the anon key can't satisfy
+            // `user_id = auth.uid()`. Guests fall back to the anon key, the insert fails RLS,
+            // and rows simply stay dirty until they sign in (offline-first by design).
+            let token = await SupabaseClientProvider.accessToken() ?? bearer
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")  // upsert on id
 
             let encoder = JSONEncoder()

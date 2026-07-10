@@ -14,11 +14,21 @@ final class CommunityFeedUITests: XCTestCase {
     func testFeedScopesAndBylineNavigation() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--community-tab", "--reset-social"]
+        // Without a monitor, the notifications permission alert (seeded plan reminders) blocks
+        // element resolution mid-test and XCTest's blind dismissal taps land on the tab bar.
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
         app.launch()
 
         // Everyone scope (default): community posts present, each with a tappable byline (the badge
         // lives inside the byline button, so the button's "View …'s profile" label is the anchor).
         XCTAssertTrue(app.buttons["Everyone"].waitForExistence(timeout: 20), "Scope bar not found.")
+        app.buttons["Everyone"].tap()   // harmless re-select; triggers the monitor if an alert is up
         let bylines = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'View '"))
         XCTAssertTrue(bylines.firstMatch.waitForExistence(timeout: 10),
                       "No community bylines — community posts missing from Everyone.")
@@ -26,8 +36,13 @@ final class CommunityFeedUITests: XCTestCase {
 
         // A community byline opens that athlete's profile (Follow lives there).
         bylines.firstMatch.tap()
-        let follow = app.buttons["Follow"]
-        XCTAssertTrue(follow.waitForExistence(timeout: 10), "Byline tap did not open an athlete profile.")
+        // The follow button carries the athlete's name in its label ("Follow Maya Rivera").
+        let follow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Follow'")).firstMatch
+        if !follow.waitForExistence(timeout: 10) {
+            let dump = XCTAttachment(string: app.debugDescription)
+            dump.name = "hierarchy-after-byline-tap"; dump.lifetime = .keepAlways; add(dump)
+            XCTFail("Byline tap did not open an athlete profile.")
+        }
         attach(app, name: "athlete-profile-from-feed")
         app.navigationBars.buttons.firstMatch.tap()   // back to the feed
 

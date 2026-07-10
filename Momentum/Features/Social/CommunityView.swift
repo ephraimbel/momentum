@@ -4,13 +4,15 @@ import SwiftData
 /// The Community tab (docs/SOCIAL-LAYER.md, 2026-07-09) — the feed stream, returned as a first-class
 /// destination. Deliberately a *Substack-for-runners*, not a Strava clone: strictly
 /// reverse-chronological, follow-scoped or clearly-badged community, one earned "respect" reaction,
-/// flat comments, and nothing algorithmic. Runs on the athlete's own shared workouts + the seeded
-/// Momentum community until the Supabase social backend lands.
+/// flat comments, and nothing algorithmic. The athlete's own shared workouts + the badged seeded
+/// community render locally (the offline/dark experience); real athletes' posts pull in through
+/// `RemoteFeedStore` when the Supabase backend is configured and the athlete is signed in.
 struct CommunityView: View {
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
     @Environment(FollowStore.self) private var follows
     @Environment(ModerationStore.self) private var moderation
+    @Environment(RemoteFeedStore.self) private var remoteFeed
     @AppStorage("community.feedScope") private var scopeRaw = CommunityScope.everyone.rawValue
     @State private var selectedAthlete: CommunityAthlete?
 
@@ -28,12 +30,20 @@ struct CommunityView: View {
 
     /// Assembled once per relevant change (the community seed is ~250 athletes' posts — never filter
     /// per row). Moderation runs on the full stream so blocked athletes vanish from both scopes.
+    /// Remote posts (real athletes, fetched per-scope so the *server's* follow graph gates them)
+    /// merge on top; the local pipeline — including `FeedAssembler.scoped` — is unchanged.
     private var feed: [FeedItem] {
         let shared = workouts.lazy.filter { SocialPrivacy.isShared($0) }.prefix(Self.ownWorkoutCap)
         let full = FeedAssembler.feed(userWorkouts: Array(shared), profile: profile,
                                       community: CommunityFeed.seed())
             .filter(moderation.isVisible)
-        return scope == .following ? FeedAssembler.scoped(full, following: follows.following) : full
+        let local = scope == .following ? FeedAssembler.scoped(full, following: follows.following) : full
+        // Own published posts come back in the remote feed too — the local copy wins (it has the
+        // full-resolution photos and needs no signing round trip).
+        let localIDs = Set(local.map(\.id))
+        let remote = remoteFeed.items.filter { !localIDs.contains($0.id) }.filter(moderation.isVisible)
+        guard !remote.isEmpty else { return local }
+        return (local + remote).sorted { $0.date > $1.date }
     }
 
     var body: some View {
@@ -44,11 +54,10 @@ struct CommunityView: View {
                     emptyState.padding(.top, Theme.Space.xxl)
                 } else {
                     ForEach(items) { item in
-                        FeedPostCard(item: item) { handle in
-                            if let athlete = CommunityDirectory.athlete(handle: handle) {
-                                selectedAthlete = athlete
-                            }
-                        }
+                        // Own posts keep an inert byline (no self-profile push from the feed).
+                        FeedPostCard(item: item, onOpenAuthor: item.authorHandle == profile?.handle
+                            ? nil
+                            : { handle in openAthlete(handle) })
                     }
                 }
             }
@@ -59,9 +68,26 @@ struct CommunityView: View {
         .navigationBarHidden(true)
         .safeAreaInset(edge: .top) { header }
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
-        .refreshable {
-            // No-op until the Supabase social backend lands (docs/SOCIAL-LAYER.md, Slice 6) — then
-            // this pulls fresh posts from people you follow.
+        .refreshable { await remoteFeed.refresh(scope: remoteScope) }
+        .task(id: scopeRaw) {
+            // First load per scope — pull-to-refresh handles the rest. No-op offline/guest/dark.
+            if remoteFeed.items.isEmpty { await remoteFeed.refresh(scope: remoteScope) }
+        }
+    }
+
+    private var remoteScope: FeedScope { scope == .following ? .following : .everyone }
+
+    /// Community (seeded) athletes resolve locally; real athletes fetch their page from the
+    /// backend. Nothing happens on a miss (offline/dark) — the feed card is still fully readable.
+    private func openAthlete(_ handle: String) {
+        if let seeded = CommunityDirectory.athlete(handle: handle) {
+            selectedAthlete = seeded
+            return
+        }
+        Task {
+            if let remote = await remoteFeed.athlete(handle: handle) {
+                selectedAthlete = remote
+            }
         }
     }
 
@@ -150,4 +176,5 @@ enum CommunityScope: String, CaseIterable {
         .environment(ReactionStore())
         .environment(CommentStore())
         .environment(ModerationStore())
+        .environment(RemoteFeedStore())
 }

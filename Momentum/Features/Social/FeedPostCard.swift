@@ -49,7 +49,7 @@ struct FeedPostCard: View {
         .sheet(isPresented: $showingDetail) { PostDetailView(item: item) }
         .confirmationDialog("Report this post?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
-                Button(reason.rawValue) { moderation.report(item.id); Haptics.success() }
+                Button(reason.rawValue) { moderation.reportPost(item.id, reason: reason); Haptics.success() }
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("We'll review it and hide it from your feed.") }
@@ -58,10 +58,11 @@ struct FeedPostCard: View {
     // MARK: Byline
 
     // In profile contexts the byline isn't a navigation target (you're already on that person's
-    // page). In the Community feed, `onOpenAuthor` makes a community byline open the athlete.
+    // page). In the Community feed, `onOpenAuthor` makes any handled byline — badged community
+    // or real network athlete — open that athlete; callers pass nil for the viewer's own posts.
     private var authorRow: some View {
         HStack(spacing: Theme.Space.sm) {
-            if let onOpenAuthor, item.isCommunity, let handle = item.authorHandle {
+            if let onOpenAuthor, let handle = item.authorHandle {
                 Button { onOpenAuthor(handle) } label: { authorIdentity }
                     .buttonStyle(.plain)
                     .accessibilityLabel("View \(item.authorName)'s profile")
