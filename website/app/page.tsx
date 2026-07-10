@@ -1,6 +1,7 @@
 import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
 import Reveal from "@/components/Reveal";
+import RaceCalc from "@/components/RaceCalc";
 
 export default function Home() {
   return (
@@ -11,8 +12,11 @@ export default function Home() {
         <Proof />
         <Pillars />
         <DeepDives />
+        <Predictor />
+        <Goals />
         <Manifesto />
         <Testimonials />
+        <Pricing />
         <FAQ />
         <FinalCTA />
       </main>
@@ -32,6 +36,7 @@ function Nav() {
           <a href="#product">Product</a>
           <a href="#intelligence">Intelligence</a>
           <a href="#method">Method</a>
+          <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>
           <a className="btn btn-ink btn-sm" href="#download">
             Get the app
@@ -70,7 +75,14 @@ function Hero() {
               See how it works
             </a>
           </div>
-          <p className="hero-note">Free to start · Apple Watch, Garmin &amp; heart-rate straps via Apple Health</p>
+          <p className="hero-note">Free to start · your first adaptive week on us</p>
+          <div className="devices" aria-label="Works with">
+            <span>iPhone</span>
+            <span>Apple Watch</span>
+            <span>Garmin</span>
+            <span>Heart-rate straps</span>
+            <span>Apple Health</span>
+          </div>
         </div>
         <PhoneFrame src="/shots/hero-today.png" alt="momentum Today screen: your map, today's plan, and one Start button" priority />
       </div>
@@ -251,6 +263,121 @@ function DeepDives() {
           <div className="duo-media">
             <PhoneFrame small src="/shots/heatmap-dark.png" alt="Personal heatmap tracing running routes across a dark city map" />
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Predictor() {
+  return (
+    <section className="section" id="predictor" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head center" style={{ textAlign: "center" }}>
+            <p className="eyebrow">Try the engine</p>
+            <h2 className="display">What could you run?</h2>
+            <p className="lede">
+              Enter a recent result and the same deterministic model that calibrates momentum&apos;s
+              training paces projects your other distances.
+            </p>
+          </div>
+        </Reveal>
+        <Reveal delay={80}>
+          <RaceCalc />
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+function Goals() {
+  const goals = [
+    { n: "5K", d: "Your first — or your fastest." },
+    { n: "10K", d: "Speed meets staying power." },
+    { n: "Half", d: "The distance that hooks you." },
+    { n: "Marathon", d: "Twenty-six point two, built week by week." },
+    { n: "Run/walk", d: "Brand new? Start exactly where you are." },
+    { n: "Return", d: "Coming back from injury, gated and gradual." },
+    { n: "Faster", d: "No race — just sharper paces." },
+    { n: "Further", d: "Build the engine. Ultra is coming." },
+  ];
+  return (
+    <section className="section" id="goals" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head">
+            <p className="eyebrow">Every starting line</p>
+            <h2 className="display">A plan for the runner you are today.</h2>
+            <p className="lede">
+              Pick the goal; momentum builds the road — and tells you honestly if the date is too
+              tight.
+            </p>
+          </div>
+        </Reveal>
+        <div className="goals">
+          {goals.map((g, i) => (
+            <Reveal key={g.n} delay={(i % 4) * 70}>
+              <div className="goal">
+                <div className="num">{g.n}</div>
+                <p>{g.d}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Pricing() {
+  return (
+    <section className="section" id="pricing" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head center" style={{ textAlign: "center" }}>
+            <p className="eyebrow">Pricing</p>
+            <h2 className="display">A coach for less than a race entry.</h2>
+            <p className="lede">
+              Personal run coaching costs $150+ a month. momentum&apos;s adaptive engine trains you
+              for a fraction of one session.
+            </p>
+          </div>
+        </Reveal>
+        <div className="plans">
+          <Reveal>
+            <div className="plan">
+              <h3>Free</h3>
+              <div className="plan-price">$0</div>
+              <p className="plan-cycle">forever</p>
+              <ul>
+                <li><span className="tick" aria-hidden />Track every run — GPS, pace, splits, elevation</li>
+                <li><span className="tick" aria-hidden />Live heart rate &amp; zones from your gear</li>
+                <li><span className="tick" aria-hidden />Strength logging with the full exercise library</li>
+                <li><span className="tick" aria-hidden />Your first adaptive training week</li>
+                <li><span className="tick" aria-hidden />Recent history &amp; personal heatmap</li>
+              </ul>
+              <a className="btn btn-ghost" href="#download">Start free</a>
+            </div>
+          </Reveal>
+          <Reveal delay={90}>
+            <div className="plan plan-pro">
+              <span className="plan-badge">Most popular</span>
+              <h3>momentum Pro</h3>
+              <div className="plan-price">
+                $79.99 <small>/ year</small>
+              </div>
+              <p className="plan-cycle">or $11.99/month · cancel anytime</p>
+              <ul>
+                <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
+                <li><span className="tick" aria-hidden />AI coach, post-run reads &amp; voice guidance</li>
+                <li><span className="tick" aria-hidden />Recovery-aware training &amp; the injury loop</li>
+                <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
+                <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
+              </ul>
+              <a className="btn btn-ink" href="#download">Start your free week</a>
+            </div>
+          </Reveal>
         </div>
       </div>
     </section>
@@ -461,7 +588,7 @@ function Footer() {
           </div>
         </div>
         <div className="footer-base">
-          <p>© 2026 momentum, Inc. All rights reserved.</p>
+          <p>© 2026 momentum, Inc. · Made in Austin, TX</p>
           <p>
             Apple Health, Apple Watch, and App Store are trademarks of Apple Inc. · Garmin is a
             trademark of Garmin Ltd.
