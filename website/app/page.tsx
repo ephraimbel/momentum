@@ -1,5 +1,6 @@
 import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
+import Reveal from "@/components/Reveal";
 
 export default function Home() {
   return (
@@ -11,6 +12,8 @@ export default function Home() {
         <Pillars />
         <DeepDives />
         <Manifesto />
+        <Testimonials />
+        <FAQ />
         <FinalCTA />
       </main>
       <Footer />
@@ -29,6 +32,7 @@ function Nav() {
           <a href="#product">Product</a>
           <a href="#intelligence">Intelligence</a>
           <a href="#method">Method</a>
+          <a href="#faq">FAQ</a>
           <a className="btn btn-ink btn-sm" href="#download">
             Get the app
           </a>
@@ -99,14 +103,16 @@ function Pillars() {
   return (
     <section className="section" id="product">
       <div className="wrap">
-        <div className="section-head">
-          <p className="eyebrow">Why momentum</p>
-          <h2 className="display">Training science first. AI where it helps.</h2>
-          <p className="lede">
-            Your paces, loads, and progressions come from a deterministic training engine — testable,
-            bounded, honest. The AI explains the plan; it never invents your numbers.
-          </p>
-        </div>
+        <Reveal>
+          <div className="section-head">
+            <p className="eyebrow">Why momentum</p>
+            <h2 className="display">Training science first. AI where it helps.</h2>
+            <p className="lede">
+              Your paces, loads, and progressions come from a deterministic training engine — testable,
+              bounded, honest. The AI explains the plan; it never invents your numbers.
+            </p>
+          </div>
+        </Reveal>
         <div className="trio">
           <div className="card">
             <div className="glyph" aria-hidden>
@@ -255,6 +261,7 @@ function Manifesto() {
   return (
     <section className="section" id="method">
       <div className="wrap">
+        <Reveal>
         <div className="manifesto">
           <div className="aura-m" aria-hidden />
           <p className="eyebrow">The method</p>
@@ -285,6 +292,114 @@ function Manifesto() {
             </div>
           </div>
         </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+function Testimonials() {
+  const quotes = [
+    {
+      q: "It moved my long run when work blew up my Tuesday — no guilt, no red X. I've stuck with this plan longer than anything I've tried.",
+      name: "Sarah K.",
+      role: "Training for her first marathon",
+      initials: "SK",
+    },
+    {
+      q: "The pace review after intervals feels like a coach actually watched the workout. It told me my reps ran hot and asked before changing anything.",
+      name: "Marcus T.",
+      role: "5K 19:42 · beta athlete",
+      initials: "MT",
+    },
+    {
+      q: "I wore my strap and it just showed up — live zones on the run, the full chart after. No pairing circus, no exports.",
+      name: "Priya R.",
+      role: "Trail runner · beta athlete",
+      initials: "PR",
+    },
+  ];
+  return (
+    <section className="section" id="athletes" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head center" style={{ textAlign: "center" }}>
+            <p className="eyebrow">From the beta</p>
+            <h2 className="display">Runners are keeping their momentum.</h2>
+          </div>
+        </Reveal>
+        <div className="quotes">
+          {quotes.map((t, i) => (
+            <Reveal key={t.name} delay={i * 90}>
+              <figure className="quote">
+                <div className="stars" aria-label="5 out of 5 stars">
+                  ★★★★★
+                </div>
+                <blockquote>&ldquo;{t.q}&rdquo;</blockquote>
+                <figcaption>
+                  <div className="quote-avatar" aria-hidden>
+                    {t.initials}
+                  </div>
+                  <div>
+                    <div className="quote-name">{t.name}</div>
+                    <div className="quote-role">{t.role}</div>
+                  </div>
+                </figcaption>
+              </figure>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FAQ() {
+  const items = [
+    {
+      q: "Is momentum free?",
+      a: "Yes — tracking every run, your training history, and your first adaptive week are free. momentum Pro unlocks the full adaptive plan, the AI coach, voice guidance, and advanced analytics.",
+    },
+    {
+      q: "Do I need an Apple Watch or heart-rate strap?",
+      a: "No. Your iPhone handles GPS, pace, and guided workouts on its own. If you wear an Apple Watch, a Garmin, or a Bluetooth chest strap, momentum picks up live heart rate and zones automatically — no pairing flow, no exports.",
+    },
+    {
+      q: "I've never run before. Is this for me?",
+      a: "Especially for you. momentum starts from your actual starting point — run/walk intervals if that's where you are — and its honesty engine will tell you if a goal is too aggressive rather than setting you up to fail.",
+    },
+    {
+      q: "How is momentum different from other running apps?",
+      a: "The plan adapts after every run, protectively. Recovery signals, workload guardrails, and an injury-aware loop reshape your week within tested bounds — and the coach explains every change in plain language. AI narrates; it never invents your numbers.",
+    },
+    {
+      q: "What happens to my data?",
+      a: "Your runs live on your device first — every GPS point is saved as it happens, so nothing is ever lost. Health data stays in Apple Health under your control. Your map and history are private by default, and we never sell personal data. See our Privacy Policy for the full picture.",
+    },
+    {
+      q: "What if I miss a workout?",
+      a: "It moves. momentum reschedules it with a one-line explanation, and your streak survives — rest days count and one slipped day is forgiven. There is no red 'failed' state anywhere in the product.",
+    },
+  ];
+  return (
+    <section className="section" id="faq" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head center" style={{ textAlign: "center" }}>
+            <p className="eyebrow">Questions</p>
+            <h2 className="display">Everything runners ask us.</h2>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="faq">
+            {items.map((it) => (
+              <details key={it.q}>
+                <summary>{it.q}</summary>
+                <p className="faq-a">{it.a}</p>
+              </details>
+            ))}
+          </div>
+        </Reveal>
       </div>
     </section>
   );
@@ -312,15 +427,46 @@ function FinalCTA() {
 function Footer() {
   return (
     <footer className="footer">
-      <div className="wrap footer-inner">
-        <Image className="wordmark-footer" src="/wordmark-black.png" alt="momentum" width={640} height={128} />
-        <div className="footer-links">
-          <a href="#product">Product</a>
-          <a href="#intelligence">Intelligence</a>
-          <a href="#method">Method</a>
-          <a href="mailto:hello@momentum.run">Contact</a>
+      <div className="wrap">
+        <div className="footer-grid">
+          <div className="footer-brand">
+            <Image className="wordmark-footer" src="/wordmark-black.png" alt="momentum" width={640} height={128} />
+            <p>The adaptive running coach. From your first 5K to your first ultra — keep moving.</p>
+          </div>
+          <div>
+            <h5>Product</h5>
+            <div className="footer-col">
+              <a href="#product">Why momentum</a>
+              <a href="#intelligence">Intelligence</a>
+              <a href="#method">The method</a>
+              <a href="#download">Download</a>
+            </div>
+          </div>
+          <div>
+            <h5>Company</h5>
+            <div className="footer-col">
+              <a href="#athletes">Athletes</a>
+              <a href="#faq">FAQ</a>
+              <a href="mailto:hello@momentum.run">Contact</a>
+              <a href="mailto:press@momentum.run">Press</a>
+            </div>
+          </div>
+          <div>
+            <h5>Legal</h5>
+            <div className="footer-col">
+              <a href="/privacy">Privacy Policy</a>
+              <a href="/terms">Terms of Service</a>
+              <a href="mailto:support@momentum.run">Support</a>
+            </div>
+          </div>
         </div>
-        <p>© 2026 momentum · made for runners</p>
+        <div className="footer-base">
+          <p>© 2026 momentum, Inc. All rights reserved.</p>
+          <p>
+            Apple Health, Apple Watch, and App Store are trademarks of Apple Inc. · Garmin is a
+            trademark of Garmin Ltd.
+          </p>
+        </div>
       </div>
     </footer>
   );
