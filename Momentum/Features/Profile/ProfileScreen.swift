@@ -18,7 +18,13 @@ struct ProfileScreen: View {
     @Environment(FollowStore.self) private var follows
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
+    #if DEBUG
+    // --profile-highlights: open on the Highlights face for sim verification.
+    @State private var gridTab: ProfileGridTab =
+        ProcessInfo.processInfo.arguments.contains("--profile-highlights") ? .highlights : .grid
+    #else
     @State private var gridTab: ProfileGridTab = .grid
+    #endif
     @State private var immersive: ImmersiveStart?
 
     private var profile: UserProfile? { profiles.first }
@@ -33,6 +39,7 @@ struct ProfileScreen: View {
     private struct ImmersiveStart: Identifiable { let id: UUID }
 
     var body: some View {
+        ScrollViewReader { scroll in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
                 Group {
@@ -73,6 +80,17 @@ struct ProfileScreen: View {
         .background(Theme.background)
         .navigationBarHidden(true)
         .safeAreaInset(edge: .top) { header }
+        #if DEBUG
+        // --profile-scroll-badges: bring the trophy case on screen for sim verification.
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--profile-scroll-badges") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    withAnimation { scroll.scrollTo("profile-badges", anchor: .bottom) }
+                }
+            }
+        }
+        #endif
+        }
         .sheet(isPresented: $editing) { if let profile { EditProfileView(profile: profile) } }
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,

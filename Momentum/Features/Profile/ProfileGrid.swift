@@ -122,16 +122,19 @@ struct ProfileGrid: View {
     }
 
     private var bestsSection: some View {
-        section("Personal bests") {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm),
-                                GridItem(.flexible(), spacing: Theme.Space.sm)], spacing: Theme.Space.sm) {
+        section("Badges") {
+            // The trophy case: three medallions to a row, floating on the canvas (a card around a
+            // 3D medal would flatten it — the drop shadow needs the page to land on).
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3),
+                      spacing: Theme.Space.md) {
                 ForEach(highlights.items) { item in
-                    HighlightCard(item: item)
-                        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                    BadgeCell(item: item)
+                        .contentShape(Rectangle())
                         .onTapGesture { if let id = item.workoutID { onOpen(id) } }
                 }
             }
         }
+        .id("profile-badges")
     }
 
     // MARK: Building blocks
@@ -194,29 +197,3 @@ private struct WorkoutTile: View {
     }
 }
 
-// MARK: - Highlight card
-
-private struct HighlightCard: View {
-    let item: ProfileHighlights.Highlight
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Image(systemName: item.systemImage)
-                .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
-                .frame(width: 38, height: 38)
-                .background(Circle().fill(IridescentMaterial().opacity(Theme.IridescentOpacity.badge.value)))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.value)
-                    .font(.display(24, weight: .black)).monospacedDigit()
-                    .foregroundStyle(Theme.ink).lineLimit(1).minimumScaleFactor(0.6)
-                Text(item.title)
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-    }
-}
