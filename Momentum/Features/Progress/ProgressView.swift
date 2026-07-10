@@ -18,7 +18,6 @@ struct ProgressScreen: View {
         #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
         let a = ProcessInfo.processInfo.arguments
         if a.contains("--progress-history") { return .history }
-        if a.contains("--progress-you") { return .you }
         #endif
         return .trends
     }()
@@ -31,7 +30,7 @@ struct ProgressScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
-        case trends = "Trends", history = "History", you = "You"
+        case trends = "Trends", history = "History"
         var id: Self { self }
     }
 
@@ -71,14 +70,26 @@ struct ProgressScreen: View {
             switch segment {
             case .trends: trends
             case .history: history
-            case .you: you
             }
         }
         .background(Theme.background)
         .navigationBarHidden(true)
         .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView() }
+        .sheet(item: $correcting) { item in
+            if let profile = profiles.first {
+                CorrectionSheet(belief: item.value, category: item.category, noteID: item.noteID, profile: profile)
+                    .presentationDetents([.medium])
+            }
+        }
         .task(id: workouts.count) { refreshAggregates() }
+        .onAppear {
+            // Athlete-model upkeep (was the You tab's onAppear — idempotent, local-only).
+            guard let p = profiles.first else { return }
+            services.athleteModel.seedOnboarding(for: p, in: context)
+            services.athleteModel.ingest(profile: p, in: context)
+            RecordsBook.backfillIfNeeded(in: context)
+        }
     }
 
     private var header: some View {
@@ -124,24 +135,36 @@ struct ProgressScreen: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
-                    // Lead with the fitness read (are you getting fitter?), then the trend graphs up top —
+                    // The hero: the athlete's own body with the week's physiology read off it.
+                    // Every callout is a door into the detail card it summarizes.
+                    AthletePanel(activation: weeklyMuscleActivation,
+                                 sex: BodySex(profileSex: profiles.first?.sex),
+                                 callouts: panelCallouts) { target in
+                        withAnimation(.easeOut(duration: 0.45)) { proxy.scrollTo(target, anchor: .top) }
+                    }
+                    .reveal(0)
+                    // Then the fitness read (are you getting fitter?) and the trend graphs —
                     // the "how I'm progressing" section sits near the top, not buried at the bottom.
-                    fitnessHero().reveal(0)
-                    hrZonesCard.reveal(0.04).id("hrZones")
-                    trendMetrics().reveal(0.05)
+                    fitnessHero().reveal(0.03).id("fitness")
+                    hrZonesCard.reveal(0.05).id("hrZones")
+                    trendMetrics().reveal(0.06)
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         distanceChart(insights)
                         loadChart(insights)
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
-                        if !weeklyMuscleActivation.isEmpty { muscleWeek }
+                        if !weeklyMuscleActivation.isEmpty { muscleWeek.id("muscleWeek") }
                     }
                     .reveal(0.09)
+                    .id("charts")
                     .proLocked(.advancedAnalytics)
                     // Then "how am I right now" and "what can I run" — the coaching read.
                     formCard(recovery).reveal(0.14).id("formRace")
                     raceOutlook().reveal(0.18)
                     coachCard(insights).reveal(0.22)
+                    // What the coach has learned about *you* (the former You tab, folded in so the
+                    // athlete's story lives under the body it describes).
+                    athleteStory.reveal(0.26)
                 }
                 .padding(Theme.Space.md)
                 .padding(.bottom, Theme.Space.xxl)
@@ -158,6 +181,9 @@ struct ProgressScreen: View {
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-records") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("records", anchor: .top) }
                 }
                 #endif
             }
@@ -1293,40 +1319,94 @@ struct ProgressScreen: View {
         var id: String { title }
     }
 
-    private var you: some View {
+    /// The former You tab, folded into Trends: identity, records, digest, adaptations, learned
+    /// beliefs, trajectory — the athlete's story, sitting under the body panel that summarizes it.
+    private var athleteStory: some View {
         let facts = AthleteModelEngine(workouts: workouts, plan: plan).facts
         let model = profiles.first?.athlete
         let items = learnedItems(facts, model)
-        return ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
-                identityHero(model, facts).reveal(0)
-                RecordsCard(distanceUnit: distanceUnit).reveal(0.05)
-                let nudges = AthleteNudges.generate(facts)
-                if !nudges.isEmpty { weeklyDigest(nudges).reveal(0.08) }
-                if !coachingEvents.isEmpty { adaptationHistory.reveal(0.10) }
-                if confidentCount(facts) < 3 { learningState(facts).reveal(0.12) }
-                ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                    learnedCard(item).reveal(0.14 + Double(i) * 0.05)
-                }
-                if let model, model.snapshots.count >= 2 { trajectory(model).reveal(0.2) }
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            identityHero(model, facts)
+            RecordsCard(distanceUnit: distanceUnit).id("records")
+            let nudges = AthleteNudges.generate(facts)
+            if !nudges.isEmpty { weeklyDigest(nudges) }
+            if !coachingEvents.isEmpty { adaptationHistory }
+            if confidentCount(facts) < 3 { learningState(facts) }
+            ForEach(Array(items.enumerated()), id: \.element.id) { _, item in
+                learnedCard(item)
             }
-            .padding(Theme.Space.md)
-            .padding(.bottom, Theme.Space.xxl)
+            if let model, model.snapshots.count >= 2 { trajectory(model) }
         }
-        .sheet(item: $correcting) { item in
-            if let profile = profiles.first {
-                CorrectionSheet(belief: item.value, category: item.category, noteID: item.noteID, profile: profile)
-                    .presentationDetents([.medium])
+    }
+
+    /// The Athlete Panel's six body-mapped readings. Anchors are unit coordinates on the figure:
+    /// head = readiness, lungs = VO₂max, heart = resting HR, core = training load, legs = week
+    /// volume, arm = muscle focus. Each targets the scroll id of the card that explains it.
+    private var panelCallouts: [AthleteCallout] {
+        var out: [AthleteCallout] = []
+        // Readiness — blended with Health signals when present, same as the form card.
+        let readinessValue: String
+        let readinessContext: String
+        if recovery.hasData {
+            let score = signals.blendedReadiness(base: recovery.score)
+            readinessValue = "\(score)"
+            readinessContext = RecoveryModel.band(score).rawValue
+        } else {
+            readinessValue = "—"
+            readinessContext = "Learning your norm"
+        }
+        out.append(AthleteCallout(label: "READINESS", value: readinessValue, unit: recovery.hasData ? "/100" : nil,
+                                  context: readinessContext, anchor: CGPoint(x: 0.50, y: 0.095),
+                                  edge: .leading, slot: 0.10, target: "formRace"))
+        // VO₂max — lungs. Device measurement wins; else the pace-derived estimate.
+        if let vo2 = measuredVO2 ?? currentVO2 {
+            out.append(AthleteCallout(label: "VO₂ MAX", value: String(format: "%.1f", vo2), unit: nil,
+                                      context: measuredVO2 != nil ? "From your device" : "Estimated from pace",
+                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.10, target: "fitness"))
+        } else {
+            out.append(AthleteCallout(label: "VO₂ MAX", value: "—", unit: nil, context: "Needs a few runs",
+                                      anchor: CGPoint(x: 0.56, y: 0.26), edge: .trailing, slot: 0.10, target: "fitness"))
+        }
+        // Training load — core. ACWR with a no-shame band word.
+        if insights.chronic >= 1 {
+            let word: String = switch insights.acwr {
+            case ..<0.8:      "Fresh"
+            case 0.8..<1.31:  "Sweet spot"
+            case 1.31..<1.51: "Pushing"
+            default:          "High — absorb it"
             }
+            out.append(AthleteCallout(label: "TRAINING LOAD", value: String(format: "%.2f", insights.acwr), unit: nil,
+                                      context: word, anchor: CGPoint(x: 0.50, y: 0.385),
+                                      edge: .leading, slot: 0.45, target: "charts"))
+        } else {
+            out.append(AthleteCallout(label: "TRAINING LOAD", value: "—", unit: nil, context: "Building baseline",
+                                      anchor: CGPoint(x: 0.50, y: 0.385), edge: .leading, slot: 0.45, target: "charts"))
         }
-        .onAppear {
-            // Keep the model fresh and ensure seeds exist (both idempotent, local-only).
-            guard let p = profiles.first else { return }
-            services.athleteModel.seedOnboarding(for: p, in: context)
-            services.athleteModel.ingest(profile: p, in: context)
-            // One-time record backfill so histories that predate persist-on-save own their bests.
-            RecordsBook.backfillIfNeeded(in: context)
+        // Resting heart — from Apple Health when connected.
+        if let rhr = signals.restingHR {
+            out.append(AthleteCallout(label: "RESTING HEART", value: "\(rhr)", unit: "bpm",
+                                      context: signals.restingHRNote ?? "From Apple Health",
+                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.45, target: "hrZones"))
+        } else {
+            out.append(AthleteCallout(label: "RESTING HEART", value: "—", unit: nil, context: "Connect Health",
+                                      anchor: CGPoint(x: 0.53, y: 0.30), edge: .trailing, slot: 0.45, target: "hrZones"))
         }
+        // Week volume — legs.
+        let weekM = insights.weeks.last?.distanceM ?? 0
+        out.append(AthleteCallout(label: "THIS WEEK", value: Formatters.distance(meters: weekM, unit: distanceUnit), unit: nil,
+                                  context: insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered",
+                                  anchor: CGPoint(x: 0.42, y: 0.60), edge: .leading, slot: 0.80, target: "charts"))
+        // Muscle focus — arm. Falls back to the intensity mix when the week was all cardio.
+        if let top = weeklyMuscleActivation.filter({ $0.key != .fullBody && $0.value > 0 }).max(by: { $0.value < $1.value }) {
+            out.append(AthleteCallout(label: "MUSCLE FOCUS", value: top.key.rawValue.capitalized, unit: nil,
+                                      context: "Most worked this week", anchor: CGPoint(x: 0.70, y: 0.30),
+                                      edge: .trailing, slot: 0.80, target: "muscleWeek"))
+        } else {
+            out.append(AthleteCallout(label: "WEEK FOCUS", value: "Endurance", unit: nil,
+                                      context: "All cardio this week", anchor: CGPoint(x: 0.58, y: 0.60),
+                                      edge: .trailing, slot: 0.80, target: "intensityMix"))
+        }
+        return out
     }
 
     /// The coaching timeline — every plan adaptation with its *why*, so the closed loop is legible: the
