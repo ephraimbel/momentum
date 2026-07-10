@@ -30,9 +30,20 @@ enum CommunityGenerator {
         // center (downtown = land) rather than the jittered dot, so traces don't start in the water.
         let lat = city.lat + rng.double(-0.02, 0.02)
         let lon = city.lon + rng.double(-0.02, 0.02)
-        let postDate = now.addingTimeInterval(-rng.double(0.3, 96) * 3600)
+        // Post content is salted by the calendar day: identities never change (a followed handle
+        // must not vanish overnight), but everyone's latest post rotates daily — a returning user
+        // opens a NEW page every day, not the same feed frozen forever. Deterministic within a day.
+        let day = Int(now.timeIntervalSince1970 / 86_400)
+        var postRng = SeededRNG(i &* 48_271 &+ day &* 92_821)
+        // Recency-weighted post ages: a big slice of the community posted within the last few
+        // hours, so the top of the feed reads "3 min ago, 40 min ago, 2 hr ago" like a page people
+        // are actively using — not a uniform smear across four days. Exponent 1.7 keeps the newest
+        // posts SPREAD across the first hour (a steeper curve piles dozens onto one identical
+        // "9 minutes ago", which is its own fake tell).
+        let u = postRng.double(0, 1)
+        let postDate = now.addingTimeInterval(-(0.05 + 96 * pow(u, 1.7)) * 3600)
         let post = makePost(index: i, name: name, handle: handle, city: city.name,
-                            discipline: discipline, lat: city.lat, lon: city.lon, date: postDate, rng: &rng)
+                            discipline: discipline, lat: city.lat, lon: city.lon, date: postDate, rng: &postRng)
 
         return CommunityAthlete(
             handle: handle, name: name, location: city.name, bio: rng.pick(bios),
@@ -58,6 +69,20 @@ enum CommunityGenerator {
             return makePost(index: index, name: name, handle: handle, city: city,
                             discipline: discipline, lat: 0, lon: 0, date: date, rng: &rng)
         }
+    }
+
+    /// A brand-new post for `athlete`, dated moments ago — the pull-to-refresh pulse uses these so
+    /// refreshing the page always surfaces something that just happened. Deterministic per
+    /// (pulse, slot); ids live in their own space (8M+) far from feed (0+) and history (500k+) posts.
+    static func freshPost(for athlete: CommunityAthlete, pulse: Int, slot: Int, now: Date) -> FeedItem {
+        var rng = SeededRNG(pulse &* 48_611 &+ slot &* 7_129 &+ 977)
+        let roll = rng.int(0...99)
+        let discipline: WorkoutType = roll < 62 ? .run : (roll < 78 ? .ride : (roll < 90 ? .strength : .walk))
+        let date = now.addingTimeInterval(-rng.double(0.5, 6) * 60)
+        return makePost(index: 8_000_000 + pulse * 50 + slot, name: athlete.name,
+                        handle: athlete.handle, city: athlete.location ?? "Austin, TX",
+                        discipline: discipline, lat: athlete.lat, lon: athlete.lon,
+                        date: date, rng: &rng)
     }
 
     private static func makePost(index i: Int, name: String, handle: String, city: String,
@@ -115,9 +140,11 @@ enum CommunityGenerator {
             return (rng.pick(runTitles),
                     gpsStat(km: routeKm ?? rng.double(3, 12), paceSecPerKm: rng.double(280, 430), rng: &rng), pr)
         case .trailRun:
-            // Trails are slower: 5:35–8:20 /km.
-            return (rng.pick(runTitles),
-                    gpsStat(km: routeKm ?? rng.double(5, 15), paceSecPerKm: rng.double(335, 500), rng: &rng), pr)
+            // Slower paces (5:35–7:40 /km). Trail titles ONLY when there's no route map — the
+            // bundled loops trace city streets, and "Singletrack miles" over downtown blocks is a
+            // fake tell. With a street map these read as easy road runs, which the pace matches.
+            return (rng.pick(routeKm == nil ? trailTitles : easyRunTitles),
+                    gpsStat(km: routeKm ?? rng.double(5, 15), paceSecPerKm: rng.double(335, 460), rng: &rng), pr)
         case .ride, .mountainBikeRide, .gravelRide, .eBikeRide:
             // 20–31 km/h ≈ 12–19 mph.
             return (rng.pick(rideTitles),
@@ -131,7 +158,14 @@ enum CommunityGenerator {
             let seconds = rng.int(35 * 60...80 * 60)
             return (rng.pick(liftTitles), "\(vol.formatted()) lb · \(rng.int(8...26)) sets · \(durationString(seconds: seconds))", pr)
         default:
-            return (rng.pick(otherTitles), durationString(seconds: rng.int(20 * 60...70 * 60)), pr)
+            // Timed sports get their OWN titles — "Pool intervals" on a yoga post is a fake tell.
+            let titles: [String] = switch discipline {
+            case .swimming: swimTitles
+            case .rowing: rowTitles
+            case .yoga: yogaTitles
+            default: otherTitles
+            }
+            return (rng.pick(titles), durationString(seconds: rng.int(20 * 60...70 * 60)), pr)
         }
     }
 
@@ -165,44 +199,87 @@ enum CommunityGenerator {
         ("Stockholm",59.35,18.04),("Mexico City",19.43,-99.13),("Barcelona",41.41,2.16),("Munich",48.14,11.58),
         ("Calgary",51.05,-114.07),("Cape Town",-33.96,18.47),("Singapore",1.35,103.82),("Oslo",59.93,10.76)]
 
+    // No em-dashes anywhere in generated copy — dashes read as machine-written (user call
+    // 2026-07-10). Everything below is written the way people actually type on a feed.
     private static let bios = [
-        "Hybrid athlete — lift heavy, move fast.","Marathoner in training. Coffee, then miles.",
+        "Hybrid athlete. Lift heavy, move fast.","Marathoner in training. Coffee, then miles.",
         "Just here to beat yesterday.","Consistency over intensity.","Weekend warrior, weekday grinder.",
-        "Chasing PRs and good sunrises.","Run streak in progress.","Strong is the goal."]
-    /// Captions must fit the sport — "negative split" on a lift post is another fake tell.
+        "Chasing PRs and good sunrises.","Run streak in progress.","Strong is the goal.",
+        "5am club.","Slow miles, big base.","Training for my first ultra.","Dad of two, runner of many miles.",
+        "Physio by day, trail runner by weekend.","Half marathon szn.","Back after an injury. Patient this time."]
+    /// Captions must fit the sport ("negative split" on a lift post is a fake tell).
     private static func captions(for discipline: WorkoutType) -> [String] {
         if discipline.isStrengthStyle {
             return neutralCaptions + [
                 "Heavy but moving well.", "All the reps in the bank.", "Bar felt light today.",
-                "Last set was a fight.", "Volume day done."]
+                "Last set was a fight.", "Volume day done.", "New gym, same work.",
+                "Grip gave out before the legs did lol", "Told myself 5 sets. Did 8."]
         }
         if discipline.isGPS {
             return neutralCaptions + [
                 "Negative split the whole way.", "Legs heavy, heart full.", "Easy effort, big smile.",
-                "Beat my old time.", "Perfect weather for it."]
+                "Beat my old time.", "Perfect weather for it.", "Almost bailed at mile 2. Glad I didn't.",
+                "First run in new shoes and yeah, believers now", "Humid one today 🥵",
+                "Sunrise did all the work.", "Didn't want to. Did it anyway."]
         }
         return neutralCaptions
     }
     private static let neutralCaptions = [
-        "Felt strong today.", "Tough one but worth it.", "Dialed in.", "Showed up. That's the win."]
-    private static let runTitles = ["Morning run","Tempo run","Long run","Easy miles","Sunrise tempo","Track session","Recovery jog"]
-    private static let rideTitles = ["Morning ride","Hill repeats","Long ride","Gravel loop","Coffee ride","Interval ride"]
+        "Felt strong today.", "Tough one but worth it.", "Dialed in.", "Showed up. That's the win.",
+        "Not my best, still counts.", "Day 1 of the new block.", "Body said no, did it anyway."]
+    private static let runTitles = ["Morning run","Tempo run","Long run","Easy miles","Sunrise tempo","Track session","Recovery jog","Lunch run","Night run","Progression run","Shakeout"]
+    private static let rideTitles = ["Morning ride","Hill repeats","Long ride","Gravel loop","Coffee ride","Interval ride","Sunset spin"]
+    private static let trailTitles = ["Trail run","Ridge loop","Singletrack miles","Dirt hour","Trail tempo"]
+    private static let easyRunTitles = ["Easy miles","Recovery jog","Easy run","Slow miles","Base miles"]
     private static let walkTitles = ["Recovery walk","Evening walk","Hike","Trail walk","Steps day"]
     private static let liftTitles = ["Push day","Pull day","Lower power","Upper hypertrophy","Full body","Leg day","Conditioning"]
-    private static let otherTitles = ["Session","Flow","Pool intervals","Steady state","Open mat","Mobility"]
-    /// Sample "Momentum read" lines — the public AI read shown in a post's reading view (clearly
-    /// community/sample content, never presented as analysis of a real stranger).
+    private static let swimTitles = ["Pool intervals","Morning laps","Easy swim","Swim session"]
+    private static let rowTitles = ["Steady state","Erg intervals","Morning meters","Row session"]
+    private static let yogaTitles = ["Flow","Mobility","Evening flow","Stretch and reset"]
+    private static let otherTitles = ["Session","Steady state","Conditioning","Open mat"]
+    /// Sample "Momentum read" lines shown in a post's reading view (clearly community/sample
+    /// content, never presented as analysis of a real stranger).
     private static let aiReads = [
-        "A controlled effort — heart rate stayed in the aerobic band the whole way, so this builds the engine without adding fatigue.",
+        "A controlled effort. Heart rate stayed in the aerobic band the whole way, so this builds the engine without adding fatigue.",
         "Strong finish: the last third was the fastest, which is exactly how you want a steady session to end.",
         "Volume landed right in the productive range. Pair it with an easy day tomorrow and the adaptation sticks.",
-        "Consistent splits and a relaxed cadence — this is the kind of repeatable session that compounds over months.",
+        "Consistent splits and a relaxed cadence. This is the kind of repeatable session that compounds over months.",
         "Effort matched the plan. Nothing flashy, just another deposit in the consistency account.",
-        "Good intensity discipline — you held back early and had something left to give late."]
+        "Good intensity discipline: held back early, had something left to give late."]
     /// Variety of basemaps across the feed (Strava-style "people use different maps"). No satellite —
     /// aerial imagery is off-brand and removed from the app's map choices.
     static let feedStyles: [MapStyleOption] = [.standard, .realistic, .streets, .outdoors, .dark]
     private static let disciplines: [WorkoutType] = [.run,.run,.ride,.walk,.trailRun,.strength,.strength,.hiit,.swimming,.rowing,.yoga]
+}
+
+/// Session-scoped "someone just posted" pulses: each pull-to-refresh mints a few brand-new
+/// community posts dated moments ago, so refreshing always lands something fresh up top — the
+/// page reads as live, never static. Deterministic per pulse; state resets with the process.
+@MainActor
+enum CommunityPulse {
+    private static var pulse = 0
+    private static var usedHandles: Set<String> = []
+
+    /// Returns `existing` with 2–4 fresh posts prepended (newest first). Featured athletes
+    /// (indices 0..<8) are skipped so the hand-curated voices don't double-post, and each
+    /// generated athlete pulses at most once per session.
+    static func refreshed(_ existing: [FeedItem], now: Date = Date()) -> [FeedItem] {
+        let athletes = CommunityDirectory.all()
+        guard athletes.count > 12 else { return existing }
+        pulse += 1
+        var rng = SeededRNG(pulse &* 104_729)
+        var fresh: [FeedItem] = []
+        for slot in 0..<rng.int(2...4) {
+            var pick = athletes[rng.int(8...(athletes.count - 1))]
+            var tries = 0
+            while usedHandles.contains(pick.handle), tries < 8 {
+                pick = athletes[rng.int(8...(athletes.count - 1))]; tries += 1
+            }
+            usedHandles.insert(pick.handle)
+            fresh.append(CommunityGenerator.freshPost(for: pick, pulse: pulse, slot: slot, now: now))
+        }
+        return (fresh + existing).sorted { $0.date > $1.date }
+    }
 }
 
 /// Tiny deterministic PRNG (LCG) — stable seeded values for the generated community.

@@ -124,7 +124,7 @@ struct PostDetailView: View {
     }
 
     private var commentCount: Int {
-        (CommunityComments.seed(for: item.id) + comments.comments(for: item.id))
+        (CommunityComments.seed(for: item.id, postDate: item.date) + comments.comments(for: item.id))
             .filter(moderation.isVisible).count
     }
 

@@ -24,8 +24,9 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
 }
 
 enum CommunityDirectory {
-    // Generated once per launch (≈250 athletes) so the feed + globe are stable and not rebuilt on each
-    // access. Featured (hand-curated) athletes lead; the generated community fills out the rest.
+    // Generated once per launch (≈950 athletes) so the feed + globe are stable and not rebuilt on
+    // each access. Featured (hand-curated) athletes lead; the generated community fills out the
+    // rest. Identities are launch-stable; post content rotates daily (CommunityGenerator).
     private static let baseDate = Date()
     private static let cached: [CommunityAthlete] = featured(now: baseDate) + CommunityGenerator.generate(now: baseDate)
 
@@ -71,17 +72,17 @@ enum CommunityDirectory {
             CommunityAthlete(handle: maya.handle, name: maya.name, location: maya.location,
                 bio: "Marathoner chasing a sub-3. Coffee, then miles.",
                 totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000, lat: 30.27, lon: -97.74,
-                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42, ai: "A textbook negative split — the back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
+                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
             CommunityAthlete(handle: theo.handle, name: theo.name, location: theo.location,
                 bio: "Strength coach. Big believer in boring consistency.",
                 totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000, lat: 40.78, lon: -73.97,
-                posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02:40", pr: "Squat e1RM PR", reactions: 67, ai: "Tonnage up with the same RPE — the new e1RM is earned, not a fluke. Hold this volume for a week before pushing load again.")]),
+                posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02:40", pr: "Squat e1RM PR", reactions: 67, ai: "Tonnage up with the same RPE. The new e1RM is earned, not a fluke. Hold this volume for a week before pushing load again.")]),
             CommunityAthlete(handle: lin.handle, name: lin.name, location: lin.location,
                 bio: "Cyclist. Hills are just downhills in waiting.",
                 totalWorkouts: 268, dayStreak: 5, totalDistanceM: 9_800_000, lat: 45.52, lon: -122.64,
                 posts: [post(3, lin, .ride, ago(7), "Hill repeats", nil, targetKm: 39, paceSecPerKm: 139, reactions: 18)]),
             CommunityAthlete(handle: priya.handle, name: priya.name, location: priya.location,
-                bio: "Hybrid athlete — lift heavy, move fast.",
+                bio: "Hybrid athlete. Lift heavy, move fast.",
                 totalWorkouts: 190, dayStreak: 12, totalDistanceM: 620_000, lat: 51.51, lon: -0.13,
                 posts: [post(4, priya, .hiit, ago(11), "Conditioning", "Quick and brutal.", "22:14", reactions: 9)]),
             CommunityAthlete(handle: marcus.handle, name: marcus.name, location: marcus.location,

@@ -18,7 +18,7 @@ struct PostCommentsView: View {
 
     /// Seeded + user comments, moderation-filtered, oldest → newest.
     private var visible: [Comment] {
-        (CommunityComments.seed(for: item.id) + comments.comments(for: item.id))
+        (CommunityComments.seed(for: item.id, postDate: item.date) + comments.comments(for: item.id))
             .filter(moderation.isVisible)
             .sorted { $0.date < $1.date }
     }
@@ -31,7 +31,7 @@ struct PostCommentsView: View {
                         postHeader
                         Divider().overlay(Theme.hairline)
                         if visible.isEmpty {
-                            Text("No comments yet — say something kind.")
+                            Text("No comments yet. Say something kind.")
                                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                                 .padding(.top, Theme.Space.sm)
                         } else {

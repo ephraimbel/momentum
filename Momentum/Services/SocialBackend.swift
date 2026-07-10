@@ -28,6 +28,9 @@ protocol SocialBackending: AnyObject {
     func unpublish(postID: UUID) async -> Bool
     func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage?
     func athletePage(handle: String) async -> AthletePage?
+    /// Find discoverable athletes by name or @handle. nil = unavailable (guest/offline/dark);
+    /// only `discoverable = true` profiles surface (privacy is opt-in).
+    func searchAthletes(query: String, limit: Int) async -> [AthleteHit]?
     func signedPhotoURLs(paths: [String]) async -> [String: URL]
     func publicAvatarURL(path: String) -> URL?
 
@@ -54,6 +57,15 @@ struct FeedCursor: Sendable, Equatable {
 struct FeedPage: Sendable {
     let rows: [SocialSyncEngine.FeedRow]
     let next: FeedCursor?
+}
+
+/// One search hit — a discoverable athlete's public identity (no posts; the profile page loads those).
+struct AthleteHit: Sendable, Identifiable {
+    let handle: String
+    let displayName: String
+    let location: String?
+    let avatarPath: String?
+    var id: String { handle }
 }
 
 /// One remote athlete's public projection + their visible posts.
@@ -139,6 +151,7 @@ final class StubSocialBackend: SocialBackending {
     func unpublish(postID: UUID) async -> Bool { false }
     func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? { nil }
     func athletePage(handle: String) async -> AthletePage? { nil }
+    func searchAthletes(query: String, limit: Int) async -> [AthleteHit]? { nil }
     func signedPhotoURLs(paths: [String]) async -> [String: URL] { [:] }
     func publicAvatarURL(path: String) -> URL? { nil }
     func setFollow(handle: String, following: Bool) async {}
@@ -327,6 +340,37 @@ final class SupabaseSocialBackend: SocialBackending {
             return AthletePage(handle: profile.handle, displayName: profile.display_name,
                                bio: profile.bio, location: profile.public_location,
                                avatarPath: profile.avatar_path, rows: rows)
+        } catch { return nil }
+    }
+
+    func searchAthletes(query: String, limit: Int) async -> [AthleteHit]? {
+        guard let client, await isAvailable else { return nil }
+        // Strip the @ people naturally type, and the ilike wildcards so user input can't widen
+        // the pattern. Sub-2-char queries return empty rather than the whole directory.
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "@", with: "")
+            .replacingOccurrences(of: "%", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: ",", with: "")
+        guard q.count >= 2 else { return [] }
+        struct Row: Decodable {
+            let handle: String
+            let display_name: String
+            let public_location: String?
+            let avatar_path: String?
+        }
+        do {
+            let rows: [Row] = try await client.from("profiles")
+                .select("handle,display_name,public_location,avatar_path")
+                .eq("discoverable", value: true)
+                .neq("handle", value: "")
+                .or("handle.ilike.%\(q)%,display_name.ilike.%\(q)%")
+                .limit(limit)
+                .execute().value
+            return rows.map {
+                AthleteHit(handle: $0.handle, displayName: $0.display_name,
+                           location: $0.public_location, avatarPath: $0.avatar_path)
+            }
         } catch { return nil }
     }
 

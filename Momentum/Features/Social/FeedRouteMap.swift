@@ -13,6 +13,11 @@ enum FeedRouteSnapshots {
     private static var waiters: [String: [CheckedContinuation<UIImage?, Never>]] = [:]
     private static var inFlight: Set<String> = []
 
+    /// At most this many live render engines at once — a fast scroll through the feed otherwise
+    /// bursts dozens of style/tile fetches and rate-limits the whole page into silhouettes.
+    private static let maxConcurrentRenders = 4
+    private static var active = 0
+
     static func image(post: UUID, coordinates: [CLLocationCoordinate2D],
                       style: MapStyleOption, scheme: ColorScheme, size: CGSize) async -> UIImage? {
         let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")"
@@ -22,8 +27,11 @@ enum FeedRouteSnapshots {
             guard !inFlight.contains(key) else { return }   // join the in-flight render
             inFlight.insert(key)
             Task {
+                while active >= maxConcurrentRenders { try? await Task.sleep(for: .milliseconds(120)) }
+                active += 1
                 let data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
                                                            styleURI: style.styleURI(for: scheme))
+                active -= 1
                 let image = data.flatMap(UIImage.init(data:))
                 if let image { cache[key] = image }
                 (waiters.removeValue(forKey: key) ?? []).forEach { $0.resume(returning: image) }
@@ -62,10 +70,25 @@ struct FeedRouteMap: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .animation(.easeOut(duration: 0.25), value: image != nil)
         .task(id: "\(item.id)-\(colorScheme == .dark)") {
+            #if DEBUG
+            // UI tests keep the instant silhouette: XCUITest's accessibility snapshot realizes
+            // EVERY lazy feed row at once, and a hundred queued Mapbox render engines starve the
+            // main thread until queries time out. Real scrolling only ever realizes a handful.
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
+            #endif
             guard let coords = item.routeCoordinates, coords.count > 1 else { return }
-            image = await FeedRouteSnapshots.image(post: item.id, coordinates: coords,
-                                                   style: item.mapStyle, scheme: colorScheme,
-                                                   size: CGSize(width: 420, height: height + 40))
+            // Failed renders retry with backoff — a transient tile hiccup must not leave the card
+            // a silhouette for the rest of the session.
+            for attempt in 0..<3 {
+                if Task.isCancelled { return }
+                if let rendered = await FeedRouteSnapshots.image(
+                    post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
+                    size: CGSize(width: 420, height: height + 40)) {
+                    image = rendered
+                    return
+                }
+                try? await Task.sleep(for: .seconds(Double(attempt + 1) * 2))
+            }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)   // the post card carries the description

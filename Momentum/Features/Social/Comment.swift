@@ -42,11 +42,14 @@ enum CommentModeration {
 /// Seeded community comments so posts feel alive (honest: clearly community content). Deterministic
 /// per post id; replaced by real comments once Supabase is configured.
 enum CommunityComments {
-    static func seed(for postID: UUID, now: Date = Date()) -> [Comment] {
+    static func seed(for postID: UUID, postDate: Date? = nil, now: Date = Date()) -> [Comment] {
         let base = stableSeed(postID)                  // process-stable (UUID.hashValue is randomized)
         var rng = SeededRNG(base)
         let n = rng.int(0...4)
         guard n > 0 else { return [] }
+        // Comments land AFTER their post — a two-day-old comment under a twenty-minute-old post
+        // is an instant fake tell. Clamp the window to the post's actual age when known.
+        let window = min(postDate.map { max(now.timeIntervalSince($0), 120) } ?? 40 * 3600, 40 * 3600)
         return (0..<n).map { k in
             let who = rng.pick(commenters)
             return Comment(
@@ -54,7 +57,7 @@ enum CommunityComments {
                 postID: postID,
                 authorName: who.name, authorHandle: who.handle, isCommunity: true,
                 text: rng.pick(texts),
-                date: now.addingTimeInterval(-rng.double(0.2, 40) * 3600))
+                date: now.addingTimeInterval(-rng.double(0.05, 0.9) * window))
         }
     }
 
@@ -70,9 +73,14 @@ enum CommunityComments {
     private static let commenters: [(name: String, handle: String)] = [
         ("Jordan Ellis", "jordane"), ("Sam Park", "samp"), ("Riley Okafor", "rileyo"),
         ("Casey Tan", "caseyt"), ("Morgan Reed", "morganr"), ("Alex Costa", "alexc"),
-        ("Taylor Kim", "taylork"), ("Jules Mercer", "julesm")]
+        ("Taylor Kim", "taylork"), ("Jules Mercer", "julesm"), ("Dana Walsh", "danaw"),
+        ("Chris Novak", "chrisn"), ("Robin Iyer", "robini"), ("Ash Flores", "ashf")]
+    // Written the way people actually comment — short, warm, no em-dashes (an AI tell).
     private static let texts = [
-        "Strong work! 🔥", "Let's go!", "Inspiring pace.", "That route looks brutal — nice.",
+        "Strong work! 🔥", "Let's go!", "Inspiring pace.", "That route looks brutal. Nice.",
         "Beast mode.", "Consistency is everything 💪", "Huge. Keep it up!", "Love this.",
-        "Respect.", "Crushing it lately.", "Solid effort!", "This is the way."]
+        "Respect.", "Crushing it lately.", "Solid effort!", "This is the way.",
+        "Okay pace!! 👏", "What shoes are you in?", "That elevation though",
+        "Making me want to get out there", "Save some PRs for the rest of us",
+        "Unreal consistency.", "There it is!!", "Weekend well spent."]
 }

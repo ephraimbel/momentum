@@ -20,7 +20,10 @@ enum RouteSnapshotter {
         let drawn = RouteSmoothing.smooth(clippingEnds(coordinates))
         guard drawn.count > 1 else { return nil }
 
-        let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2))
+        // No Mapbox logo/attribution baked into the image — these are in-feed workout cards, not
+        // standalone maps (user call 2026-07-10).
+        let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2,
+                                                                  showsLogo: false, showsAttribution: false))
         snapshotter.styleURI = styleURI
         snapshotter.setCamera(to: snapshotter.camera(
             for: drawn, padding: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26), bearing: 0, pitch: 0))
@@ -62,8 +65,15 @@ enum RouteSnapshotter {
                     }
                 })
             }.store(in: &tokens)
-            // Never hang the caller if the style/tiles fail to load.
-            snapshotter.onMapLoadingError.observeNext { _ in finish(nil) }.store(in: &tokens)
+            // Only a STYLE failure is fatal (nothing renders without a style). Tile/sprite/glyph
+            // errors are partial and transient — the snapshot still completes with what loaded.
+            // Failing the whole image on one missed tile left feed cards permanently mapless
+            // (user report 2026-07-10).
+            snapshotter.onMapLoadingError.observe { error in
+                if error.type == .style { finish(nil) }
+            }.store(in: &tokens)
+            // And never hang the caller if neither signal ever fires (offline, no cached style).
+            Task { try? await Task.sleep(for: .seconds(25)); finish(nil) }
         }
     }
 

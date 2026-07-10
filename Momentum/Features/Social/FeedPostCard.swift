@@ -41,12 +41,15 @@ struct FeedPostCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("post-body")
             footer.padding(.top, 2)
         }
         .padding(.vertical, Theme.Space.lg)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
         .contextMenu { moderationMenu }
-        .sheet(isPresented: $showingDetail) { PostDetailView(item: item) }
+        // Full-screen, not a sheet — the sheet's card presentation clipped the reading view on
+        // device (user report 2026-07-10); the post now opens as a clean full-page view.
+        .fullScreenCover(isPresented: $showingDetail) { PostDetailView(item: item) }
         .confirmationDialog("Report this post?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
                 Button(reason.rawValue) { moderation.reportPost(item.id, reason: reason); Haptics.success() }
@@ -152,7 +155,7 @@ struct FeedPostCard: View {
 
     /// Visible comment count = seeded community + the user's own, minus moderation-hidden.
     private var commentCount: Int {
-        (CommunityComments.seed(for: item.id) + comments.comments(for: item.id))
+        (CommunityComments.seed(for: item.id, postDate: item.date) + comments.comments(for: item.id))
             .filter(moderation.isVisible).count
     }
 
