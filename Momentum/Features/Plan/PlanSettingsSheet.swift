@@ -11,6 +11,7 @@ struct PlanSettingsSheet: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
+    @State private var name: String
     @State private var goal: Goal
     @State private var days: Int
     @State private var minutes: Int
@@ -19,6 +20,7 @@ struct PlanSettingsSheet: View {
     init(profile: UserProfile, onDone: @escaping () -> Void) {
         self.profile = profile
         self.onDone = onDone
+        _name = State(initialValue: profile.plan?.name ?? "")
         _goal = State(initialValue: profile.goal)
         _days = State(initialValue: profile.daysPerWeek)
         _minutes = State(initialValue: profile.sessionMinutes)
@@ -31,6 +33,7 @@ struct PlanSettingsSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    nameSection
                     goalSection
                     daysSection
                     sessionSection
@@ -54,6 +57,23 @@ struct PlanSettingsSheet: View {
     }
 
     // MARK: Sections
+
+    /// Name the block after what it's FOR ("Austin Marathon") — the name becomes the Plan page
+    /// title and marks plan sessions wherever they surface.
+    private var nameSection: some View {
+        section("PLAN NAME") {
+            TextField("e.g. Austin Marathon", text: $name)
+                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+                .textInputAutocapitalization(.words)
+                .submitLabel(.done)
+                .padding(Theme.Space.md)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                }
+        }
+    }
 
     private var goalSection: some View {
         let goals: [(Goal, String, String)] = [
@@ -123,11 +143,19 @@ struct PlanSettingsSheet: View {
     }
 
     private func apply() {
+        // Rename-only edits must NOT rebuild — regenerating the upcoming weeks is for structural
+        // changes. Only rebuild when something the generator actually reads has changed.
+        let structural = goal != profile.goal || days != profile.daysPerWeek
+            || minutes != profile.sessionMinutes || equipment != profile.equipment
         profile.goal = goal
         profile.daysPerWeek = days
         profile.sessionMinutes = minutes
         profile.equipment = equipment
-        PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
+        if structural {
+            PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
+        }
+        profile.plan?.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? context.save()
         Haptics.success()
         onDone()
     }

@@ -4,6 +4,10 @@ import SwiftData
 @Model
 final class TrainingPlan {
     var id: UUID = UUID()
+    /// The athlete's own name for this block ("Austin Marathon") — shown as the Plan page title and
+    /// stamped on plan sessions surfacing elsewhere (Today's banner), so plan work is unmistakable.
+    /// Empty = unnamed; UI falls back to "Plan". Survives rebuilds (PlanService.persist carries it).
+    var name: String = ""
     var goal: Goal = Goal.generalFitness
     var disciplines: [String] = []
     var raceDate: Date?

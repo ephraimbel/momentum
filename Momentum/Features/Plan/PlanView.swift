@@ -207,7 +207,9 @@ struct PlanView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Plan").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
+                Text(planDisplayName)
+                    .font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).minimumScaleFactor(0.55)
                 Spacer()
                 if plan != nil {
                     Button { showSettings = true } label: {
@@ -236,8 +238,15 @@ struct PlanView: View {
             let day = raceDate.formatted(.dateTime.month(.abbreviated).day())
             return weeks >= 2 ? "\(label) · \(day) · \(weeks) weeks to go" : "\(label) · \(day) — race week"
         }
-        guard let phases = plan?.weekPhases, !phases.isEmpty, let idx = planWeekIndex(of: currentWeekStart) else { return nil }
-        return "Training plan · week \(idx + 1) of \(phases.count)"
+        guard let idx = planWeekIndex(of: currentWeekStart), planWeekStarts.count > 1 else { return nil }
+        let prefix = (plan?.name.isEmpty ?? true) ? "Training plan · " : ""
+        return "\(prefix)Week \(idx + 1) of \(planWeekStarts.count)"
+    }
+
+    /// The athlete's name for the block is the page title ("Austin Marathon"); unnamed plans stay "Plan".
+    private var planDisplayName: String {
+        let name = plan?.name.trimmingCharacters(in: .whitespaces) ?? ""
+        return name.isEmpty ? "Plan" : name
     }
 
     private var currentWeekStart: Date {

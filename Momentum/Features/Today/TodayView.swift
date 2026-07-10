@@ -324,7 +324,7 @@ struct TodayView: View {
                     .font(.system(size: 28, weight: .bold)).foregroundStyle(Theme.ink)
             }
             VStack(spacing: Theme.Space.xs) {
-                Text("TODAY'S PLAN")
+                Text(planEyebrow)
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
                 Text(planTitle(session))
                     .font(.display(28, weight: .black)).foregroundStyle(Theme.ink)
@@ -352,6 +352,13 @@ struct TodayView: View {
         .presentationDetents([.height(380)])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+    }
+
+    /// What marks a session as PLAN work wherever it surfaces — the plan's own name when the
+    /// athlete gave it one ("AUSTIN MARATHON"), else the generic banner.
+    private var planEyebrow: String {
+        let name = plan?.name.trimmingCharacters(in: .whitespaces) ?? ""
+        return name.isEmpty ? "TODAY'S PLAN" : name.uppercased()
     }
 
     private func planTitle(_ s: PlannedSession) -> String {
@@ -1008,8 +1015,9 @@ struct TodayView: View {
                         .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("TODAY'S PLAN").font(.rounded(Theme.FontSize.label, weight: .bold))
+                    Text(planEyebrow).font(.rounded(Theme.FontSize.label, weight: .bold))
                         .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                        .lineLimit(1)
                     Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .foregroundStyle(Theme.ink).lineLimit(1)
                 }

@@ -24,6 +24,10 @@ enum DemoSeed {
         profile.restingHR = 52
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
+        // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
+            profile.plan?.name = "Austin Marathon"
+        }
 
         // A small demo lift library with real muscle mapping, so strength posts light the body map
         // (chest/back/legs/shoulders) instead of falling back to a glyph.

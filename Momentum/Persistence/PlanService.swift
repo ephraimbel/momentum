@@ -115,7 +115,8 @@ enum PlanService {
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,
                         startDate: Date, in context: ModelContext,
                         calendar: Calendar = .current) -> TrainingPlan {
-        // Replace any existing plan.
+        // Replace any existing plan — but the athlete's name for it survives the rebuild.
+        let carriedName = profile.plan?.name ?? ""
         if let existing = profile.plan {
             context.delete(existing)
             profile.plan = nil
@@ -126,6 +127,7 @@ enum PlanService {
             uniquingKeysWith: { a, _ in a })
 
         let trainingPlan = TrainingPlan()
+        trainingPlan.name = carriedName
         trainingPlan.goal = profile.goal
         trainingPlan.disciplines = profile.disciplines
         trainingPlan.raceDate = profile.raceDate
