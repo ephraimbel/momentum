@@ -74,12 +74,20 @@ enum PlanCoaching {
     }
 
     /// Move past, still-planned sessions onto the next open day — never a red miss (§9.4).
+    /// A real absence (≥3 past-due sessions at once) additionally triggers the **rebuild week**:
+    /// the coming week's sessions are scaled to ~70% and hard work softens to easy, because the
+    /// evidence on returning from time away says restore 50–75% of lost volume — never cram it back.
+    /// Naturally idempotent: once reconciled, nothing is past-due, so a second pass can't re-shrink.
     static func reconcileMissed(_ plan: TrainingPlan?, today: Date, in context: ModelContext,
                                 calendar: Calendar = .current) {
         guard let plan else { return }
+        // While paused, sessions were deliberately shifted out — rolling them "forward" again would
+        // undo the pause. Stand down until the window passes (resume clears it early).
+        if let paused = plan.pausedUntil, calendar.startOfDay(for: today) < calendar.startOfDay(for: paused) { return }
         let todayStart = calendar.startOfDay(for: today)
         var occupied = Set(plan.sessions.map { calendar.startOfDay(for: $0.date) })
         var changed = false
+        var movedCount = 0
 
         for session in plan.sessions
             where session.status == .planned
@@ -105,6 +113,27 @@ enum PlanCoaching {
                 session.rationale = "Rolled forward — no streak lost."
                 changed = true
             }
+            movedCount += 1
+        }
+
+        // Rebuild week after a real absence (PRD §9.4: ≥3 misses → the week restarts at ~70%).
+        if movedCount >= 3, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
+            for s in plan.sessions
+                where s.status != .completed && s.completedWorkout == nil
+                      && calendar.startOfDay(for: s.date) >= todayStart && s.date < horizon {
+                if let d = s.targetDistanceM { s.targetDistanceM = (d * 0.7).rounded() }
+                if let dur = s.targetDurationS { s.targetDurationS = (dur * 0.7).rounded() }
+                if let rt = s.runType, rt.isQuality {
+                    s.runType = .easy
+                    s.intervals = nil
+                    s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: plan.p5kSPerKm)
+                }
+                for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.7).rounded())) }
+                s.rationale = "Rebuild week — easing back in at ~70% after time away. The plan meets you here."
+            }
+            CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
+                                 detail: "You were away a bit, so this week restarts at about 70%. Cramming the missed work back in is how comebacks end early.",
+                                 on: today, in: context, calendar: calendar)
         }
         if changed { try? context.save() }
     }

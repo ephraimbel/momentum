@@ -442,6 +442,56 @@ struct PlanCoachingTests {
         #expect(pe.targetSets == 4)
     }
 
+    // MARK: Rebuild week after absence (PRD §9.4: ≥3 misses → restart at ~70%)
+
+    private func plannedRun(in ctx: ModelContext, daysFromNow: Int, type: RunType,
+                            distanceM: Double) -> PlannedSession {
+        let s = PlannedSession()
+        s.date = Calendar.current.date(byAdding: .day, value: daysFromNow, to: Calendar.current.startOfDay(for: Date()))!
+        s.discipline = .running
+        s.runType = type
+        s.status = .planned
+        s.targetDistanceM = distanceM
+        s.targetPaceSPerKm = 380
+        return s
+    }
+
+    @Test func threeMissesTriggerSeventyPercentRebuildWeek() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        // Three sessions slipped past (a real absence) + a quality day coming up this week.
+        let missed = [plannedRun(in: ctx, daysFromNow: -5, type: .easy, distanceM: 6000),
+                      plannedRun(in: ctx, daysFromNow: -3, type: .long, distanceM: 12000),
+                      plannedRun(in: ctx, daysFromNow: -2, type: .easy, distanceM: 6000)]
+        let upcoming = plannedRun(in: ctx, daysFromNow: 4, type: .tempo, distanceM: 8000)
+        let plan = makePlan(in: ctx, sessions: missed + [upcoming]); plan.p5kSPerKm = 330
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+
+        #expect(missed.allSatisfy { $0.status == .moved })
+        #expect(upcoming.runType == .easy)                        // hard work softened for re-entry
+        #expect(upcoming.targetDistanceM == 5600)                 // 8000 × 0.7
+        #expect(upcoming.rationale?.lowercased().contains("rebuild") == true)
+        // Idempotent: a second reconcile finds nothing past-due and can't re-shrink.
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+        #expect(upcoming.targetDistanceM == 5600)
+    }
+
+    @Test func twoMissesJustRescheduleWithoutRebuild() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let missed = [plannedRun(in: ctx, daysFromNow: -2, type: .easy, distanceM: 6000),
+                      plannedRun(in: ctx, daysFromNow: -1, type: .easy, distanceM: 6000)]
+        let upcoming = plannedRun(in: ctx, daysFromNow: 4, type: .tempo, distanceM: 8000)
+        let plan = makePlan(in: ctx, sessions: missed + [upcoming]); plan.p5kSPerKm = 330
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+
+        #expect(missed.allSatisfy { $0.status == .moved })        // still rescheduled, never red
+        #expect(upcoming.runType == .tempo)                       // but no rebuild for a small slip
+        #expect(upcoming.targetDistanceM == 8000)
+    }
+
     @Test func moderateEffortNeverTriggersStrengthDeload() throws {
         let container = try makeContainer()
         let ctx = container.mainContext

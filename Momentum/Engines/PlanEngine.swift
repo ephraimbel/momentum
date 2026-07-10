@@ -184,7 +184,8 @@ enum PlanEngine {
         switch raceDistanceM {
         case .some(let d) where d < 13_000: byDistance = 1
         case .some(let d) where d < 25_000: byDistance = 2
-        case .some: byDistance = 3
+        case .some(let d) where d < 45_000: byDistance = 3
+        case .some: byDistance = 4                    // ultra — the deepest hole needs the longest climb out
         case .none: byDistance = min(3, Int((0.15 * Double(totalWeeks)).rounded(.up)))
         }
         let taper = min(byDistance, max(1, totalWeeks / 4))
@@ -199,7 +200,8 @@ enum PlanEngine {
         switch weeks {
         case ..<2: return [0.55]
         case 2: return [0.65, 0.5]
-        default: return [0.7, 0.55, 0.45]
+        case 3: return [0.7, 0.55, 0.45]
+        default: return [0.75, 0.65, 0.55, 0.45]      // ultra — a gentler, longer glide to the start
         }
     }
 

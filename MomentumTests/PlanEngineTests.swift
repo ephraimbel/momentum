@@ -204,9 +204,25 @@ struct PlanEngineTests {
         #expect(PlanEngine.mesocycle(totalWeeks: 12, raceDistanceM: 5_000, hasRace: true).taperWeeks == 1)
         #expect(PlanEngine.mesocycle(totalWeeks: 12, raceDistanceM: 21_097, hasRace: true).taperWeeks == 2)
         #expect(PlanEngine.mesocycle(totalWeeks: 16, raceDistanceM: 42_195, hasRace: true).taperWeeks == 3)
+        #expect(PlanEngine.mesocycle(totalWeeks: 16, raceDistanceM: 50_000, hasRace: true).taperWeeks == 4)
         // A short runway caps the taper so build weeks survive; no race → no taper at all.
         #expect(PlanEngine.mesocycle(totalWeeks: 4, raceDistanceM: 42_195, hasRace: true).taperWeeks == 1)
         #expect(PlanEngine.mesocycle(totalWeeks: 4, raceDistanceM: nil, hasRace: false).taperWeeks == 0)
+    }
+
+    @Test func ultraPlansGenerateEndToEnd() {
+        // "From your first 5K to your first ultra" — a 50K plan periodizes with a 4-week taper,
+        // threshold-emphasis quality, and the long run capped at 32 km.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+        inp.raceDistanceM = 50_000
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 15,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(plan.weeks.suffix(4).allSatisfy { $0.isTaper })
+        let longs = plan.weeks.flatMap(\.sessions).filter { $0.runType == .long || $0.runType == .progression }
+        #expect((longs.compactMap(\.targetDistanceM).max() ?? 0) <= 32_000 + 1)
+        // No raw 5K-speed reps anywhere in an ultra build.
+        #expect(!plan.weeks.flatMap(\.sessions).contains { $0.intervals?.contains("@ 5K") == true })
     }
 
     @Test func planPhasesRunBaseBuildPeakTaper() {

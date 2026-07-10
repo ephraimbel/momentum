@@ -789,6 +789,7 @@ struct OnboardingFlow: View {
         switch d {
         case .fiveK: "Fast and punchy"; case .tenK: "Speed meets stamina"
         case .half: "The endurance test"; case .marathon: "The big one"
+        case .fiftyK: "Beyond the marathon"
         }
     }
 

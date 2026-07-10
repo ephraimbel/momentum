@@ -52,13 +52,19 @@ enum Discipline: String, Codable, Sendable, CaseIterable { case running, cycling
 /// A target race the plan points at (drives long-run progression + taper). Onboarding captures one
 /// for "run a race" goals; the engine reads `raceDistanceM`.
 enum RaceDistance: String, Codable, Sendable, CaseIterable, Identifiable {
-    case fiveK, tenK, half, marathon
+    case fiveK, tenK, half, marathon, fiftyK
     var id: String { rawValue }
     var meters: Double {
-        switch self { case .fiveK: 5_000; case .tenK: 10_000; case .half: 21_097.5; case .marathon: 42_195 }
+        switch self {
+        case .fiveK: 5_000; case .tenK: 10_000; case .half: 21_097.5
+        case .marathon: 42_195; case .fiftyK: 50_000
+        }
     }
     var label: String {
-        switch self { case .fiveK: "5K"; case .tenK: "10K"; case .half: "Half marathon"; case .marathon: "Marathon" }
+        switch self {
+        case .fiveK: "5K"; case .tenK: "10K"; case .half: "Half marathon"
+        case .marathon: "Marathon"; case .fiftyK: "50K ultra"
+        }
     }
     /// The closest preset to a stored meters value (for display of a custom distance).
     static func nearest(toMeters m: Double) -> RaceDistance {

@@ -175,6 +175,7 @@ struct PlanFeasibility: Sendable {
         case (.tenK, .new): km = 30; case (.tenK, .some): km = 40; case (.tenK, .experienced): km = 50
         case (.half, .new): km = 40; case (.half, .some): km = 55; case (.half, .experienced): km = 70
         case (.marathon, .new): km = 55; case (.marathon, .some): km = 70; case (.marathon, .experienced): km = 90
+        case (.fiftyK, .new): km = 65; case (.fiftyK, .some): km = 80; case (.fiftyK, .experienced): km = 100
         }
         return km * 1_000
     }
@@ -182,7 +183,7 @@ struct PlanFeasibility: Sendable {
     /// Minimum specific-prep block (weeks) for a distance — even a fit runner needs this to be race-ready.
     private static func minWeeks(forDistanceM distanceM: Double) -> Int {
         switch RaceDistance.nearest(toMeters: distanceM) {
-        case .fiveK: 4; case .tenK: 5; case .half: 8; case .marathon: 12
+        case .fiveK: 4; case .tenK: 5; case .half: 8; case .marathon: 12; case .fiftyK: 16
         }
     }
 
