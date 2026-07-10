@@ -204,6 +204,12 @@ function Gallery() {
       h: "A coach you can ask",
       p: "Pace, programming, or how a session felt — answers grounded in your actual training data.",
     },
+    {
+      src: "/shots/profile-grid.png",
+      alt: "Profile grid of workout tiles — route art and muscle maps",
+      h: "Every run becomes art",
+      p: "Your profile is a wall of routes and muscle maps — a private mirror of the work you've put in.",
+    },
   ];
   return (
     <section className="section" id="gallery" style={{ paddingTop: 0 }}>
