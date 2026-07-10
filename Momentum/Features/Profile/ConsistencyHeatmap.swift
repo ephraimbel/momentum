@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// A GitHub-style consistency grid for the last `weeks` weeks. Inactive days are a clean light grid;
-/// active days reveal **one** cohesive iridescent sheet that flows across the whole grid (earned
-/// accent — consistency is progress). Doing it as a single masked sheet (the `MuscleMapView`
-/// technique) — rather than filling each 13px square with its own gradient — is what makes active
-/// days read as a vivid, intentional accent instead of muddy per-square pastels. Shared by the
-/// Profile surfaces. Color is never the sole carrier — a single VoiceOver summary names the
-/// active-day count (PRD §13.4).
+/// A GitHub-style consistency grid for the last `weeks` weeks. Inactive days are a clean light
+/// grid; active days fill in **solid brand purple, stepped by how much you actually trained** that
+/// day (the GitHub intensity treatment) — a 20-minute jog and a two-hour long run read differently
+/// at a glance. Pass `dayMinutes` for the intensity signal; without it, active days render at one
+/// solid mid level (binary callers like community profiles). Color is never the sole carrier — a
+/// single VoiceOver summary names the active-day count (PRD §13.4).
 ///
-/// `showsAxes` adds the frame that makes the data legible at a glance (the GitHub treatment):
-/// month labels above the columns, weekday hints down the left, and a quiet ring on today.
+/// `showsAxes` adds the frame that makes the data legible at a glance: month labels above the
+/// columns, weekday hints down the left, a quiet ring on today, and the less→more legend.
 struct ConsistencyHeatmap: View {
     let countingDays: Set<Int>
+    /// Active minutes per local day — drives the intensity steps. Empty = binary rendering.
+    var dayMinutes: [Int: Double] = [:]
     var weeks: Int = 16
     var cell: CGFloat = 13
     var spacing: CGFloat = 3
@@ -26,6 +27,7 @@ struct ConsistencyHeatmap: View {
             VStack(alignment: .leading, spacing: spacing * 2) {
                 if showsAxes { monthLabels }
                 grid(today: today)
+                if showsAxes { legend.padding(.top, spacing) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -36,16 +38,33 @@ struct ConsistencyHeatmap: View {
 
     private func grid(today: Int) -> some View {
         ZStack {
-            // Baseline: every day as a faint, clean square so the grid structure always reads.
-            cells(today: today) { _ in Theme.inkTertiary.opacity(0.12) }
-            // Active days: a single iridescent gradient spanning the whole grid, revealed only through
-            // the active squares — so they share one flowing accent (periwinkle → peach) and stand out.
-            Rectangle().fill(IridescentMaterial())
-                .mask(cells(today: today) { day in countingDays.contains(day) ? Color.white : Color.clear })
+            cells(today: today) { day in fill(for: day) }
             // Today: a quiet ink ring anchors "now" at the bottom-right of the story.
             if showsAxes { todayRing(today: today) }
         }
     }
+
+    // MARK: Intensity
+
+    /// Solid purple, stepped by training minutes (GitHub's level treatment): a faint baseline for
+    /// empty days, then light / medium / full purple at <30 / <75 / 75+ active minutes.
+    private func fill(for day: Int) -> Color {
+        guard countingDays.contains(day) else { return Theme.inkTertiary.opacity(0.10) }
+        return Self.levelColors[level(for: day)]
+    }
+
+    private func level(for day: Int) -> Int {
+        guard let minutes = dayMinutes[day] else { return 1 }   // binary callers: one solid mid step
+        if minutes >= 75 { return 2 }
+        if minutes >= 30 { return 1 }
+        return 0
+    }
+
+    /// A real purple ramp (GitHub uses swatches, not opacity — white-blended tints go washy).
+    /// Light lavender → mid violet → the full brand purple.
+    static let levelColors: [Color] = [
+        Color(hex: "C9BEF9"), Color(hex: "A18BF5"), Color(hex: "7C63F0"),
+    ]
 
     // MARK: Axes
 
@@ -93,6 +112,22 @@ struct ConsistencyHeatmap: View {
         let prevTop = colTop.addingTimeInterval(-7 * 86_400)
         let changed = cal.component(.month, from: colTop) != cal.component(.month, from: prevTop)
         return changed ? formatter.string(from: colTop) : nil
+    }
+
+    /// The GitHub "less → more" key, right-aligned and quiet.
+    private var legend: some View {
+        HStack(spacing: spacing) {
+            Text("Less").font(.rounded(9, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            RoundedRectangle(cornerRadius: 2).fill(Theme.inkTertiary.opacity(0.10))
+                .frame(width: 9, height: 9)
+            ForEach(0..<3, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 2).fill(Self.levelColors[i])
+                    .frame(width: 9, height: 9)
+            }
+            Text("More").font(.rounded(9, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityHidden(true)
     }
 
     private func todayRing(today: Int) -> some View {

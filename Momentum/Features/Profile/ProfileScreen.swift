@@ -41,7 +41,7 @@ struct ProfileScreen: View {
     var body: some View {
         ScrollViewReader { scroll in
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                 Group {
                     identity
                     if let profile, !profile.bio.isEmpty {

@@ -87,9 +87,9 @@ struct ProfileGrid: View {
     private var highlightsContent: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
             lifetimeSection
-            if !highlights.items.isEmpty { bestsSection }
             if !stats.countsByType.isEmpty { trainSection }
             consistencySection
+            if !highlights.items.isEmpty { bestsSection }
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.lg)
@@ -144,6 +144,16 @@ struct ProfileGrid: View {
         }
     }
 
+    /// Active minutes per local day — the consistency chart's intensity signal (a 20-minute jog
+    /// and a two-hour long run are different days, and the chart should say so).
+    private var dayMinutes: [Int: Double] {
+        var out: [Int: Double] = [:]
+        for w in workouts {
+            out[StreakCalculator.localDay(w.startedAt), default: 0] += w.durationS / 60
+        }
+        return out
+    }
+
     /// The GitHub-grade consistency graph: month axis, weekday hints, today ring — plus the one
     /// number that summarizes it, set as the card's own headline.
     private var consistencySection: some View {
@@ -156,7 +166,8 @@ struct ProfileGrid: View {
                     Text("active days · last 16 weeks")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                ConsistencyHeatmap(countingDays: stats.countingDays, showsAxes: true)
+                ConsistencyHeatmap(countingDays: stats.countingDays,
+                                   dayMinutes: dayMinutes, showsAxes: true)
             }
             .padding(Theme.Space.lg).background(card)
         }
