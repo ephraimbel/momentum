@@ -830,10 +830,10 @@ struct OnboardingFlow: View {
             .buttonStyle(.plain)
             .reveal(cascade(0))
             .sheet(isPresented: $showRacePicker) {
-                RacePickerSheet { race, date in
+                RacePickerSheet { race, pickedDistance, date in
                     pick {
                         vm.plannedRaceName = race.name
-                        vm.raceDistance = race.distance
+                        vm.raceDistance = pickedDistance
                         vm.hasRace = true
                         vm.raceDate = date
                     }

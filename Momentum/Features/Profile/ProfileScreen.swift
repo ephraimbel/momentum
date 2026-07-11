@@ -18,6 +18,7 @@ struct ProfileScreen: View {
     /// PR shelf — tiles whose workout holds a current record carry the earned iridescent mark.
     @Query private var records: [PersonalRecord]
     @Environment(FollowStore.self) private var follows
+    @Environment(PaywallController.self) private var paywall
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
     #if DEBUG
@@ -169,7 +170,17 @@ struct ProfileScreen: View {
         VStack(spacing: Theme.Space.md) {
             AvatarView(photo: profile?.avatarData, name: displayName, size: 76)
             VStack(spacing: 3) {
-                Text(displayName).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
+                HStack(spacing: 6) {
+                    Text(displayName).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.7)   // long names shrink; the seal stays put
+                    // Verified Pro — the same checkmark the feed shows everyone else.
+                    if paywall.isEntitled(to: .fullPlan) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(Theme.purple)
+                            .accessibilityLabel("Verified Pro")
+                    }
+                }
                 if handleText != nil || profile.flatMap(SocialPrivacy.publicLocation) != nil {
                     HStack(spacing: 6) {
                         if let handle = handleText {

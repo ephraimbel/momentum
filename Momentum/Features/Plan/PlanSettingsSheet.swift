@@ -111,11 +111,11 @@ struct PlanSettingsSheet: View {
             // Hosted at stack level so the catalog can open from ANY state — picking a race is
             // allowed to be the thing that switches the plan's focus to racing.
             .sheet(isPresented: $showRacePicker) {
-                RacePickerSheet { race, date in
+                RacePickerSheet { race, pickedDistance, date in
                     withAnimation(Motion.standard) {
                         goal = .raceDistance
                         name = race.name
-                        raceDistance = race.distance
+                        raceDistance = pickedDistance
                         hasRaceDate = true
                         raceDate = date
                     }

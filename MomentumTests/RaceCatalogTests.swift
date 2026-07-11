@@ -51,10 +51,26 @@ struct RaceCatalogTests {
     }
 
     @Test func catalogHygiene() {
-        // Stable unique ids, all seven majors present, every race a real marathon distance.
+        // Stable unique ids, all seven majors present, every event offers at least one distance.
         #expect(Set(RaceCatalog.races.map(\.id)).count == RaceCatalog.races.count)
         #expect(RaceCatalog.races.filter { $0.region == .majors }.count == 7)
-        #expect(RaceCatalog.races.allSatisfy { $0.distance == .marathon })
+        #expect(RaceCatalog.races.allSatisfy { !$0.distances.isEmpty })
+        #expect(RaceCatalog.races.filter { $0.region == .majors }.allSatisfy { $0.flagship == .marathon })
         #expect(RaceCatalog.races.allSatisfy { !$0.name.isEmpty && !$0.city.isEmpty && !$0.flag.isEmpty })
+    }
+
+    @Test func raceWeekendsOfferSubDistances() {
+        // The big weekends carry their halfs and shorter classics — most people race those.
+        #expect(race("houston").distances.contains(.half))
+        #expect(race("disney").distances == [.marathon, .half, .tenK, .fiveK])
+        #expect(race("disney").flagship == .marathon)                 // flagship stays first
+        // Standalone half/10K classics exist in their regions.
+        #expect(race("nyc-half").distances == [.half])
+        #expect(race("great-north").distances == [.half])
+        #expect(race("bolder-boulder").distances == [.tenK])
+        // Every offered distance is unique per event (no duplicate chips).
+        for r in RaceCatalog.races {
+            #expect(Set(r.distances).count == r.distances.count, "\(r.id): duplicate distances")
+        }
     }
 }
