@@ -110,7 +110,10 @@ enum DemoSeed {
                 // by timestamp or the snapshot draws a scribble instead of the route.
                 let coords = gps.samples.sorted { $0.t < $1.t }
                     .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
+                // Same basemap the app renders everywhere (the persisted app-wide style) — seeded
+                // tiles must look like real saves, not a mismatched light map.
+                if let data = await RouteSnapshotter.snapshot(
+                    coordinates: coords, styleURI: MapStyleOption.persisted.styleURI(for: .light)) {
                     gps.mapSnapshotData = data
                     try? context.save()
                 }

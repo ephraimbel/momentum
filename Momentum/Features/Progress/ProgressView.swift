@@ -841,6 +841,9 @@ struct ProgressScreen: View {
                     Image(systemName: w.type.systemImage).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.inkSecondary)
                 }
                 .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
+                // Self-heal like the grid tiles: a GPS workout whose finish-time snapshot render
+                // failed re-renders + persists here, beyond the launch sweep's recency window.
+                .task(id: w.id) { await WorkoutSnapshotHealer.healIfNeeded(w, context: context) }
         }
     }
 

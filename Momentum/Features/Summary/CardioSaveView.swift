@@ -92,6 +92,7 @@ struct CardioSaveView: View {
                 effort = workout.perceivedEffort
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
+                hasRoute = (workout.gps?.routeCoordinates(type: workout.type).count ?? 0) > 1
                 // The share moment starts from the athlete's chosen default (never silently public).
                 visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
             }
@@ -153,9 +154,9 @@ struct CardioSaveView: View {
         }
     }
 
-    private var hasRoute: Bool {
-        (workout?.gps?.routeCoordinates(type: workout?.type ?? .run).count ?? 0) > 1
-    }
+    /// Computed ONCE when the workout loads — `routeCoordinates` maps every GPS sample, far too
+    /// heavy to run per body evaluation (every keystroke while naming the run re-evaluates body).
+    @State private var hasRoute = false
 
     /// The basemap this run's map renders with — previewed live on the hero map above and saved
     /// with the workout (grid tile, History, feed post). Pro styles are the upgrade moment: tapping
