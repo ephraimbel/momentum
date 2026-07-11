@@ -26,6 +26,10 @@ struct ProfileScreen: View {
     @State private var gridTab: ProfileGridTab = .grid
     #endif
     @State private var immersive: ImmersiveStart?
+    #if DEBUG
+    // --share-card: open the share composer on the latest workout for sim verification.
+    @State private var debugSharing = ProcessInfo.processInfo.arguments.contains("--share-card")
+    #endif
 
     private var profile: UserProfile? { profiles.first }
 
@@ -111,6 +115,13 @@ struct ProfileScreen: View {
         #endif
         }
         .sheet(isPresented: $editing) { if let profile { EditProfileView(profile: profile) } }
+        #if DEBUG
+        .sheet(isPresented: $debugSharing) {
+            if let latest = workouts.first(where: { $0.gps != nil }) ?? workouts.first {
+                ShareCardView(workout: latest, weightUnit: weightUnit, distanceUnit: distanceUnit)
+            }
+        }
+        #endif
         .task(id: workouts.count) { refreshAggregates() }
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
