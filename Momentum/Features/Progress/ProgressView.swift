@@ -61,6 +61,25 @@ struct ProgressScreen: View {
     /// workouts themselves (snapshots only accumulate one per week of app use).
     @State private var cachedWeekVolumes: [(week: Date, meters: Double)]?
 
+    private var aggregatesReady: Bool { cachedInsights != nil }
+
+    /// One quiet frame of placeholder cards while the caches compute — the tab responds
+    /// instantly instead of freezing through the engine walks.
+    private var warmup: some View {
+        ScrollView {
+            VStack(spacing: Theme.Space.md) {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface).frame(height: 420)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface).frame(height: 150)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface).frame(height: 220)
+            }
+            .padding(Theme.Space.md)
+        }
+        .scrollDisabled(true)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .transition(.opacity)
+    }
+
     private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
     private var insights: ProgressInsights { cachedInsights ?? ProgressInsights(workouts: workouts) }
     private var recovery: RecoveryModel { cachedRecovery ?? RecoveryModel(workouts: workouts) }
@@ -96,9 +115,16 @@ struct ProgressScreen: View {
                 .padding(.horizontal, Theme.Space.md)
                 .padding(.top, Theme.Space.md)
                 .padding(.bottom, Theme.Space.md)
-            switch segment {
-            case .trends: trends
-            case .history: history
+            // First tap renders a skeleton for one frame instead of computing every engine
+            // inline: with cold caches each `insights`/`stats`/`recovery` access re-ran a full
+            // history walk during the tab-switch frame — that was the freeze.
+            if aggregatesReady {
+                switch segment {
+                case .trends: trends
+                case .history: history
+                }
+            } else {
+                warmup
             }
         }
         .background(Theme.background)
@@ -112,11 +138,11 @@ struct ProgressScreen: View {
                     .presentationDetents([.medium])
             }
         }
-        .task(id: workouts.count) { refreshAggregates() }
-        .onAppear {
+        .task(id: workouts.count) {
+            await Task.yield()   // let the skeleton frame paint before the heavy pass
+            withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
             // Athlete-model upkeep (was the You tab's onAppear — idempotent, local-only).
-            // Once per screen instance: ingest re-walks history, and paying that on every
-            // tab visit showed up as load stutter.
+            // Once per screen instance, and after first paint: ingest re-walks history.
             guard !didUpkeep, let p = profiles.first else { return }
             didUpkeep = true
             services.athleteModel.seedOnboarding(for: p, in: context)
@@ -129,7 +155,7 @@ struct ProgressScreen: View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
             Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
             Spacer()
-            StreakChip(days: stats.currentStreak)
+            if let cachedStats { StreakChip(days: cachedStats.currentStreak) }
             if segment == .history {
                 Button { Haptics.light(); showLogWorkout = true } label: {
                     Image(systemName: "plus").font(.system(size: 19, weight: .bold)).foregroundStyle(Theme.ink)
