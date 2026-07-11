@@ -1,9 +1,11 @@
 import SwiftUI
 import SwiftData
 
-/// Change the plan's fundamentals after onboarding — goal, days/week, session length, equipment — and
-/// rebuild. Edits are buffered and only applied on "Update", which regenerates the upcoming plan
-/// (preserving your calibrated pace + cross-training via `PlanService.rebuild`). Cancel changes nothing.
+/// Change the plan's fundamentals — or point it at a whole new race — and rebuild. Running-first
+/// (the app's identity): name the block, pick the focus, choose the race distance and date (any
+/// timeframe — race week to next year), set an optional goal time, and get the HONEST feasibility
+/// read live before committing. Edits are buffered and only applied on save, which regenerates the
+/// upcoming plan (calibrated pace + completed work are kept). Cancel changes nothing.
 struct PlanSettingsSheet: View {
     let profile: UserProfile
     var onDone: () -> Void
@@ -13,6 +15,13 @@ struct PlanSettingsSheet: View {
 
     @State private var name: String
     @State private var goal: Goal
+    @State private var raceDistance: RaceDistance?
+    @State private var hasRaceDate: Bool
+    @State private var raceDate: Date
+    @State private var hasGoalTime: Bool
+    @State private var goalHours: Int
+    @State private var goalMinutes: Int
+    @State private var intensity: PlanIntensity
     @State private var days: Int
     @State private var minutes: Int
     @State private var equipment: Equipment
@@ -22,12 +31,52 @@ struct PlanSettingsSheet: View {
         self.onDone = onDone
         _name = State(initialValue: profile.plan?.name ?? "")
         _goal = State(initialValue: profile.goal)
+        _raceDistance = State(initialValue: profile.raceDistanceM.map(RaceDistance.nearest(toMeters:)))
+        _hasRaceDate = State(initialValue: profile.raceDate != nil)
+        _raceDate = State(initialValue: profile.raceDate
+            ?? Calendar.current.date(byAdding: .weekOfYear, value: 12, to: Date()) ?? Date())
+        let goalS = profile.goalFinishTimeS
+        _hasGoalTime = State(initialValue: goalS != nil)
+        _goalHours = State(initialValue: goalS.map { Int($0) / 3600 } ?? 4)
+        _goalMinutes = State(initialValue: goalS.map { (Int($0) % 3600) / 60 } ?? 0)
+        _intensity = State(initialValue: profile.planIntensity.flatMap(PlanIntensity.init(rawValue:)) ?? .balanced)
         _days = State(initialValue: profile.daysPerWeek)
         _minutes = State(initialValue: profile.sessionMinutes)
         _equipment = State(initialValue: profile.equipment)
     }
 
     private var lifting: Bool { profile.disciplines.contains(Discipline.strength.rawValue) }
+    private var racing: Bool { goal == .raceDistance }
+
+    /// Anything the generator reads changed → save rebuilds the upcoming weeks.
+    private var structural: Bool {
+        goal != profile.goal || days != profile.daysPerWeek
+            || minutes != profile.sessionMinutes || equipment != profile.equipment
+            || newRaceDistanceM != profile.raceDistanceM
+            || newRaceDate != profile.raceDate
+            || newGoalFinishTimeS != profile.goalFinishTimeS
+            || intensity.rawValue != (profile.planIntensity ?? PlanIntensity.balanced.rawValue)
+    }
+
+    private var newRaceDistanceM: Double? { racing ? raceDistance?.meters : nil }
+    private var newRaceDate: Date? { racing && hasRaceDate ? Calendar.current.startOfDay(for: raceDate) : nil }
+    private var newGoalFinishTimeS: Double? {
+        racing && hasGoalTime ? Double(goalHours * 3600 + goalMinutes * 60) : nil
+    }
+
+    /// The honest read for the race + date on screen right now — same engine as onboarding.
+    private var feasibility: PlanFeasibility? {
+        guard racing, let distanceM = newRaceDistanceM, let date = newRaceDate else { return nil }
+        let weeks = PlanEngine.weeksToRace(startDate: Date(), raceDate: date, calendar: .current) ?? 0
+        let experience = ExperienceLevel(rawValue: profile.experience[Discipline.running.rawValue] ?? "") ?? .some
+        return PlanFeasibility.assess(raceDistanceM: distanceM,
+                                      goalFinishTimeS: newGoalFinishTimeS,
+                                      currentP5kSPerKm: profile.plan?.p5kSPerKm,
+                                      currentWeeklyVolumeM: profile.weeklyRunVolumeM ?? 0,
+                                      weeksAvailable: weeks,
+                                      experience: experience,
+                                      injuryProne: !profile.injuryHistory.isEmpty)
+    }
 
     var body: some View {
         NavigationStack {
@@ -35,10 +84,14 @@ struct PlanSettingsSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     nameSection
                     goalSection
+                    if racing { raceSection }
+                    intensitySection
                     daysSection
                     sessionSection
                     if lifting { equipmentSection }
-                    Text("Updating rebuilds your upcoming plan from today. Completed workouts and your calibrated pace are kept.")
+                    Text(structural
+                         ? "Saving rebuilds your upcoming plan from today. Completed workouts and your calibrated pace are kept."
+                         : "Nothing structural changed — saving keeps your current plan exactly as it is.")
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -50,7 +103,9 @@ struct PlanSettingsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Update") { apply() }.fontWeight(.semibold) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(structural ? "Rebuild plan" : "Save") { apply() }.fontWeight(.semibold)
+                }
             }
         }
         .presentationBackground(Theme.background)
@@ -75,15 +130,112 @@ struct PlanSettingsSheet: View {
         }
     }
 
+    /// Running-first, always — racing leads, strength supports (ENDURANCE-FOCUS §1).
     private var goalSection: some View {
         let goals: [(Goal, String, String)] = [
-            (.loseFat, "Lose fat / get fit", "flame"), (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"),
-            (.getStronger, "Get stronger", "dumbbell.fill"), (.raceDistance, "Run a race", "flag.checkered"),
-            (.endurance, "Improve endurance", "wind"), (.stayConsistent, "Stay consistent", "calendar")]
-        return section("GOAL") {
+            (.raceDistance, "Run a race", "flag.checkered"),
+            (.endurance, "Run farther & faster", "wind"),
+            (.stayConsistent, "Stay consistent", "calendar"),
+            (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"),
+            (.getStronger, "Get stronger", "dumbbell.fill"),
+            (.loseFat, "Lose fat / get fit", "flame")]
+        return section("FOCUS") {
             VStack(spacing: Theme.Space.sm) {
                 ForEach(goals, id: \.0) { g in
-                    SelectionCard(title: g.1, systemImage: g.2, isSelected: goal == g.0) { goal = g.0 }
+                    SelectionCard(title: g.1, systemImage: g.2, isSelected: goal == g.0) {
+                        withAnimation(Motion.standard) { goal = g.0 }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The heart of the sheet: which race, when, and how fast — with the honest verdict live.
+    private var raceSection: some View {
+        section("YOUR RACE") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(RaceDistance.allCases) { d in
+                    SelectionCard(title: d.label, isSelected: raceDistance == d) {
+                        withAnimation(Motion.standard) { raceDistance = d }
+                    }
+                }
+
+                Toggle(isOn: $hasRaceDate.animation(Motion.standard)) {
+                    Text("I have a race date")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                }
+                .tint(Theme.ink)
+                .padding(Theme.Space.md)
+                .background(cardBackground)
+
+                if hasRaceDate {
+                    DatePicker("Race day", selection: $raceDate,
+                               in: Date()..., displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .tint(Theme.ink)
+                        .padding(Theme.Space.sm)
+                        .background(cardBackground)
+                }
+
+                Toggle(isOn: $hasGoalTime.animation(Motion.standard)) {
+                    Text("Target finish time")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                }
+                .tint(Theme.ink)
+                .padding(Theme.Space.md)
+                .background(cardBackground)
+
+                if hasGoalTime {
+                    HStack(spacing: 0) {
+                        Picker("Hours", selection: $goalHours) {
+                            ForEach(0..<10, id: \.self) { Text("\($0) hr").tag($0) }
+                        }
+                        .pickerStyle(.wheel)
+                        Picker("Minutes", selection: $goalMinutes) {
+                            ForEach(Array(stride(from: 0, to: 60, by: 5)), id: \.self) { Text("\($0) min").tag($0) }
+                        }
+                        .pickerStyle(.wheel)
+                    }
+                    .frame(height: 110)
+                    .background(cardBackground)
+                }
+
+                if let f = feasibility {
+                    feasibilityCard(f)
+                }
+            }
+        }
+    }
+
+    /// The same honesty moment as onboarding — verdict first, never a fantasy.
+    private func feasibilityCard(_ f: PlanFeasibility) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Image(systemName: f.verdict == .onTrack ? "checkmark.seal.fill"
+                  : f.verdict == .tight ? "exclamationmark.triangle.fill" : "hand.raised.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(f.headline)
+                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(f.detail)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .background(cardBackground)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// How hard to push — the athlete's dial (safety caps from injury history still apply).
+    private var intensitySection: some View {
+        section("HOW HARD TO PUSH") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach([PlanIntensity.gentle, .balanced, .aggressive], id: \.self) { level in
+                    SelectionCard(title: level.label, subtitle: level.subtitle,
+                                  isSelected: intensity == level) { intensity = level }
                 }
             }
         }
@@ -116,6 +268,13 @@ struct PlanSettingsSheet: View {
 
     // MARK: Building blocks
 
+    private var cardBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
     private func segmented(_ values: [Int], current: Int, label: @escaping (Int) -> String, _ set: @escaping (Int) -> Void) -> some View {
         HStack(spacing: Theme.Space.sm) {
             ForEach(values, id: \.self) { v in
@@ -145,13 +304,16 @@ struct PlanSettingsSheet: View {
     private func apply() {
         // Rename-only edits must NOT rebuild — regenerating the upcoming weeks is for structural
         // changes. Only rebuild when something the generator actually reads has changed.
-        let structural = goal != profile.goal || days != profile.daysPerWeek
-            || minutes != profile.sessionMinutes || equipment != profile.equipment
+        let rebuild = structural
         profile.goal = goal
         profile.daysPerWeek = days
         profile.sessionMinutes = minutes
         profile.equipment = equipment
-        if structural {
+        profile.raceDistanceM = newRaceDistanceM
+        profile.raceDate = newRaceDate
+        profile.goalFinishTimeS = newGoalFinishTimeS
+        profile.planIntensity = intensity.rawValue
+        if rebuild {
             PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
         }
         profile.plan?.name = name.trimmingCharacters(in: .whitespacesAndNewlines)

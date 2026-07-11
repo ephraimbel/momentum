@@ -85,6 +85,10 @@ struct PlanView: View {
         }
         .onAppear {
             #if DEBUG
+            // --plan-settings: open the plan-settings sheet (screenshot verification; sim can't tap).
+            if ProcessInfo.processInfo.arguments.contains("--plan-settings") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettings = true }
+            }
             // --plan-locked-week: land on next week (the Pro-locked state) for lock-pill verification.
             if ProcessInfo.processInfo.arguments.contains("--plan-locked-week"),
                let next = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: weekStart) {
