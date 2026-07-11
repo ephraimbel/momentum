@@ -25,6 +25,7 @@ struct PlanSettingsSheet: View {
     @State private var days: Int
     @State private var minutes: Int
     @State private var equipment: Equipment
+    @State private var showRacePicker = false
 
     init(profile: UserProfile, onDone: @escaping () -> Void) {
         self.profile = profile
@@ -107,6 +108,27 @@ struct PlanSettingsSheet: View {
                     Button(structural ? "Rebuild plan" : "Save") { apply() }.fontWeight(.semibold)
                 }
             }
+            // Hosted at stack level so the catalog can open from ANY state — picking a race is
+            // allowed to be the thing that switches the plan's focus to racing.
+            .sheet(isPresented: $showRacePicker) {
+                RacePickerSheet { race, date in
+                    withAnimation(Motion.standard) {
+                        goal = .raceDistance
+                        name = race.name
+                        raceDistance = race.distance
+                        hasRaceDate = true
+                        raceDate = date
+                    }
+                }
+            }
+            .onAppear {
+                #if DEBUG
+                // --race-picker: open the catalog directly (screenshot verification; sim can't tap).
+                if ProcessInfo.processInfo.arguments.contains("--race-picker") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showRacePicker = true }
+                }
+                #endif
+            }
         }
         .presentationBackground(Theme.background)
     }
@@ -154,6 +176,27 @@ struct PlanSettingsSheet: View {
     private var raceSection: some View {
         section("YOUR RACE") {
             VStack(spacing: Theme.Space.sm) {
+                // The occasion, first: pick a real race from the catalog — name, distance, and
+                // date land in one tap (and stay editable below).
+                Button { showRacePicker = true } label: {
+                    HStack(spacing: Theme.Space.md) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Find your race")
+                                .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                            Text("Boston, Chicago, Hong Kong — the big ones, with dates")
+                                .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .padding(Theme.Space.md)
+                    .background(cardBackground)
+                }
+                .buttonStyle(.plain)
+
                 ForEach(RaceDistance.allCases) { d in
                     SelectionCard(title: d.label, isSelected: raceDistance == d) {
                         withAnimation(Motion.standard) { raceDistance = d }

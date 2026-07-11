@@ -22,6 +22,7 @@ struct OnboardingFlow: View {
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
+    @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var healthImport: HealthImportState = .idle   // calibration: the Health baseline card
 
@@ -802,13 +803,50 @@ struct OnboardingFlow: View {
 
     private var raceStep: some View {
         questionScaffold("Which race?", subtitle: "We'll point your long runs and taper at it.") {
+            // The occasion first: pick a real race — Boston, Chicago, Hong Kong — and its name,
+            // distance, and date are built into the plan from the very first generation.
+            Button { Haptics.light(); showRacePicker = true } label: {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(vm.plannedRaceName ?? "Find your race")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text(vm.plannedRaceName != nil
+                             ? "Locked in — date and distance set below"
+                             : "Boston, Chicago, Hong Kong — the big ones, with dates")
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(Theme.Space.md)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                }
+            }
+            .buttonStyle(.plain)
+            .reveal(cascade(0))
+            .sheet(isPresented: $showRacePicker) {
+                RacePickerSheet { race, date in
+                    pick {
+                        vm.plannedRaceName = race.name
+                        vm.raceDistance = race.distance
+                        vm.hasRace = true
+                        vm.raceDate = date
+                    }
+                }
+            }
+
             ForEach(Array(RaceDistance.allCases.enumerated()), id: \.element) { i, d in
                 SelectionCard(title: d.label, subtitle: raceSubtitle(d), isSelected: vm.raceDistance == d) {
                     pick { vm.raceDistance = d }
                 }
-                .reveal(cascade(i))
+                .reveal(cascade(i + 1))
             }
-            raceDateCard.reveal(cascade(RaceDistance.allCases.count))
+            raceDateCard.reveal(cascade(RaceDistance.allCases.count + 1))
         }
     }
 

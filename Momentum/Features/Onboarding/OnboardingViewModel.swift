@@ -82,6 +82,10 @@ final class OnboardingViewModel {
     /// much cruder %-of-max fallback.
     var importedRestingHR: Int?
 
+    /// A catalog race picked on the race step ("Chicago Marathon") — becomes the plan's name at
+    /// finish, so the season is branded with its occasion from day one.
+    var plannedRaceName: String?
+
     // Health import (ENDURANCE-FOCUS §4) — the baseline estimated from their recent runs. Set by the
     // calibration step's import card; feeds the pace seed AND the current-volume inputs.
     var importedBaseline: BaselineEstimator.RunningBaseline? {
@@ -351,6 +355,10 @@ final class OnboardingViewModel {
         context.insert(profile)
         // Build the plan (shared day budget + cross-training) — same path as the edit-settings rebuild.
         PlanService.rebuild(for: profile, calibration: calibration, in: context)
+        // A catalog race picked during onboarding names the season after its occasion.
+        if goal == .raceDistance, let raceName = plannedRaceName, profile.plan?.name.isEmpty != false {
+            profile.plan?.name = raceName
+        }
         // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).
         AthleteModelService().seedOnboarding(for: profile, in: context)
         return profile
