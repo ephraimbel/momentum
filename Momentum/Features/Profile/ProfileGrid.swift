@@ -56,6 +56,9 @@ struct ProfileGrid: View {
     var weightUnit: WeightUnit = .default()
     var distanceUnit: DistanceUnit = .auto
     let tab: ProfileGridTab
+    /// Workouts holding a current personal record — their tiles carry the earned iridescent mark
+    /// (iridescence is achievement-only, so the grid quietly doubles as a trophy wall).
+    var prWorkoutIds: Set<UUID> = []
     /// Called with the tapped workout's id.
     var onOpen: (UUID) -> Void
 
@@ -73,7 +76,8 @@ struct ProfileGrid: View {
     private var gridContent: some View {
         LazyVGrid(columns: columns, spacing: Theme.Space.sm) {
             ForEach(workouts) { workout in
-                WorkoutTile(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit) {
+                WorkoutTile(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
+                            isPR: prWorkoutIds.contains(workout.id)) {
                     onOpen(workout.id)
                 }
             }
@@ -212,26 +216,46 @@ private struct WorkoutTile: View {
     let workout: Workout
     var weightUnit: WeightUnit
     var distanceUnit: DistanceUnit
+    /// This workout holds a current PR → the tile carries the earned iridescent mark.
+    var isPR: Bool = false
     var onOpen: () -> Void
 
     var body: some View {
-        Color.clear
-            .aspectRatio(3.0 / 4.0, contentMode: .fit)
-            .overlay { WorkoutTileMedia(workout: workout, style: .tile) }
-            .overlay(alignment: .bottom) { metricStrip }
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline))
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onOpen)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(workout.type.title), \(metric)")
-            .accessibilityAddTraits(.isButton)
+        Button(action: onOpen) {
+            Color.clear
+                .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                .overlay { WorkoutTileMedia(workout: workout, style: .tile) }
+                .overlay(alignment: .bottom) { metricStrip }
+                .overlay(alignment: .topTrailing) { if isPR { prMark } }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(TilePressStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(workout.type.title), \(metric)\(isPR ? ", personal record" : "")")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The earned mark: a small iridescent dot, white-ringed so it reads on any basemap or photo.
+    /// Achievement-only iridescence (brand rule) — most tiles stay quiet, records glint.
+    private var prMark: some View {
+        Circle()
+            .fill(IridescentMaterial())
+            .frame(width: 7, height: 7)
+            .overlay(Circle().stroke(.white.opacity(0.9), lineWidth: 1))
+            .padding(7)
     }
 
     private var metricStrip: some View {
         HStack(spacing: 4) {
             Image(systemName: workout.type.systemImage).font(.system(size: 10, weight: .bold))
             Text(metric).font(.rounded(11, weight: .bold)).monospacedDigit()
+            Spacer(minLength: 4)
+            // A quiet date turns the mosaic into a legible training log at a glance.
+            Text(workout.startedAt, format: .dateTime.month(.abbreviated).day())
+                .font(.rounded(9.5, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(.white.opacity(0.72))
         }
         .foregroundStyle(.white)
         .padding(.horizontal, Theme.Space.sm).padding(.vertical, Theme.Space.chipV)
@@ -247,6 +271,17 @@ private struct WorkoutTile: View {
             return Formatters.distance(meters: gps.distanceM, unit: distanceUnit)
         }
         return Formatters.duration(s: workout.durationS)
+    }
+}
+
+/// Tile press feedback: a small transform-only settle (brand rule: animate transforms, never
+/// layout) so the mosaic feels tactile without any chrome.
+private struct TilePressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.92 : 1)
+            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 

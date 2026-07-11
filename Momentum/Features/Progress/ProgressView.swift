@@ -834,6 +834,9 @@ struct ProgressScreen: View {
         if let data = w.gps?.mapSnapshotData, let img = UIImage(data: data) {
             Image(uiImage: img).resizable().scaledToFill()
                 .frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 13))
+                // Same hairline ring as the glyph fallback — light basemaps otherwise bleed into
+                // the card with no edge.
+                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
         } else {
             RoundedRectangle(cornerRadius: 13).fill(Theme.surface)
                 .frame(width: 52, height: 52)

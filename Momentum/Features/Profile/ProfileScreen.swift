@@ -15,6 +15,8 @@ struct ProfileScreen: View {
 
     @Query private var profiles: [UserProfile]
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
+    /// PR shelf — tiles whose workout holds a current record carry the earned iridescent mark.
+    @Query private var records: [PersonalRecord]
     @Environment(FollowStore.self) private var follows
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
@@ -81,7 +83,8 @@ struct ProfileScreen: View {
                     // discipline mix, and consistency now live one tap away under "Highlights".
                     Section {
                         ProfileGrid(workouts: workouts, stats: stats, highlights: highlights,
-                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab) { id in
+                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab,
+                                    prWorkoutIds: Set(records.compactMap { $0.workout?.id })) { id in
                             immersive = ImmersiveStart(id: id)
                         }
                     } header: {
