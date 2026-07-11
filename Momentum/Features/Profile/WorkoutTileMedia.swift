@@ -15,18 +15,27 @@ struct WorkoutTileMedia: View {
 
     enum Style { case tile, immersive }
 
+    @Environment(\.modelContext) private var modelContext
+
     var body: some View {
-        switch media {
-        case .photo(let ui):
-            Image(uiImage: ui).resizable().scaledToFill()
-        case .muscle(let activation):
-            muscleMedia(activation)
-        case .snapshot(let ui):
-            snapshotMedia(ui)
-        case .route(let coords):
-            routeMedia(coords)
-        case .glyph:
-            glyphMedia
+        Group {
+            switch media {
+            case .photo(let ui):
+                Image(uiImage: ui).resizable().scaledToFill()
+            case .muscle(let activation):
+                muscleMedia(activation)
+            case .snapshot(let ui):
+                snapshotMedia(ui)
+            case .route(let coords):
+                routeMedia(coords)
+            case .glyph:
+                glyphMedia
+            }
+        }
+        // Self-heal: a GPS workout whose snapshot render failed at finish shows the silhouette,
+        // renders + persists the real map here, and swaps in via SwiftData observation.
+        .task(id: workout.id) {
+            await WorkoutSnapshotHealer.healIfNeeded(workout, context: modelContext)
         }
     }
 
@@ -97,7 +106,7 @@ struct WorkoutTileMedia: View {
     @ViewBuilder
     private func routeMedia(_ coords: [CLLocationCoordinate2D]) -> some View {
         if style == .immersive {
-            RouteMapView(coordinates: coords, style: .standard)
+            RouteMapView(coordinates: coords, style: workout.gps?.mapStyle ?? .persisted)
         } else {
             ZStack {
                 Theme.background

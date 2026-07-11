@@ -31,6 +31,9 @@ struct RootView: View {
     // Open the most recent run's detail (for verifying the guided-run Reps breakdown).
     @Query(sort: \Workout.startedAt, order: .reverse) private var recentWorkouts: [Workout]
     @State private var showRunDetail = ProcessInfo.processInfo.arguments.contains("--ui-test-run-detail")
+    // Flipped AFTER insertion (onAppear + delay) — a cover whose isPresented is already true while
+    // the view is being inserted can silently fail to present (see the onboarding note below).
+    @State private var showSaveScreen = false
     #endif
 
     var body: some View {
@@ -80,6 +83,18 @@ struct RootView: View {
                         NavigationStack { WorkoutDetailView(workout: run) }
                     }
                 }
+                // --save-screen: the post-run save editor for the newest seeded GPS run —
+                // deterministic verification of map styles/photos/Pro gate without choreographing
+                // a live run through XCUITest. Hosted on its OWN background view: from the 4th
+                // chained presentation modifier onward, covers on this chain silently stop
+                // presenting (--ui-test-run-detail is affected too).
+                .background {
+                    Color.clear.fullScreenCover(isPresented: $showSaveScreen) {
+                        if let run = recentWorkouts.first(where: { $0.type.isGPS && $0.gps != nil }) {
+                            CardioSaveView(workoutId: run.id) { showSaveScreen = false }
+                        }
+                    }
+                }
                 #endif
             }
         }
@@ -127,11 +142,17 @@ struct RootView: View {
                     recoveredWorkout = pending
                     showRecoveryPrompt = true
                 }
+                // Heal recent workouts whose route snapshot failed to render at finish — History
+                // thumbnails recover on launch instead of showing bare silhouettes forever.
+                Task { await WorkoutSnapshotHealer.sweep(in: context) }
             }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
             if ProcessInfo.processInfo.arguments.contains("--paywall") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { paywall.present(for: .aiCoach) }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--save-screen") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showSaveScreen = true }
             }
             #endif
         }

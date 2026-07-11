@@ -393,11 +393,21 @@ final class CardioViewModel {
         if let reps = tracker?.completedReps, !reps.isEmpty, let data = try? JSONEncoder().encode(reps) {
             await store.attachStructuredReps(data)
         }
-        // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5) — do
-        // this synchronously so the summary always opens with a route image.
+        // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5),
+        // with the athlete's chosen map style (the map they actually ran on), not a hardcoded
+        // basemap. NOT awaited: the save screen's hero is a live RouteMapView, so nothing on it
+        // needs this image — and a slow tile fetch right after an outdoor run was holding the
+        // finish for many seconds. If the render fails, WorkoutSnapshotHealer recovers it from the
+        // grid/History/launch sweep.
         let coords = coordinates
-        if coords.count > 1, let data = await RouteSnapshotter.snapshot(coordinates: coords) {
-            await store.attachSnapshot(data)
+        if coords.count > 1 {
+            let store = self.store
+            let snapshotStyle = MapStyleOption.persisted.styleURI(for: .light)
+            Task.detached(priority: .userInitiated) {
+                if let data = await RouteSnapshotter.snapshot(coordinates: coords, styleURI: snapshotStyle) {
+                    await store.attachSnapshot(data)
+                }
+            }
         }
         // Stage 3 (§8.5): snap the finished route to the road/path network in the background, then
         // upgrade the stored route + snapshot. Not awaited — the summary shows the raw trace instantly
@@ -421,7 +431,9 @@ final class CardioViewModel {
                 let pairs = match.coordinates.map { [$0.latitude, $0.longitude] }
                 guard let routeData = try? JSONEncoder().encode(pairs) else { return }
                 await store.attachMatchedRoute(routeData)
-                if let snapshot = await RouteSnapshotter.snapshot(coordinates: match.coordinates) {
+                let matchedStyle = await MapStyleOption.persisted.styleURI(for: .light)
+                if let snapshot = await RouteSnapshotter.snapshot(coordinates: match.coordinates,
+                                                                  styleURI: matchedStyle) {
                     await store.attachSnapshot(snapshot)
                 }
             }

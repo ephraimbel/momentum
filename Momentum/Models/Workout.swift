@@ -78,6 +78,9 @@ final class GPSDetail {
     var avgHR: Int?
     var avgCadence: Int?            // steps/min (run) or rpm (ride)
     var mapSnapshotData: Data?      // true-B/W PNG
+    /// The basemap this workout's map renders with — chosen on the save screen (nil = the athlete's
+    /// app-wide persisted style at render time). Raw string for SwiftData migration safety.
+    var mapStyleRaw: String?
     /// Route snapped to the road/path network by Mapbox Map Matching (§8.5), stored as JSON
     /// `[[lat, lon]]`. Present only when matching succeeded above the confidence gate; display falls
     /// back to the Kalman-filtered raw trace when nil. The raw `samples` are always retained.
@@ -92,6 +95,11 @@ final class GPSDetail {
     var structuredRepsData: Data?
     var structuredReps: [RepResult] {
         structuredRepsData.flatMap { try? JSONDecoder().decode([RepResult].self, from: $0) } ?? []
+    }
+
+    /// The workout's map style, resolved: the saved per-run choice, else the app-wide style.
+    var mapStyle: MapStyleOption {
+        mapStyleRaw.flatMap(MapStyleOption.init(rawValue:)) ?? .persisted
     }
 
     init() {}

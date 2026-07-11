@@ -12,6 +12,7 @@ struct CardioSaveView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(PaywallController.self) private var paywall
     @Query private var profiles: [UserProfile]
     // Read the just-finished workout from a FRESH context (same rationale as StrengthSaveView): the
     // GPS samples, HR series, and finish-time attachments were written by the background
@@ -25,6 +26,9 @@ struct CardioSaveView: View {
     @State private var sportType: WorkoutType = .run
     @State private var effort: Int?
     @State private var visibility: WorkoutPrivacy = .private
+    /// The map style THIS run renders with — previewed live on the hero map, persisted on Save.
+    @State private var mapStyle: MapStyleOption = .persisted
+    @State private var initialMapStyle: MapStyleOption = .persisted
     @State private var celebrating = false
     @State private var confirmDiscard = false
     @FocusState private var focus: Field?
@@ -35,12 +39,15 @@ struct CardioSaveView: View {
     private static let cardioTypes = WorkoutType.allCases.filter(\.isGPS)
 
     var body: some View {
-        NavigationStack {
+        @Bindable var paywall = paywall
+        return NavigationStack {
             ScrollView {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
                     VStack(spacing: Theme.Space.lg) {
-                        CardioSummaryContent(workout: workout, distanceUnit: distanceUnit, showsHeader: false)
+                        CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
+                                             showsHeader: false, canEditPhoto: true,
+                                             mapStyleOverride: mapStyle)
                         editor
                     }
                     .padding(Theme.Space.md)
@@ -69,6 +76,11 @@ struct CardioSaveView: View {
                 CompletionCelebration(title: "\(workout?.type.title ?? "Run") saved") { onDone() }
             }
         }
+        // The save screen is itself a fullScreenCover — RootView's app-level paywall cover cannot
+        // present on top of it, so the Pro map-style gate needs its own host here.
+        .fullScreenCover(item: $paywall.presentedFeature) { feature in
+            PaywallView(feature: feature)
+        }
         .task {
             guard reader == nil else { return }
             let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)
@@ -78,6 +90,8 @@ struct CardioSaveView: View {
                 desc = workout.note
                 sportType = workout.type
                 effort = workout.perceivedEffort
+                mapStyle = workout.gps?.mapStyle ?? .persisted
+                initialMapStyle = mapStyle
                 // The share moment starts from the athlete's chosen default (never silently public).
                 visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
             }
@@ -106,6 +120,10 @@ struct CardioSaveView: View {
                 .focused($focus, equals: .desc)
             Divider().overlay(Theme.hairline)
             sportRow
+            if hasRoute {
+                Divider().overlay(Theme.hairline)
+                mapStyleRow
+            }
             Divider().overlay(Theme.hairline)
             effortRow
             Divider().overlay(Theme.hairline)
@@ -133,6 +151,49 @@ struct CardioSaveView: View {
                 .foregroundStyle(Theme.ink)
             }
         }
+    }
+
+    private var hasRoute: Bool {
+        (workout?.gps?.routeCoordinates(type: workout?.type ?? .run).count ?? 0) > 1
+    }
+
+    /// The basemap this run's map renders with — previewed live on the hero map above and saved
+    /// with the workout (grid tile, History, feed post). Pro styles are the upgrade moment: tapping
+    /// one without entitlement opens the paywall instead of applying.
+    private var mapStyleRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("Map style").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Theme.Space.sm) {
+                    ForEach(MapStyleOption.pickable) { option in
+                        styleChip(option)
+                    }
+                }
+            }
+        }
+    }
+
+    private func styleChip(_ option: MapStyleOption) -> some View {
+        let locked = option.requiresPro && !paywall.isEntitled(to: .mapStyles)
+        let selected = option == mapStyle
+        return Button {
+            if locked { paywall.present(for: .mapStyles); return }
+            withAnimation(.easeOut(duration: 0.15)) { mapStyle = option }
+            Haptics.selection()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: locked ? "lock.fill" : option.systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(option.label).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+            }
+            .foregroundStyle(selected ? Theme.background : (locked ? Theme.inkTertiary : Theme.ink))
+            .padding(.horizontal, Theme.Space.md).padding(.vertical, 7)
+            .background(Capsule().fill(selected ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background)))
+            .overlay(Capsule().stroke(selected ? .clear : Theme.hairline))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(locked ? "\(option.label), Pro style" : option.label)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     /// Perceived effort (RPE 1–10) — a one-tap meter. Optional; tap the active bar to clear it.
@@ -181,8 +242,17 @@ struct CardioSaveView: View {
                 $0.type = sportType
                 $0.perceivedEffort = effort
                 $0.privacy = visibility
+                $0.gps?.mapStyleRaw = mapStyle.rawValue
                 // Recompute on the fresh context so the estimate sees the complete GPS detail.
                 $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
+            }
+            // The saved snapshot must match the chosen basemap (grid tile + History thumb). Re-render
+            // off the save path when the style changed (or the finish-time render failed); the tile
+            // shows the previous image until the new one lands, and the healer covers a failure.
+            if mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil {
+                let style = mapStyle
+                let readerContext = reader.context
+                Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
             }
             // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
             // only). Plan mutations go through the main context; only scalars are read off `workout`.

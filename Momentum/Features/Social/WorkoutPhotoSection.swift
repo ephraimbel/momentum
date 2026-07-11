@@ -12,9 +12,13 @@ struct WorkoutPhotoSection: View {
     var canEdit: Bool = false
     @Environment(\.modelContext) private var context
     @State private var picked: [PhotosPickerItem] = []
+    @State private var choosingSource = false
+    @State private var showingLibrary = false
+    @State private var showingCamera = false
 
     private var photosData: [Data] { workout.orderedPhotosData }
     private var remaining: Int { Workout.photoCap - photosData.count }
+    private static var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
 
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
@@ -30,12 +34,29 @@ struct WorkoutPhotoSection: View {
             }
         }
         .onChange(of: picked) { _, items in Task { await load(items) } }
+        // Take a photo right there or pull from the library (user ask 2026-07-11) — the dialog is
+        // skipped when there's no camera (Simulator, iPad without one) and the library opens direct.
+        .confirmationDialog("Add photos", isPresented: $choosingSource, titleVisibility: .hidden) {
+            Button("Take photo") { showingCamera = true }
+            Button("Choose from library") { showingLibrary = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(isPresented: $showingLibrary, selection: $picked,
+                      maxSelectionCount: max(remaining, 0), matching: .images)
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraPicker { image in append(image) }
+                .ignoresSafeArea()
+        }
+    }
+
+    private func addPhotos() {
+        if Self.cameraAvailable { choosingSource = true } else { showingLibrary = true }
     }
 
     // MARK: Add (empty state)
 
     private var addButton: some View {
-        PhotosPicker(selection: $picked, maxSelectionCount: Workout.photoCap, matching: .images) {
+        Button { addPhotos() } label: {
             HStack(spacing: Theme.Space.sm) {
                 Image(systemName: "camera").font(.system(size: 16, weight: .semibold))
                 Text("Add photos").font(.rounded(Theme.FontSize.body, weight: .semibold))
@@ -45,6 +66,7 @@ struct WorkoutPhotoSection: View {
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [5])))
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Manage (thumbnails + add tile)
@@ -56,13 +78,14 @@ struct WorkoutPhotoSection: View {
                     thumbnail(data, index: index)
                 }
                 if remaining > 0 {
-                    PhotosPicker(selection: $picked, maxSelectionCount: remaining, matching: .images) {
+                    Button { addPhotos() } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
                             .frame(width: 56, height: 56)
                             .background(RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface))
                             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [5])))
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Add photo")
                 }
             }
@@ -88,6 +111,16 @@ struct WorkoutPhotoSection: View {
             .padding(2)
             .accessibilityLabel("Remove photo \(index + 1)")
         }
+    }
+
+    /// A camera capture lands exactly like a picked photo: downscaled, appended in order, saved.
+    private func append(_ image: UIImage) {
+        guard remaining > 0, let raw = image.jpegData(compressionQuality: 0.9) else { return }
+        migrateLegacyIfNeeded()
+        let order = (workout.photos.map(\.order).max() ?? -1) + 1
+        workout.photos.append(WorkoutPhoto(order: order, data: Self.downscaled(raw)))
+        try? context.save()
+        Haptics.success()
     }
 
     // MARK: Mutations (all edits run on the multi-photo set — legacy folds in first)
@@ -139,5 +172,35 @@ struct WorkoutPhotoSection: View {
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         return resized.jpegData(compressionQuality: quality) ?? data
+    }
+}
+
+/// The system camera, presented full screen — a capture lands through `onCapture` exactly like a
+/// library pick. Guarded by `isSourceTypeAvailable(.camera)` at the call site (Simulator has none).
+private struct CameraPicker: UIViewControllerRepresentable {
+    var onCapture: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPicker
+        init(_ parent: CameraPicker) { self.parent = parent }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage { parent.onCapture(image) }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
     }
 }

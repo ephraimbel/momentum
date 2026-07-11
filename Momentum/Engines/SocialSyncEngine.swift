@@ -172,7 +172,7 @@ enum SocialSyncEngine {
             prBadge: nil,
             muscles: FeedAssembler.muscleMap(w).map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) },
             route: route,
-            mapStyle: MapStyleOption.standard.rawValue,
+            mapStyle: (w.gps?.mapStyle ?? .standard).rawValue,
             aiRead: w.aiSummary)
     }
 }

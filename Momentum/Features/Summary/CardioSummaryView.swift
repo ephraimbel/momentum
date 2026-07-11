@@ -10,6 +10,9 @@ struct CardioSummaryContent: View {
     var showsHeader: Bool = true
     /// Allow attaching/replacing the workout photo (post-workout only; read-only in history).
     var canEditPhoto: Bool = false
+    /// Live style override from the save editor's map-style row — the hero map previews the choice
+    /// before it's saved. nil (history/read-only) renders the workout's own persisted style.
+    var mapStyleOverride: MapStyleOption? = nil
 
     @Environment(\.modelContext) private var context
     @State private var hits: [CardioAchievements.Hit] = []
@@ -76,16 +79,17 @@ struct CardioSummaryContent: View {
     @ViewBuilder
     private func routeMap(_ gps: GPSDetail) -> some View {
         let coords = gps.routeCoordinates(type: workout.type)
+        let style = mapStyleOverride ?? gps.mapStyle
         if coords.count > 1 {
-            RouteMapView(coordinates: RouteSmoothing.smooth(coords))
+            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style)
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
                 // When the map-matched route lands post-finish (nil→present), the coordinates change
                 // underneath RouteMapView. Its route line is added imperatively once on style-load (a
                 // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
-                // identity on match-presence forces one clean remount, re-running style-load with the
-                // snapped route.
-                .id(gps.matchedRouteData != nil)
+                // identity on match-presence (and the previewed style) forces one clean remount,
+                // re-running style-load with the snapped route.
+                .id("\(gps.matchedRouteData != nil)-\(style.rawValue)")
         }
     }
 

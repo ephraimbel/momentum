@@ -108,7 +108,8 @@ enum FeedAssembler {
             prBadge: nil,
             muscles: muscles,
             routeLatLon: route,
-            mapStyle: .standard,
+            // The athlete's own posts render the map THEY saved the run with (save-screen choice).
+            mapStyle: w.gps?.mapStyle ?? .standard,
             photosData: w.orderedPhotosData,
             avatarData: profile?.avatarData,
             aiRead: w.aiSummary)
