@@ -71,13 +71,14 @@ struct WorkoutTileMedia: View {
 
     // MARK: Renderers
 
-    /// The saved route snapshot, shown WHOLE. Snapshots are landscape (640×360) and tiles are
-    /// portrait (3:4) — `scaledToFill` cropped most of the route away, leaving a meaningless sliver
-    /// of line. Fit shows the full route exactly as it was framed when the run was saved; the same
-    /// image, blurred, fills the letterbox so the tile still reads edge-to-edge.
+    /// The saved route snapshot. New snapshots render PORTRAIT at the tile's own 3:4
+    /// (`RouteSnapshotter.workoutTileSize`) with the route inset to the center square — sharp,
+    /// full-bleed, whole route visible. Legacy landscape snapshots (pre-portrait) keep the
+    /// fit-over-blur letterbox until the healer re-renders them; a straight fill would crop the
+    /// route to a meaningless sliver.
     @ViewBuilder
     private func snapshotMedia(_ ui: UIImage) -> some View {
-        if style == .immersive {
+        if style == .immersive || ui.size.height >= ui.size.width {
             Image(uiImage: ui).resizable().scaledToFill()
         } else {
             ZStack {

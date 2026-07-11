@@ -111,10 +111,15 @@ enum DemoSeed {
                 let coords = gps.samples.sorted { $0.t < $1.t }
                     .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                 // Same basemap the app renders everywhere (the persisted app-wide style) — seeded
-                // tiles must look like real saves, not a mismatched light map.
+                // tiles must look like real saves, not a mismatched light map. Portrait tile-native
+                // size + the style stamped, exactly like a real save.
+                let seedStyle = MapStyleOption.persisted
                 if let data = await RouteSnapshotter.snapshot(
-                    coordinates: coords, styleURI: MapStyleOption.persisted.styleURI(for: .light)) {
+                    coordinates: coords, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: seedStyle.styleURI(for: .light),
+                    insets: RouteSnapshotter.workoutTileInsets) {
                     gps.mapSnapshotData = data
+                    gps.mapStyleRaw = seedStyle.rawValue
                     try? context.save()
                 }
             }

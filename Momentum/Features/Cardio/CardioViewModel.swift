@@ -402,10 +402,13 @@ final class CardioViewModel {
         let coords = coordinates
         if coords.count > 1 {
             let store = self.store
-            let snapshotStyle = MapStyleOption.persisted.styleURI(for: .light)
+            let snapshotStyle = MapStyleOption.persisted
             Task.detached(priority: .userInitiated) {
-                if let data = await RouteSnapshotter.snapshot(coordinates: coords, styleURI: snapshotStyle) {
-                    await store.attachSnapshot(data)
+                if let data = await RouteSnapshotter.snapshot(
+                    coordinates: coords, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: snapshotStyle.styleURI(for: .light),
+                    insets: RouteSnapshotter.workoutTileInsets) {
+                    await store.attachSnapshot(data, styleRaw: snapshotStyle.rawValue)
                 }
             }
         }
@@ -431,10 +434,12 @@ final class CardioViewModel {
                 let pairs = match.coordinates.map { [$0.latitude, $0.longitude] }
                 guard let routeData = try? JSONEncoder().encode(pairs) else { return }
                 await store.attachMatchedRoute(routeData)
-                let matchedStyle = await MapStyleOption.persisted.styleURI(for: .light)
-                if let snapshot = await RouteSnapshotter.snapshot(coordinates: match.coordinates,
-                                                                  styleURI: matchedStyle) {
-                    await store.attachSnapshot(snapshot)
+                let matchedStyle = await MapStyleOption.persisted
+                if let snapshot = await RouteSnapshotter.snapshot(
+                    coordinates: match.coordinates, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: matchedStyle.styleURI(for: .light),
+                    insets: RouteSnapshotter.workoutTileInsets) {
+                    await store.attachSnapshot(snapshot, styleRaw: matchedStyle.rawValue)
                 }
             }
         }

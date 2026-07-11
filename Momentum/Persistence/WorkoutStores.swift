@@ -64,10 +64,14 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         ActiveWorkoutMarker.clear()
     }
 
-    /// Attach the rendered route snapshot (PRD §8.5) to the finished workout's GPS detail.
-    func attachSnapshot(_ data: Data) {
+    /// Attach the rendered route snapshot (PRD §8.5) to the finished workout's GPS detail, stamping
+    /// the style it was rendered with — the workout's map identity is fixed at render time, so the
+    /// live surfaces (detail, immersive pager) always match the tile instead of drifting with the
+    /// athlete's later app-wide style changes.
+    func attachSnapshot(_ data: Data, styleRaw: String? = nil) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         detail.mapSnapshotData = data
+        if let styleRaw { detail.mapStyleRaw = styleRaw }
         try? modelContext.save()
     }
 

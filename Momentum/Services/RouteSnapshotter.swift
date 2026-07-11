@@ -9,9 +9,17 @@ import SwiftUI
 /// Today's "done today" and the History feed.
 @MainActor
 enum RouteSnapshotter {
+    /// The canonical size for a WORKOUT's persisted snapshot: portrait 3:4, native to the profile
+    /// grid tile (landscape images had to letterbox there, which read as a cut-off route).
+    static let workoutTileSize = CGSize(width: 660, height: 880)
+    /// Insets for workout snapshots: the route stays inside the CENTER SQUARE, so the 52×52
+    /// History thumbnail (a square crop of this portrait image) never clips it.
+    static let workoutTileInsets = UIEdgeInsets(top: 130, left: 34, bottom: 130, right: 34)
+
     static func snapshot(coordinates: [CLLocationCoordinate2D],
                          size: CGSize = CGSize(width: 640, height: 360),
-                         styleURI: StyleURI = .light) async -> Data? {
+                         styleURI: StyleURI = .light,
+                         insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26)) async -> Data? {
         guard coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
@@ -26,7 +34,7 @@ enum RouteSnapshotter {
                                                                   showsLogo: false, showsAttribution: false))
         snapshotter.styleURI = styleURI
         snapshotter.setCamera(to: snapshotter.camera(
-            for: drawn, padding: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26), bearing: 0, pitch: 0))
+            for: drawn, padding: insets, bearing: 0, pitch: 0))
         let gradientStart = UIColor(Theme.route), gradientEnd = UIColor(Theme.iridescent[3])
 
         // Wait for the style to load, then snapshot and stroke the route over it in the overlay

@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// Renders and persists the route map snapshot for saved workouts that are missing one.
 ///
@@ -19,7 +20,8 @@ enum WorkoutSnapshotHealer {
     private static var active = 0
 
     /// Render + persist the snapshot for one workout, if it's missing and a route exists.
-    /// Renders with the workout's own map style (save-screen choice, else the app-wide style).
+    /// Renders with the workout's own map style (save-screen choice, else the app-wide style) and
+    /// STAMPS that style so the workout's map identity never drifts with later app-style changes.
     static func healIfNeeded(_ workout: Workout, context: ModelContext) async {
         guard let gps = workout.gps, gps.mapSnapshotData == nil else { return }
         let coords = gps.routeCoordinates(type: workout.type)
@@ -30,11 +32,15 @@ enum WorkoutSnapshotHealer {
         defer { inFlight.remove(id) }
         while active >= maxConcurrent { try? await Task.sleep(for: .milliseconds(150)) }
         active += 1
+        let style = gps.mapStyle
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
-                                                   styleURI: gps.mapStyle.styleURI(for: .light))
+                                                   size: RouteSnapshotter.workoutTileSize,
+                                                   styleURI: style.styleURI(for: .light),
+                                                   insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
         guard let data else { failed.insert(id); return }
         gps.mapSnapshotData = data
+        gps.mapStyleRaw = style.rawValue
         try? context.save()
     }
 
@@ -45,10 +51,34 @@ enum WorkoutSnapshotHealer {
         var descriptor = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
         descriptor.fetchLimit = 200
         guard let recent = try? context.fetch(descriptor) else { return }
+        // Legacy stamp: workouts saved before per-run styles have no recorded style, so their live
+        // maps (pager, detail) drifted to whatever the athlete's CURRENT app style is — mismatching
+        // their own tile. Pin them once to the present app style (the style their snapshot was
+        // rendered against); from here on, changing the Today map never re-skins old runs.
+        let appStyle = MapStyleOption.persisted.rawValue
+        var stamped = false
+        for workout in recent where workout.type.isGPS {
+            if let gps = workout.gps, gps.mapStyleRaw == nil {
+                gps.mapStyleRaw = appStyle
+                stamped = true
+            }
+        }
+        if stamped { try? context.save() }
         let stale = recent.filter { $0.type.isGPS && $0.gps != nil && $0.gps?.mapSnapshotData == nil }
             .prefix(limit)
         for workout in stale {
             await healIfNeeded(workout, context: context)
+        }
+        // Portrait upgrade: legacy landscape snapshots letterbox in the grid — re-render the most
+        // recent ones tile-native (in the workout's stamped style) so the visible grid sharpens
+        // without any user action.
+        let legacy = recent.filter { workout in
+            guard workout.type.isGPS, let data = workout.gps?.mapSnapshotData,
+                  let ui = UIImage(data: data) else { return false }
+            return ui.size.width > ui.size.height
+        }.prefix(limit)
+        for workout in legacy {
+            await rerender(workout, style: workout.gps?.mapStyle ?? .persisted, context: context)
         }
     }
 
@@ -61,10 +91,13 @@ enum WorkoutSnapshotHealer {
         while active >= maxConcurrent { try? await Task.sleep(for: .milliseconds(150)) }
         active += 1
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
-                                                   styleURI: style.styleURI(for: .light))
+                                                   size: RouteSnapshotter.workoutTileSize,
+                                                   styleURI: style.styleURI(for: .light),
+                                                   insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
         guard let data else { return }
         gps.mapSnapshotData = data
+        gps.mapStyleRaw = style.rawValue
         try? context.save()
     }
 }
