@@ -63,21 +63,50 @@ final class WebsiteShotsUITests: XCTestCase {
         dump(app, "hero-route")
     }
 
-    /// A live guided run with the simulated GPS route + simulated HR (zone chip, bpm, step banner).
+    /// A live run with the simulated GPS route drawing + simulated HR (live pace, time, HR zone).
+    /// A free run (--live-run) tracks regardless of the permission dialogs, unlike a structured
+    /// run which stalls in "acquiring" behind them — so this is the robust capture.
     func testDumpLiveRun() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-route", "--ui-test-structured-run", "--demo-hr"]
+        app.launchArguments = ["--seed-demo", "--live-run", "--ui-test-route", "--demo-hr"]
         app.launch()
 
-        let pause = app.buttons["Pause"]
-        let startNow = app.buttons["Start now"]
-        let deadline = Date().addingTimeInterval(25)
-        while !pause.exists && Date() < deadline {
-            if startNow.exists && startNow.isHittable { startNow.tap() }
-            usleep(300_000)
+        // Dismiss both photobombing springboard dialogs (Location, then Motion & Fitness) as they
+        // appear — the run tracks underneath them regardless.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allow = springboard.buttons["Allow"]
+        let allowLocation = springboard.buttons["Allow While Using App"]
+        for _ in 0..<20 {
+            if allowLocation.exists && allowLocation.isHittable { allowLocation.tap() }
+            if allow.exists && allow.isHittable { allow.tap() }
+            usleep(400_000)
         }
-        XCTAssertTrue(pause.waitForExistence(timeout: 5), "Never reached tracking.")
-        sleep(20)   // let the trace draw and HR ramp
+        sleep(16)   // let the route trace draw and HR ramp
+        // Final sweep in case a dialog re-armed, then shoot.
+        if allowLocation.exists && allowLocation.isHittable { allowLocation.tap() }
+        if allow.exists && allow.isHittable { allow.tap() }
+        sleep(2)
         dump(app, "live-run")
+    }
+
+    /// The AI coach chat — the "your week in review" read plus a seeded plan-change proposal card.
+    func testDumpCoach() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--coach-card"]
+        app.launch()
+
+        // Motion & Fitness permission (springboard) can pop over the chat — dismiss it.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 8) { allow.tap() }
+        sleep(2)
+        // The composer auto-focuses → keyboard up, covering half the thread. The transcript uses
+        // .scrollDismissesKeyboard(.interactively), so a downward drag pushes the keyboard away;
+        // a gentle one keeps the "Ease this week" proposal card in frame.
+        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+        let low = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+        top.press(forDuration: 0.1, thenDragTo: low)
+        sleep(2)
+        dump(app, "coach")
     }
 }
