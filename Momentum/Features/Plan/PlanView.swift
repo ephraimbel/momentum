@@ -19,6 +19,7 @@ struct PlanView: View {
     @State private var pendingStart: PlannedSession?     // start after the detail sheet dismisses
     @State private var locator = LocationService()
     @State private var showSettings = false
+    @State private var showNewPlan = false
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
@@ -83,11 +84,20 @@ struct PlanView: View {
         .sheet(isPresented: $showSettings) {
             if let p = profiles.first { PlanSettingsSheet(profile: p) { showSettings = false } }
         }
+        // "Start a new plan" — the same complete form, framed as a beginning: blank name, always
+        // rebuilds, honest about replacing the current block (completed work + calibration carry).
+        .sheet(isPresented: $showNewPlan) {
+            if let p = profiles.first { PlanSettingsSheet(profile: p, mode: .create) { showNewPlan = false } }
+        }
         .onAppear {
             #if DEBUG
             // --plan-settings: open the plan-settings sheet (screenshot verification; sim can't tap).
             if ProcessInfo.processInfo.arguments.contains("--plan-settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettings = true }
+            }
+            // --plan-new: open the start-a-new-plan flow directly.
+            if ProcessInfo.processInfo.arguments.contains("--plan-new") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showNewPlan = true }
             }
             // --plan-locked-week: land on next week (the Pro-locked state) for lock-pill verification.
             if ProcessInfo.processInfo.arguments.contains("--plan-locked-week"),
@@ -221,11 +231,20 @@ struct PlanView: View {
                     .lineLimit(1).minimumScaleFactor(0.55)
                 Spacer()
                 if plan != nil {
-                    Button { showSettings = true } label: {
+                    // Two distinct intents, named plainly: tune what exists, or begin again.
+                    // Goals change — starting over is a first-class move, never buried.
+                    Menu {
+                        Button { showSettings = true } label: {
+                            Label("Adjust this plan", systemImage: "slider.horizontal.3")
+                        }
+                        Button { showNewPlan = true } label: {
+                            Label("Start a new plan", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    } label: {
                         Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
                             .frame(width: 40, height: 40).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).accessibilityLabel("Plan settings")
+                    .accessibilityLabel("Plan options")
                 }
                 addButton
             }

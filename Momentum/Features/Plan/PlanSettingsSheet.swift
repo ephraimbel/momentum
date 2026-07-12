@@ -7,7 +7,13 @@ import SwiftData
 /// read live before committing. Edits are buffered and only applied on save, which regenerates the
 /// upcoming plan (calibrated pace + completed work are kept). Cancel changes nothing.
 struct PlanSettingsSheet: View {
+    /// Two intents, one complete form. `.adjust` tunes the current plan (buffered, rename-only
+    /// never rebuilds); `.create` is a fresh start — blank name, always rebuilds, honest about
+    /// replacing the current block. Goals change; beginning again is a first-class flow.
+    enum Mode { case adjust, create }
+
     let profile: UserProfile
+    var mode: Mode = .adjust
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -27,10 +33,12 @@ struct PlanSettingsSheet: View {
     @State private var equipment: Equipment
     @State private var showRacePicker = false
 
-    init(profile: UserProfile, onDone: @escaping () -> Void) {
+    init(profile: UserProfile, mode: Mode = .adjust, onDone: @escaping () -> Void) {
         self.profile = profile
+        self.mode = mode
         self.onDone = onDone
-        _name = State(initialValue: profile.plan?.name ?? "")
+        // A new plan starts with a blank name (its own occasion); adjusting keeps the current one.
+        _name = State(initialValue: mode == .create ? "" : (profile.plan?.name ?? ""))
         _goal = State(initialValue: profile.goal)
         _raceDistance = State(initialValue: profile.raceDistanceM.map(RaceDistance.nearest(toMeters:)))
         _hasRaceDate = State(initialValue: profile.raceDate != nil)
@@ -90,9 +98,7 @@ struct PlanSettingsSheet: View {
                     daysSection
                     sessionSection
                     if lifting { equipmentSection }
-                    Text(structural
-                         ? "Saving rebuilds your upcoming plan from today. Completed workouts and your calibrated pace are kept."
-                         : "Nothing structural changed — saving keeps your current plan exactly as it is.")
+                    Text(footerNote)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -100,12 +106,12 @@ struct PlanSettingsSheet: View {
                 .padding(.bottom, Theme.Space.xxl)
             }
             .background(Theme.background)
-            .navigationTitle("Plan settings")
+            .navigationTitle(mode == .create ? "New plan" : "Plan settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(structural ? "Rebuild plan" : "Save") { apply() }.fontWeight(.semibold)
+                    Button(confirmTitle) { apply() }.fontWeight(.semibold)
                 }
             }
             // Hosted at stack level so the catalog can open from ANY state — picking a race is
@@ -344,10 +350,25 @@ struct PlanSettingsSheet: View {
         }
     }
 
+    private var confirmTitle: String {
+        mode == .create ? "Create plan" : (structural ? "Rebuild plan" : "Save")
+    }
+
+    private var footerNote: String {
+        switch mode {
+        case .create:
+            return "Creating a new plan replaces your current block from today. Completed workouts, records, and your calibrated pace all carry over."
+        case .adjust:
+            return structural
+                ? "Saving rebuilds your upcoming plan from today. Completed workouts and your calibrated pace are kept."
+                : "Nothing structural changed — saving keeps your current plan exactly as it is."
+        }
+    }
+
     private func apply() {
         // Rename-only edits must NOT rebuild — regenerating the upcoming weeks is for structural
-        // changes. Only rebuild when something the generator actually reads has changed.
-        let rebuild = structural
+        // changes. A NEW plan always rebuilds: that's the point of beginning again.
+        let rebuild = structural || mode == .create
         profile.goal = goal
         profile.daysPerWeek = days
         profile.sessionMinutes = minutes
