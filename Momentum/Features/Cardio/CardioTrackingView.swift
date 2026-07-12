@@ -174,7 +174,6 @@ struct CardioTrackingView: View {
                 BrandPuck.apply(to: proxy)
                 puckFeed.attach(to: proxy)
                 syncRouteLayers(proxy.map, delta: nil)   // style reload wiped sources → full rebuild
-                motion.map = proxy.map   // puckSink is wired in `.onAppear` (before any fix lands)
             }
             // Incremental: feed only the new points to the smoother; append the newly-frozen chunks
             // and replace the short live tail. No full re-smooth, no full re-upload — per-fix work
@@ -182,7 +181,6 @@ struct CardioTrackingView: View {
             .onChange(of: routeCoords.count) {
                 let delta = smoother.ingest(routeCoords)
                 syncRouteLayers(proxy.map, delta: delta)
-                motion.tailBase = smoother.tail
             }
             // The dot follows the engine's filtered position (raw while acquiring so "you" shows
             // instantly; Kalman tip once recording), interpolated to display cadence so it glides.
