@@ -12,6 +12,7 @@ struct TodayView: View {
     @Environment(Services.self) private var services
     @Environment(CoachPresenter.self) private var coach
     @Query private var profiles: [UserProfile]
+    @Query private var chatMessages: [ChatMessage]   // coach-button badge (threads stay small)
     @Query private var workouts: [Workout]
     @Query private var appNotifications: [AppNotification]
     @Query private var checkins: [DailyCheckin]
@@ -66,8 +67,23 @@ struct TodayView: View {
     @State private var mapShowsGlobe = ProcessInfo.processInfo.arguments.contains("--world")
     @State private var liveCount = 0
     @State private var selectedAthlete: CommunityAthlete?
+    // DEBUG marketing capture (--marketing-hero, pair with --seed-demo): trace a real seeded run's
+    // route on the Today map + overview it, so the website header shows a route AND today's plan
+    // card in one authentic app shot.
+    @State private var marketingHero = ProcessInfo.processInfo.arguments.contains("--marketing-hero")
 
     enum GoalKind { case open, distance }
+
+    /// A real street-following SF loop for the marketing hero (reads like an actual run, not a
+    /// synthetic oval).
+    private var heroRouteCoordinates: [CLLocationCoordinate2D] {
+        guard marketingHero else { return [] }
+        #if DEBUG
+        return (CommunityRoutes.heroLoop()?.pts ?? []).map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) }
+        #else
+        return []
+        #endif
+    }
 
     private let distanceUnit: DistanceUnit = .auto
     private var plan: TrainingPlan? { profiles.first?.plan }
@@ -87,7 +103,7 @@ struct TodayView: View {
             // separate screen. Once the map has been shown it stays MOUNTED (hidden behind the
             // strength home) — tearing the engine down on a strength switch made returning to a
             // cardio sport re-download the style and repopulate tiles: seconds of blank map.
-            let mapActive = isCardio || worldMode || loopMode
+            let mapActive = isCardio || worldMode || loopMode || marketingHero
             if mapActive || mapWasShown {
                 mapLayer.opacity(mapActive ? 1 : 0).allowsHitTesting(mapActive)
             }
@@ -107,7 +123,21 @@ struct TodayView: View {
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .onAppear {
             bootstrapIfNeeded()
-            if isCardio || worldMode || loopMode { mapWasShown = true }
+            // Refresh the Home Screen widget's snapshot whenever Today surfaces — the write is
+            // change-guarded, so an identical snapshot never wakes the widget.
+            WidgetBridge.publish(profile: profiles.first, workouts: workouts)
+            if isCardio || worldMode || loopMode || marketingHero { mapWasShown = true }
+            // Marketing hero: frame the traced route (deferred so the style/tiles are loaded).
+            if marketingHero {
+                let coords = heroRouteCoordinates
+                if coords.count > 1 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        viewport = .overview(geometry: LineString(coords),
+                                             geometryPadding: EdgeInsets(top: 90, leading: 60, bottom: 320, trailing: 60))
+                    }
+                }
+                return
+            }
             // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
             // lands we switch to following the puck. We only *follow the puck* up front when location is
             // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
@@ -241,6 +271,9 @@ struct TodayView: View {
         AppNotification.post(kind: .system, title: "Welcome to momentum",
                              body: "Your plan is set. Tap Start whenever you're ready to move.",
                              in: context, dedupeToken: "welcome", daily: false)
+        // The proactive coach: at most one seeded thought in the chat per pass (earned load bump,
+        // Monday recap), badged on the coach button and mirrored to the bell. Deduped inside.
+        CoachProactive.sweep(profile: profiles.first, workouts: workouts, in: context)
         // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
         // carb-load → kit → race-day fueling), each posted once.
         if let profile = profiles.first, let raceDate = profile.raceDate,
@@ -323,8 +356,18 @@ struct TodayView: View {
             session.intervals = variety ? "8×45sec hills" : "6×400m @ 5K pace"
             session.date = Date()
             context.insert(session)   // inserted so post-run crediting behaves like a real plan session
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            // 2 s, not 0.4: a cover presented inside the first-appear churn (map bind, bootstrap
+            // sweeps, query invalidations) is silently dropped by SwiftUI — by 2 s Today has settled.
+            // Only these launch deep-links race that window; a user's tap always lands after it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 launch = .cardio(type: .run, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+            }
+        }
+        // --live-run: straight into a free run (pair with --ui-test-route for a synthetic GPS feed) —
+        // verifies the live screen and the lock-screen Live Activity without UI choreography.
+        if ProcessInfo.processInfo.arguments.contains("--live-run") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                launch = .cardio(type: .run, goalMeters: nil, planned: nil, guideRoute: [])
             }
         }
         #endif
@@ -436,6 +479,16 @@ struct TodayView: View {
                         .circleStrokeWidth(1)
                         .onTapGesture { selectedAthlete = athlete }
                 }
+            }
+            // Marketing hero (--marketing-hero): a real seeded run traced on the map — white casing
+            // under the brand-purple line, exactly the app's route styling — for the website header.
+            if marketingHero, heroRouteCoordinates.count > 1 {
+                PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
+                    .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.85)))
+                    .lineWidth(11).lineJoin(.round)
+                PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
+                    .lineColor(StyleColor(UIColor(Theme.route)))
+                    .lineWidth(6).lineJoin(.round)
             }
             // Inline loop suggester — draw the candidates right on the Today map. The unselected loops
             // are a faint hairline; the selected one wears the brand purple (matching the live puck),
@@ -601,11 +654,31 @@ struct TodayView: View {
     }
 
     /// The coach, one tap from home — same glass circle language as the bell. Free to talk; plan
-    /// changes gate on Pro at Apply time, inside the chat.
+    /// changes gate on Pro at Apply time, inside the chat. A quiet dot marks a seeded thought
+    /// (proactive proposal / weekly recap) the athlete hasn't seen yet.
     private var coachButton: some View {
         BrandMark(size: 26)
             .frame(width: 44, height: 44).momentumGlass(in: Circle())
-            .mapSafeTap("Ask your coach") { Haptics.light(); coach.open() }
+            .overlay(alignment: .topTrailing) {
+                if hasUnseenCoachNews {
+                    Circle().fill(Theme.ink)
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                        .offset(x: 1, y: -1)
+                }
+            }
+            // The label stays STABLE ("Ask your coach") whatever the badge shows — a changing
+            // label breaks element identity for assistive tech and UI tests alike; the unseen
+            // news rides on the accessibility VALUE instead.
+            .mapSafeTap("Ask your coach") {
+                Haptics.light(); coach.open()
+            }
+            .accessibilityValue(hasUnseenCoachNews ? "New message waiting" : "")
+    }
+
+    /// A coach message landed after the chat was last on screen (proactive seeds arrive closed).
+    private var hasUnseenCoachNews: Bool {
+        chatMessages.contains { $0.role == .coach && $0.createdAt > coach.lastSeenAt }
     }
 
     private var unreadCount: Int { appNotifications.filter { !$0.read }.count }

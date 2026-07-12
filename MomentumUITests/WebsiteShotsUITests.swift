@@ -4,7 +4,7 @@ import XCTest
 /// captures). Walks the seeded app and writes PNGs of the surfaces the site showcases.
 final class WebsiteShotsUITests: XCTestCase {
 
-    private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/dab5c7b2-3f47-4a9d-a69d-e9360d163b0c/scratchpad/site"
+    private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/9e5489bb-10b4-4631-a8cd-f5b4f9789f6e/scratchpad/site"
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
@@ -49,6 +49,18 @@ final class WebsiteShotsUITests: XCTestCase {
         XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 10))
         sleep(1)
         dump(app, "coach")
+    }
+
+    /// The website HEADER shot: the Today map with a real seeded run traced on it (route) AND
+    /// today's plan card — the Runna-style "route + plan" hero, in one authentic app screen.
+    func testDumpHero() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--marketing-hero"]
+        app.launch()
+        let discard = app.buttons["Discard"]
+        if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
+        sleep(9)   // style load + tiles + route draw + overview camera settle
+        dump(app, "hero-route")
     }
 
     /// A live guided run with the simulated GPS route + simulated HR (zone chip, bpm, step banner).

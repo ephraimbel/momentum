@@ -44,6 +44,14 @@ enum CommunityRoutes {
         return pool.min(by: { abs($0.km - target) < abs($1.km - target) })
     }
 
+    #if DEBUG
+    /// The website marketing hero's route — a real ~10km San Francisco street loop (coherent with
+    /// the app's other SF captures). DEBUG-only; drives `--marketing-hero`.
+    static func heroLoop() -> Loop? {
+        loop(city: "San Francisco, CA", discipline: .run, nearestKm: 10)
+    }
+    #endif
+
     private static func isRide(_ type: WorkoutType) -> Bool {
         switch type {
         case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: true
