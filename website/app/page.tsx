@@ -625,8 +625,8 @@ function Footer() {
             <div className="footer-col">
               <a href="#principles">Principles</a>
               <a href="#faq">FAQ</a>
-              <a href="mailto:hello@momentum.run">Contact</a>
-              <a href="mailto:press@momentum.run">Press</a>
+              <a href="mailto:hello@momentumco.app">Contact</a>
+              <a href="mailto:press@momentumco.app">Press</a>
             </div>
           </div>
           <div>
@@ -634,7 +634,7 @@ function Footer() {
             <div className="footer-col">
               <a href="/privacy">Privacy Policy</a>
               <a href="/terms">Terms of Service</a>
-              <a href="mailto:support@momentum.run">Support</a>
+              <a href="mailto:support@momentumco.app">Support</a>
             </div>
           </div>
         </div>
