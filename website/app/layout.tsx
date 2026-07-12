@@ -41,6 +41,21 @@ export const metadata: Metadata = {
     type: "website",
     url: "https://momentumco.app",
     siteName: "momentum",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "momentum — the running coach that adapts to you",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "momentum — keep moving",
+    description:
+      "The adaptive running coach: deterministic training science, live guidance, and a plan that bends around your life.",
+    images: ["/og.png"],
   },
 };
 
