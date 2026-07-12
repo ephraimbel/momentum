@@ -26,6 +26,10 @@ const inter = localFont({
 });
 
 export const metadata: Metadata = {
+  // The canonical home (momentumco.app, live 2026-07-12): absolute URLs for OG/Twitter cards
+  // and canonicals resolve against this, not the per-deployment *.vercel.app hostname.
+  metadataBase: new URL("https://momentumco.app"),
+  alternates: { canonical: "/" },
   title: "momentum — the running coach that adapts to you",
   description:
     "Adaptive training plans, live guided runs, and honest coaching intelligence. From your first 5K to your first ultra. keep moving.",
@@ -35,6 +39,8 @@ export const metadata: Metadata = {
     description:
       "The adaptive running coach: deterministic training science, live guidance, and a plan that bends around your life.",
     type: "website",
+    url: "https://momentumco.app",
+    siteName: "momentum",
   },
 };
 
