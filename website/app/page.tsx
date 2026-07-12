@@ -16,7 +16,7 @@ export default function Home() {
         <Predictor />
         <Goals />
         <Manifesto />
-        <Testimonials />
+        <Principles />
         <Pricing />
         <FAQ />
         <FinalCTA />
@@ -489,53 +489,40 @@ function Manifesto() {
   );
 }
 
-function Testimonials() {
-  const quotes = [
+function Principles() {
+  // Honest by design: no fabricated testimonials. These are the commitments the product
+  // actually holds itself to — each one is a real, shipped behavior, not social proof.
+  const cards = [
     {
-      q: "It moved my long run when work blew up my Tuesday — no guilt, no red X. I've stuck with this plan longer than anything I've tried.",
-      name: "Sarah K.",
-      role: "Training for her first marathon",
-      initials: "SK",
+      title: "No red X, ever",
+      body: "Miss a session and the plan moves with a one-line reason — it reschedules, it never shames. There is no “failed” state in momentum, by design.",
     },
     {
-      q: "The pace review after intervals feels like a coach actually watched the workout. It told me my reps ran hot and asked before changing anything.",
-      name: "Marcus T.",
-      role: "5K 19:42 · beta athlete",
-      initials: "MT",
+      title: "Real math, not vibes",
+      body: "Every pace, load, and zone comes from a deterministic, tested engine — VDOT paces, training-load guardrails, personalized zones. The AI writes the explanation; it never invents the numbers.",
     },
     {
-      q: "I wore my strap and it just showed up — live zones on the run, the full chart after. No pairing circus, no exports.",
-      name: "Priya R.",
-      role: "Trail runner · beta athlete",
-      initials: "PR",
+      title: "Your training stays yours",
+      body: "Offline-first, owner-only, opt-in. No feed algorithm, no kudos games, nothing sold. Honest presence when you want it — never a public ledger you can’t leave.",
     },
   ];
   return (
-    <section className="section" id="athletes" style={{ paddingTop: 0 }}>
+    <section className="section" id="principles" style={{ paddingTop: 0 }}>
       <div className="wrap">
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
-            <p className="eyebrow">From the beta</p>
-            <h2 className="display">Runners are keeping their momentum.</h2>
+            <p className="eyebrow">Why it’s built this way</p>
+            <h2 className="display">No shame. Real math. Your data.</h2>
           </div>
         </Reveal>
         <div className="quotes">
-          {quotes.map((t, i) => (
-            <Reveal key={t.name} delay={i * 90}>
+          {cards.map((c, i) => (
+            <Reveal key={c.title} delay={i * 90}>
               <figure className="quote">
-                <div className="stars" aria-label="5 out of 5 stars">
-                  ★★★★★
+                <div className="quote-name" style={{ fontSize: "1.15rem", marginBottom: ".55rem" }}>
+                  {c.title}
                 </div>
-                <blockquote>&ldquo;{t.q}&rdquo;</blockquote>
-                <figcaption>
-                  <div className="quote-avatar" aria-hidden>
-                    {t.initials}
-                  </div>
-                  <div>
-                    <div className="quote-name">{t.name}</div>
-                    <div className="quote-role">{t.role}</div>
-                  </div>
-                </figcaption>
+                <blockquote style={{ marginTop: 0 }}>{c.body}</blockquote>
               </figure>
             </Reveal>
           ))}
@@ -636,7 +623,7 @@ function Footer() {
           <div>
             <h5>Company</h5>
             <div className="footer-col">
-              <a href="#athletes">Athletes</a>
+              <a href="#principles">Principles</a>
               <a href="#faq">FAQ</a>
               <a href="mailto:hello@momentum.run">Contact</a>
               <a href="mailto:press@momentum.run">Press</a>
