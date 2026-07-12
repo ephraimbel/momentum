@@ -90,8 +90,18 @@ function Hero() {
             <span>Apple Health</span>
           </div>
         </div>
-        <div className="rise rise-5">
-          <PhoneFrame src="/shots/today-map.png" alt="momentum Today screen: your map, today's plan, and one Start button" priority />
+        <div className="hero-device rise rise-5">
+          <PhoneFrame src="/shots/hero-route.png" alt="momentum Today screen: a real running route traced on the map with today's plan card" priority />
+          {/* Floating brand accents — layered UI chips that lift the device off the page (Runna/Strava-style depth). */}
+          <div className="float-chip float-plan" aria-hidden>
+            <span className="fc-eyebrow">TODAY</span>
+            <span className="fc-title">Long run · 6.2 mi</span>
+            <span className="fc-sub">easy · ~11:56 /mi</span>
+          </div>
+          <div className="float-chip float-pace" aria-hidden>
+            <span className="fc-metric">8.1<span className="fc-unit">km</span></span>
+            <span className="fc-sub">this morning</span>
+          </div>
         </div>
       </div>
     </section>

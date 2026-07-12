@@ -329,6 +329,89 @@ a {
   color: var(--ink-3);
 }
 
+/* Hero device: the route+plan phone, lifted with floating brand UI chips (Runna/Strava depth). */
+.hero-device {
+  position: relative;
+  padding: 8px 18px;
+}
+.hero-device .phone {
+  max-width: 360px;
+}
+
+.float-chip {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: saturate(140%) blur(14px);
+  -webkit-backdrop-filter: saturate(140%) blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 24px 50px -22px rgba(14, 14, 18, 0.32),
+    0 6px 16px -10px rgba(14, 14, 18, 0.2);
+  z-index: 4;
+  animation: chip-float 6s ease-in-out infinite;
+}
+.float-plan {
+  top: 12%;
+  left: -6%;
+  animation-delay: 0.4s;
+}
+.float-pace {
+  bottom: 15%;
+  right: -4%;
+}
+.fc-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.fc-title {
+  font-family: var(--font-d);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.fc-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.fc-metric {
+  font-family: var(--font-d);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.fc-unit {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink-3);
+  margin-left: 2px;
+}
+/* the pace chip wears an earned iridescent left edge — progress, on brand */
+.float-pace {
+  border-left: 3px solid transparent;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.86)) padding-box,
+    linear-gradient(160deg, var(--iri-1), var(--iri-4), var(--iri-5)) border-box;
+  border: 1px solid transparent;
+}
+
+@keyframes chip-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .float-chip { animation: none; }
+}
+
 /* soft, blurred iridescent auras — the brand accent, never loud */
 .aura {
   position: absolute;
@@ -560,12 +643,23 @@ a {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
   padding: 32px 28px;
-  transition: border-color 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.25s ease, background 0.25s ease;
 }
 
 .card:hover {
-  border-color: rgba(0, 0, 0, 0.16);
-  transform: translateY(-2px);
+  border-color: rgba(0, 0, 0, 0.14);
+  transform: translateY(-3px);
+  background: #fff;
+  box-shadow: 0 30px 60px -32px rgba(14, 14, 18, 0.28), 0 8px 20px -14px rgba(14, 14, 18, 0.18);
+}
+
+/* the glyph tile picks up an earned iridescent wash on hover — the brand accent, on progress cards */
+.card:hover .glyph {
+  border-color: transparent;
+  background:
+    linear-gradient(#fff, #fff) padding-box,
+    linear-gradient(140deg, var(--iri-1), var(--iri-4), var(--iri-5)) border-box;
+  border: 1px solid transparent;
 }
 
 .card h3 {
@@ -1364,6 +1458,28 @@ a {
   }
   .footer-inner {
     flex-direction: column;
+  }
+  /* Floating hero chips: tuck inside the device bounds so they never clip the viewport. */
+  .hero-device {
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .float-plan {
+    left: 2%;
+    top: 8%;
+  }
+  .float-pace {
+    right: 2%;
+  }
+}
+@media (max-width: 560px) {
+  /* Very narrow: the chips crowd the device — keep only the plan chip, pulled fully in. */
+  .float-pace {
+    display: none;
+  }
+  .float-plan {
+    left: 4%;
+    padding: 11px 14px;
   }
 }
 
