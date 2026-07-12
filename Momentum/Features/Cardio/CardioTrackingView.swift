@@ -26,6 +26,10 @@ struct CardioTrackingView: View {
     @Query private var profiles: [UserProfile]   // for max HR → live zone banding
     @State private var phase: Phase = .acquiring
     @State private var countdown = 3
+    /// Where the run began — captured from the athlete's known position the INSTANT recording arms,
+    /// so the green start pin drops immediately on "GO" rather than waiting for the first accepted
+    /// route point (which lands up to a fix interval later, and read as a delayed dot).
+    @State private var startCoordinate: CLLocationCoordinate2D?
     @State private var viewport: Viewport = .idle
     @State private var confirmStop = false
     @State private var vm: CardioViewModel?
@@ -46,6 +50,9 @@ struct CardioTrackingView: View {
     /// CoreLocation — the dot, the camera, and the trace all track the same clean track, so a
     /// rejected GPS spike can't teleport the dot into a building while the line stays put.
     @State private var puckFeed = PuckFeed()
+    /// Interpolates dot + trace tip between the ~1 Hz fixes at display cadence — the run draws as a
+    /// continuous glide (Strava-smooth), not a once-a-second step.
+    @State private var motion = LiveMotionSmoother()
     @State private var deviationM = 0.0
     @State private var rejoinBearing = 0.0     // compass bearing to the nearest loop point (north-up)
     /// While true the camera stays locked on the athlete (zoomed in, north-up). A pan/pinch drops it;
@@ -113,9 +120,15 @@ struct CardioTrackingView: View {
         // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
         // the athlete centered at the tight running zoom.
         .onChange(of: routeCoords.count) { updateOffRoute() }   // followPuck keeps the camera centered
-        // The moment recording starts, snap in to the athlete and follow.
+        // The moment recording starts: drop the start pin at the athlete's known position (instant,
+        // no wait for the first route point) and snap the camera in to follow.
         .onChange(of: phase) { _, newPhase in
-            if newPhase == .tracking { recenterOnUser() }
+            if newPhase == .tracking {
+                if startCoordinate == nil, let p = vm?.puckPoint {
+                    startCoordinate = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon)
+                }
+                recenterOnUser()
+            }
         }
         // Never imply we're still searching forever: after a beat, soften the copy to nudge "Start now".
         .task {
@@ -124,6 +137,13 @@ struct CardioTrackingView: View {
         }
         .onAppear {
             if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
+
+            // Wire the interpolated dot into the puck up front (not in `.onStyleLoaded`) so the very
+            // first fix during acquiring already shows "you" — style-load timing can't delay it. The
+            // trace-tip render still waits on `motion.map`, which is fine (no trace before a style).
+            motion.puckSink = { [puckFeed] coord in
+                puckFeed.push(lat: coord.latitude, lon: coord.longitude)
+            }
 
             // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
             // begins we follow the location puck (see `recenterOnUser`).
@@ -137,9 +157,10 @@ struct CardioTrackingView: View {
         // North-up (rotation disabled) so the rejoin arrow's compass bearing reads as screen rotation.
         MapReader { proxy in
             Map(viewport: $viewport) {
-                // A green dot where the run began (one stable annotation — no churn). Uses the raw first
-                // fix so it never triggers a spline recompute.
-                if let start = routeCoords.first {
+                // A green dot where the run began (one stable annotation — no churn). Uses the
+                // position captured at "GO" so it appears instantly; falls back to the first route
+                // point if that capture was ever missed. Never triggers a spline recompute.
+                if let start = startCoordinate ?? routeCoords.first {
                     MapViewAnnotation(coordinate: start) { startDot }.allowOverlap(true)
                 }
                 // The athlete's purple location puck ("you") is configured imperatively in
@@ -153,6 +174,7 @@ struct CardioTrackingView: View {
                 BrandPuck.apply(to: proxy)
                 puckFeed.attach(to: proxy)
                 syncRouteLayers(proxy.map, delta: nil)   // style reload wiped sources → full rebuild
+                motion.map = proxy.map   // puckSink is wired in `.onAppear` (before any fix lands)
             }
             // Incremental: feed only the new points to the smoother; append the newly-frozen chunks
             // and replace the short live tail. No full re-smooth, no full re-upload — per-fix work
@@ -160,12 +182,14 @@ struct CardioTrackingView: View {
             .onChange(of: routeCoords.count) {
                 let delta = smoother.ingest(routeCoords)
                 syncRouteLayers(proxy.map, delta: delta)
+                motion.tailBase = smoother.tail
             }
-            // The puck follows the engine's filtered position (raw while acquiring so "you" shows
-            // instantly; Kalman tip once recording).
+            // The dot follows the engine's filtered position (raw while acquiring so "you" shows
+            // instantly; Kalman tip once recording), interpolated to display cadence so it glides.
             .onChange(of: vm?.puckPoint) { _, point in
-                if let point { puckFeed.push(lat: point.lat, lon: point.lon) }
+                if let point { motion.push(lat: point.lat, lon: point.lon) }
             }
+            .onDisappear { motion.stop() }   // breaks the display link's retain of the smoother
             .ignoresSafeArea()
             // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
             // manual pan or pinch drops the lock; the recenter arrow re-engages it.
