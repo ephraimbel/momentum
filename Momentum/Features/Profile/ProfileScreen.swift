@@ -47,6 +47,8 @@ struct ProfileScreen: View {
                                               weightUnit: weightUnit, distanceUnit: distanceUnit)
     }
 
+    @State private var aggregatedForCount = -1   // matches the count the caches were built for
+
     private func refreshAggregates() {
         let fresh = ProfileStats(workouts: workouts, plan: profile?.plan)
         cachedStats = fresh
@@ -126,7 +128,13 @@ struct ProfileScreen: View {
             }
         }
         #endif
-        .task(id: workouts.count) { refreshAggregates() }
+        .task(id: workouts.count) {
+            // .task(id:) re-fires on every tab visit; the stats walk only needs to re-run
+            // when the data actually moved — re-walking per switch read as tab-change jank.
+            guard aggregatedForCount != workouts.count else { return }
+            refreshAggregates()
+            aggregatedForCount = workouts.count
+        }
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
                                   weightUnit: weightUnit, distanceUnit: distanceUnit)

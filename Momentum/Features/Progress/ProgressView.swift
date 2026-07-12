@@ -29,6 +29,7 @@ struct ProgressScreen: View {
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
     @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
+    @State private var aggregatedForCount = -1               // .task(id:) re-fires on every tab visit; only re-walk when data moved
     @State private var showAllAdaptations = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -139,8 +140,11 @@ struct ProgressScreen: View {
             }
         }
         .task(id: workouts.count) {
-            await Task.yield()   // let the skeleton frame paint before the heavy pass
-            withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
+            if aggregatedForCount != workouts.count {
+                await Task.yield()   // let the skeleton frame paint before the heavy pass
+                withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
+                aggregatedForCount = workouts.count
+            }
             // Athlete-model upkeep (was the You tab's onAppear — idempotent, local-only).
             // Once per screen instance, and after first paint: ingest re-walks history.
             guard !didUpkeep, let p = profiles.first else { return }
