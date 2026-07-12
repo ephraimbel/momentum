@@ -14,6 +14,8 @@ enum RaceCatalog {
         let month: Int
         let weekday: Int
         let ordinal: Int
+        /// A fixed calendar day (Peachtree = July 4). When set, weekday/ordinal are ignored.
+        var day: Int? = nil
 
         /// The next occurrence strictly after `date` (usually today) in the given calendar.
         func nextOccurrence(after date: Date, calendar: Calendar = .current) -> Date? {
@@ -29,6 +31,10 @@ enum RaceCatalog {
             var comps = DateComponents()
             comps.year = year
             comps.month = month
+            if let day {
+                comps.day = day
+                return calendar.date(from: comps)
+            }
             comps.weekday = weekday
             if ordinal > 0 {
                 comps.weekdayOrdinal = ordinal
@@ -160,6 +166,26 @@ enum RaceCatalog {
              region: .unitedStates, distances: [.tenK], rule: .init(month: 5, weekday: mon, ordinal: -1)),
         Race(id: "great-north", name: "Great North Run", city: "Newcastle", country: "UK", flag: "🇬🇧",
              region: .international, distances: [.half], rule: .init(month: 9, weekday: sun, ordinal: 1)),
+        Race(id: "atlanta", name: "Atlanta Marathon", city: "Atlanta", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 3, weekday: sun, ordinal: 1)),
+        Race(id: "peachtree", name: "Peachtree Road Race", city: "Atlanta", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.tenK], rule: .init(month: 7, weekday: sun, ordinal: 1, day: 4)),
+        Race(id: "miami", name: "Miami Marathon", city: "Miami", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 2, weekday: sun, ordinal: 1)),
+        Race(id: "nashville", name: "Nashville Marathon", city: "Nashville", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 4, weekday: sat, ordinal: -1)),
+        Race(id: "dallas", name: "Dallas Marathon", city: "Dallas", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 12, weekday: sun, ordinal: 2)),
+        Race(id: "seattle", name: "Seattle Marathon", city: "Seattle", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 11, weekday: sun, ordinal: -1)),
+        Race(id: "portland", name: "Portland Marathon", city: "Portland", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 10, weekday: sun, ordinal: 1)),
+        Race(id: "detroit", name: "Detroit Marathon", city: "Detroit", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 10, weekday: sun, ordinal: 3)),
+        Race(id: "columbus", name: "Columbus Marathon", city: "Columbus", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 10, weekday: sun, ordinal: 3)),
+        Race(id: "baltimore", name: "Baltimore Marathon", city: "Baltimore", country: "USA", flag: "🇺🇸",
+             region: .unitedStates, distances: [.marathon, .half], rule: .init(month: 10, weekday: sat, ordinal: 3)),
     ]
 
     /// Case- and diacritic-insensitive search over name, city, and country. Empty query → everything

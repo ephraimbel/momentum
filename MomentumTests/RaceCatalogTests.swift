@@ -40,6 +40,26 @@ struct RaceCatalogTests {
         }
     }
 
+    @Test func fixedDateClassicsLandOnTheirDay() {
+        // Peachtree Road Race is July 4th, every year — a fixed date, not a weekend rule.
+        #expect(race("peachtree").nextDate(after: date(2026, 7, 15), calendar: cal) == date(2027, 7, 4))
+        #expect(race("peachtree").nextDate(after: date(2027, 1, 1), calendar: cal) == date(2027, 7, 4))
+    }
+
+    @Test func unitedStatesCoverageSpansTheMap() {
+        // Every region of the country sees itself: Northeast, Southeast, Midwest, South, West,
+        // Pacific Northwest, plus Hawaii and the mountain states.
+        let usCities = Set(RaceCatalog.races.filter { $0.country == "USA" }.map(\.city))
+        for city in ["Boston", "New York", "Philadelphia", "Atlanta", "Miami", "Nashville",
+                     "Chicago", "Detroit", "Columbus", "Minneapolis–St. Paul", "Indianapolis",
+                     "Houston", "Austin", "Dallas", "Los Angeles", "San Francisco", "Sacramento",
+                     "Seattle", "Portland", "Boulder", "St. George", "Honolulu", "Washington, D.C.",
+                     "Baltimore"] {
+            #expect(usCities.contains(city), "missing US coverage: \(city)")
+        }
+        #expect(RaceCatalog.races.filter { $0.country == "USA" }.count >= 25)
+    }
+
     @Test func searchFindsByNameCityAndCountry() {
         #expect(RaceCatalog.search("chi").contains { $0.id == "chicago" })
         #expect(RaceCatalog.search("hong").contains { $0.id == "hong-kong" })

@@ -53,6 +53,11 @@ struct RacePickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search races, cities, countries")
+            // Typing a new search resets the review — a lock-in bar for a race that's no longer on
+            // screen would be a trap, and this flow never traps.
+            .onChange(of: query) { _, _ in
+                withAnimation(reduceMotion ? nil : Motion.standard) { selected = nil }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
