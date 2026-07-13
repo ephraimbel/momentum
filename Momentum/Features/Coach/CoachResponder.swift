@@ -269,7 +269,18 @@ enum CoachResponder {
                 card: card)
         }
 
-        // Structural changes (goal/race/days/length) or a fresh plan → open plan settings, where the
+        // A specific weekly day count ("train 5 days a week", "switch to 4 days") → a direct changeDays
+        // card the athlete can apply, not just a nudge to settings.
+        if has(["days a week", "train", "switch", "instead", "cut to", "go to", "move to", "bump"]),
+           let days = weeklyDayCount(in: q), days != ctx.settings.daysPerWeek {
+            var card = CoachCardPayload(kind: .changeDays, label: "Train \(days) days a week")
+            card.daysPerWeek = days
+            return LocalTurn(
+                text: "\(days) days a week — I can rebuild your plan around that and keep the hard days spaced so nothing stacks. Want me to?",
+                card: card)
+        }
+
+        // Structural changes (goal/race/length) or a fresh plan → open plan settings, where the
         // race catalog ("Find your race"), focus, and schedule all live and the plan rebuilds around them.
         if has(["change my goal", "new goal", "change my race", "different race", "change my days",
                 "days per week", "train on different days", "shorter sessions", "longer sessions", "session length",
@@ -282,6 +293,17 @@ enum CoachResponder {
                              card: card)
         }
 
+        return nil
+    }
+
+    /// A weekly day count named in the message ("5 days a week", "train four days", "3-day week"),
+    /// 1…7, else nil. Requires a "day" mention so other numbers (miles, dates) don't misread.
+    private static func weeklyDayCount(in q: String) -> Int? {
+        guard q.contains("day") else { return nil }
+        let words: [(String, Int)] = [("one", 1), ("two", 2), ("three", 3), ("four", 4),
+                                      ("five", 5), ("six", 6), ("seven", 7)]
+        for (w, n) in words where q.contains("\(w) day") || q.contains("\(w)-day") { return n }
+        for n in 1...7 where q.contains("\(n) day") || q.contains("\(n)-day") { return n }
         return nil
     }
 

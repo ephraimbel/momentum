@@ -48,6 +48,23 @@ struct CoachOfflineQATests {
 
     // MARK: Schedule Q&A
 
+    @Test func namingAWeeklyDayCountOffersToChangeIt() {
+        // "train 5 days a week" → a direct changeDays proposal, not a generic answer.
+        let ctx = makeContext()   // default plan is 3 days/week
+        let five = CoachResponder.respond(to: "can I train 5 days a week instead", context: ctx)
+        #expect(five.card?.kind == .changeDays)
+        #expect(five.card?.daysPerWeek == 5)
+
+        // Number words + "N-day" phrasing both parse.
+        #expect(CoachResponder.respond(to: "switch me to four days", context: ctx).card?.daysPerWeek == 4)
+        #expect(CoachResponder.respond(to: "go to a 6-day week", context: ctx).card?.daysPerWeek == 6)
+
+        // A count that matches the current plan proposes nothing (no needless card).
+        #expect(CoachResponder.respond(to: "keep me at 3 days a week", context: ctx).card?.kind != .changeDays)
+        // "5 days ago" is a report, not a request — no change proposed.
+        #expect(CoachResponder.respond(to: "I ran hard 5 days ago", context: ctx).card?.kind != .changeDays)
+    }
+
     @Test func namingARaceOffersToPointThePlanAtIt() {
         // Naming a catalog race → a changeRace proposal the athlete can apply (rebuilds the season).
         let turn = CoachResponder.respond(to: "set me up for the Chicago Marathon", context: makeContext())
