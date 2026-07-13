@@ -265,7 +265,7 @@ enum CoachResponder {
             card.raceName = message   // the bridge re-resolves via the catalog (preserves any named sub-distance)
             let dateStr = m.date.formatted(.dateTime.month(.wide).day().year())
             return LocalTurn(
-                text: "\(m.race.name) — \(m.race.city), \(dateStr). I can point your whole plan at that \(m.distance.label.lowercased()): base, build, peak, then a taper to land you fresh on the day. Want me to build it?",
+                text: "\(m.race.name) — \(m.race.city), \(dateStr). I can point your whole plan at that \(m.distance.label.lowercased()) and build the best block your timeline allows — I'll be honest about the runway on the card. Want me to?",
                 card: card)
         }
 

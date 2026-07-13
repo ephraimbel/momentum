@@ -159,21 +159,23 @@ struct CoachActionsTests {
 
     // MARK: Race honesty
 
-    @Test func impossibleRaceDeclinesBeforeAnyMutation() throws {
+    @Test func shortRunwayRaceBuildsHonestlyOnApply() throws {
         let container = try makeContainer()
         let ctx = container.mainContext
         let profile = makeProfile(in: ctx)
         profile.experience = [Discipline.running.rawValue: ExperienceLevel.new.rawValue]
         profile.weeklyRunVolumeM = 0
-        let planID = profile.plan?.id
 
-        // A brand-new runner, marathon in two weeks: tooShort → declined, profile untouched.
+        // A brand-new runner, marathon in two weeks: the card already showed the "very short runway"
+        // warning + alternatives, so Apply is the athlete's informed choice — build the honest
+        // best-effort block (never a flat refusal), and say so plainly in the receipt.
         let outcome = CoachActions.apply(.changeRace(distanceM: 42_195, date: day(14), goalFinishTimeS: nil),
                                          profile: profile, workouts: [], today: today, in: ctx)
-        guard case .declined = outcome else { Issue.record("expected declined, got \(outcome)"); return }
-        #expect(profile.raceDate == nil)
-        #expect(profile.raceDistanceM == nil)
-        #expect(profile.plan?.id == planID)
+        guard case .applied(let receipt) = outcome else { Issue.record("expected applied, got \(outcome)"); return }
+        #expect(profile.raceDistanceM == 42_195)
+        #expect(profile.goal == .raceDistance)
+        #expect((profile.plan?.sessions.isEmpty) == false)   // a plan is still built…
+        #expect(receipt.detail.lowercased().contains("short runway"))   // …and the receipt is honest
     }
 
     @Test func reachableRaceAppliesAndRetargetsGoal() throws {
