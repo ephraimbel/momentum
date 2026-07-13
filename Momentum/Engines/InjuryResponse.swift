@@ -54,6 +54,7 @@ enum InjuryResponse {
 
         if let plan = profile.plan {
             let p5k = plan.p5kSPerKm
+            let unit = (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()   // keep returns clean
             let window = plan.sessions.filter {
                 $0.status == .planned && $0.completedWorkout == nil
                 && $0.discipline == .running
@@ -69,7 +70,7 @@ enum InjuryResponse {
                         s.intervals = nil
                         s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
                     }
-                    if let d = s.targetDistanceM { s.targetDistanceM = (d * 0.9).rounded() }
+                    if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: unit) }
                     s.rationale = "\(marker) \(areaName) — easy running only while it settles."
                 case .moderate, .severe:
                     // Rest the impact; keep the engine with non-impact cross-training. Severe halves
@@ -126,6 +127,7 @@ enum InjuryResponse {
         var restored = 0
         if let plan = profile.plan {
             let p5k = plan.p5kSPerKm
+            let unit = (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()
             let mine = plan.sessions.filter {
                 $0.status == .planned && $0.completedWorkout == nil
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
@@ -138,12 +140,12 @@ enum InjuryResponse {
                 s.targetDurationS = nil
                 if i == 0 {
                     s.runType = .recovery
-                    s.targetDistanceM = 3_000                       // a short test-the-waters return
+                    s.targetDistanceM = RunRounding.snap(meters: 3_000, unit: unit)   // a short test-the-waters return
                     s.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
                     s.rationale = "Welcome back — a short, gentle return. Stop if anything flares."
                 } else {
                     s.runType = .easy
-                    s.targetDistanceM = 5_000
+                    s.targetDistanceM = RunRounding.snap(meters: 5_000, unit: unit)
                     s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
                     s.rationale = "Easy miles while you rebuild — quality work returns next week."
                 }
@@ -164,7 +166,7 @@ enum InjuryResponse {
                 s.runType = .easy
                 s.intervals = nil
                 s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
-                if let d = s.targetDistanceM { s.targetDistanceM = min(d, 8_000) }
+                if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: min(d, 8_000), unit: unit) }
                 s.rationale = "First week back — easy only. Quality returns once you've settled."
             }
         }

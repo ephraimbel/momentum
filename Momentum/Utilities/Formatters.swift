@@ -47,12 +47,25 @@ enum Formatters {
         return String(format: "%.1f %@", value, suffix)
     }
 
-    // MARK: Distance — 2 decimals < 100, else integer
+    // MARK: Distance — up to 2 decimals, trailing zeros dropped so a clean prescription reads "6 mi"
+    // / "3.5 mi" (not "6.00" / "3.50"), while a recorded run keeps its precision ("5.03 mi").
     static func distance(meters: Double, unit: DistanceUnit) -> String {
         let u = unit.resolved()
         let value = u == .imperial ? meters / metersPerMile : meters / 1000
         let suffix = u == .imperial ? "mi" : "km"
-        let str = value < 100 ? String(format: "%.2f", value) : String(Int(value.rounded()))
+        let str: String
+        if value >= 100 {
+            str = String(Int(value.rounded()))
+        } else {
+            let hundredths = (value * 100).rounded() / 100
+            if hundredths == hundredths.rounded() {
+                str = String(Int(hundredths))                       // 6.00 → "6"
+            } else if (hundredths * 10) == (hundredths * 10).rounded() {
+                str = String(format: "%.1f", hundredths)            // 3.50 → "3.5"
+            } else {
+                str = String(format: "%.2f", hundredths)            // 5.03 → "5.03"
+            }
+        }
         return "\(str) \(suffix)"
     }
 
@@ -76,11 +89,6 @@ enum Formatters {
         return h > 0
             ? String(format: "%d:%02d:%02d", h, m, sec)
             : String(format: "%d:%02d", m, sec)
-    }
-
-    // MARK: Time of day
-    static func clock(date: Date) -> String {
-        date.formatted(date: .omitted, time: .shortened)
     }
 
     // MARK: Compact number — "12.4k", "1.2M", or an integer below 1,000 (no unit)

@@ -118,10 +118,11 @@ enum PlanCoaching {
 
         // Rebuild week after a real absence (PRD §9.4: ≥3 misses → the week restarts at ~70%).
         if movedCount >= 3, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
+            let unit = displayUnit(in: context)
             for s in plan.sessions
                 where s.status != .completed && s.completedWorkout == nil
                       && calendar.startOfDay(for: s.date) >= todayStart && s.date < horizon {
-                if let d = s.targetDistanceM { s.targetDistanceM = (d * 0.7).rounded() }
+                if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.7, unit: unit) }
                 if let dur = s.targetDurationS { s.targetDurationS = (dur * 0.7).rounded() }
                 if let rt = s.runType, rt.isQuality {
                     s.runType = .easy
@@ -160,10 +161,11 @@ enum PlanCoaching {
             .sorted { $0.date < $1.date }
         guard !future.isEmpty else { return 0 }
         let p5k = plan.p5kSPerKm
+        let unit = displayUnit(in: context)   // keep rescaled prescriptions clean
 
         // Scale a cardio session's targets and soften any hard quality work to easy.
         func soften(_ s: PlannedSession, factor: Double, note: String) {
-            if let d = s.targetDistanceM { s.targetDistanceM = (d * factor).rounded() }
+            if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * factor, unit: unit) }
             if let dur = s.targetDurationS { s.targetDurationS = (dur * factor).rounded() }
             if let rt = s.runType, rt.isQuality || rt == .long {
                 s.runType = .easy
@@ -176,7 +178,7 @@ enum PlanCoaching {
         switch rec {
         case .increase:
             for s in future {
-                if let d = s.targetDistanceM { s.targetDistanceM = (d * 1.1).rounded() }
+                if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 1.1, unit: unit) }
                 if let dur = s.targetDurationS { s.targetDurationS = (dur * 1.1).rounded() }
                 for pe in s.strengthTargets { pe.targetSets = min(6, pe.targetSets + 1) }
                 s.rationale = "Nudged up ~10% — your load says you've earned more."
@@ -196,7 +198,7 @@ enum PlanCoaching {
             if next.strengthTargets.isEmpty {
                 next.runType = .recovery
                 next.intervals = nil
-                next.targetDistanceM = min(next.targetDistanceM ?? 3200, 3200)
+                next.targetDistanceM = RunRounding.snap(meters: min(next.targetDistanceM ?? 3200, 3200), unit: unit)
                 next.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
             } else {
                 for pe in next.strengthTargets { pe.targetSets = 2 }
@@ -213,6 +215,13 @@ enum PlanCoaching {
     /// The goal race distance for "@ race pace" re-derivation — lives on the profile, not the plan.
     private static func goalRaceDistanceM(in context: ModelContext) -> Double? {
         (try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.raceDistanceM
+    }
+
+    /// The athlete's resolved display unit — so adaptations keep prescriptions clean (`RunRounding`)
+    /// after scaling. Internal so the sibling recovery/injury engines reuse it.
+    static func displayUnit(in context: ModelContext) -> DistanceUnit {
+        ((try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.distanceUnit)
+            .flatMap(DistanceUnit.init(rawValue:))?.resolved() ?? .metric
     }
 
     /// The outcome of a pace recalibration, so the caller can narrate/notify it ("you're getting faster").
@@ -438,6 +447,54 @@ enum PlanCoaching {
                         headline: "You've earned more",
                         detail: "Your load's been light and well-absorbed — bump next week about 10%?",
                         sessionsAffected: future.count)
+    }
+
+    /// Pause the plan (travel, illness, life): shift every future, still-planned session forward by
+    /// `days` and stamp `pausedUntil`. Scheduling only — never load adaptation, so `lastAdaptedAt` is
+    /// untouched. The race date is NEVER moved; the caller is honest about compressed runway instead.
+    /// Returns the number of sessions shifted.
+    @discardableResult
+    static func pause(_ plan: TrainingPlan?, days: Int, from today: Date,
+                      in context: ModelContext, calendar: Calendar = .current) -> Int {
+        guard let plan, days > 0 else { return 0 }
+        let todayStart = calendar.startOfDay(for: today)
+        guard let until = calendar.date(byAdding: .day, value: days, to: todayStart) else { return 0 }
+        var shifted = 0
+        for s in plan.sessions
+            where s.status != .completed && s.completedWorkout == nil
+                  && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { continue }
+            s.date = moved
+            shifted += 1
+        }
+        plan.pausedUntil = until
+        try? context.save()
+        return shifted
+    }
+
+    /// End a pause early: pull the shifted sessions back by the *unused* remainder of the window and
+    /// clear `pausedUntil`. Resuming on/after the window's end just clears the flag (nothing to pull).
+    /// Returns the number of sessions moved back.
+    @discardableResult
+    static func resume(_ plan: TrainingPlan?, from today: Date,
+                       in context: ModelContext, calendar: Calendar = .current) -> Int {
+        guard let plan, let until = plan.pausedUntil else { return 0 }
+        let todayStart = calendar.startOfDay(for: today)
+        let remaining = calendar.dateComponents([.day], from: todayStart,
+                                                to: calendar.startOfDay(for: until)).day ?? 0
+        plan.pausedUntil = nil
+        guard remaining > 0 else { try? context.save(); return 0 }
+        var moved = 0
+        for s in plan.sessions
+            where s.status != .completed && s.completedWorkout == nil
+                  && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let back = calendar.date(byAdding: .day, value: -remaining, to: s.date),
+                  calendar.startOfDay(for: back) >= todayStart else { continue }
+            s.date = back
+            moved += 1
+        }
+        try? context.save()
+        return moved
     }
 
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.

@@ -244,8 +244,8 @@ struct PlanEngineTests {
         #expect(plan.weeks.suffix(3).allSatisfy { $0.isTaper })            // taper ends ON race week
         let maxVol = plan.weeks.map(\.runVolumeM).max() ?? 0
         #expect(maxVol > 30_000 * 1.8)                                     // actually grows over a year…
-        #expect(maxVol <= 70_000 + 100)                                    // …and holds at the marathon peak
-    }
+        #expect(maxVol <= 70_000 * 1.04)                                   // …and holds near the marathon peak
+    }                                                                       // (×1.04 absorbs clean-distance snapping)
 
     @Test func raceBeyondHorizonBuildsWithoutPhantomTaper() {
         // A race 60 weeks out: the 52-week block is pure foundation — base + build + deloads,
@@ -260,9 +260,10 @@ struct PlanEngineTests {
         #expect(!plan.weeks.contains { $0.isTaper || $0.phase == .taper || $0.phase == .peak })
         #expect(plan.weeks.first?.phase == .base)
         #expect(plan.weeks.contains { $0.phase == .recovery })             // deloads still land
-        // Volume grows toward the marathon readiness peak (90 km at this level) and holds there.
+        // Volume grows toward the marathon readiness peak (90 km at this level) and holds there
+        // (×1.04 absorbs clean-distance snapping rounding a few sessions up).
         #expect((plan.weeks.map(\.runVolumeM).max() ?? 0)
-                <= PlanFeasibility.peakWeeklyVolumeM(distanceM: 42_195, experience: .experienced) + 100)
+                <= PlanFeasibility.peakWeeklyVolumeM(distanceM: 42_195, experience: .experienced) * 1.04)
     }
 
     @Test func raceWeekPlanIsOneWeek() {
@@ -414,7 +415,9 @@ struct PlanEngineTests {
         let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
         var lastBuild: Double?
         for week in plan.weeks where !week.isDeload && !week.isTaper {
-            if let prev = lastBuild { #expect(week.runVolumeM <= prev * 1.08 + 1) }
+            // Capped at the balanced 8% ramp (not aggressive's 11%); ×1.02 absorbs clean-distance
+            // snapping wobble on the weekly total — still unmistakably the safer cadence.
+            if let prev = lastBuild { #expect(week.runVolumeM <= prev * 1.08 * 1.02 + 1) }
             lastBuild = week.runVolumeM
         }
         #expect(plan.weeks[3].isDeload)   // balanced cadence: deload on week 4

@@ -16,6 +16,7 @@ struct PlanCoachingTests {
 
     private func makePlan(in ctx: ModelContext, sessions: [PlannedSession]) -> TrainingPlan {
         let profile = UserProfile()
+        profile.distanceUnit = "metric"   // deterministic clean-km snapping (RunRounding), locale-independent
         let plan = TrainingPlan()
         ctx.insert(profile)
         ctx.insert(plan)
@@ -157,10 +158,12 @@ struct PlanCoachingTests {
         return w
     }
 
-    /// 10 equal sessions weighted so the acute:chronic ratio lands ~1.6 ⇒ "ease".
+    /// 10 equal sessions weighted so the acute:chronic ratio lands ~1.54 ⇒ "ease".
+    /// (Chronic load is normalized to the history that exists — oldest at day 27 keeps the
+    /// divisor ≈ 3.86 and this genuinely overreaching; day 28 would sit on the window boundary.)
     private func overreachingHistory(in ctx: ModelContext) {
         for d in [0, 2, 4, 6] { _ = loggedWorkout(in: ctx, daysAgo: d) }       // acute (last 7d)
-        for d in [10, 12, 14, 18, 22, 26] { _ = loggedWorkout(in: ctx, daysAgo: d) }  // chronic-only
+        for d in [10, 12, 14, 18, 22, 27] { _ = loggedWorkout(in: ctx, daysAgo: d) }  // chronic-only
     }
 
     @Test func autoEasesWhenOverreaching() throws {
@@ -303,7 +306,7 @@ struct PlanCoachingTests {
         let changed = PlanCoaching.apply(proposal.rec, to: plan, in: ctx)
 
         #expect(changed == 1)
-        #expect((future.targetDistanceM ?? 0) == 6600)   // bumped ~10% (the engine's number, on confirm)
+        #expect((future.targetDistanceM ?? 0) == 6500)   // bumped ~10% (6000→6600), snapped to a clean 6.5 km
         #expect(plan.lastAdaptedAt != nil)
     }
 
@@ -470,11 +473,11 @@ struct PlanCoachingTests {
 
         #expect(missed.allSatisfy { $0.status == .moved })
         #expect(upcoming.runType == .easy)                        // hard work softened for re-entry
-        #expect(upcoming.targetDistanceM == 5600)                 // 8000 × 0.7
+        #expect(upcoming.targetDistanceM == 5500)                 // 8000 × 0.7 = 5600, snapped to a clean 5.5 km
         #expect(upcoming.rationale?.lowercased().contains("rebuild") == true)
         // Idempotent: a second reconcile finds nothing past-due and can't re-shrink.
         PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
-        #expect(upcoming.targetDistanceM == 5600)
+        #expect(upcoming.targetDistanceM == 5500)
     }
 
     @Test func twoMissesJustRescheduleWithoutRebuild() throws {

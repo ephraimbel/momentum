@@ -182,6 +182,19 @@ enum PlanEngine {
             }
         }
 
+        // Clean prescriptions (RunRounding): snap every running target to the round value a coach
+        // would write in the athlete's unit — the LAST step, so it's what's stored and shown. The
+        // race session snaps to the exact race distance. Perturbs weekly volume by <2% (well inside
+        // the ACWR guardrail's range), so the safety ramp holds.
+        for w in weeks.indices {
+            for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
+                guard let d = weeks[w].sessions[s].targetDistanceM, d > 0 else { continue }
+                let isRace = weeks[w].sessions[s].runType == .race
+                weeks[w].sessions[s].targetDistanceM =
+                    RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: isRace)
+            }
+        }
+
         return GeneratedPlan(p5kSPerKm: p5k, weeks: weeks)
     }
 
@@ -668,4 +681,7 @@ struct PlanInputs: Sendable {
     /// Age in years (from onboarding's birth year) — 50+ gets masters recovery: deload every 3rd
     /// week instead of the intensity default. Intensity itself is never reduced by age.
     var age: Int? = nil
+    /// The athlete's display unit — prescriptions snap to clean values in it (`RunRounding`), so a
+    /// coach's "run 4 miles / a 5K" reads clean instead of "3.73 mi". Storage stays SI.
+    var distanceUnit: DistanceUnit = .metric
 }

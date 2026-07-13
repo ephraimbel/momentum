@@ -93,7 +93,9 @@ enum RecoveryAdaptation {
         session.runType = .easy
         session.intervals = nil
         session.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
-        if let d = session.targetDistanceM { session.targetDistanceM = (d * 0.9).rounded() }
+        if let d = session.targetDistanceM {
+            session.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: PlanCoaching.displayUnit(in: context))
+        }
         if let dur = session.targetDurationS { session.targetDurationS = (dur * 0.9).rounded() }
         session.rationale = "Eased today — \(decision.reason). The hard work lands better when you're recovered."
 

@@ -104,6 +104,7 @@ struct RecoveryAdaptationTests {
         vm.hasRace = true; vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date())!
         vm.experience = .some; vm.weeklyRunVolumeM = 30_000
         let profile = vm.finish(in: ctx)
+        profile.distanceUnit = "metric"   // deterministic clean-km snapping, locale-independent
         let plan = try #require(profile.plan)
 
         // Force a quality session onto today so there's something to protect.
@@ -118,7 +119,7 @@ struct RecoveryAdaptationTests {
         #expect(note.headline == "Easy day instead")
 
         #expect(session.runType == .easy)                        // today softened…
-        #expect(session.targetDistanceM == 7_200)                // …volume trimmed 10%
+        #expect(session.targetDistanceM == 7_000)                // …volume trimmed 10% (8000→7200), snapped to 7.0 km
         #expect(session.rationale?.contains("HRV") == true)      // reason on the session itself
         let othersAfter = plan.sessions.filter { $0 !== session }.map(\.runType)
         #expect(othersBefore == othersAfter)                     // ONLY today — bounded, not a rewrite

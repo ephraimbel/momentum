@@ -111,7 +111,8 @@ enum PlanService {
             preferredDayOffsets: offsets,
             intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
             injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
-            age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) })
+            age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) },
+            distanceUnit: (DistanceUnit(rawValue: p.distanceUnit) ?? .auto).resolved())
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,

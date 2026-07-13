@@ -30,9 +30,22 @@ struct ProgressInsightsTests {
         #expect(i.status == .overreaching)
     }
 
-    @Test func steadyLoadHolds() {
-        let ws = stride(from: 1, through: 27, by: 3).map { run(daysAgo: $0, minutes: 40) }
+    @Test func firstWeekBigLoadIsNotToldToRest() {
+        // Brand-new athlete, five hard days of history and nothing older. The un-normalized
+        // ÷4 chronic divisor read this as ACWR ≈ 4 → "rest" — a false alarm for exactly the
+        // athlete we should be encouraging. With history-normalized chronic, ratio ≈ 1.
+        let ws = (0..<5).map { run(daysAgo: $0, minutes: 60) }
         let i = ProgressInsights(workouts: ws)
+        #expect(i.status != .overreaching)
+        #expect(i.recommendation != .rest && i.recommendation != .ease)
+    }
+
+    @Test func steadyLoadHolds() {
+        // Three runs a week for ~4 weeks. No run lands exactly on the 7-day acute cutoff —
+        // a day-7 workout sits on the boundary and flips in/out with calendar-vs-interval
+        // rounding, which is boundary flakiness, not training signal.
+        let days = [1, 3, 5, 8, 10, 12, 15, 17, 19, 22, 24, 26]
+        let i = ProgressInsights(workouts: days.map { run(daysAgo: $0, minutes: 40) })
         #expect(i.acwr > 0.8)
         #expect(i.recommendation == .hold)
     }
@@ -63,6 +76,33 @@ struct ProgressInsightsTests {
         let i = ProgressInsights(workouts: [run(daysAgo: 2, minutes: 40)])
         #expect(i.weeks.count == 8)
         #expect(i.weeks.last!.load > 0)   // recent workout lands in the latest (rolling 7-day) bar
+    }
+
+    /// The Trends range picker: `weeksBack` sizes the weekly series (1M ≈ 5, 3M ≈ 13). The most
+    /// recent bar stays the rolling 7-day window regardless of range.
+    @Test func weeksBackSizesTheSeries() {
+        let ws = [run(daysAgo: 2, minutes: 40)]
+        #expect(ProgressInsights(workouts: ws, weeksBack: 5).weeks.count == 5)
+        #expect(ProgressInsights(workouts: ws, weeksBack: 13).weeks.count == 13)
+        // A degenerate window still produces at least the current week (no crash, no empty series).
+        #expect(ProgressInsights(workouts: ws, weeksBack: 0).weeks.count == 1)
+        for weeks in [5, 13, 26] {
+            #expect(ProgressInsights(workouts: ws, weeksBack: weeks).weeks.last!.load > 0)
+        }
+    }
+
+    /// Widening the window must never change the coaching verdict — ACWR and the trend percentages
+    /// always read the most recent weeks, so 1M and 3M agree on status/recommendation/ACWR.
+    @Test func verdictIsIndependentOfRange() {
+        var ws = [run(daysAgo: 20, minutes: 30)]
+        ws += (0..<4).map { run(daysAgo: $0, minutes: 60) }
+        let short = ProgressInsights(workouts: ws, weeksBack: 5)
+        let long = ProgressInsights(workouts: ws, weeksBack: 13)
+        #expect(short.acwr == long.acwr)
+        #expect(short.status == long.status)
+        #expect(short.recommendation == long.recommendation)
+        #expect(short.loadTrendPct == long.loadTrendPct)
+        #expect(short.weeks.last!.load == long.weeks.last!.load)
     }
 
     /// The latest bar is a rolling 7-day window ending now, so a recent workout always shows there —
@@ -111,7 +151,7 @@ struct ProgressInsightsTests {
         let container = inMemoryContainer()
         let plan = futureRun(in: container.mainContext, distanceM: 5000)
         PlanCoaching.apply(.ease, to: plan, in: container.mainContext)
-        #expect(plan.sessions[0].targetDistanceM == 4250)   // -15%
+        #expect(plan.sessions[0].targetDistanceM == 4500)   // -15% (5000→4250), snapped to a clean 4.5 km
         #expect(plan.sessions[0].runType == .easy)          // hard work softened
         #expect(plan.sessions[0].intervals == nil)
     }
