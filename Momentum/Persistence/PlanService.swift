@@ -62,6 +62,13 @@ enum PlanService {
     /// is supplied, and re-adds the athlete's cross-training. Starts the plan from `startDate`.
     static func rebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
                         startDate: Date = Date(), in context: ModelContext) {
+        // A running goal implies you run: if the athlete switched to a race/endurance focus (via the
+        // coach or plan settings) without running among their disciplines, add it — otherwise the
+        // engine would build a race plan with no runs. Guards every rebuild caller in one place.
+        let runningGoal = profile.goal == .raceDistance || profile.goal == .endurance
+        if runningGoal, !profile.disciplines.contains(Discipline.running.rawValue) {
+            profile.disciplines = [Discipline.running.rawValue] + profile.disciplines
+        }
         let extras = profile.crossTraining.compactMap(WorkoutType.init(rawValue:))
         let disciplines = profile.disciplines.compactMap(Discipline.init(rawValue:))
         let userDays = profile.daysPerWeek
