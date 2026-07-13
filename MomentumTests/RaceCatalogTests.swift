@@ -70,6 +70,31 @@ struct RaceCatalogTests {
         #expect(RaceCatalog.search("").count == RaceCatalog.races.count)
     }
 
+    @Test func naturalLanguageMatchResolvesNamedRaces() {
+        // The coach hears a phrase and gets the race + distance + our computed date — deterministic.
+        let ref = date(2026, 1, 1)
+        let chicago = RaceCatalog.match(freeText: "set me up for the Chicago Marathon", after: ref)
+        #expect(chicago?.race.id == "chicago")
+        #expect(chicago?.distance == .marathon)
+        #expect(chicago?.date == date(2026, 10, 11))                 // Chicago's traditional weekend
+
+        // A named sub-distance wins the right event: "NYC half" → the half, not the NYC marathon.
+        let nycHalf = RaceCatalog.match(freeText: "I want to run the NYC half", after: ref)
+        #expect(nycHalf?.distance == .half)
+        #expect(nycHalf?.race.distances.contains(.half) == true)
+
+        // City-only, flagship distance.
+        #expect(RaceCatalog.match(freeText: "train for boston", after: ref)?.race.id == "boston")
+        #expect(RaceCatalog.match(freeText: "hong kong marathon", after: ref)?.race.id == "hong-kong")
+    }
+
+    @Test func naturalLanguageMatchRefusesWhenUnclear() {
+        // No named race → nil, so the coach asks instead of inventing one.
+        #expect(RaceCatalog.match(freeText: "I want to run a marathon someday") == nil)
+        #expect(RaceCatalog.match(freeText: "make my plan harder") == nil)
+        #expect(RaceCatalog.match(freeText: "") == nil)
+    }
+
     @Test func catalogHygiene() {
         // Stable unique ids, all seven majors present, every event offers at least one distance.
         #expect(Set(RaceCatalog.races.map(\.id)).count == RaceCatalog.races.count)

@@ -199,4 +199,61 @@ enum RaceCatalog {
                 || $0.country.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
     }
+
+    /// A natural-language resolution: the coach hears "set me up for the Chicago Marathon" or "I want
+    /// to run the NYC half" and this returns the race, the distance the athlete meant (its flagship,
+    /// or the sub-distance they named if the weekend offers it), and the computed next date — exactly
+    /// what a `changeRace` needs. Deterministic and honest; nil when nothing clearly matches (so the
+    /// coach can ask, never guess a race the athlete didn't name).
+    struct Match: Sendable, Equatable {
+        let race: Race
+        let distance: RaceDistance
+        let date: Date
+    }
+
+    /// Distance/filler words that describe ANY race — never distinctive enough to identify one.
+    private static let genericTokens: Set<String> = [
+        "marathon", "half", "full", "the", "a", "run", "running", "race", "road", "ultra",
+        "5k", "10k", "50k", "city", "international", "authentic", "waterfront", "for", "to",
+        "my", "want", "do", "next", "train", "training", "plan", "on", "in", "at", "of",
+    ]
+
+    static func match(freeText: String, after date: Date = Date(), calendar: Calendar = .current) -> Match? {
+        let text = fold(freeText)
+        guard !text.isEmpty else { return nil }
+        let words = Set(text.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+        let wanted = requestedDistance(in: text)
+
+        var best: (race: Race, score: Int)?
+        for race in races {
+            // Distinctive tokens = the race's name + city words minus the generic descriptors.
+            let tokens = (fold(race.name) + " " + fold(race.city))
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+                .filter { $0.count >= 3 && !genericTokens.contains($0) }
+            let hits = tokens.filter { words.contains($0) }.count
+            guard hits > 0 else { continue }
+
+            var score = hits * 3
+            if let wanted, race.distances.contains(wanted) { score += 2 }   // "NYC half" → the race that offers a half
+            if let wanted, race.flagship == wanted { score += 1 }
+            if best == nil || score > best!.score { best = (race, score) }
+        }
+        guard let winner = best, let next = winner.race.nextDate(after: date, calendar: calendar) else { return nil }
+        let distance = (wanted.flatMap { winner.race.distances.contains($0) ? $0 : nil }) ?? winner.race.flagship
+        return Match(race: winner.race, distance: distance, date: next)
+    }
+
+    /// A distance the athlete named explicitly (else nil → use the race's flagship).
+    private static func requestedDistance(in text: String) -> RaceDistance? {
+        if text.contains("50k") || text.contains("ultra") { return .fiftyK }
+        if text.contains("half") || text.contains("13.1") { return .half }
+        if text.contains("10k") { return .tenK }
+        if text.contains("5k") { return .fiveK }
+        if text.contains("marathon") || text.contains("26.2") || text.contains("full") { return .marathon }
+        return nil
+    }
+
+    private static func fold(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
 }
