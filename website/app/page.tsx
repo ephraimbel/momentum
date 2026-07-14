@@ -1,6 +1,5 @@
 import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
-import WatchFrame from "@/components/WatchFrame";
 import Reveal from "@/components/Reveal";
 import RaceCalc from "@/components/RaceCalc";
 import Nav from "@/components/Nav";
@@ -72,20 +71,16 @@ function Hero() {
           </div>
         </div>
         <div className="hero-device rise rise-5">
-          <PhoneFrame src="/shots/hero-route.png" alt="momentum Today screen: a real running route traced on the map with today's plan card" priority />
-          {/* Paired Apple Watch — the live heart-rate zone gauge, in front of the phone (Runna-style). */}
-          <div className="hero-watch">
-            <WatchFrame src="/shots/watch-run.png" alt="momentum on Apple Watch: the live heart-rate zone gauge during a run" />
-          </div>
-          {/* Floating brand accents — layered UI chips that lift the device off the page (Runna/Strava-style depth). */}
+          <PhoneFrame src="/shots/hero-route.png" alt="momentum Today screen: the Austin Marathon course traced on the map" priority />
+          {/* Floating brand accents — the finished-marathon moment: an achievement chip + the finish stat. */}
           <div className="float-chip float-plan" aria-hidden>
-            <span className="fc-eyebrow">TODAY</span>
-            <span className="fc-title">Long run · 6.2 mi</span>
-            <span className="fc-sub">easy · ~11:56 /mi</span>
+            <span className="fc-eyebrow">AUSTIN MARATHON</span>
+            <span className="fc-title">Marathon complete</span>
+            <span className="fc-sub">26.2 mi · 2:58:41</span>
           </div>
           <div className="float-chip float-pace" aria-hidden>
-            <span className="fc-metric">8.1<span className="fc-unit">km</span></span>
-            <span className="fc-sub">this morning</span>
+            <span className="fc-metric">6:49<span className="fc-unit">/mi</span></span>
+            <span className="fc-sub">avg pace · sub-3 PR</span>
           </div>
         </div>
       </div>
