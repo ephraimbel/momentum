@@ -51,9 +51,8 @@ function Nav() {
 function Hero() {
   return (
     <section className="hero" id="top">
-      <div className="aura aura-1" aria-hidden />
-      <div className="aura aura-2" aria-hidden />
-      <div className="aura aura-3" aria-hidden />
+      {/* Soft iridescent wash (.hero::before) sits behind everything and fades to white at the
+          bottom, so the hero blends seamlessly into the rest of the page. */}
       {/* The self-drawing route — the app's welcome motif, redrawn across the header. */}
       <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
         <path d="M -60 470 C 180 380 260 560 470 470 S 760 300 980 400 S 1280 540 1520 380" />

@@ -412,39 +412,38 @@ a {
   .float-chip { animation: none; }
 }
 
-/* soft, blurred iridescent auras — the brand accent, never loud */
-.aura {
+/* The hero's iridescent wash — one cohesive oil-slick of the five brand pastels pooled across the
+   top, then masked to fade to nothing by mid-hero so the section melts into the white page below.
+   Soft and low-opacity by design (iridescence is the earned accent, never loud); a slow drift gives
+   it life. Sits behind the route line and content (z-index 0). */
+.hero::before {
+  content: "";
   position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
+  inset: -10% -12% 0;
+  z-index: 0;
   pointer-events: none;
+  background:
+    radial-gradient(46% 48% at 80% 4%, rgba(184, 192, 255, 0.42), transparent 62%),
+    radial-gradient(42% 44% at 99% 28%, rgba(230, 194, 255, 0.32), transparent 64%),
+    radial-gradient(48% 50% at 6% 10%, rgba(194, 240, 255, 0.32), transparent 62%),
+    radial-gradient(40% 44% at 44% 40%, rgba(200, 255, 224, 0.2), transparent 66%),
+    radial-gradient(34% 40% at 60% 16%, rgba(255, 216, 194, 0.16), transparent 68%);
+  filter: blur(28px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 34%, transparent 82%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 34%, transparent 82%);
+  animation: aura-drift 26s ease-in-out infinite alternate;
 }
 
-.aura-1 {
-  width: 560px;
-  height: 560px;
-  right: -160px;
-  top: -120px;
-  background: radial-gradient(closest-side, var(--iri-1) 0%, transparent 70%);
-  opacity: 0.5;
+@keyframes aura-drift {
+  to {
+    transform: translate3d(-1.6%, 1.4%, 0) scale(1.05);
+  }
 }
 
-.aura-2 {
-  width: 480px;
-  height: 480px;
-  right: 260px;
-  top: 300px;
-  background: radial-gradient(closest-side, var(--iri-4) 0%, transparent 70%);
-  opacity: 0.32;
-}
-
-.aura-3 {
-  width: 420px;
-  height: 420px;
-  left: -180px;
-  bottom: -160px;
-  background: radial-gradient(closest-side, var(--iri-2) 0%, transparent 70%);
-  opacity: 0.4;
+@media (prefers-reduced-motion: reduce) {
+  .hero::before {
+    animation: none;
+  }
 }
 
 /* ——— phone frame (realistic: titanium band → bezel → screen) ——— */
