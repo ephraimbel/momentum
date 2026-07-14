@@ -22,12 +22,23 @@ struct ProgressInsights {
         let avgPaceSPerKm: Double   // distance-weighted, running only; 0 = no runs that week
     }
 
+    /// One calendar day — powers the Trends "Week" range (last 7 days as daily bars, Strava-style),
+    /// where weekly windows would collapse to a single meaningless bar.
+    struct DayPoint: Identifiable, Sendable {
+        let id = UUID()
+        let dayStart: Date
+        let load: Double
+        let distanceM: Double
+        let avgPaceSPerKm: Double   // distance-weighted, running only; 0 = no runs that day
+    }
+
     let acute: Double
     let chronic: Double
     let acwr: Double
     let status: Status
     let recommendation: Recommendation
     let weeks: [WeekPoint]            // last `weeksBack` weeks, oldest → newest
+    let days: [DayPoint]              // last 7 calendar days, oldest → newest (the "Week" range)
     let loadTrendPct: Double          // this week vs prior 3-week average
     let distanceTrendPct: Double
     let paceTrendPct: Double          // running pace: negative = faster (improving)
@@ -87,6 +98,24 @@ struct ProgressInsights {
             series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist, avgPaceSPerKm: wkPace))
         }
         weeks = series
+
+        // Daily series — the last 7 calendar days (oldest → newest), one bucket per day, for the
+        // "Week" range. Same load/distance/pace math as the weekly series, just a 1-day window.
+        var dayPts: [DayPoint] = []
+        let today = calendar.startOfDay(for: now)
+        for i in stride(from: 6, through: 0, by: -1) {
+            guard let dayStart = calendar.date(byAdding: .day, value: -i, to: today),
+                  let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { continue }
+            let inDay = workouts.filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd }
+            let dLoad = inDay.reduce(0) { $0 + load($1) }
+            let dDist = inDay.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+            let runs = inDay.filter { $0.type.discipline == .running }
+            let runDist = runs.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+            let runDur = runs.reduce(0) { $0 + $1.durationS }
+            let dPace = runDist > 0 ? runDur / (runDist / 1000) : 0
+            dayPts.append(DayPoint(dayStart: dayStart, load: dLoad, distanceM: dDist, avgPaceSPerKm: dPace))
+        }
+        days = dayPts
 
         // Trends: current week vs the prior 3 weeks' average.
         func trend(_ values: (WeekPoint) -> Double) -> Double {

@@ -42,13 +42,19 @@ struct ProgressScreen: View {
     /// axis density, and bar widths all key off `weeks` (6M ≈ 26 and 1Y ≈ 52 arrive once athletes
     /// have the history to fill them).
     enum TrendRange: String, CaseIterable, Identifiable {
-        case month = "1M", threeMonths = "3M", sixMonths = "6M", year = "1Y"
+        case week = "1W", month = "1M", threeMonths = "3M", sixMonths = "6M", year = "1Y"
         var id: Self { self }
         /// The windows offered in the picker. `year` stays defined (weeks + label ready) but off the
         /// switcher until it earns its place — add `.year` here to light it up in one edit.
-        static let selectable: [TrendRange] = [.month, .threeMonths, .sixMonths]
+        static let selectable: [TrendRange] = [.week, .month, .threeMonths, .sixMonths]
+        /// True for the day-resolution range: charts plot the last 7 days as daily bars instead of
+        /// rolling weekly windows (one weekly bar would be meaningless).
+        var isDaily: Bool { self == .week }
+        /// Weekly-window count for `ProgressInsights`. `.week` still asks for 5 so the ACWR/trend math
+        /// (which reads recent WEEKS, window-independent) stays valid — its charts render `days`.
         var weeks: Int {
             switch self {
+            case .week: 5
             case .month: 5           // ~30 days of rolling weekly windows
             case .threeMonths: 13    // ~90 days
             case .sixMonths: 26      // ~6 months
@@ -57,6 +63,7 @@ struct ProgressScreen: View {
         }
         var accessibilityLabel: String {
             switch self {
+            case .week: "Last week"
             case .month: "Last month"
             case .threeMonths: "Last three months"
             case .sixMonths: "Last six months"
@@ -64,7 +71,7 @@ struct ProgressScreen: View {
             }
         }
     }
-    @State private var trendRange: TrendRange = .month
+    @State private var trendRange: TrendRange = .week
 
     private var plan: TrainingPlan? { profiles.first?.plan }
 
@@ -1266,29 +1273,30 @@ struct ProgressScreen: View {
     /// dropped so a rest week doesn't read as a cliff.
     private func paceChart(_ insights: ProgressInsights) -> some View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
-        let paced = insights.weeks.filter { $0.avgPaceSPerKm > 0 }
+        let paced = trendPoints(insights).filter { $0.avgPaceSPerKm > 0 }
         let slowest = paced.map(\.avgPaceSPerKm).max() ?? 0
         let fastest = paced.map(\.avgPaceSPerKm).min() ?? 1
-        let last = paced.last?.weekStart
-        return chartSection("Weekly pace", subtitle: "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))",
+        let last = paced.last?.date
+        let subtitle = trendIsDaily ? "Per \(unit), by day" : "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))"
+        return chartSection(trendIsDaily ? "Daily pace" : "Weekly pace", subtitle: subtitle,
                             explainer: MetricExplainers.weeklyPace) {
             if paced.count < 2 { notEnoughData } else {
-                Chart(paced) { wk in
-                    LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                             y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
+                Chart(paced) { p in
+                    LineMark(x: .value("Date", p.date, unit: trendUnit),
+                             y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
                         .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
-                    PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                              y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
-                        .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
-                        .symbolSize(wk.weekStart == last ? 90 : 22)
+                    PointMark(x: .value("Date", p.date, unit: trendUnit),
+                              y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                        .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
+                        .symbolSize(p.date == last ? 90 : 22)
                         .annotation(position: .top, spacing: 6) {
-                            if animateCharts, wk.weekStart == last { valuePill(paceMMSS(wk.avgPaceSPerKm)) }
+                            if animateCharts, p.date == last { valuePill(paceMMSS(p.avgPaceSPerKm)) }
                         }
                 }
-                .chartXScale(domain: paddedWeekDomain(paced.map(\.weekStart)))
+                .chartXScale(domain: paddedDomain(paced.map(\.date)))
                 .chartYScale(domain: (fastest * 0.93)...(slowest * 1.07))
-                .chartXAxis { weekAxis(insights.weeks.count) }
+                .chartXAxis { trendAxis(insights.weeks.count) }
                 .chartYAxis { paceAxis }
                 .frame(height: 172)
             }
@@ -1296,25 +1304,30 @@ struct ProgressScreen: View {
     }
 
     private func loadChart(_ insights: ProgressInsights) -> some View {
-        let maxLoad = insights.weeks.map(\.load).max() ?? 0
-        let last = insights.weeks.last?.weekStart
-        let usual = insights.chronic   // 4-week average weekly load = the athlete's own baseline
-        return chartSection("Weekly training load", subtitle: "Effort × time, every sport\(trendSuffix(insights.loadTrendPct))",
+        let pts = trendPoints(insights)
+        let maxLoad = pts.map(\.load).max() ?? 0
+        let last = pts.last?.date
+        // The "usual" baseline is a WEEKLY norm — meaningless against daily bars, so it's hidden in
+        // the Week view (a daily load sits far below a weekly average and would float off the top).
+        let usual = trendIsDaily ? 0 : insights.chronic   // 4-week average weekly load = own baseline
+        let barW: CGFloat = trendIsDaily ? 24 : loadBarWidth(insights.weeks.count)
+        let subtitle = "Effort × time, every sport\(trendIsDaily ? ", by day" : trendSuffix(insights.loadTrendPct))"
+        return chartSection(trendIsDaily ? "Daily training load" : "Weekly training load", subtitle: subtitle,
                             explainer: MetricExplainers.trainingLoad) {
             if maxLoad <= 0 { notEnoughData } else {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    Chart(insights.weeks) { wk in
+                    Chart(pts) { p in
                         // Bars slim down as the window widens so 13 or 26 weeks never collide.
-                        BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                                y: .value("Load", animateCharts ? wk.load : 0),
-                                width: .fixed(loadBarWidth(insights.weeks.count)))
-                            // Earned-iridescent only on the current week; prior weeks are clean ink.
-                            .foregroundStyle(wk.weekStart == last
+                        BarMark(x: .value("Date", p.date, unit: trendUnit),
+                                y: .value("Load", animateCharts ? p.load : 0),
+                                width: .fixed(barW))
+                            // Earned-iridescent only on the current bar; prior ones are clean ink.
+                            .foregroundStyle(p.date == last
                                              ? AnyShapeStyle(IridescentMaterial())
                                              : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
                             .cornerRadius(3)
                             .annotation(position: .top, spacing: 5) {
-                                if animateCharts, wk.weekStart == last, wk.load > 0 { valuePill(Formatters.compact(wk.load)) }
+                                if animateCharts, p.date == last, p.load > 0 { valuePill(Formatters.compact(p.load)) }
                             }
                         // Your recent norm — each bar reads as above/below "usual" rather than a bare number.
                         if usual > 0, animateCharts {
@@ -1326,12 +1339,14 @@ struct ProgressScreen: View {
                                 }
                         }
                     }
-                    .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
+                    .chartXScale(domain: paddedDomain(pts.map(\.date)))
                     .chartYScale(domain: 0...max(1, maxLoad * 1.18))
-                    .chartXAxis { weekAxis(insights.weeks.count) }
+                    .chartXAxis { trendAxis(insights.weeks.count) }
                     .chartYAxis { valueAxis }
                     .frame(height: 172)
-                    Text("Runs and lifts on one scale — how hard × how long you trained. The line is your recent norm.")
+                    Text(trendIsDaily
+                         ? "Runs and lifts on one scale — how hard × how long you trained each day this week."
+                         : "Runs and lifts on one scale — how hard × how long you trained. The line is your recent norm.")
                         .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1342,37 +1357,58 @@ struct ProgressScreen: View {
     private func distanceChart(_ insights: ProgressInsights) -> some View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
-        let maxDist = insights.weeks.map { disp($0.distanceM) }.max() ?? 0
-        let last = insights.weeks.last?.weekStart
-        return chartSection("Weekly distance", subtitle: "\(unit == "mi" ? "Miles" : "Kilometres") per week\(trendSuffix(insights.distanceTrendPct))",
-                            explainer: MetricExplainers.weeklyDistance) {
+        let pts = trendPoints(insights)
+        let maxDist = pts.map { disp($0.distanceM) }.max() ?? 0
+        let last = pts.last?.date
+        let miles = unit == "mi" ? "Miles" : "Kilometres"
+        let title = trendIsDaily ? "Daily distance" : "Weekly distance"
+        let subtitle = trendIsDaily ? "\(miles) this week, by day"
+                                    : "\(miles) per week\(trendSuffix(insights.distanceTrendPct))"
+        return chartSection(title, subtitle: subtitle, explainer: MetricExplainers.weeklyDistance) {
             if maxDist <= 0 { notEnoughData } else {
-                Chart(insights.weeks) { wk in
-                    AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                             y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                        .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear],
-                                                        startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.monotone)
-                    LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                             y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                        .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                        .interpolationMethod(.monotone)
-                    if disp(wk.distanceM) > 0 {
-                        PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
-                                  y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                            .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
-                            .symbolSize(wk.weekStart == last ? 90 : 22)
-                            .annotation(position: .top, spacing: 6) {
-                                if animateCharts, wk.weekStart == last {
-                                    let v = disp(wk.distanceM)
+                Chart(pts) { p in
+                    if trendIsDaily {
+                        // Daily bars read cleanly across a rest-day-punctuated week (a line would dip
+                        // to zero and zigzag); the current day glints iridescent.
+                        BarMark(x: .value("Day", p.date, unit: .day),
+                                y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
+                                width: .fixed(24))
+                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
+                                                            : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
+                            .cornerRadius(3)
+                            .annotation(position: .top, spacing: 5) {
+                                if animateCharts, p.date == last, disp(p.distanceM) > 0 {
+                                    let v = disp(p.distanceM)
                                     valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
                                 }
                             }
+                    } else {
+                        AreaMark(x: .value("Week", p.date, unit: .weekOfYear),
+                                 y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
+                            .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear],
+                                                            startPoint: .top, endPoint: .bottom))
+                            .interpolationMethod(.monotone)
+                        LineMark(x: .value("Week", p.date, unit: .weekOfYear),
+                                 y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
+                            .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            .interpolationMethod(.monotone)
+                        if disp(p.distanceM) > 0 {
+                            PointMark(x: .value("Week", p.date, unit: .weekOfYear),
+                                      y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
+                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
+                                .symbolSize(p.date == last ? 90 : 22)
+                                .annotation(position: .top, spacing: 6) {
+                                    if animateCharts, p.date == last {
+                                        let v = disp(p.distanceM)
+                                        valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
+                                    }
+                                }
+                        }
                     }
                 }
-                .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
+                .chartXScale(domain: paddedDomain(pts.map(\.date)))
                 .chartYScale(domain: 0...max(1, maxDist * 1.18))
-                .chartXAxis { weekAxis(insights.weeks.count) }
+                .chartXAxis { trendAxis(pts.count) }
                 .chartYAxis { valueAxis }
                 .frame(height: 172)
             }
@@ -1403,6 +1439,48 @@ struct ProgressScreen: View {
                                              : .dateTime.month(.abbreviated).day())
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    // MARK: Trend series — daily for the Week range, weekly otherwise (one path serves every chart).
+
+    /// A granularity-agnostic chart point: the distance/pace/load charts plot these, so the same
+    /// marks render both the daily "Week" view (7 days) and the rolling weekly ranges.
+    struct TrendPoint: Identifiable {
+        let id = UUID()
+        let date: Date
+        let load: Double
+        let distanceM: Double
+        let avgPaceSPerKm: Double
+    }
+
+    private var trendIsDaily: Bool { trendRange.isDaily }
+    private var trendUnit: Calendar.Component { trendIsDaily ? .day : .weekOfYear }
+
+    /// The points to plot for the current range — daily buckets for Week, weekly windows otherwise.
+    private func trendPoints(_ insights: ProgressInsights) -> [TrendPoint] {
+        trendIsDaily
+            ? insights.days.map { TrendPoint(date: $0.dayStart, load: $0.load, distanceM: $0.distanceM, avgPaceSPerKm: $0.avgPaceSPerKm) }
+            : insights.weeks.map { TrendPoint(date: $0.weekStart, load: $0.load, distanceM: $0.distanceM, avgPaceSPerKm: $0.avgPaceSPerKm) }
+    }
+
+    /// X domain padded to the unit: half a day for daily, four days for weekly.
+    private func paddedDomain(_ dates: [Date]) -> ClosedRange<Date> {
+        guard let lo = dates.min(), let hi = dates.max(), lo <= hi else { return Date()...Date().addingTimeInterval(1) }
+        let pad: TimeInterval = trendIsDaily ? 12 * 3600 : 4 * 24 * 3600
+        return lo.addingTimeInterval(-pad)...hi.addingTimeInterval(pad)
+    }
+
+    /// X axis for the current granularity: single-letter weekday initials across the 7-day Week view,
+    /// else the existing week/month timeline.
+    @AxisContentBuilder private func trendAxis(_ count: Int) -> some AxisContent {
+        if trendIsDaily {
+            AxisMarks(values: .stride(by: .day)) { _ in
+                AxisValueLabel(format: .dateTime.weekday(.narrow))
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+        } else {
+            weekAxis(count)
         }
     }
 
@@ -1437,13 +1515,6 @@ struct ProgressScreen: View {
         return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
-    /// Pads a weekly date range by half a week on each side so the first/last bar or point has room
-    /// and never clips against the plot edge.
-    private func paddedWeekDomain(_ dates: [Date]) -> ClosedRange<Date> {
-        guard let lo = dates.min(), let hi = dates.max(), lo <= hi else { return Date()...Date().addingTimeInterval(1) }
-        let pad: TimeInterval = 4 * 24 * 3600
-        return lo.addingTimeInterval(-pad)...hi.addingTimeInterval(pad)
-    }
 
     /// A small monospaced value callout pinned to the current week's mark — the "where you are now"
     /// number, so the latest point reads precisely without labelling every week.
