@@ -2,6 +2,7 @@ import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
 import Reveal from "@/components/Reveal";
 import RaceCalc from "@/components/RaceCalc";
+import Nav from "@/components/Nav";
 
 export default function Home() {
   return (
@@ -26,33 +27,13 @@ export default function Home() {
   );
 }
 
-function Nav() {
-  return (
-    <header className="nav">
-      <div className="wrap nav-inner">
-        <a href="#top" aria-label="momentum home">
-          <Image className="wordmark" src="/wordmark-black.png" alt="momentum" width={640} height={128} priority />
-        </a>
-        <nav className="nav-links" aria-label="Primary">
-          <a href="#product">Product</a>
-          <a href="#intelligence">Intelligence</a>
-          <a href="#method">Method</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#faq">FAQ</a>
-          <a className="btn btn-ink btn-sm" href="#download">
-            Get the app
-          </a>
-        </nav>
-      </div>
-    </header>
-  );
-}
 
 function Hero() {
   return (
     <section className="hero" id="top">
-      {/* Soft iridescent wash (.hero::before) sits behind everything and fades to white at the
-          bottom, so the hero blends seamlessly into the rest of the page. */}
+      {/* Living iridescent field: two slowly-drifting pastel layers behind everything (incl. the
+          transparent nav), masked to melt into white as the hero meets the page below. */}
+      <div className="hero-aura" aria-hidden />
       {/* The self-drawing route — the app's welcome motif, redrawn across the header. */}
       <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
         <path d="M -60 470 C 180 380 260 560 470 470 S 760 300 980 400 S 1280 540 1520 380" />
