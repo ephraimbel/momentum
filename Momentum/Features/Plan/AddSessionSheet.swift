@@ -39,7 +39,7 @@ struct AddSessionSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     daySection
                     activitySection
-                    if isGPS { goalSection } else if isTimed { durationSection }
+                    if isGPS { goalSection } else { durationSection }   // strength-style gets a duration too
                 }
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
@@ -85,18 +85,31 @@ struct AddSessionSheet: View {
     private var daySection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             label("Day")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Space.sm) {
-                    ForEach(next14, id: \.self) { dayBadge($0) }
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.Space.sm) {
+                        ForEach(dayStrip, id: \.self) { dayBadge($0).id($0) }
+                    }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
+                // Bring the pre-selected day into view — it can start off-screen (a future Pro week, or
+                // an earlier-this-week rest day), which is exactly when a hidden selection goes unnoticed.
+                .onAppear { proxy.scrollTo(Calendar.current.startOfDay(for: date), anchor: .center) }
             }
         }
     }
 
-    private var next14: [Date] {
-        let start = Calendar.current.startOfDay(for: Date())
-        return (0..<14).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: start) }
+    /// The day strip always spans from the earlier of {today, the pre-selected day} through at least
+    /// two weeks out — so a `defaultDate` outside today…+13 (future week / past rest day) is still
+    /// shown and selectable, never silently applied on a hidden day. Capped so it can't run away.
+    private var dayStrip: [Date] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let def = cal.startOfDay(for: defaultDate)
+        let first = min(today, def)
+        let last = max(cal.date(byAdding: .day, value: 13, to: today) ?? today, def)
+        let span = min((cal.dateComponents([.day], from: first, to: last).day ?? 13) + 1, 70)
+        return (0..<max(1, span)).compactMap { cal.date(byAdding: .day, value: $0, to: first) }
     }
 
     private func dayBadge(_ day: Date) -> some View {
@@ -257,7 +270,9 @@ struct AddSessionSheet: View {
             if goalKind == .distance {
                 s.targetDistanceM = goalValue * (distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000)
             }
-        } else if isTimed, goalKind == .distance {
+        } else if goalKind == .distance {
+            // Any non-GPS sport (timed OR strength-style) sets a duration goal — so a hand-added
+            // strength session reads as real work ("Strength · 45 min") instead of an empty stub.
             s.targetDurationS = goalMinutes * 60
         }
         plan.sessions.append(s)

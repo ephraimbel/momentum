@@ -117,7 +117,12 @@ enum PlanCoaching {
         }
 
         // Rebuild week after a real absence (PRD §9.4: ≥3 misses → the week restarts at ~70%).
-        if movedCount >= 3, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
+        // Shrinking load is a structural change, so it shares the ≤1-change/week `lastAdaptedAt` gate
+        // — never stack a rebuild-week on top of another ease/bump (or vice-versa) in the same week.
+        let recentlyAdapted = plan.lastAdaptedAt.map {
+            (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) < 7
+        } ?? false
+        if movedCount >= 3, !recentlyAdapted, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
             let unit = displayUnit(in: context)
             for s in plan.sessions
                 where s.status != .completed && s.completedWorkout == nil
@@ -132,6 +137,7 @@ enum PlanCoaching {
                 for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.7).rounded())) }
                 s.rationale = "Rebuild week — easing back in at ~70% after time away. The plan meets you here."
             }
+            plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
             CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
                                  detail: "You were away a bit, so this week restarts at about 70%. Cramming the missed work back in is how comebacks end early.",
                                  on: today, in: context, calendar: calendar)

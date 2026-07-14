@@ -88,6 +88,12 @@ struct CoachChatView: View {
                 Text("Your coach's memory of you is kept — only the messages go.")
             }
         }
+        // Build the view model SYNCHRONOUSLY on appear (not in the async .task below): the first
+        // paint needs it, and a .task-created vm leaves the body rendering Color.clear until the task
+        // runs — a visible blank flash when the chat opens (worst on a cold-launch/deep-link open).
+        .onAppear {
+            if vm == nil { vm = CoachChatViewModel(context: context, health: services.health) }
+        }
         .task {
             if vm == nil { vm = CoachChatViewModel(context: context, health: services.health) }
             // Contextual entry ("ask about this workout") pre-types the input and pins the workout

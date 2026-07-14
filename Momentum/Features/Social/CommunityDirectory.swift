@@ -15,12 +15,15 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
     let lat: Double            // approximate home location for the globe (fuzzed — city-level)
     let lon: Double
     let posts: [FeedItem]
-    /// Real athletes (Supabase) carry their avatar; seeded community renders initials.
+    /// Real athletes (Supabase) carry their avatar; seeded community renders a bundled synthetic face.
     var avatarData: Data? = nil
     /// True for the seeded "Momentum community" (whose body-of-work is deterministic sample
     /// content); false for real network athletes — their profile shows only real data.
     var isSample: Bool = true
     var id: String { handle }
+    /// The seeded athlete's bundled synthetic-face asset (deterministic per name); nil for real
+    /// network athletes. See `CommunityAvatars`.
+    var communityAvatarAsset: String? { isSample ? CommunityAvatars.assetName(forDisplayName: name) : nil }
 }
 
 enum CommunityDirectory {

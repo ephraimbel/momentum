@@ -8,13 +8,16 @@ struct FeedMediaView: View {
     let item: FeedItem
     /// Applied to photo and route media; the muscle/timed cards keep their natural heights.
     var height: CGFloat = 200
+    /// `.fill` crops photos to the compact feed band; the reading view passes `.fit` so the whole
+    /// photo shows (with `height` as a max cap).
+    var photoContentMode: ContentMode = .fill
 
     @ViewBuilder
     var body: some View {
         if !item.photosData.isEmpty {
-            // >1 photo pages horizontally — the pager needs hit testing, so a multi-photo block
-            // swallows taps (swipe to browse); the surrounding card still opens from title/stats.
-            PhotoCarousel(photosData: item.photosData, height: height)
+            // Photos page horizontally in a native paging ScrollView that cooperates with the
+            // parent's vertical scroll (so the reading view never gets "stuck" on a photo).
+            PhotoCarousel(photosData: item.photosData, height: height, contentMode: photoContentMode)
         } else if item.type.isStrengthStyle, let muscles = item.muscles, !muscles.isEmpty {
             // The lift counterpart to the route map: the body, with worked muscles glowing iridescent.
             muscleMedia(muscles)

@@ -22,7 +22,9 @@
 // CoachResponder.swift whenever this is slow/down/unconfigured — so the chat never blocks.
 //
 // Deploy:  supabase functions deploy coach-chat
-// Secrets: supabase secrets set ANTHROPIC_API_KEY=... AI_MODEL=claude-opus-4-8 AI_MAX_TOKENS=500
+// Secrets: supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   (server-only; NEVER in the app/git)
+//          optional: AI_MODEL=claude-opus-4-8  AI_MAX_TOKENS=500
+//          optional research: AI_WEB_SEARCH=1  AI_WEB_SEARCH_MAX_USES=3   (off by default)
 // Eval:    node scripts/coach-chat-eval.mjs   (see the harness header)
 //
 // Model note: AI_MODEL defaults to claude-opus-4-8. Opus 4.8 REMOVES `temperature`/`top_p`/`top_k`
@@ -35,6 +37,17 @@ const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "500");
 
 const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
+// Optional web research — OFF by default so cost stays predictable. Set AI_WEB_SEARCH=1 to let the
+// coach look up current facts (upcoming race dates, registration windows, qualifying times, course
+// details) via Anthropic's server-side web search, capped at AI_WEB_SEARCH_MAX_USES lookups/reply.
+// The app only ever escalates to this function for questions its offline coach can't answer, so a
+// search runs only on the rare research turn — never on the everyday plan/training questions.
+const WEB_SEARCH = (Deno.env.get("AI_WEB_SEARCH") ?? "") === "1";
+const WEB_SEARCH_MAX_USES = Number(Deno.env.get("AI_WEB_SEARCH_MAX_USES") ?? "3");
+const TOOLS = WEB_SEARCH
+  ? [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: WEB_SEARCH_MAX_USES }]
+  : undefined;
+
 const SYSTEM = `You are momentum's coach, in a chat with this athlete. You're given the recent \
 conversation and a \`context\` object: their training status (acute:chronic load ratio and what it \
 means), today's planned session, \`upcoming\` sessions for the next 14 days (each with an id), their \
@@ -42,11 +55,20 @@ means), today's planned session, \`upcoming\` sessions for the next 14 days (eac
 \`adaptLock\`, \`isPaused\`, \`injuryAreas\`, \`lastWorkout\`, \`memoryCategories\`, and your \
 long-term \`memory\` (honor any note with \`pinned: true\` as ground truth).
 
-Reply in ONE short, warm, specific message (<= 60 words), second person. Ground every claim in the \
-numbers from \`context\` — never invent data. The plan engine owns loads/paces/volumes; you narrate \
-and advise within them, you do not compute new numbers. Be a no-shame coach: a missed or partial \
-session just moves on. Never give medical or injury diagnosis. If asked to do something outside \
-training, gently steer back.
+Reply in ONE short, warm, specific message (<= 60 words, up to ~90 only when a factual/research \
+answer genuinely needs it), second person. Ground every claim in the numbers from \`context\` — \
+never invent data. The plan engine owns loads/paces/volumes; you narrate and advise within them, \
+you do not compute new numbers. Be a no-shame coach: a missed or partial session just moves on. \
+Never give medical or injury diagnosis. If asked to do something outside training, gently steer back.
+
+WHY YOU'RE ANSWERING. The app answers everyday plan/training questions itself and only hands you \
+the ones it couldn't — the deeper coaching questions (fueling nuance, the science of training, \
+pacing strategy, gear, mindset) and requests to RESEARCH real-world facts (upcoming race dates, \
+registration windows, qualifying standards, course profiles, weather). Answer these fully and \
+expertly, like a seasoned running coach — this is exactly where you add value. If web search is \
+available and the athlete asks about a specific race or a fact that changes over time, use it and \
+cite the concrete answer (date, place, number); if it isn't available, give your best honest \
+guidance and say when they should double-check the official race site. Still no invented specifics.
 
 THE CARD. You may attach at most ONE card. A card is a PROPOSAL — the app shows the athlete the \
 exact change and they confirm; you never apply anything. Rules:
@@ -56,6 +78,11 @@ offering it). Fill ONLY the parameters your kind needs.
 - Echo ids and enum values VERBATIM from context: sessionId from upcoming[].id, goal from \
 settings.goalOptions, equipment from settings.equipmentOptions, injuryArea from injuryAreas. Dates \
 are "yyyy-MM-dd". Never invent an id.
+- REQUIRED fields per kind — a card missing these is broken, and never use a placeholder like \
+"undefined": moveSession needs sessionId AND newDateISO; skipSession needs sessionId; changeDays \
+needs daysPerWeek; changeSessionLength needs sessionMinutes; changeGoal needs goal; changeEquipment \
+needs equipment; changeRace needs raceName (or raceDistanceM + raceDateISO); injuryReport needs \
+injuryArea; pausePlan needs pauseDays; rememberNote needs note + noteCategory; nav needs nav.
 - If adaptLock.canAdaptLoad is false, do NOT propose easeWeek/bumpLoad — explain in words that the \
 plan was already adjusted (adaptLock.lastAdaptedAtISO) and one structural change a week keeps \
 adaptation honest.
@@ -147,6 +174,31 @@ const SCHEMA = {
   required: ["reply", "card"],
 };
 
+// The card kinds, from the schema above (single source of truth) — named in the prompt so the model
+// emits a valid kind without the API-level json_schema (which rejects this card shape as too complex).
+const CARD_KINDS = (SCHEMA.properties.card.properties.kind.enum as string[]).join(", ");
+
+/// Model output → object. Structured outputs are OFF (our card schema exceeds the API's json_schema
+/// complexity limit — "Schema is too complex"), so we instruct strict JSON in the prompt and parse
+/// TOLERANTLY here: strip any stray ``` fence, take the outermost {...}, and if that isn't valid JSON
+/// with a reply (the model sometimes just answers in prose) use the whole text verbatim as the reply.
+/// This NEVER throws — the answer always lands. Escalation turns are almost always plain Q&A, so the
+/// only thing a prose reply loses is a card, which those turns rarely carry.
+function parseModelJSON(text: string): { reply: string; card: unknown } {
+  let t = text.trim();
+  if (t.startsWith("```")) t = t.replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim();
+  const first = t.indexOf("{"), last = t.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try {
+      const obj = JSON.parse(t.slice(first, last + 1));
+      if (obj && typeof obj.reply === "string") {
+        return { reply: obj.reply, card: obj.card ?? { kind: "none", label: "" } };
+      }
+    } catch (_e) { /* fall through to prose */ }
+  }
+  return { reply: t, card: { kind: "none", label: "" } };
+}
+
 /// Extract the (possibly incomplete) "reply" string value from a growing JSON buffer, un-escaping
 /// as we go. Returns null until `"reply":"` has arrived. `done` flips at the closing quote.
 function replySlice(buf: string): { text: string; done: boolean } | null {
@@ -184,11 +236,21 @@ function requestParams(payload: { messages?: { role: string; text: string }[]; c
     role: m.role === "assistant" ? "assistant" as const : "user" as const,
     content: m.text,
   }));
+  // The Anthropic API requires the FIRST message to be a user turn. A real chat thread usually opens
+  // with the coach's welcome (an assistant message) and can carry proactive assistant seeds, so drop
+  // any leading assistant turns — otherwise every call 400s and the app silently falls back offline.
+  while (history.length && history[0].role !== "user") history.shift();
   return {
     model: MODEL,
     max_tokens: MAX_TOKENS,
-    system: SYSTEM + "\n\nCONTEXT:\n" + JSON.stringify(payload.context ?? {}),
-    output_config: { format: { type: "json_schema", schema: SCHEMA } },
+    system: SYSTEM +
+      "\n\nOUTPUT: reply with ONLY a JSON object (no code fences, no text around it), \"reply\" first:\n" +
+      "{\"reply\": \"<your message>\", \"card\": {\"kind\": \"none\", \"label\": \"\"}}\n" +
+      "card.kind must be exactly one of: " + CARD_KINDS + ". Include ONLY the extra fields that kind needs.\n\n" +
+      "CONTEXT:\n" + JSON.stringify(payload.context ?? {}),
+    // Server-side web search, only when enabled (see TOOLS). The model decides whether a turn needs
+    // it; most don't. Results feed the reply, which the model still returns as the JSON above.
+    ...(TOOLS ? { tools: TOOLS } : {}),
     messages: history.length ? history : [{ role: "user" as const, content: "Hello" }],
   };
 }
@@ -210,7 +272,7 @@ Deno.serve(async (req) => {
     try {
       const message = await client.messages.create(requestParams(payload));
       const text = message.content.find((b) => b.type === "text")?.text ?? "{}";
-      return json(JSON.parse(text), 200);
+      return json(parseModelJSON(text), 200);
     } catch (_e) {
       // The client renders its deterministic CoachResponder on any non-200 — never block.
       return json({ error: "coach_unavailable" }, 503);
@@ -237,7 +299,7 @@ Deno.serve(async (req) => {
             }
           }
         }
-        const parsed = JSON.parse(buf || "{}");
+        const parsed = parseModelJSON(buf || "{}");
         // Anything the incremental extractor missed (e.g. a trailing escape) goes out now.
         if (typeof parsed.reply === "string" && parsed.reply.length > emitted) {
           send("delta", { text: parsed.reply.slice(emitted) });

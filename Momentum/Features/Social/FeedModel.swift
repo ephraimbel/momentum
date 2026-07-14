@@ -35,8 +35,12 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var photosData: [Data] = []
     /// The hero photo — the first attached photo (convenience for tile/thumbnail contexts).
     var photoData: Data? { photosData.first }
-    /// The author's profile photo (the user's own posts); nil → initials avatar (community).
+    /// The author's profile photo (the user's own posts); nil → initials/bundled avatar (community).
     var avatarData: Data? = nil
+    /// The bundled synthetic-face asset for a seeded community author (deterministic per name), so
+    /// community posts show a real-feeling face instead of an initials chip. nil for the user's own
+    /// and real network posts (they carry `avatarData`). See `CommunityAvatars`.
+    var communityAvatarAsset: String? { isCommunity ? CommunityAvatars.assetName(forDisplayName: authorName) : nil }
     /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
     /// post's reading view. The user's own posts carry their `aiSummary`; community posts are seeded.
     var aiRead: String? = nil

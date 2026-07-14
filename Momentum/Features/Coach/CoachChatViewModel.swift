@@ -133,10 +133,14 @@ final class CoachChatViewModel {
         }
     }
 
-    /// Three-tier reply, best experience first: (1) STREAM — the reply lands token by token in a
-    /// live bubble (typing dots yield to text on the first delta); (2) one-shot JSON for an older
-    /// deploy; (3) the deterministic local responder. The chat never blocks, and partial streamed
-    /// text survives a dropped connection. Everything is de-dashed at finalize.
+    /// Offline-first routing (keeps the AI cheap — the model runs only for what we can't answer):
+    /// 1. The deterministic `CoachResponder` answers first. When it's CONFIDENT — a card intent or a
+    ///    grounded answer — we render that immediately, free, no network. Most turns land here.
+    /// 2. Only when the responder falls through (a question outside what we know: fueling nuance,
+    ///    the science of training, researching an upcoming race) AND a backend is configured do we
+    ///    escalate to the Claude-backed coach — STREAMED token by token, one-shot JSON as a fallback.
+    /// 3. If that AI call is slow/down/unconfigured, the responder's safe generic line is shown.
+    /// The chat never blocks, partial streamed text survives a dropped connection, all de-dashed.
     private func respond(to latest: String, history: [CoachChatService.Turn],
                          context ctx: CoachResponder.Context,
                          startedAt started: ContinuousClock.Instant = .now) async {
@@ -144,40 +148,47 @@ final class CoachChatViewModel {
             isResponding = false; isStreamingReply = false   // busy until finalize, whatever path
             Haptics.light()                                  // the reply landed — one soft tick
         }
-        if service.isConfigured {
-            var live: ChatMessage?
-            let streamed = await service.stream(history: history, context: ctx) { [weak self] delta in
-                guard let self else { return }
-                if live == nil {
-                    let msg = ChatMessage(role: .coach, text: "")
-                    self.context.insert(msg)
-                    live = msg
-                    self.isStreamingReply = true   // dots out, words in — but still busy
-                }
-                live?.text += delta
-            }
-            if let live {
-                // Streamed replies animate themselves — no artificial beat on top.
-                live.text = CoachResponder.deDash(streamed?.text ?? live.text)
-                if let streamed { live.card = validatedCard(streamed.card, context: ctx) }
-                try? context.save()
-                return
-            }
-            if let streamed {   // stream returned whole but emitted no deltas — render one-shot
-                await settleThinkingBeat(since: started, for: streamed.text)
-                insert(.coach, CoachResponder.deDash(streamed.text), card: validatedCard(streamed.card, context: ctx))
-                return
-            }
-            if let llm = await service.reply(history: history, context: ctx) {
-                await settleThinkingBeat(since: started, for: llm.text)
-                insert(.coach, CoachResponder.deDash(llm.text), card: validatedCard(llm.card, context: ctx))
-                return
-            }
+        // Tier 1 — answer locally where we're confident (and always when there's no AI to escalate to).
+        let local = CoachResponder.resolve(to: latest, context: ctx)
+        if local.confident || !service.isConfigured {
+            await settleThinkingBeat(since: started, for: local.turn.text)
+            insert(.coach, local.turn.text, card: validatedCard(local.turn.card, context: ctx))
+            return
         }
-        // No backend (or it failed): the local responder, behind the same thinking beat.
-        let turn = CoachResponder.respond(to: latest, context: ctx)
-        await settleThinkingBeat(since: started, for: turn.text)
-        insert(.coach, turn.text, card: validatedCard(turn.card, context: ctx))
+
+        // Tier 2 — we don't have a solid answer and the AI is available: hand this one to Claude.
+        var live: ChatMessage?
+        let streamed = await service.stream(history: history, context: ctx) { [weak self] delta in
+            guard let self else { return }
+            if live == nil {
+                let msg = ChatMessage(role: .coach, text: "")
+                self.context.insert(msg)
+                live = msg
+                self.isStreamingReply = true   // dots out, words in — but still busy
+            }
+            live?.text += delta
+        }
+        if let live {
+            // Streamed replies animate themselves — no artificial beat on top.
+            live.text = CoachResponder.deDash(streamed?.text ?? live.text)
+            if let streamed { live.card = validatedCard(streamed.card, context: ctx) }
+            try? context.save()
+            return
+        }
+        if let streamed {   // stream returned whole but emitted no deltas — render one-shot
+            await settleThinkingBeat(since: started, for: streamed.text)
+            insert(.coach, CoachResponder.deDash(streamed.text), card: validatedCard(streamed.card, context: ctx))
+            return
+        }
+        if let llm = await service.reply(history: history, context: ctx) {
+            await settleThinkingBeat(since: started, for: llm.text)
+            insert(.coach, CoachResponder.deDash(llm.text), card: validatedCard(llm.card, context: ctx))
+            return
+        }
+
+        // Tier 3 — the AI didn't answer either: fall back to the responder's safe generic line.
+        await settleThinkingBeat(since: started, for: local.turn.text)
+        insert(.coach, local.turn.text, card: validatedCard(local.turn.card, context: ctx))
     }
 
     /// Drop any card that doesn't survive validation right now — a reply with a broken card is still

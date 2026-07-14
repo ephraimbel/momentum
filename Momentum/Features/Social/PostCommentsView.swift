@@ -60,7 +60,8 @@ struct PostCommentsView: View {
 
     private func row(_ comment: Comment) -> some View {
         HStack(alignment: .top, spacing: Theme.Space.sm) {
-            AvatarView(photo: comment.isCommunity ? nil : profile?.avatarData, name: comment.authorName, size: 30)
+            AvatarView(photo: comment.isCommunity ? nil : profile?.avatarData, name: comment.authorName, size: 30,
+                       imageName: comment.isCommunity ? CommunityAvatars.assetName(forDisplayName: comment.authorName) : nil)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(comment.authorName).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)

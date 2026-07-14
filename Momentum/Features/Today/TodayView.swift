@@ -71,6 +71,9 @@ struct TodayView: View {
     // route on the Today map + overview it, so the website header shows a route AND today's plan
     // card in one authentic app shot.
     @State private var marketingHero = ProcessInfo.processInfo.arguments.contains("--marketing-hero")
+    // One-shot: the hero course is framed in `.onStyleLoaded` (once the map is actually ready), not
+    // on a fixed onAppear delay that raced the tile load and left the camera on the puck.
+    @State private var heroFramed = false
 
     enum GoalKind { case open, distance }
 
@@ -94,6 +97,23 @@ struct TodayView: View {
         else { return [] }
         return obj["pts"] ?? []
     }()
+
+    /// Frame the full hero course once the style/tiles are ready. One-shot (guarded). A direct camera
+    /// on the course centroid — not `.overview` from an uninitialized `.idle` camera, which fails to
+    /// fit and falls back to a world-zoom globe. Centroid + a fixed zoom reliably centers the whole
+    /// course between the floating header and the plan card.
+    private func frameMarketingHero() {
+        guard marketingHero, !heroFramed, heroRouteCoordinates.count > 1 else { return }
+        heroFramed = true
+        let coords = heroRouteCoordinates
+        let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
+        // Nudge the centre slightly north so the plan card at the bottom doesn't crowd the course.
+        let center = CLLocationCoordinate2D(latitude: (lats.min()! + lats.max()!) / 2 + 0.012,
+                                            longitude: (lons.min()! + lons.max()!) / 2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            viewport = .camera(center: center, zoom: 11.6, pitch: 0)
+        }
+    }
     #endif
 
     private let distanceUnit: DistanceUnit = .auto
@@ -138,17 +158,9 @@ struct TodayView: View {
             // change-guarded, so an identical snapshot never wakes the widget.
             WidgetBridge.publish(profile: profiles.first, workouts: workouts)
             if isCardio || worldMode || loopMode || marketingHero { mapWasShown = true }
-            // Marketing hero: frame the traced route (deferred so the style/tiles are loaded).
-            if marketingHero {
-                let coords = heroRouteCoordinates
-                if coords.count > 1 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                        viewport = .overview(geometry: LineString(coords),
-                                             geometryPadding: EdgeInsets(top: 90, leading: 60, bottom: 320, trailing: 60))
-                    }
-                }
-                return
-            }
+            // Marketing hero frames the course in `.onStyleLoaded` (once tiles are ready). Return here
+            // so the puck-follow / last-known camera logic below never steals the camera.
+            if marketingHero { return }
             // Open over the athlete's last-known neighborhood (never the whole world); once a live fix
             // lands we switch to following the puck. We only *follow the puck* up front when location is
             // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
@@ -173,7 +185,7 @@ struct TodayView: View {
         .onChange(of: activity) { if isCardio { mapWasShown = true } }
         // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
-            if !worldMode, locator.lastLocation != nil {
+            if !worldMode, !marketingHero, locator.lastLocation != nil {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
@@ -184,7 +196,7 @@ struct TodayView: View {
         }
         // Re-tilt the camera when switching to/from 3D Satellite (and other layers reset it flat).
         .onChange(of: mapStyle) {
-            if !worldMode {
+            if !worldMode, !marketingHero {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
@@ -499,10 +511,10 @@ struct TodayView: View {
                 // periwinkle (route dark-variant #D0D6FF) over a crisp white casing pops on any style.
                 PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
                     .lineColor(StyleColor(UIColor.white))
-                    .lineWidth(11).lineJoin(.round)
+                    .lineWidth(13).lineJoin(.round)
                 PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
                     .lineColor(StyleColor(UIColor(red: 0.816, green: 0.839, blue: 1.0, alpha: 1)))
-                    .lineWidth(6).lineJoin(.round)
+                    .lineWidth(7).lineJoin(.round)
             }
             // Inline loop suggester — draw the candidates right on the Today map. The unselected loops
             // are a faint hairline; the selected one wears the brand purple (matching the live puck),
@@ -527,7 +539,14 @@ struct TodayView: View {
         .ornamentOptions(MapChrome.hidden)
         // Enabling the puck activates Mapbox's location provider, which prompts for permission — so we
         // only turn it on once the athlete has actually granted location (never up front on arrival).
-        .onStyleLoaded { _ in if locator.isAuthorized { BrandPuck.apply(to: proxy) } }
+        .onStyleLoaded { _ in
+            #if DEBUG
+            // The marathon hero owns the camera (frame the course) and shows no puck — a "you are
+            // here" dot parked downtown only distracts from the course.
+            if marketingHero { frameMarketingHero(); return }
+            #endif
+            if locator.isAuthorized { BrandPuck.apply(to: proxy) }
+        }
         .onChange(of: locator.isAuthorized) { _, granted in if granted { BrandPuck.apply(to: proxy) } }
         .ignoresSafeArea()
         }

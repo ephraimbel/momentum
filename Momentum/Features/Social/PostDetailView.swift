@@ -22,7 +22,8 @@ struct PostDetailView: View {
                         .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                     if let pr = item.prBadge { PRBadge(text: pr) }
-                    FeedMediaView(item: item, height: 260)
+                    // Reading view shows the WHOLE photo (fit, not cropped), taller than the feed band.
+                    FeedMediaView(item: item, height: 360, photoContentMode: .fit)
                     StatGrid(cells: item.metrics.map { .init(value: $0.value, label: $0.label) },
                              valueSize: 20, leading: true)
                         .padding(.vertical, Theme.Space.sm)
@@ -52,7 +53,7 @@ struct PostDetailView: View {
 
     private var byline: some View {
         HStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: item.avatarData, name: item.authorName, size: 44)
+            AvatarView(photo: item.avatarData, name: item.authorName, size: 44, imageName: item.communityAvatarAsset)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(item.authorName).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
@@ -99,9 +100,9 @@ struct PostDetailView: View {
         return HStack(spacing: Theme.Space.xl) {
             Button { reactions.toggle(item.id); Haptics.light() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: reacted ? "bolt.fill" : "bolt")
+                    Image(systemName: reacted ? "heart.fill" : "heart")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(reacted ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkSecondary))
+                        .foregroundStyle(reacted ? Theme.like : Theme.inkSecondary)
                         .scaleEffect(reacted && !reduceMotion ? 1.12 : 1)
                         .animation(.spring(response: 0.3, dampingFraction: 0.5), value: reacted)
                     Text("\(reactions.count(for: item))").font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
@@ -109,7 +110,7 @@ struct PostDetailView: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(reacted ? "Respected" : "Respect")
+            .accessibilityLabel(reacted ? "Liked" : "Like")
             Button { showingComments = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "bubble.left").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.inkSecondary)

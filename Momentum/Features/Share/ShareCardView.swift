@@ -27,6 +27,9 @@ struct ShareCardView: View {
     #endif
     @State private var photoItem: PhotosPickerItem?
     @State private var pickedPhoto: UIImage?
+    /// The workout's own photo, decoded ONCE (a full-res JPEG) — not re-decoded on every
+    /// style/format/size tap the way an inline `UIImage(data:)` in `photo` would be.
+    @State private var workoutPhoto: UIImage?
 
     enum ShareFormat: String, CaseIterable, Identifiable {
         case story = "Story", square = "Square"
@@ -38,12 +41,9 @@ struct ShareCardView: View {
         ShareStats(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
     }
 
-    /// The photo a photo-style card wears: explicit pick first, else the workout's own photo.
-    private var photo: UIImage? {
-        if let pickedPhoto { return pickedPhoto }
-        if let data = workout.orderedPhotosData.first { return UIImage(data: data) }
-        return nil
-    }
+    /// The photo a photo-style card wears: explicit pick first, else the workout's own photo
+    /// (decoded once into `workoutPhoto`, never inline here on the render path).
+    private var photo: UIImage? { pickedPhoto ?? workoutPhoto }
 
     private var styleLocked: Bool {
         style.requiresPro && !paywall.isEntitled(to: .allShareTemplates)
@@ -119,6 +119,12 @@ struct ShareCardView: View {
                 guard let photoItem,
                       let data = try? await photoItem.loadTransferable(type: Data.self) else { return }
                 pickedPhoto = UIImage(data: data)
+            }
+            // Decode the workout's own photo once, off the render path (photo styles read `photo`).
+            .task(id: workout.id) {
+                if workoutPhoto == nil, let data = workout.orderedPhotosData.first {
+                    workoutPhoto = UIImage(data: data)
+                }
             }
         }
     }

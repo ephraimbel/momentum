@@ -817,7 +817,9 @@ struct ProgressScreen: View {
         let visible = hasFullHistory ? workouts : workouts.filter { $0.startedAt >= cutoff }
         let lockedCount = workouts.count - visible.count
         return ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
+            // Lazy: a long history otherwise realizes every month section (and decodes every route
+            // thumbnail) up front. Sections now materialize as they scroll into view.
+            LazyVStack(alignment: .leading, spacing: Theme.Space.md) {
                 historySummary().reveal(0)
                 // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a tab).
                 // Rescued from the retired standalone History screen during the lean-cleanup pass.
@@ -939,26 +941,7 @@ struct ProgressScreen: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func feedThumb(_ w: Workout) -> some View {
-        if let data = w.gps?.mapSnapshotData, let img = UIImage(data: data) {
-            Image(uiImage: img).resizable().scaledToFill()
-                .frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 13))
-                // Same hairline ring as the glyph fallback — light basemaps otherwise bleed into
-                // the card with no edge.
-                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
-        } else {
-            RoundedRectangle(cornerRadius: 13).fill(Theme.surface)
-                .frame(width: 52, height: 52)
-                .overlay {
-                    Image(systemName: w.type.systemImage).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.inkSecondary)
-                }
-                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
-                // Self-heal like the grid tiles: a GPS workout whose finish-time snapshot render
-                // failed re-renders + persists here, beyond the launch sweep's recency window.
-                .task(id: w.id) { await WorkoutSnapshotHealer.healIfNeeded(w, context: context) }
-        }
-    }
+    private func feedThumb(_ w: Workout) -> some View { HistoryFeedThumb(workout: w) }
 
     private func feedTitle(_ w: Workout) -> String {
         if !w.title.isEmpty { return w.title }
@@ -2109,6 +2092,44 @@ struct ProgressScreen: View {
         case 11..<17: return "Afternoon"
         case 17..<22: return "Evening"
         default: return "Late-night"
+        }
+    }
+}
+
+/// A History-feed row thumbnail. Decodes the persisted map snapshot ONCE into `@State`, off the
+/// render path — the feed's non-lazy `ForEach` previously re-ran `UIImage(data:)` for every GPS row
+/// on each re-render. Falls back to the discipline glyph and self-heals a missing snapshot (re-render
+/// + persist) exactly like the profile grid tiles.
+private struct HistoryFeedThumb: View {
+    let workout: Workout
+    @Environment(\.modelContext) private var context
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+                    .frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 13))
+                    // Hairline ring so light basemaps don't bleed into the card with no edge.
+                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
+            } else {
+                RoundedRectangle(cornerRadius: 13).fill(Theme.surface)
+                    .frame(width: 52, height: 52)
+                    .overlay {
+                        Image(systemName: workout.type.systemImage)
+                            .font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.hairline))
+            }
+        }
+        .task(id: workout.id) {
+            if let data = workout.gps?.mapSnapshotData, let img = UIImage(data: data) {
+                image = img
+            } else {
+                // No (or unreadable) snapshot — self-heal, then pick up the freshly-rendered one.
+                await WorkoutSnapshotHealer.healIfNeeded(workout, context: context)
+                if let data = workout.gps?.mapSnapshotData, let img = UIImage(data: data) { image = img }
+            }
         }
     }
 }

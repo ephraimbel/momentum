@@ -108,10 +108,22 @@ enum CoachResponder {
     /// The card-capable entry point (offline mirror of the Edge Function): deterministic keyword
     /// intents where they're safe, plain grounded text everywhere else. The chat never blocks.
     static func respond(to message: String, context ctx: Context) -> LocalTurn {
+        resolve(to: message, context: ctx).turn
+    }
+
+    /// Offline-first routing decision. Returns the local turn AND whether we're `confident` in it:
+    /// - a matched card intent, or a grounded answer → confident (use it, no AI, free)
+    /// - fell through to the generic capability line → NOT confident (`turn` is the safe fallback;
+    ///   the app escalates to the Claude-backed coach and uses this only if that's unavailable).
+    /// This is the gate that keeps the AI cheap: it runs only for questions we can't answer well.
+    static func resolve(to message: String, context ctx: Context) -> (turn: LocalTurn, confident: Bool) {
         if let turn = cardTurn(for: message, context: ctx) {
-            return LocalTurn(text: deDash(turn.text), card: turn.card)
+            return (LocalTurn(text: deDash(turn.text), card: turn.card), true)
         }
-        return LocalTurn(text: deDash(rawReply(to: message, context: ctx)), card: nil)
+        if let answer = groundedAnswer(to: message, context: ctx) {
+            return (LocalTurn(text: deDash(answer), card: nil), true)
+        }
+        return (LocalTurn(text: deDash(genericFallback(to: message, context: ctx)), card: nil), false)
     }
 
     // MARK: - Keyword → card intents (deterministic, conservative)
@@ -204,8 +216,11 @@ enum CoachResponder {
             if let turn = skipProposal(q, context: ctx) { return turn }
         }
 
-        // Ease the week (consent-gated protective direction).
-        if has(["too hard", "too much this week", "ease this week", "ease my week", "easier week", "cut back", "dial it back", "lighten", "brutal"]) {
+        // Ease the week (consent-gated protective direction). Natural ease phrasings included —
+        // "ease it off" must not fall through to the "this week" schedule branch below.
+        if has(["too hard", "too much this week", "way too much", "ease this week", "ease my week",
+                "easier week", "ease it off", "ease off", "ease it up", "back it off", "cut back",
+                "dial it back", "lighten", "brutal", "overwhelming"]) {
             guard hasUpcoming else { return nil }
             if ctx.canAdaptLoad {
                 let card = CoachCardPayload(kind: .easeWeek, label: "Ease this week")
@@ -486,7 +501,17 @@ enum CoachResponder {
         return "I already adjusted your plan \(when). One structural change a week keeps adaptation honest, so let's hold here for now. Ask me again in a few days."
     }
 
+    /// The full offline reply — a confident grounded answer where we have one, else the generic
+    /// capability fallback. Kept for callers that just want text no matter what.
     private static func rawReply(to message: String, context ctx: Context) -> String {
+        groundedAnswer(to: message, context: ctx) ?? genericFallback(to: message, context: ctx)
+    }
+
+    /// A CONFIDENT, grounded answer — or `nil` when the question falls past everything we actually
+    /// know (the point where we'd otherwise deflect with a generic capability line). That `nil` is
+    /// the escalation signal: the app hands those questions to the Claude-backed coach, and only
+    /// those, so the AI is used where it adds value and nowhere else (keeps it cheap).
+    private static func groundedAnswer(to message: String, context ctx: Context) -> String? {
         let q = message.lowercased()
         let i = ctx.insights
         let s = ctx.stats
@@ -545,8 +570,9 @@ enum CoachResponder {
         // with their numbers where they exist. After the data branches so live data always wins.
         if let t = CoachKnowledge.answer(for: q, facts: facts(ctx)) { return t }
 
-        // Today / what to do
-        if has(["today", "what should i", "what do i do", "workout now", "should i train", "next session"]) {
+        // Today / what to do. "what should i" is spelled out to the real intents — bare "what should
+        // i" also swallows "what should I look for / wear / buy", which belong in the library or to AI.
+        if has(["today", "what should i do", "what should i run", "what do i do", "workout now", "should i train", "next session"]) {
             if let session = ctx.todaySession {
                 let brief = PlanCoaching.brief(for: session, distanceUnit: ctx.distanceUnit)
                 let why = session.rationale.map { " \($0)" } ?? ""
@@ -592,8 +618,12 @@ enum CoachResponder {
             return "\(d) day\(d == 1 ? "" : "s") and counting. Rest days count and a single slipped day is forgiven, so just keep moving. You won't lose it easily."
         }
 
-        // PRs / records
-        if has(["pr", "record", "strongest", "best lift", "1rm", "e1rm", "max"]) {
+        // PRs / records. The short tokens ("pr", "max") must match as whole WORDS — a bare substring
+        // check fires on "prevent", "prep", "approach", "maximum", stealing those questions from the
+        // knowledge library (and from AI escalation) with a nonsense records reply.
+        let words = Set(q.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        if has(["record", "strongest", "best lift", "1rm", "e1rm", "personal best"])
+            || !words.isDisjoint(with: ["pr", "prs", "max", "maxes"]) {
             if let pr = s.strengthPRs.first {
                 return "Your standout is \(pr.name) at an estimated \(Formatters.weight(kg: pr.e1RMKg, unit: .default())) one-rep max. Keep the working sets honest and that'll climb."
             }
@@ -614,8 +644,16 @@ enum CoachResponder {
             return "Hey, I'm your coach. I can talk through how you're trending, what to do today, recovery, or your records. What's on your mind?"
         }
 
-        // A near-miss nudge first — point at the closest real capability instead of changing the
-        // subject — then a varied grounded fallback (the same line twice reads as scripted).
+        // Fell past everything we confidently answer — signal the caller to escalate (or, offline,
+        // fall back to the generic capability line below).
+        return nil
+    }
+
+    /// The last-resort offline reply when no grounded answer matched and the AI coach is unavailable:
+    /// a near-miss nudge toward the closest real capability, then a varied grounded capability line.
+    private static func genericFallback(to message: String, context ctx: Context) -> String {
+        let q = message.lowercased()
+        let i = ctx.insights
         if let nudge = capabilityNudge(q) { return nudge }
         let lead = i.hasData
             ? "Right now you're \(i.status.rawValue.lowercased()), load balance \(acwrText(i))."

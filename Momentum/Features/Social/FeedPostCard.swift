@@ -79,7 +79,7 @@ struct FeedPostCard: View {
 
     private var authorIdentity: some View {
         HStack(spacing: Theme.Space.sm) {
-            AvatarView(photo: item.avatarData, name: item.authorName, size: 36)
+            AvatarView(photo: item.avatarData, name: item.authorName, size: 36, imageName: item.communityAvatarAsset)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(item.authorName).font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
@@ -175,9 +175,9 @@ struct FeedPostCard: View {
             reactions.toggle(item.id); Haptics.light()
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: reacted ? "bolt.fill" : "bolt")
+                Image(systemName: reacted ? "heart.fill" : "heart")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(reacted ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkTertiary))
+                    .foregroundStyle(reacted ? Theme.like : Theme.inkTertiary)
                     .scaleEffect(reacted && !reduceMotion ? 1.12 : 1)
                     .animation(.spring(response: 0.3, dampingFraction: 0.5), value: reacted)
                 Text("\(reactions.count(for: item))")
@@ -187,7 +187,7 @@ struct FeedPostCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(reacted ? "Respected" : "Respect")
+        .accessibilityLabel(reacted ? "Liked" : "Like")
         .accessibilityValue("\(reactions.count(for: item))")
     }
 

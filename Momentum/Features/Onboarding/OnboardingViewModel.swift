@@ -296,11 +296,12 @@ final class OnboardingViewModel {
         return "\(phrase) — one week at a time"
     }
 
-    /// Whole weeks until race day (for the reveal countdown), if a dated race was set.
+    /// Whole weeks until race day (for the reveal countdown), if a dated race was set. Delegates to
+    /// the canonical `PlanEngine.weeksToRace` (inclusive of race week) so the feasibility verdict here
+    /// matches Plan Settings for the same race + date — they used to differ by one week.
     var weeksToRace: Int? {
         guard goal == .raceDistance, hasRace else { return nil }
-        let w = Calendar.current.dateComponents([.weekOfYear], from: Date(), to: raceDate).weekOfYear ?? 0
-        return max(0, w)
+        return PlanEngine.weeksToRace(startDate: Date(), raceDate: raceDate, calendar: .current)
     }
 
     /// Create the profile + plan. Returns the persisted profile.

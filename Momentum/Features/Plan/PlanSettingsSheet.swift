@@ -77,7 +77,14 @@ struct PlanSettingsSheet: View {
     }
 
     private var newRaceDistanceM: Double? { racing ? raceDistance?.meters : nil }
-    private var newRaceDate: Date? { racing && hasRaceDate ? Calendar.current.startOfDay(for: raceDate) : nil }
+    private var newRaceDate: Date? {
+        guard racing && hasRaceDate else { return nil }
+        let d = Calendar.current.startOfDay(for: raceDate)
+        // A race date in the past is stale (the race elapsed and no new plan was made). Feeding it to
+        // the generator yields a degenerate 1-week plan (weeksToRace clamps to 1), so treat it as "no
+        // date" — the feasibility card prompts for a fresh one instead of racing toward yesterday.
+        return d > Calendar.current.startOfDay(for: Date()) ? d : nil
+    }
     private var newGoalFinishTimeS: Double? {
         racing && hasGoalTime ? Double(goalHours * 3600 + goalMinutes * 60) : nil
     }

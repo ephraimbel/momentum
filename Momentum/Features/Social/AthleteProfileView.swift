@@ -97,7 +97,7 @@ struct AthleteProfileView: View {
 
     private var identity: some View {
         VStack(spacing: Theme.Space.md) {
-            AvatarView(photo: athlete.avatarData, name: athlete.name, size: 76)
+            AvatarView(photo: athlete.avatarData, name: athlete.name, size: 76, imageName: athlete.communityAvatarAsset)
             VStack(spacing: 3) {
                 HStack(spacing: 6) {
                     Text(athlete.name).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
@@ -300,6 +300,8 @@ private struct PostTile: View {
                     .padding(Theme.Space.sm)
             }
         } else if let route = routeCoords, route.count > 1 {
+            // A lightweight route silhouette (the real map is one tap away in the post's reading view).
+            // A grid of live Mapbox snapshots is far heavier than the feed's 2–3 and hurt scroll.
             ZStack {
                 Theme.background
                 RouteSilhouette(coords: route)
@@ -339,3 +341,4 @@ private struct PostTile: View {
         item.statLine.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespaces) ?? item.statLine
     }
 }
+

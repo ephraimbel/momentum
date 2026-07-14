@@ -17,7 +17,6 @@ final class Services {
     let location: any LocationServing
     let motion: any MotionServing
     let health: any HealthServing
-    let plan: any PlanEngineServing
     let ai: any AIServing
     let sync: any SyncServing
     let paywall: any PaywallServing
@@ -33,7 +32,6 @@ final class Services {
         location: any LocationServing,
         motion: any MotionServing,
         health: any HealthServing,
-        plan: any PlanEngineServing,
         ai: any AIServing,
         sync: any SyncServing,
         paywall: any PaywallServing,
@@ -48,7 +46,6 @@ final class Services {
         self.location = location
         self.motion = motion
         self.health = health
-        self.plan = plan
         self.ai = ai
         self.sync = sync
         self.paywall = paywall
@@ -69,7 +66,6 @@ final class Services {
             location: LocationService(),
             motion: MotionService(),
             health: HealthService(),
-            plan: StubPlanEngine(),
             ai: AIService(),
             sync: SyncService(),
             paywall: paywall,
@@ -129,7 +125,6 @@ protocol HealthServing: AnyObject {
     /// The full heart-rate series for a workout window (Watch/Garmin runs carry one) — time-in-zones.
     func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)]
 }
-protocol PlanEngineServing: AnyObject {}
 @MainActor
 protocol SyncServing: AnyObject {
     /// Push dirty (never-synced) workouts to the cloud and stamp them synced (PRD §8.9). No-op until
@@ -242,7 +237,6 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
 
 // MARK: - Phase 0 stubs
 
-final class StubPlanEngine: PlanEngineServing {}
 @MainActor
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {

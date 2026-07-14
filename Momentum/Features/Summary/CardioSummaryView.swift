@@ -17,6 +17,9 @@ struct CardioSummaryContent: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
     @State private var hits: [CardioAchievements.Hit] = []
+    // The splits' cumulative-distance walk (a haversine per accepted sample) cached once — the
+    // splits section re-ran it on every body pass through the reveal cascade.
+    @State private var samplePts: [CardioMetrics.SamplePoint] = []
     /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
     /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
     @State private var healthHR: [(date: Date, bpm: Double)] = []
@@ -48,6 +51,7 @@ struct CardioSummaryContent: View {
                 splitsSection(gps).reveal(0.40)
             }
             .task {
+                samplePts = samplePoints(gps)
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
                 // Backfill the HR series from Health when we didn't record one live (Watch / imported
                 // runs). Same window + threshold as the time-in-zones card, so the two agree.
@@ -101,6 +105,19 @@ struct CardioSummaryContent: View {
                 // identity on match-presence (and the previewed style) forces one clean remount,
                 // re-running style-load with the snapped route.
                 .id("\(gps.matchedRouteData != nil)-\(style.rawValue)")
+        } else if workout.type.isGPS {
+            // A GPS-discipline run with no usable route (treadmill, or GPS never locked) — a quiet
+            // card instead of a silent gap where the map belongs.
+            ZStack {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                VStack(spacing: 6) {
+                    Image(systemName: "mappin.slash").font(.system(size: 22, weight: .semibold))
+                    Text("No route recorded").font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                }
+                .foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(height: 120)
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         }
     }
 
@@ -135,8 +152,7 @@ struct CardioSummaryContent: View {
     }
 
     private func splitsSection(_ gps: GPSDetail) -> some View {
-        let points = samplePoints(gps)
-        let splits = CardioMetrics.splits(points, unitMeters: unitMeters)
+        let splits = CardioMetrics.splits(samplePts, unitMeters: unitMeters)
         let unitLabel = distanceUnit.resolved() == .imperial ? "mi" : "km"
         return VStack(alignment: .leading, spacing: Theme.Space.sm) {
             if !splits.isEmpty {

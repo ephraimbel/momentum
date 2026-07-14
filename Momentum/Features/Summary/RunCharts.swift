@@ -21,83 +21,85 @@ struct RunAnalysisSection: View {
     // MARK: Derived series
 
     private struct Pt { let t: TimeInterval; let distanceM: Double; let altitudeM: Double; let paceSPerKm: Double }
+    private struct HRPt { let t: TimeInterval; let bpm: Int }
+    private struct SplitBar: Identifiable { let id: Int; let unitIndex: Int; let paceSPerUnit: Double; let isBest: Bool }
 
-    /// Accepted fixes reduced to cumulative distance + altitude + instantaneous pace.
-    private var points: [Pt] {
-        let accepted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-        guard let first = accepted.first else { return [] }
-        var out: [Pt] = []
-        var cumulative = 0.0
-        var prev: LocationSample?
-        for s in accepted {
-            if let p = prev {
-                cumulative += Geo.distance(lat1: p.lat, lon1: p.lon, lat2: s.lat, lon2: s.lon)
-            }
-            // Ignore near-stopped fixes for pace (they'd spike the line); 0 = "no pace here".
-            let pace = s.speedMS > 0.4 ? 1000 / s.speedMS : 0
-            out.append(Pt(t: s.t.timeIntervalSince(first.t), distanceM: cumulative, altitudeM: s.altitudeM, paceSPerKm: pace))
-            prev = s
-        }
-        return out
+    /// The chart series, derived from the GPS samples ONCE. Reducing accepted fixes to cumulative
+    /// distance runs a haversine per sample; the old computed-property form recomputed it 2–3× on
+    /// every `body` pass (thinned points, splits, HR), and `body` re-evaluates through the reveal
+    /// cascade and when Health HR backfills. For a long run that re-walk of thousands of samples on
+    /// the main thread is exactly the post-run stutter this caches away.
+    private struct Derived { var pts: [Pt]; var hr: [HRPt]; var bars: [SplitBar] }
+    @State private var derived: Derived?
+
+    /// Recompute only when an input that shapes the series actually changes.
+    private var derivedKey: String {
+        "\(gps.samples.count)|\(gps.hrSamples.count)|\(healthHRSeries.count)|\(unitMeters)"
     }
 
     /// Evenly thin a long trace so the charts stay smooth (keeps endpoints).
-    private func thinned<T>(_ pts: [T], to max: Int = 200) -> [T] {
+    private static func thinned<T>(_ pts: [T], to max: Int = 200) -> [T] {
         guard pts.count > max, max > 2 else { return pts }
         let stride = Double(pts.count - 1) / Double(max - 1)
         return (0..<max).map { pts[Int((Double($0) * stride).rounded())] }
     }
 
-    private struct HRPt { let t: TimeInterval; let bpm: Int }
-
-    /// Heart-rate readings as elapsed-time points (seconds from the first reading). Prefers our own
-    /// live-captured series; falls back to the Apple Health series for Watch/imported runs where the
-    /// phone didn't stream HR — so the chart is present for every run that has heart-rate data.
-    private var hrPoints: [HRPt] {
-        let local = gps.hrSamples.filter { $0.bpm > 0 }
-            .sorted { $0.t < $1.t }
-            .map { (date: $0.t, bpm: Double($0.bpm)) }
-        let readings = local.count >= 4 ? local : healthHRSeries.sorted { $0.date < $1.date }
-        guard let first = readings.first else { return [] }
-        return readings.map { HRPt(t: $0.date.timeIntervalSince(first.date), bpm: Int($0.bpm.rounded())) }
-    }
-
-    private struct SplitBar: Identifiable { let id: Int; let unitIndex: Int; let paceSPerUnit: Double; let isBest: Bool }
-
-    private var splitBars: [SplitBar] {
-        let splits = CardioMetrics.splits(points.map { .init(t: $0.t, cumulativeM: $0.distanceM) }, unitMeters: unitMeters)
-        // Only full units on the chart — a partial's short sample yields an unreliable pace that
-        // towers over the real splits and distorts the "fastest" read. The partial still appears
-        // in the text SPLITS list below.
+    private static func compute(gps: GPSDetail, health: [(date: Date, bpm: Double)], unitMeters: Double) -> Derived {
+        // Points: accepted fixes reduced to cumulative distance + altitude + instantaneous pace.
+        let accepted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
+        var pts: [Pt] = []
+        if let first = accepted.first {
+            var cumulative = 0.0
+            var prev: LocationSample?
+            for s in accepted {
+                if let p = prev { cumulative += Geo.distance(lat1: p.lat, lon1: p.lon, lat2: s.lat, lon2: s.lon) }
+                let pace = s.speedMS > 0.4 ? 1000 / s.speedMS : 0   // near-stopped → 0 = "no pace here"
+                pts.append(Pt(t: s.t.timeIntervalSince(first.t), distanceM: cumulative, altitudeM: s.altitudeM, paceSPerKm: pace))
+                prev = s
+            }
+        }
+        // HR: prefer our own live series; fall back to Apple Health for Watch/imported runs.
+        let local = gps.hrSamples.filter { $0.bpm > 0 }.sorted { $0.t < $1.t }.map { (date: $0.t, bpm: Double($0.bpm)) }
+        let readings = local.count >= 4 ? local : health.sorted { $0.date < $1.date }
+        var hr: [HRPt] = []
+        if let firstHR = readings.first {
+            hr = readings.map { HRPt(t: $0.date.timeIntervalSince(firstHR.date), bpm: Int($0.bpm.rounded())) }
+        }
+        // Splits: only full units (a partial's short sample yields an unreliable pace).
+        let splits = CardioMetrics.splits(pts.map { .init(t: $0.t, cumulativeM: $0.distanceM) }, unitMeters: unitMeters)
         let full = splits.filter { !$0.isPartial }
         let bestPace = full.map { $0.durationS / ($0.distanceM / unitMeters) }.min()
-        return full.map { s in
+        let bars = full.map { s -> SplitBar in
             let pace = s.durationS / max(1, s.distanceM / unitMeters)
             let isBest = bestPace.map { abs(pace - $0) < 0.5 } == true
             return SplitBar(id: s.index, unitIndex: s.index + 1, paceSPerUnit: pace, isBest: isBest)
         }
+        return Derived(pts: Self.thinned(pts), hr: Self.thinned(hr), bars: bars)
     }
 
     // MARK: Body
 
     var body: some View {
-        let pts = thinned(points)
-        let hasPace = pts.contains { $0.paceSPerKm > 0 }
-        let altitudes = pts.map(\.altitudeM)
-        let elevRange = (altitudes.max() ?? 0) - (altitudes.min() ?? 0)
-        let bars = splitBars
-
-        let hr = hrPoints
-
-        if pts.count >= 4 || hr.count >= 4 {
-            VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                if pts.count >= 4 {
-                    if hasPace, type != .ride { paceCard(pts) }
-                    if bars.count >= 2, type != .ride { splitsCard(bars) }
+        Group {
+            if let d = derived {
+                let pts = d.pts
+                let hasPace = pts.contains { $0.paceSPerKm > 0 }
+                let altitudes = pts.map(\.altitudeM)
+                let elevRange = (altitudes.max() ?? 0) - (altitudes.min() ?? 0)
+                if pts.count >= 4 || d.hr.count >= 4 {
+                    VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                        if pts.count >= 4 {
+                            if hasPace, type != .ride { paceCard(pts) }
+                            if d.bars.count >= 2, type != .ride { splitsCard(d.bars) }
+                        }
+                        if d.hr.count >= 4 { hrCard(d.hr) }
+                        if pts.count >= 4, elevRange > 4 { elevationCard(pts, minAlt: altitudes.min() ?? 0) }
+                    }
                 }
-                if hr.count >= 4 { hrCard(thinned(hr)) }
-                if pts.count >= 4, elevRange > 4 { elevationCard(pts, minAlt: altitudes.min() ?? 0) }
             }
+        }
+        .task(id: derivedKey) {
+            derived = Self.compute(gps: gps, health: healthHRSeries, unitMeters: unitMeters)
         }
     }
 

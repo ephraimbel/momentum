@@ -1,19 +1,23 @@
 import SwiftUI
 import UIKit
 
-/// A profile avatar — the athlete's chosen photo, or a deterministic initials chip when they haven't
-/// set one (so the feed reads as many distinct people, not identical orbs). Used across the social
-/// surfaces (profiles, feed bylines, comments).
+/// A profile avatar — the athlete's chosen photo, a bundled community face, or a deterministic
+/// initials chip when there's nothing else (so the feed reads as many distinct people, not identical
+/// orbs). Used across the social surfaces (profiles, feed bylines, comments).
 struct AvatarView: View {
     let photo: Data?
     let name: String
     var size: CGFloat = 36
+    /// An asset-catalog image name (the seeded community's bundled synthetic face — see
+    /// `CommunityAvatars`). Preferred when present: `UIImage(named:)` is cached by UIKit for the
+    /// app's lifetime, so a scrolling feed never re-decodes a JPEG per row (a `photo` Data would).
+    var imageName: String? = nil
 
     var body: some View {
-        if let photo, let ui = UIImage(data: photo) {
-            Image(uiImage: ui).resizable().scaledToFill()
-                .frame(width: size, height: size).clipShape(Circle())
-                .overlay(Circle().stroke(Theme.hairline, lineWidth: 0.5))
+        if let imageName, let ui = UIImage(named: imageName) {
+            photoAvatar(ui)
+        } else if let photo, let ui = UIImage(data: photo) {
+            photoAvatar(ui)
         } else {
             Circle().fill(gradient)
                 .frame(width: size, height: size)
@@ -23,6 +27,12 @@ struct AvatarView: View {
                         .foregroundStyle(.white)
                 )
         }
+    }
+
+    private func photoAvatar(_ ui: UIImage) -> some View {
+        Image(uiImage: ui).resizable().scaledToFill()
+            .frame(width: size, height: size).clipShape(Circle())
+            .overlay(Circle().stroke(Theme.hairline, lineWidth: 0.5))
     }
 
     private var initials: String {

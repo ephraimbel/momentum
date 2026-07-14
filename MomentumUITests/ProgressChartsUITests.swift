@@ -26,11 +26,13 @@ final class ProgressChartsUITests: XCTestCase {
         XCTAssertTrue(progressTab.waitForExistence(timeout: 15), "Progress tab not found.")
         progressTab.tap()
 
-        // The weekly charts should render (Trends is the default segment).
-        XCTAssertTrue(app.staticTexts["Weekly training load"].waitForExistence(timeout: 10),
-                      "Weekly training load chart not found.")
-        XCTAssertTrue(app.staticTexts["Weekly distance"].waitForExistence(timeout: 5),
-                      "Weekly distance chart not found.")
+        // The trend charts should render on the default Trends segment. The default range decides the
+        // granularity word — "Daily …" (1W) or "Weekly …" (wider windows) — so assert on the metric,
+        // not the prefix, and the test stays valid whatever the default window is.
+        let load = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "training load")).firstMatch
+        XCTAssertTrue(load.waitForExistence(timeout: 10), "Training-load chart not found.")
+        let distance = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "distance")).firstMatch
+        XCTAssertTrue(distance.waitForExistence(timeout: 5), "Distance chart not found.")
     }
 
     /// The consistency heatmap collapses its 112 color-only cells into ONE VoiceOver element with an

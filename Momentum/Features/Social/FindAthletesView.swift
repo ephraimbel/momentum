@@ -126,7 +126,7 @@ struct FindAthletesView: View {
         HStack(spacing: Theme.Space.sm) {
             Button { onOpen(athlete.handle) } label: {
                 HStack(spacing: Theme.Space.sm) {
-                    AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42)
+                    AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42, imageName: athlete.communityAvatarAsset)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(athlete.name)
                             .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)

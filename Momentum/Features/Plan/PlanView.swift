@@ -27,6 +27,11 @@ struct PlanView: View {
     @State private var weekMap: [Date: [PlannedSession]] = [:]
     @State private var weekStartsCache: [Date] = []
     @State private var planFirstWeek: Date?
+    // The (plan-identity, session-count, week) signature the `weekMap` cache was built for. When the
+    // current signature no longer matches — a regenerated plan (cascade-deletes old sessions), a
+    // removed session, a new week, or the very first frame — `liveWeekMap` recomputes fresh from the
+    // live `plan.sessions` instead of touching the stale cache, which can hold deleted objects.
+    @State private var weekMapToken: Int = 0
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
@@ -47,31 +52,66 @@ struct PlanView: View {
     private var days: [Date] {
         (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) }
     }
+    /// The week's sessions grouped by day. Returns the memoized cache while its signature matches the
+    /// live plan; otherwise recomputes fresh (cheap, one pass over `plan.sessions`) — so it never
+    /// reads a cascade-deleted/removed session, and never flashes an empty board on the first frame.
+    private var liveWeekMap: [Date: [PlannedSession]] {
+        weekMapToken == currentWeekToken ? weekMap : computeWeekMap()
+    }
+    /// A cheap signature of everything the map depends on: plan identity, session count, and the week.
+    /// A regenerated plan (new id), an added/removed session (count), or a week change all flip it.
+    private var currentWeekToken: Int {
+        var h = Hasher()
+        h.combine(plan?.persistentModelID)
+        h.combine(plan?.sessions.count ?? 0)
+        h.combine(weekStart)
+        return h.finalize()
+    }
+    private func computeWeekMap() -> [Date: [PlannedSession]] {
+        guard let plan else { return [:] }
+        let cal = Calendar.current
+        let weekDays = Set(days.map { cal.startOfDay(for: $0) })
+        var map: [Date: [PlannedSession]] = [:]
+        for s in plan.sessions {
+            let d = cal.startOfDay(for: s.date)
+            if weekDays.contains(d) { map[d, default: []].append(s) }
+        }
+        for k in map.keys { map[k]?.sort { $0.date < $1.date } }
+        return map
+    }
+
+    // Extracted from `body` so the long modifier chain below (sheets, onChange, onAppear) applies to
+    // a resolved view type — inlining the whole tree tipped the type-checker into a timeout.
+    @ViewBuilder
+    private var planContent: some View {
+        if plan == nil {
+            emptyState
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.md) {
+                    header
+                    weekStrip
+                    if isCurrentWeek { tuneSection }
+                    weekBoard
+                        .reveal(0.06)
+                        .proLocked(.fullPlan, active: !isCurrentWeek)
+                    coachsRead
+                }
+                .padding(Theme.Space.md)
+                .padding(.bottom, Theme.Space.xxl)
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
 
     var body: some View {
-        Group {
-            if plan == nil {
-                emptyState
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Space.md) {
-                        header
-                        weekStrip
-                        if isCurrentWeek { tuneSection }
-                        weekBoard
-                            .reveal(0.06)
-                            .proLocked(.fullPlan, active: !isCurrentWeek)
-                        coachsRead
-                    }
-                    .padding(Theme.Space.md)
-                    .padding(.bottom, Theme.Space.xxl)
-                }
-                .scrollIndicators(.hidden)
-            }
-        }
+        planContent
         .onAppear { rebuildDerived() }
-        .onChange(of: weekStart) { rebuildDerived() }
-        .onChange(of: plan?.sessions.count ?? 0) { rebuildDerived() }
+        // One trigger for the whole board: `currentWeekToken` hashes plan identity + session count +
+        // week, so a saved/new plan (new id, often same count), an added/removed session, or a week
+        // change each rebuild the memoized maps. (Date-moves that keep all three are covered by the
+        // editing-sheet `onDismiss` below.)
+        .onChange(of: currentWeekToken) { rebuildDerived() }
         .background(Theme.background)
         .navigationBarHidden(true)
         .sheet(isPresented: $showingAdd) {
@@ -88,12 +128,12 @@ struct PlanView: View {
                                onStart: { pendingStart = $0 })
         }
         .workoutRunner(launch: $launch)
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $showSettings, onDismiss: rebuildDerived) {
             if let p = profiles.first { PlanSettingsSheet(profile: p) { showSettings = false } }
         }
         // "Start a new plan" — the same complete form, framed as a beginning: blank name, always
         // rebuilds, honest about replacing the current block (completed work + calibration carry).
-        .sheet(isPresented: $showNewPlan) {
+        .sheet(isPresented: $showNewPlan, onDismiss: rebuildDerived) {
             if let p = profiles.first { PlanSettingsSheet(profile: p, mode: .create) { showNewPlan = false } }
         }
         // A coach nav card asked for plan settings — open the sheet the shell steered us toward
@@ -280,9 +320,14 @@ struct PlanView: View {
         guard let profile = profiles.first else { return nil }
         if let raceM = profile.raceDistanceM, raceM > 0, let raceDate = profile.raceDate, raceDate > Date() {
             let label = RaceDistance.nearest(toMeters: raceM).label
-            let weeks = Calendar.current.dateComponents([.weekOfYear], from: Date(), to: raceDate).weekOfYear ?? 0
+            let cal = Calendar.current
+            // Count actual days-to-race (not `.weekOfYear`, which crosses week boundaries and mislabels
+            // a race 8–13 days out as "race week"). ≤7 days = race week; otherwise weeks, rounded up.
+            let days = cal.dateComponents([.day], from: cal.startOfDay(for: Date()),
+                                          to: cal.startOfDay(for: raceDate)).day ?? 0
             let day = raceDate.formatted(.dateTime.month(.abbreviated).day())
-            return weeks >= 2 ? "\(label) · \(day) · \(weeks) weeks to go" : "\(label) · \(day) — race week"
+            return days <= 7 ? "\(label) · \(day) — race week"
+                             : "\(label) · \(day) · \(Int(ceil(Double(days) / 7.0))) weeks to go"
         }
         guard let idx = planWeekIndex(of: currentWeekStart), planWeekStarts.count > 1 else { return nil }
         let prefix = (plan?.name.isEmpty ?? true) ? "Training plan · " : ""
@@ -445,16 +490,10 @@ struct PlanView: View {
     /// dozens of `todaySessions` filters the board/header used to trigger per render.
     private func rebuildDerived() {
         let cal = Calendar.current
-        guard let plan else { weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; return }
-        // Group only this week's sessions, in a single pass, sorted within each day.
-        let weekDays = Set(days.map { cal.startOfDay(for: $0) })
-        var map: [Date: [PlannedSession]] = [:]
-        for s in plan.sessions {
-            let d = cal.startOfDay(for: s.date)
-            if weekDays.contains(d) { map[d, default: []].append(s) }
-        }
-        for k in map.keys { map[k]?.sort { $0.date < $1.date } }
-        weekMap = map
+        guard let plan else { weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; weekMapToken = 0; return }
+        // Group only this week's sessions (one pass, sorted within each day) and stamp the signature.
+        weekMap = computeWeekMap()
+        weekMapToken = currentWeekToken
 
         // The Monday of every week the plan spans — the strip's data, plus the plan's first week.
         guard let first = plan.sessions.map(\.date).min(),
@@ -568,7 +607,7 @@ struct PlanView: View {
     private static let dateColWidth: CGFloat = 42
 
     private func boardDayRow(_ day: Date) -> some View {
-        let sessions = weekMap[Calendar.current.startOfDay(for: day)] ?? []
+        let sessions = liveWeekMap[Calendar.current.startOfDay(for: day)] ?? []
         let isToday = Calendar.current.isDateInToday(day)
         return HStack(alignment: .top, spacing: Theme.Space.md) {
             boardDateColumn(day, isToday: isToday, hasSessions: !sessions.isEmpty)
@@ -722,7 +761,7 @@ struct PlanView: View {
     // MARK: Derived
 
     private var weekSessions: [PlannedSession] {
-        days.flatMap { weekMap[Calendar.current.startOfDay(for: $0)] ?? [] }
+        days.flatMap { liveWeekMap[Calendar.current.startOfDay(for: $0)] ?? [] }
     }
     private var weekProgress: (done: Int, total: Int) {
         let s = weekSessions

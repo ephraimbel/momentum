@@ -13,6 +13,7 @@ enum Theme {
     static let route = Color("route")          // brightest live element
     static let success = Color(hex: "34C759")  // "done" affordance (logged set ✓) — the one green accent
     static let purple = Color(hex: "7C63F0")   // brand violet — the Pro/marketing accent (paywall, PRO badge)
+    static let like = Color(hex: "FF375F")     // warm rose — the social "like" heart (the one warm accent a feed earns)
 
     // MARK: Spacing (base 4pt)
     enum Space {

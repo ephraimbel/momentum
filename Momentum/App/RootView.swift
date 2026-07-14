@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import StoreKit
 
 /// App shell: a `TabView` with one `NavigationStack` per tab (PRD §13.10).
 /// Onboarding presents as a gated `fullScreenCover` over this on first launch.
@@ -8,6 +9,7 @@ struct RootView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(AuthController.self) private var auth
     @Environment(CoachPresenter.self) private var coach
+    @Environment(\.requestReview) private var requestReview   // native App Store rating prompt
     @Environment(\.modelContext) private var context
     // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
     // and set was persisted as it happened — this prompt is how they come back.
@@ -147,11 +149,20 @@ struct RootView: View {
         // sign-in flips the branch and raises this flag in the same update, and a cover attached
         // to a view being inserted that instant can silently fail to present (blank canvas).
         .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingFlow {
+            OnboardingFlow { requestedReview in
                 showOnboarding = false
                 // The coach says hello the moment there's a plan to explain — a quiet seed the
                 // Today button badges, offered at the peak-curiosity moment. Once ever.
                 if profiles.first?.plan != nil { CoachProactive.seedPlanIntro(in: context) }
+                // The athlete asked to rate on the final onboarding beat — fire the native prompt
+                // once the flow's cover has fully dismissed and Today is on screen (presenting it
+                // mid-teardown cancels it). System-owned, rate-limited: it shows when iOS allows.
+                if requestedReview {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.9))
+                        requestReview()
+                    }
+                }
             }
         }
         // Onboarding owns the screen: the coach cover must never stack over it (proactive seeds

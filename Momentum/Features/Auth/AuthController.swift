@@ -56,7 +56,10 @@ final class AuthController {
             return
         }
         // Demos + UI tests skip the gate so seeded flows run straight to the app.
-        if ProcessInfo.processInfo.arguments.contains("--seed-demo") {
+        // `--onboarding` also signs in (without seeding a profile) so the onboarding flow can be
+        // presented over a clean no-profile state — no tabs render behind it, no map location prompt.
+        if ProcessInfo.processInfo.arguments.contains("--seed-demo")
+            || ProcessInfo.processInfo.arguments.contains("--onboarding") {
             userID = "demo-user"; displayName = "Demo Athlete"; return
         }
         #endif
