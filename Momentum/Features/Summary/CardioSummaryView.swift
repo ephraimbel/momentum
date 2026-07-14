@@ -47,6 +47,7 @@ struct CardioSummaryContent: View {
                 SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(0.36)
                 RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
                                    healthHRSeries: healthHR).reveal(0.38)
+                WeekContextCard(anchor: workout.startedAt, distanceUnit: distanceUnit).reveal(0.385)
                 TimeInZonesCard(workout: workout).reveal(0.39)
                 splitsSection(gps).reveal(0.40)
             }
