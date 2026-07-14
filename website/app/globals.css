@@ -424,9 +424,9 @@ a {
 /* ——— Apple Watch (paired with the phone in the hero, Runna-style two-device story) ——— */
 .hero-watch {
   position: absolute;
-  left: -5%;
-  bottom: 9%;
-  width: 140px;
+  left: -7%;
+  bottom: 8%;
+  width: 172px;
   z-index: 6;
   transform: rotate(-6deg);
   animation: chip-float 6s ease-in-out infinite;
@@ -440,28 +440,60 @@ a {
   position: relative;
   width: 100%;
   filter:
-    drop-shadow(0 34px 44px rgba(14, 14, 18, 0.34))
-    drop-shadow(0 10px 18px rgba(14, 14, 18, 0.22));
+    drop-shadow(0 40px 50px rgba(14, 14, 18, 0.36))
+    drop-shadow(0 14px 22px rgba(14, 14, 18, 0.24));
 }
-/* brushed-aluminium case, light caught top-left/bottom-right */
-.watch-case {
+
+/* Brushed-metal case — a superellipse (elliptical border-radius) taller than wide, like a real
+   45mm case. Diagonal light catches the top-left + bottom-right edges; a bright inset rim + a soft
+   inner shadow give the metal thickness. */
+.watch-body {
   position: relative;
-  aspect-ratio: 416 / 496;
-  border-radius: 32%;
-  padding: 5.5%;
-  background: linear-gradient(148deg, #edeef2 0%, #c3c6cd 26%, #86898f 52%, #c0c3ca 76%, #e7e8ec 100%);
+  aspect-ratio: 42 / 51;
+  border-radius: 36% / 30%;
+  padding: 4%;
+  /* Satin titanium: a soft diagonal sheen (not hard bands) + a faint vertical brush, so the metal
+     reads smooth and premium rather than like a gradient. */
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 0%, transparent 8% 92%, rgba(0, 0, 0, 0.05) 100%),
+    linear-gradient(
+      128deg,
+      #f6f7f9 0%,
+      #dcdee3 22%,
+      #c2c5cb 44%,
+      #cfd2d7 58%,
+      #adb0b7 78%,
+      #d2d5da 100%
+    );
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.55),
-    inset 0 -1px 2px rgba(0, 0, 0, 0.25);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -2.5px 4px rgba(0, 0, 0, 0.26),
+    inset -2px 0 4px rgba(255, 255, 255, 0.28),
+    inset 2px 0 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Edge-to-edge front glass: a near-black face whose inner shadow reads as the glass curving down to
+   the metal at the rim (the signature Apple Watch look). */
+.watch-glass {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 32% / 27%;
+  background: radial-gradient(120% 120% at 50% 0%, #14161c 0%, #05060a 60%);
+  padding: 4.5%;
+  box-shadow:
+    inset 0 0 6px 2px rgba(0, 0, 0, 0.95),
+    inset 0 1px 1px rgba(255, 255, 255, 0.14),
+    0 0 0 1px rgba(0, 0, 0, 0.85);
 }
 .watch-screen {
   position: relative;
   width: 100%;
   height: 100%;
-  border-radius: 26%;
+  border-radius: 26% / 22%;
   overflow: hidden;
   background: #000;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 .watch-screen img {
   width: 100%;
@@ -469,31 +501,60 @@ a {
   object-fit: cover;
   display: block;
 }
-.watch-gloss {
+/* A single diagonal reflection sweeping the glass — sells the domed cover. */
+.watch-shine {
   position: absolute;
   inset: 0;
-  background: linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, transparent 34%);
+  border-radius: 32% / 27%;
+  background: linear-gradient(
+    122deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.07) 14%,
+    transparent 30%,
+    transparent 68%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
   pointer-events: none;
 }
-/* digital crown + side button on the right edge */
+
+/* Digital Crown — a knurled metal cylinder protruding from the right edge, with a rounded outer cap. */
 .watch-crown {
   position: absolute;
-  right: -3.5px;
-  top: 34%;
-  width: 8px;
-  height: 30px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #8f9299, #d3d5da 60%, #a7aab0);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  z-index: 2;
+  right: -2.6%;
+  top: 32%;
+  width: 6.5%;
+  height: 16%;
+  border-radius: 2.5px;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 2.6px),
+    linear-gradient(90deg, #82858c 0%, #e6e8ec 46%, #b6b9bf 72%, #7c7f86 100%);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3);
 }
-.watch-side {
+.watch-crown::after {
+  content: "";
   position: absolute;
-  right: -2.5px;
+  right: -34%;
+  top: 12%;
+  width: 34%;
+  height: 76%;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, #d0d3d8, #9a9da3);
+}
+
+/* Side button — a slim flush pill below the crown. */
+.watch-btn {
+  position: absolute;
+  z-index: 1;
+  right: -1.4%;
   top: 55%;
-  width: 5px;
-  height: 44px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #83868d, #c5c7cc 60%, #9a9da3);
+  width: 3.6%;
+  height: 20%;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(90deg, #7a7d84, #c7c9cf 55%, #8a8d93);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 /* The hero's living iridescent field. A masked, clipped container (its fade to transparent stays
