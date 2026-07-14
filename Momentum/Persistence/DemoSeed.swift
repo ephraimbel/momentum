@@ -148,6 +148,12 @@ enum DemoSeed {
         profile.bio = "Marathon build in full swing — chasing a sub-3 and logging every mile of it."
         profile.city = "Austin, TX"
         profile.locationGranularity = LocationGranularity.city.rawValue
+        // A real (synthetic, not a real person) portrait so the marketing Profile reads as a genuine
+        // account rather than an initials chip. Bundled demo asset; used only under --marketing-profile.
+        if let url = Bundle.main.url(forResource: "demo-avatar", withExtension: "jpg"),
+           let data = try? Data(contentsOf: url) {
+            profile.avatarData = data
+        }
 
         let cal = Calendar.current
         func date(_ daysAgo: Double) -> Date { Date().addingTimeInterval(-daysAgo * 86_400 - 3 * 3600) }

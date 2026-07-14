@@ -160,40 +160,78 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     /// settles to real time for the live tip. The view model backdates its elapsed clock to match, so
     /// the frame reads as a coherent "2 mi in ~18 min at ~8:56/mi".
     private func simulatedRouteFixes() -> AsyncStream<GPSProcessor.Fix> {
-        let midway = Self.isMidway
-        // Midway takes bigger, coarser steps (dt 2 s, ~5.7 m north) so ~560 fixes cover 2 mi — few
-        // enough that the engine keeps up and the app stays responsive for the screenshot — while the
-        // implied speed (≤ ~3 m/s) still clears the Doppler accept-gate. Normal mode keeps the fine
-        // 0.5 s / 1.4 m track the Pause/Resume UI test depends on.
-        let step = midway ? 0.0000768 : 0.0000128   // ~8.5 m vs ~1.4 m north per tick
-        let dtick = midway ? 3.0 : 0.5               // dt keeps implied speed ~2.8 m/s (gate passes)
-        let wob = midway ? 0.0002 : 0.00045
+        // The marketing shot (`--live-run-midway`) traces a REAL San Francisco street loop so the run
+        // looks like something an athlete actually ran — never a straight line out over the bay. Each
+        // fix carries a virtual timestamp advancing at ~3 m/s along the real geometry (so pace + the
+        // Doppler gate stay honest; future-dated fixes pass the age gate), and the wall-clock sleep is
+        // tiny until ~2 mi is drawn, then real-time for the live tip.
+        if Self.isMidway, let route = Self.landRoute(), route.count > 1 {
+            return AsyncStream { continuation in
+                let task = Task {
+                    let base = Date()
+                    var vt = 0.0, i = 0
+                    while !Task.isCancelled {
+                        let p = route[i % route.count]
+                        continuation.yield(GPSProcessor.Fix(
+                            t: base.addingTimeInterval(vt), lat: p.0, lon: p.1,
+                            accuracyM: 5, speedMS: 3.6, altitudeM: 0))
+                        let next = route[(i + 1) % route.count]
+                        vt += max(0.4, Geo.distance(lat1: p.0, lon1: p.1, lat2: next.0, lon2: next.1) / 3.0)
+                        // Burst exactly ONE full lap fast so the whole loop draws clean and closed, then
+                        // crawl real-time (a 2nd lap overlaps the first — trace stays a single loop) so
+                        // the puck keeps moving and GPS stays "Strong" for the shot.
+                        let bursting = i < route.count
+                        i += 1
+                        try? await Task.sleep(for: .milliseconds(bursting ? 7 : 500))
+                    }
+                    continuation.finish()
+                }
+                self.streamTask = task
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        // Non-midway (`--ui-test-route` for the Pause/Resume UI test): a deterministic fine ~3 m/s
+        // track — tight-accuracy fixes every 0.5 s so the engine locks GPS and leaves `.acquiring`.
         return AsyncStream { continuation in
             let task = Task {
                 var lat = 37.7917
                 let lon = -122.3996
-                let base = Date()
                 var tick = 0.0
-                var i = 0
                 while !Task.isCancelled {
-                    // Gentle east-west swing so the route shows real shape; lateral drift stays small
-                    // enough that each jump remains consistent with the reported speed (Doppler-first).
-                    let wobble = wob * sin(tick * .pi / 90)
-                    let bursting = midway && i < 500          // ~2.0 mi after Kalman, then real-time tip
-                    let t = midway ? base.addingTimeInterval(tick) : Date()
+                    let wobble = 0.00045 * sin(tick * .pi / 90)
                     continuation.yield(GPSProcessor.Fix(
-                        t: t, lat: lat, lon: lon + wobble,
+                        t: Date(), lat: lat, lon: lon + wobble,
                         accuracyM: 5, speedMS: 3, altitudeM: 0))
-                    lat += step
-                    tick += dtick
-                    i += 1
-                    try? await Task.sleep(for: .milliseconds(bursting ? 8 : 500))
+                    lat += 0.0000128   // ~1.4 m north per tick
+                    tick += 0.5
+                    try? await Task.sleep(for: .milliseconds(500))
                 }
                 continuation.finish()
             }
             self.streamTask = task
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// A clean, gently-organic ~2 mi closed loop through Golden Gate Park — the marketing live-run
+    /// traces this. (The bundled community street routes all have out-and-back spurs that read as a
+    /// choppy, broken trace; a smooth closed loop frames as one clean run instead.)
+    private static func landRoute() -> [(Double, Double)]? {
+        let centerLat = 37.7690, centerLon = -122.4838       // Golden Gate Park
+        let radiusM = 520.0                                   // one lap ≈ 2.1 mi
+        let n = 150
+        let mPerDegLat = 111_000.0
+        let mPerDegLon = 111_000.0 * cos(centerLat * .pi / 180)
+        var pts: [(Double, Double)] = []
+        for k in 0..<n {
+            let a = Double(k) / Double(n) * 2 * .pi
+            // A little radius variation so it reads as a run, not a perfect circle.
+            let r = radiusM * (1 + 0.13 * sin(3 * a + 0.6) + 0.07 * cos(2 * a))
+            pts.append((centerLat + (r * sin(a)) / mPerDegLat,
+                        centerLon + (r * cos(a)) / mPerDegLon))
+        }
+        pts.append(pts[0])                                    // close the loop
+        return pts
     }
 #endif
 }

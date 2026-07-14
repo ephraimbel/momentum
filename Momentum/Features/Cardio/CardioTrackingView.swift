@@ -116,7 +116,16 @@ struct CardioTrackingView: View {
         }
         // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
         // the athlete centered at the tight running zoom.
-        .onChange(of: routeCoords.count) { updateOffRoute() }   // followPuck keeps the camera centered
+        .onChange(of: routeCoords.count) {
+            updateOffRoute()   // followPuck keeps the camera centered
+            #if DEBUG
+            // Marketing shot: frame the WHOLE clean loop (overview) instead of the tight follow zoom.
+            if LocationService.isMidway, routeCoords.count > 2 {
+                viewport = .overview(geometry: LineString(routeCoords),
+                                     geometryPadding: EdgeInsets(top: 90, leading: 52, bottom: 300, trailing: 52))
+            }
+            #endif
+        }
         // The moment recording starts: drop the start pin at the athlete's known position (instant,
         // no wait for the first route point) and snap the camera in to follow.
         .onChange(of: phase) { _, newPhase in
