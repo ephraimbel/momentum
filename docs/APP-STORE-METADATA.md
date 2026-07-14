@@ -8,21 +8,21 @@
 
 ## Core fields
 
-**App Name** (30 chars) — brand + top keyword:
+**App Name** (30 chars) — brand + top keywords, mirroring Runna's "Running Training Plans":
 ```
-Momentum: Run Coach & Plans
+Momentum: Run Training Plans
 ```
-*(27 chars. Apple indexes every word here, so "run", "coach", "plans" are covered — don't repeat them in Keywords. Alt if a shorter brand is wanted: `Momentum – Running Coach`.)*
+*(28 chars. Apple indexes every word, so "run", "training", "plans" are covered — don't repeat them in Keywords. Alt: `Momentum: Running Trainer` (25).)*
 
 **Subtitle** (30 chars) — the differentiator, keyword‑dense:
 ```
-Adaptive plans, 5K to marathon
+Adaptive coach, 5K to marathon
 ```
-*(30 chars. "adaptive/plans/5K/marathon" all index. Alts: `Marathon & 5K plans that adapt`, `Your adaptive running coach`.)*
+*(30 chars. "adaptive/coach/5K/marathon" all index. Alt: `Marathon & 5K plans that adapt`.)*
 
 **Keywords** (100 chars, comma‑separated, NO spaces, singular, no words already in Name/Subtitle):
 ```
-half,10k,training,pace,jog,ultra,couch,vo2,tempo,interval,cadence,fitness,race,runner,strength,recovery
+half,10k,pace,jog,ultra,couch,vo2,tempo,interval,cadence,fitness,race,runner,strength,recovery,workout,hr
 ```
 *(~99 chars. Do NOT put "Strava"/"Runna"/competitor trademarks here — Apple rejects competitor marks and it's infringement. You still surface next to them by sharing the generic running keywords + category.)*
 
