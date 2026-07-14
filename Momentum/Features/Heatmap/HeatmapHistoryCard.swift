@@ -8,7 +8,14 @@ struct HeatmapHistoryCard: View {
     var distanceUnit: DistanceUnit = .auto
 
     @State private var result: HeatmapSource.Result?
-    @State private var expand = false
+    // --heatmap-expand: auto-open the full PersonalHeatmapView on appear (website screenshot).
+    @State private var expand = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--heatmap-expand")
+        #else
+        return false
+        #endif
+    }()
 
     var body: some View {
         // ZStack with a zero-size anchor: lifecycle modifiers never fire on a Group that renders

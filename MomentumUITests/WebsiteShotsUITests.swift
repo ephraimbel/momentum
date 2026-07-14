@@ -56,15 +56,15 @@ final class WebsiteShotsUITests: XCTestCase {
         dump(app, "coach")
     }
 
-    /// The website HEADER shot: the Today map with a real seeded run traced on it (route) AND
-    /// today's plan card — the Runna-style "route + plan" hero, in one authentic app screen.
+    /// The website HEADER shot: the POST-RUN summary of a finished Austin Marathon — the real course
+    /// on the route map + the finish data (26.2 mi · 2:58:41 · 6:49/mi). Runna-style "you did it" hero.
     func testDumpHero() {
         let app = XCUIApplication()
-        app.launchArguments = darkArgs + ["--seed-demo", "--marketing-hero"]
+        app.launchArguments = darkArgs + ["--seed-demo", "--marathon-hero", "--ui-test-run-detail"]
         app.launch()
         let discard = app.buttons["Discard"]
         if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
-        sleep(9)   // style load + tiles + route draw + overview camera settle
+        sleep(9)   // detail presents + the route map draws the marathon on the dark basemap
         dump(app, "hero-route")
     }
 
@@ -86,7 +86,7 @@ final class WebsiteShotsUITests: XCTestCase {
         if allowLocation.waitForExistence(timeout: 6) { allowLocation.tap() }
         let allow = springboard.buttons["Allow"]
         if allow.waitForExistence(timeout: 4) { allow.tap() }
-        sleep(22)   // let the ~2 mi burst fully process + draw + HR ramp + follow camera settle
+        sleep(26)   // lap draws under follow-cam (~16 s), then the overview re-frames the full loop
         dump(app, "live-run")
     }
 
@@ -103,6 +103,22 @@ final class WebsiteShotsUITests: XCTestCase {
         // The seed renders ~22 route tiles sequentially on the GPU — give it room before the shot.
         sleep(22)
         dump(app, "profile-grid")
+    }
+
+    /// The personal heatmap — the full `PersonalHeatmapView` on a dark map (Progress → History →
+    /// auto-expanded via `--heatmap-expand`).
+    func testDumpHeatmap() {
+        let app = XCUIApplication()
+        // Force the persisted map style to the Dark basemap (HeatmapMapView uses the non-adaptive
+        // styleURI), so the heatmap renders on a dark map to match the site.
+        app.launchArguments = darkArgs + ["-com.momentum.mapStyle", "dark",
+                                          "--seed-demo", "--progress-history", "--heatmap-expand"]
+        app.launch()
+        let discard = app.buttons["Discard"]
+        if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
+        app.buttons["Progress"].firstMatch.tap()
+        sleep(9)   // History renders, the heatmap auto-expands, map tiles + heat layer draw
+        dump(app, "heatmap-dark")
     }
 
     /// The AI coach chat — the "your week in review" read plus a seeded plan-change proposal card.

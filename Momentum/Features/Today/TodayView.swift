@@ -74,16 +74,27 @@ struct TodayView: View {
 
     enum GoalKind { case open, distance }
 
-    /// A real street-following SF loop for the marketing hero (reads like an actual run, not a
-    /// synthetic oval).
+    /// The real Austin Marathon course for the marketing hero — the actual race route traced on the
+    /// Today map (bundled `austin-marathon.json`, street-snapped from the official course).
     private var heroRouteCoordinates: [CLLocationCoordinate2D] {
         guard marketingHero else { return [] }
         #if DEBUG
-        return (CommunityRoutes.heroLoop()?.pts ?? []).map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) }
+        return Self.austinMarathon.map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) }
         #else
         return []
         #endif
     }
+
+    #if DEBUG
+    /// The bundled Austin Marathon course points ([[lat, lon]]), loaded once for the marketing hero.
+    private static let austinMarathon: [[Double]] = {
+        guard let url = Bundle.main.url(forResource: "austin-marathon", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONDecoder().decode([String: [[Double]]].self, from: data)
+        else { return [] }
+        return obj["pts"] ?? []
+    }()
+    #endif
 
     private let distanceUnit: DistanceUnit = .auto
     private var plan: TrainingPlan? { profiles.first?.plan }

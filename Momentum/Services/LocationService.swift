@@ -213,25 +213,27 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         }
     }
 
-    /// A clean, gently-organic ~2 mi closed loop through Golden Gate Park — the marketing live-run
-    /// traces this. (The bundled community street routes all have out-and-back spurs that read as a
-    /// choppy, broken trace; a smooth closed loop frames as one clean run instead.)
+    /// A clean, real ~2 mi closed loop that FOLLOWS STREETS — a Richmond-district grid loop, snapped
+    /// to real roads via the Mapbox Directions API, de-spurred and downsampled (see
+    /// `scripts` fetch flow). Reads as a genuine run around the neighborhood; kept to ~58 points so
+    /// one full lap draws + closes before the screenshot (each accepted fix triggers a live map sync).
     private static func landRoute() -> [(Double, Double)]? {
-        let centerLat = 37.7690, centerLon = -122.4838       // Golden Gate Park
-        let radiusM = 520.0                                   // one lap ≈ 2.1 mi
-        let n = 150
-        let mPerDegLat = 111_000.0
-        let mPerDegLon = 111_000.0 * cos(centerLat * .pi / 180)
-        var pts: [(Double, Double)] = []
-        for k in 0..<n {
-            let a = Double(k) / Double(n) * 2 * .pi
-            // A little radius variation so it reads as a run, not a perfect circle.
-            let r = radiusM * (1 + 0.13 * sin(3 * a + 0.6) + 0.07 * cos(2 * a))
-            pts.append((centerLat + (r * sin(a)) / mPerDegLat,
-                        centerLon + (r * cos(a)) / mPerDegLon))
-        }
-        pts.append(pts[0])                                    // close the loop
-        return pts
+        [
+        (37.78051, -122.47802), (37.78050, -122.47743), (37.78052, -122.47684), (37.78039, -122.47627),
+        (37.78039, -122.47568), (37.78002, -122.47532), (37.77956, -122.47520), (37.77910, -122.47508),
+        (37.77864, -122.47499), (37.77817, -122.47495), (37.77771, -122.47491), (37.77724, -122.47488),
+        (37.77677, -122.47484), (37.77630, -122.47481), (37.77584, -122.47477), (37.77537, -122.47474),
+        (37.77490, -122.47471), (37.77443, -122.47467), (37.77396, -122.47464), (37.77349, -122.47460),
+        (37.77316, -122.47501), (37.77308, -122.47559), (37.77305, -122.47618), (37.77301, -122.47677),
+        (37.77298, -122.47736), (37.77296, -122.47795), (37.77293, -122.47854), (37.77290, -122.47913),
+        (37.77286, -122.47972), (37.77283, -122.48031), (37.77285, -122.48090), (37.77331, -122.48100),
+        (37.77377, -122.48110), (37.77423, -122.48121), (37.77437, -122.48177), (37.77461, -122.48227),
+        (37.77460, -122.48286), (37.77499, -122.48319), (37.77545, -122.48331), (37.77592, -122.48336),
+        (37.77639, -122.48341), (37.77686, -122.48344), (37.77733, -122.48347), (37.77779, -122.48351),
+        (37.77804, -122.48301), (37.77824, -122.48247), (37.77829, -122.48188), (37.77875, -122.48176),
+        (37.77921, -122.48165), (37.77966, -122.48153), (37.78012, -122.48146), (37.78019, -122.48088),
+        (37.78023, -122.48029), (37.78026, -122.47970), (37.78029, -122.47911), (37.78032, -122.47852),
+        ]
     }
 #endif
 }

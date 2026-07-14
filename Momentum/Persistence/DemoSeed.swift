@@ -23,6 +23,11 @@ enum DemoSeed {
         profile.weightUnit = WeightUnit.default().rawValue   // locale display units (lb in US/UK)
         profile.maxHR = 188                                  // HR zones (Karvonen) render personalized
         profile.restingHR = 52
+        // Alex Rivera's profile photo — the same portrait everywhere (Today header avatar + Profile).
+        if let url = Bundle.main.url(forResource: "demo-avatar", withExtension: "jpg"),
+           let data = try? Data(contentsOf: url) {
+            profile.avatarData = data
+        }
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
         // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
@@ -41,6 +46,13 @@ enum DemoSeed {
         // never fabricates an audience). Everything else here is a genuine, coherent training history.
         if ProcessInfo.processInfo.arguments.contains("--marketing-profile") {
             seedMarketingProfile(context, profile: profile, lifts: lifts)
+            return
+        }
+
+        // --marathon-hero: one finished Austin Marathon (the real course + finish data) for the
+        // website hero's post-run summary — the "you just ran a marathon" moment (Runna-style).
+        if ProcessInfo.processInfo.arguments.contains("--marathon-hero") {
+            seedMarathonRun(context)
             return
         }
 
@@ -148,12 +160,7 @@ enum DemoSeed {
         profile.bio = "Marathon build in full swing — chasing a sub-3 and logging every mile of it."
         profile.city = "Austin, TX"
         profile.locationGranularity = LocationGranularity.city.rawValue
-        // A real (synthetic, not a real person) portrait so the marketing Profile reads as a genuine
-        // account rather than an initials chip. Bundled demo asset; used only under --marketing-profile.
-        if let url = Bundle.main.url(forResource: "demo-avatar", withExtension: "jpg"),
-           let data = try? Data(contentsOf: url) {
-            profile.avatarData = data
-        }
+        // (avatarData is set in the common seed path — same portrait everywhere.)
 
         let cal = Calendar.current
         func date(_ daysAgo: Double) -> Date { Date().addingTimeInterval(-daysAgo * 86_400 - 3 * 3600) }
@@ -285,6 +292,45 @@ enum DemoSeed {
             out.append(s)
         }
         return out
+    }
+
+    // MARK: Marathon (post-run hero)
+
+    /// One completed Austin Marathon — the real bundled course as the GPS trace, with a sub-3 finish
+    /// so the post-run summary reads a genuine 26.2 mi race (route map + distance/time/pace/HR).
+    private static func seedMarathonRun(_ context: ModelContext) {
+        guard let url = Bundle.main.url(forResource: "austin-marathon", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONDecoder().decode([String: [[Double]]].self, from: data),
+              let pts = obj["pts"], pts.count > 1 else { return }
+        let start = Date().addingTimeInterval(-4 * 3600)      // finished this morning
+        let durationS = 10_721.0                              // 2:58:41 (sub-3)
+        let distanceM = 42_195.0                              // 26.2 mi
+        let run = Workout(); run.type = .run; run.startedAt = start; run.durationS = durationS
+        let gps = GPSDetail()
+        gps.distanceM = distanceM
+        gps.elevationGainM = 178
+        gps.avgPaceSPerKm = durationS / (distanceM / 1000)    // ~4:14 /km ≈ 6:49 /mi
+        gps.avgCadence = 183
+        let speed = distanceM / durationS                     // ~3.94 m/s
+        let last = Double(pts.count - 1)
+        gps.samples = pts.enumerated().compactMap { i, p in
+            guard p.count >= 2 else { return nil }
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(durationS * Double(i) / last)
+            s.lat = p[0]; s.lon = p[1]
+            s.speedMS = speed
+            s.altitudeM = 150 + 30 * sin(Double(i) / 9)       // rolling Austin hills
+            s.accuracyM = 5
+            s.accepted = true
+            return s
+        }
+        gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: 1)
+        gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
+        gps.mapStyleRaw = MapStyleOption.dark.rawValue        // route map on the flat dark basemap
+        run.gps = gps
+        context.insert(run)
+        try? context.save()
     }
 
     // MARK: Strength
