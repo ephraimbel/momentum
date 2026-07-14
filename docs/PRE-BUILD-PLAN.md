@@ -36,10 +36,10 @@ Profiles are viewable (verified); tapping any post opens the **real route map** 
 - [x] DemoSeed is `#if DEBUG` — seeded demo content never ships in Release.
 - [x] No secrets committed (only `Secrets.xcconfig.example`; no sk‑tokens/API keys in source). Mapbox
   token in Info.plist is the public `pk` token (expected).
-- [x] Version `0.1.0` / build `1`; bundle `com.momentum.app`; iOS 18 target.
+- [x] Version `0.1.0` / build `1`; bundle `com.ephraimbel.momentum.app`; iOS 18 target.
 - [ ] **Bump `MARKETING_VERSION` → `1.0.0` for a public release** (0.1.0 is fine for TestFlight beta).
 - [ ] **User's Xcode steps (can't be done from CLI):** archive a Release build, distribution signing
-  (App ID `com.momentum.app` in the Apple Developer account + provisioning), upload via Organizer /
+  (App ID `com.ephraimbel.momentum.app` in the Apple Developer account + provisioning), upload via Organizer /
   Transporter, complete App Store Connect metadata (screenshots, description, privacy nutrition label).
 - [ ] Optional pre‑submit: full sim smoke walk of every tab; run the Swift Testing suite green.
 

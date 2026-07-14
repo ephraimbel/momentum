@@ -449,7 +449,7 @@ final class CardioViewModel {
         if MapMatchingService.isEnabled, coords.count > 1 {
             let store = self.store
             let type = self.type
-            let log = Logger(subsystem: "com.momentum.app", category: "map-matching")
+            let log = Logger(subsystem: "com.ephraimbel.momentum.app", category: "map-matching")
             Task.detached(priority: .utility) {
                 guard let match = await MapMatchingService().match(coordinates: coords,
                                                                    profile: MapMatchingService.profile(for: type)) else {

@@ -15,7 +15,7 @@ import MetricKit
 /// subscribers; we register once at launch and never unregister.
 final class MetricsMonitor: NSObject {
     static let shared = MetricsMonitor()
-    private let logger = Logger(subsystem: "com.momentum.app", category: "metrics")
+    private let logger = Logger(subsystem: "com.ephraimbel.momentum.app", category: "metrics")
 
     /// Register for MetricKit delivery. Safe to call once at app launch.
     func start() {

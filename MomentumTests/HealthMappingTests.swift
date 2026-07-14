@@ -87,7 +87,7 @@ struct HealthMappingTests {
     // MARK: Import — filter (own-echo + dedupe)
 
     @Test func skipsOurOwnEchoedWrites() {
-        let mine = "com.momentum.app"
+        let mine = "com.ephraimbel.momentum.app"
         let withMarker: [String: Any] = [HKMetadataKeyExternalUUID: UUID().uuidString]
         // Same bundle + our marker → it's a workout already in our store; don't re-import.
         #expect(HealthService.shouldImport(sourceBundle: mine, ownBundle: mine,
@@ -95,21 +95,21 @@ struct HealthMappingTests {
     }
 
     @Test func importsForeignWorkouts() {
-        let mine = "com.momentum.app"
+        let mine = "com.ephraimbel.momentum.app"
         // A Garmin/Watch workout: different bundle, no marker → import it.
         #expect(HealthService.shouldImport(sourceBundle: "com.garmin.connect", ownBundle: mine,
                                            metadata: [:], alreadyImported: [], uuid: "B") == true)
     }
 
     @Test func skipsAlreadyImported() {
-        let mine = "com.momentum.app"
+        let mine = "com.ephraimbel.momentum.app"
         #expect(HealthService.shouldImport(sourceBundle: "com.garmin.connect", ownBundle: mine,
                                            metadata: [:], alreadyImported: ["C"], uuid: "C") == false)
     }
 
     @Test func importsOurBundleWorkoutsLackingMarker() {
         // Same bundle but no marker (e.g. a sim seed, or a workout we didn't author via save()) → import.
-        let mine = "com.momentum.app"
+        let mine = "com.ephraimbel.momentum.app"
         #expect(HealthService.shouldImport(sourceBundle: mine, ownBundle: mine,
                                            metadata: [:], alreadyImported: [], uuid: "D") == true)
     }

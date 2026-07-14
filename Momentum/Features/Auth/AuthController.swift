@@ -5,7 +5,7 @@ import Supabase
 import os
 
 /// Auth-flow breadcrumbs (deep links especially) — a dropped callback is invisible without them.
-private let authLog = Logger(subsystem: "com.momentum.app", category: "auth")
+private let authLog = Logger(subsystem: "com.ephraimbel.momentum.app", category: "auth")
 
 /// Sign in with Apple session (PRD §8.11) — the app's identity. Holds the stable Apple user
 /// identifier (persisted) and the athlete's name (Apple only hands it over on the *first*

@@ -5,7 +5,7 @@ import os
 
 /// Quiet breadcrumbs for the best-effort paths — "silently kept local" and "silently lost" look
 /// identical without them (this is exactly how a swallowed claim failure hid during the E2E).
-private let socialLog = Logger(subsystem: "com.momentum.app", category: "social")
+private let socialLog = Logger(subsystem: "com.ephraimbel.momentum.app", category: "social")
 
 /// The social network transport (docs/SOCIAL-BACKEND-SETUP.md). Everything is best-effort and
 /// offline-first: the UserDefaults stores remain the UI's source of truth; this pushes their

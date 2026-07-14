@@ -16,7 +16,7 @@ final class VoiceCoachService: NSObject, VoiceCoachServing {
     }
 
     private let synthesizer = AVSpeechSynthesizer()
-    private let logger = Logger(subsystem: "com.momentum.app", category: "voicecoach")
+    private let logger = Logger(subsystem: "com.ephraimbel.momentum.app", category: "voicecoach")
 
     override init() {
         super.init()

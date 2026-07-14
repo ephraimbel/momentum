@@ -83,7 +83,7 @@ Declare accurately (you collect these):
 
 ## App Store Connect setup checklist (your actions — needs your Apple account)
 1. **Apple Developer Program** membership active; sign in to App Store Connect.
-2. **Register the App ID** `com.momentum.app` (+ `.widgets`, `.watchkitapp`) with the needed capabilities
+2. **Register the App ID** `com.ephraimbel.momentum.app` (+ `.widgets`, `.watchkitapp`) with the needed capabilities
    (HealthKit, Location, App Groups, Push if used).
 3. In `project.yml`, set `DEVELOPMENT_TEAM` to your Team ID (currently empty), then `xcodegen generate`.
 4. Bump `MARKETING_VERSION` → `1.0.0` for a public release (0.1.0 is fine for TestFlight beta first).

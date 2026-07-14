@@ -15,7 +15,7 @@
 3. **Enable the Apple provider**: Authentication → Sign In / Providers → Apple → enable.
    In **Client IDs**, enter the app's bundle ids (comma-separated):
    ```
-   com.momentum.app, com.ephraimbelachew.momentumdev
+   com.ephraimbel.momentum.app, com.ephraimbelachew.momentumdev
    ```
    (the second is the physical-device install id — see the device-install notes). That's ALL the
    native ID-token flow needs — **no** Services ID, secret key, or redirect URL (those are only

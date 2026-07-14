@@ -76,7 +76,7 @@ protocol AnalyticsServing: AnyObject {
 /// top later behind config, exactly like `SyncService` (see docs/SYNC-SETUP.md).
 @MainActor
 final class AnalyticsService: AnalyticsServing {
-    private let logger = Logger(subsystem: "com.momentum.app", category: "analytics")
+    private let logger = Logger(subsystem: "com.ephraimbel.momentum.app", category: "analytics")
     private let northStar: NorthStarTracker
 
     init(northStar: NorthStarTracker = NorthStarTracker()) {

@@ -49,7 +49,7 @@ struct WidgetSnapshot: Codable, Equatable {
 
     // MARK: App Group IO
 
-    static let appGroup = "group.com.momentum.app"
+    static let appGroup = "group.com.ephraimbel.momentum.app"
     static let storageKey = "widget.today.v1"
 
     static func dayStamp(for date: Date, calendar: Calendar = .current) -> String {

@@ -33,6 +33,6 @@
 		<string>workout-processing</string>
 	</array>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>com.momentum.app</string>
+	<string>com.ephraimbel.momentum.app</string>
 </dict>
 </plist>
