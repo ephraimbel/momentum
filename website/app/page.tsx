@@ -1,5 +1,6 @@
 import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
+import WatchFrame from "@/components/WatchFrame";
 import Reveal from "@/components/Reveal";
 import RaceCalc from "@/components/RaceCalc";
 import Nav from "@/components/Nav";
@@ -72,6 +73,10 @@ function Hero() {
         </div>
         <div className="hero-device rise rise-5">
           <PhoneFrame src="/shots/hero-route.png" alt="momentum Today screen: a real running route traced on the map with today's plan card" priority />
+          {/* Paired Apple Watch — the live heart-rate zone gauge, in front of the phone (Runna-style). */}
+          <div className="hero-watch">
+            <WatchFrame src="/shots/watch-run.png" alt="momentum on Apple Watch: the live heart-rate zone gauge during a run" />
+          </div>
           {/* Floating brand accents — layered UI chips that lift the device off the page (Runna/Strava-style depth). */}
           <div className="float-chip float-plan" aria-hidden>
             <span className="fc-eyebrow">TODAY</span>
