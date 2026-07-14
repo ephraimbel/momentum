@@ -16,10 +16,14 @@ struct WorkoutTileMedia: View {
     enum Style { case tile, immersive }
 
     @Environment(\.modelContext) private var modelContext
+    /// Resolved once per tile identity (not per body pass): picking the media re-decodes images,
+    /// walks strength sets, and — for a snapshot-less GPS run — Kalman-smooths every GPS sample.
+    /// Doing that on every scroll-invalidated `body` was the tile grid's main source of jank.
+    @State private var resolved: Media?
 
     var body: some View {
         Group {
-            switch media {
+            switch resolved {
             case .photo(let ui):
                 Image(uiImage: ui).resizable().scaledToFill()
             case .muscle(let activation):
@@ -30,12 +34,19 @@ struct WorkoutTileMedia: View {
                 routeMedia(coords)
             case .glyph:
                 glyphMedia
+            case nil:
+                Theme.surface   // brief placeholder until the media resolves (one hop)
             }
         }
-        // Self-heal: a GPS workout whose snapshot render failed at finish shows the silhouette,
-        // renders + persists the real map here, and swaps in via SwiftData observation.
+        // Resolve the media once, then self-heal: a GPS workout whose snapshot render failed at
+        // finish shows the silhouette, renders + persists the real map here, then re-resolves so the
+        // snapshot swaps in. Keyed on identity so a reused lazy cell recomputes for its new workout.
         .task(id: workout.id) {
+            resolved = computeMedia()
+            let hadSnapshot = workout.gps?.mapSnapshotData != nil
             await WorkoutSnapshotHealer.healIfNeeded(workout, context: modelContext)
+            // If the heal just produced a snapshot, swap it in for the silhouette fallback.
+            if !hadSnapshot, workout.gps?.mapSnapshotData != nil { resolved = computeMedia() }
         }
     }
 
@@ -49,17 +60,22 @@ struct WorkoutTileMedia: View {
         case glyph
     }
 
-    private var media: Media {
+    private func computeMedia() -> Media {
         if let data = workout.heroPhotoData, let ui = UIImage(data: data) { return .photo(ui) }
         if workout.type.isStrengthStyle, let session = workout.strength {
             let activation = MuscleActivation.from(session: session)
             if activation.values.contains(where: { $0 > 0 }) { return .muscle(activation) }
         }
         if workout.type.isGPS {
-            let coords = routeCoords
             // Immersive prefers the live, framed Mapbox route over the small pre-rendered PNG.
-            if style == .immersive, coords.count > 1 { return .route(coords) }
+            if style == .immersive {
+                let coords = routeCoords
+                if coords.count > 1 { return .route(coords) }
+            }
+            // Prefer the cached snapshot PNG — only fall back to Kalman-smoothing all samples when
+            // there's no snapshot (the self-heal path), never wastefully before the snapshot check.
             if let data = workout.gps?.mapSnapshotData, let ui = UIImage(data: data) { return .snapshot(ui) }
+            let coords = routeCoords
             if coords.count > 1 { return .route(coords) }
         }
         return .glyph

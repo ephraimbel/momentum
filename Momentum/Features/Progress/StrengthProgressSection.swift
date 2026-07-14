@@ -8,34 +8,79 @@ import Charts
 struct StrengthProgressSection: View {
     let workouts: [Workout]
     var weightUnit: WeightUnit = .kg
+    /// Only compute when unlocked — a free user sees a blurred teaser, so skip the full walk of every
+    /// workout × exercise × set (previously re-run several times per render, uncached).
+    var pro: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedLift: String?
     @State private var appeared = false
+    @State private var model: Model?
 
-    private var lifts: [String] { StrengthTrends.topLifts(in: workouts) }
     private var hasStrength: Bool { workouts.contains { $0.type.isStrengthStyle && $0.strength != nil } }
+
+    /// The whole section's data, computed once off the render path. `topLifts`/`liftSummary`/
+    /// `weeklyVolume`/`muscleBalance` each walked every workout×exercise×set and were re-run on
+    /// every `body` pass; the per-lift e1RM curves are precomputed for the staple lifts (≤4).
+    struct Model {
+        var lifts: [String]
+        var summary: [StrengthTrends.LiftMetric]
+        var seriesByLift: [String: [ExerciseTrends.Point]]
+        var volumeKg: [TrendAnalytics.WeekValue]
+        var balance: [StrengthTrends.MuscleLoad]
+
+        static func build(_ workouts: [Workout]) -> Model {
+            let lifts = StrengthTrends.topLifts(in: workouts)
+            var series: [String: [ExerciseTrends.Point]] = [:]
+            for lift in lifts { series[lift] = ExerciseTrends.e1RMSeries(exerciseName: lift, in: workouts) }
+            return Model(lifts: lifts,
+                         summary: StrengthTrends.liftSummary(in: workouts),
+                         seriesByLift: series,
+                         volumeKg: StrengthTrends.weeklyVolume(in: workouts),
+                         balance: StrengthTrends.muscleBalance(in: workouts))
+        }
+    }
 
     var body: some View {
         if hasStrength {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                LiftVitalsStrip(metrics: StrengthTrends.liftSummary(in: workouts), weightUnit: weightUnit)
-                if !lifts.isEmpty { liftProgressionCard }
-                volumeCard
-                muscleBalanceCard
+                if let model {
+                    LiftVitalsStrip(metrics: model.summary, weightUnit: weightUnit)
+                    if !model.lifts.isEmpty { liftProgressionCard(model) }
+                    volumeCard(model)
+                    muscleBalanceCard(model)
+                } else {
+                    skeleton
+                }
+            }
+            .task(id: pro ? workouts.count : -1) {
+                guard pro else { return }
+                if model == nil { await Task.yield() }   // paint the skeleton first
+                let built = Model.build(workouts)
+                if selectedLift == nil { selectedLift = built.lifts.first }
+                model = built
             }
             .onAppear {
-                if selectedLift == nil { selectedLift = lifts.first }
                 if reduceMotion { appeared = true }
                 else { withAnimation(.easeOut(duration: 0.6)) { appeared = true } }
             }
         }
     }
 
+    private var skeleton: some View {
+        VStack(spacing: Theme.Space.md) {
+            ForEach(0..<3, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface).frame(height: 120)
+            }
+        }
+        .redacted(reason: .placeholder)
+    }
+
     // MARK: Lift progression (the interactive hero)
 
-    private var liftProgressionCard: some View {
+    private func liftProgressionCard(_ model: Model) -> some View {
+        let lifts = model.lifts
         let lift = selectedLift ?? lifts.first ?? ""
-        let series = ExerciseTrends.e1RMSeries(exerciseName: lift, in: workouts)
+        let series = model.seriesByLift[lift] ?? []
         let gain = ExerciseTrends.gainPercent(series)
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             HStack(alignment: .firstTextBaseline) {
@@ -51,7 +96,7 @@ struct StrengthProgressSection: View {
             // Lift picker — the athlete's staples, most-trained first.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Theme.Space.sm) {
-                    ForEach(lifts, id: \.self) { name in liftChip(name) }
+                    ForEach(lifts, id: \.self) { name in liftChip(name, selected: lift) }
                 }
             }
             e1rmChart(series)
@@ -62,8 +107,8 @@ struct StrengthProgressSection: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
     }
 
-    private func liftChip(_ name: String) -> some View {
-        let on = (selectedLift ?? lifts.first) == name
+    private func liftChip(_ name: String, selected: String) -> some View {
+        let on = selected == name
         return Button {
             withAnimation(.smooth(duration: 0.3)) { selectedLift = name }
         } label: {
@@ -146,8 +191,8 @@ struct StrengthProgressSection: View {
 
     // MARK: Weekly volume
 
-    private var volumeCard: some View {
-        let raw = StrengthTrends.weeklyVolume(in: workouts)
+    private func volumeCard(_ model: Model) -> some View {
+        let raw = model.volumeKg
         let series = raw.map { TrendAnalytics.WeekValue(weekStart: $0.weekStart,
                                                         value: weightUnit == .lb ? $0.value * Formatters.lbPerKg : $0.value) }
         let unit = weightUnit == .lb ? "lb" : "kg"
@@ -160,8 +205,8 @@ struct StrengthProgressSection: View {
 
     // MARK: Muscle balance
 
-    private var muscleBalanceCard: some View {
-        let loads = StrengthTrends.muscleBalance(in: workouts)
+    private func muscleBalanceCard(_ model: Model) -> some View {
+        let loads = model.balance
         let maxSets = loads.map(\.sets).max() ?? 1
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             HStack(alignment: .firstTextBaseline) {

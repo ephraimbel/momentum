@@ -21,6 +21,12 @@ struct PlanView: View {
     @State private var locator = LocationService()
     @State private var showSettings = false
     @State private var showNewPlan = false
+    // Derived plan data, memoized so `body` stops re-filtering the whole session list dozens of
+    // times per render (a marathon plan is ~150 sessions; the board alone did 30-40 full scans).
+    // Rebuilt only when the week or the plan actually changes.
+    @State private var weekMap: [Date: [PlannedSession]] = [:]
+    @State private var weekStartsCache: [Date] = []
+    @State private var planFirstWeek: Date?
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
@@ -63,6 +69,9 @@ struct PlanView: View {
                 .scrollIndicators(.hidden)
             }
         }
+        .onAppear { rebuildDerived() }
+        .onChange(of: weekStart) { rebuildDerived() }
+        .onChange(of: plan?.sessions.count ?? 0) { rebuildDerived() }
         .background(Theme.background)
         .navigationBarHidden(true)
         .sheet(isPresented: $showingAdd) {
@@ -71,6 +80,7 @@ struct PlanView: View {
             }
         }
         .sheet(item: $editing, onDismiss: {
+            rebuildDerived()   // an edit may move a session's date without changing the count
             if let s = pendingStart { pendingStart = nil; start(s) }
         }) { item in
             SessionDetailSheet(session: item.session, distanceUnit: distanceUnit, profile: profiles.first,
@@ -431,20 +441,40 @@ struct PlanView: View {
         return "\(Formatters.distance(meters: meters, unit: distanceUnit)) planned"
     }
 
-    /// The Monday of every week the plan spans — the strip's data.
-    private var planWeekStarts: [Date] {
-        guard let plan, let first = plan.sessions.map(\.date).min(),
+    /// Recompute the memoized week map + plan-week starts. One pass over the sessions instead of the
+    /// dozens of `todaySessions` filters the board/header used to trigger per render.
+    private func rebuildDerived() {
+        let cal = Calendar.current
+        guard let plan else { weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; return }
+        // Group only this week's sessions, in a single pass, sorted within each day.
+        let weekDays = Set(days.map { cal.startOfDay(for: $0) })
+        var map: [Date: [PlannedSession]] = [:]
+        for s in plan.sessions {
+            let d = cal.startOfDay(for: s.date)
+            if weekDays.contains(d) { map[d, default: []].append(s) }
+        }
+        for k in map.keys { map[k]?.sort { $0.date < $1.date } }
+        weekMap = map
+
+        // The Monday of every week the plan spans — the strip's data, plus the plan's first week.
+        guard let first = plan.sessions.map(\.date).min(),
               let last = plan.sessions.map(\.date).max(),
-              let start = Calendar.current.dateInterval(of: .weekOfYear, for: first)?.start else { return [] }
+              let start = cal.dateInterval(of: .weekOfYear, for: first)?.start else {
+            weekStartsCache = []; planFirstWeek = nil; return
+        }
+        planFirstWeek = start
         var out: [Date] = []
         var d = start
         while d <= last, out.count < 64 {
             out.append(d)
-            guard let next = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: d) else { break }
+            guard let next = cal.date(byAdding: .weekOfYear, value: 1, to: d) else { break }
             d = next
         }
-        return out
+        weekStartsCache = out
     }
+
+    /// The Monday of every week the plan spans — the strip's data (memoized in `weekStartsCache`).
+    private var planWeekStarts: [Date] { weekStartsCache }
 
     private func planWeekIndex(of week: Date) -> Int? {
         planWeekStarts.firstIndex { Calendar.current.isDate($0, inSameDayAs: week) }
@@ -453,8 +483,7 @@ struct PlanView: View {
     /// The macrocycle phase of the displayed week (nil off-plan or for legacy plans without phases).
     private var weekPhase: PlanPhase? {
         guard let plan = profiles.first?.plan, !plan.weekPhases.isEmpty,
-              let first = plan.sessions.map(\.date).min(),
-              let firstWeek = Calendar.current.dateInterval(of: .weekOfYear, for: first)?.start else { return nil }
+              let firstWeek = planFirstWeek else { return nil }
         let idx = Calendar.current.dateComponents([.weekOfYear], from: firstWeek, to: weekStart).weekOfYear ?? -1
         guard idx >= 0, idx < plan.weekPhases.count else { return nil }
         return PlanPhase(rawValue: plan.weekPhases[idx])
@@ -539,7 +568,7 @@ struct PlanView: View {
     private static let dateColWidth: CGFloat = 42
 
     private func boardDayRow(_ day: Date) -> some View {
-        let sessions = PlanCoaching.todaySessions(plan, on: day)
+        let sessions = weekMap[Calendar.current.startOfDay(for: day)] ?? []
         let isToday = Calendar.current.isDateInToday(day)
         return HStack(alignment: .top, spacing: Theme.Space.md) {
             boardDateColumn(day, isToday: isToday, hasSessions: !sessions.isEmpty)
@@ -693,7 +722,7 @@ struct PlanView: View {
     // MARK: Derived
 
     private var weekSessions: [PlannedSession] {
-        days.flatMap { PlanCoaching.todaySessions(plan, on: $0) }
+        days.flatMap { weekMap[Calendar.current.startOfDay(for: $0)] ?? [] }
     }
     private var weekProgress: (done: Int, total: Int) {
         let s = weekSessions

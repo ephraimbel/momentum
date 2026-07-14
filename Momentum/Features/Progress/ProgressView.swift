@@ -290,9 +290,9 @@ struct ProgressScreen: View {
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
                         // The fitness/freshness curve, cadence, climb, aerobic efficiency.
-                        ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit).id("proTrends")
+                        ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit, pro: isAnalyticsPro).id("proTrends")
                         // Strength progression — renders nothing without lifting history.
-                        StrengthProgressSection(workouts: workouts, weightUnit: weightUnit).id("strengthTrends")
+                        StrengthProgressSection(workouts: workouts, weightUnit: weightUnit, pro: isAnalyticsPro).id("strengthTrends")
                         // "How am I right now", "what can I run", and what the coach has learned.
                         formCard(recovery).id("formRace")
                         raceOutlook()

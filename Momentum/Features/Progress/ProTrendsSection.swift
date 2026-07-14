@@ -9,18 +9,51 @@ import Charts
 struct ProTrendsSection: View {
     let workouts: [Workout]
     var distanceUnit: DistanceUnit = .auto
+    /// Only compute when the analytics are unlocked — a free user sees a blurred teaser, so there's
+    /// no reason to fault every run's samples and run the trend pipeline for them.
+    var pro: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
+    @State private var model: Model?
 
     private var imperial: Bool { distanceUnit.resolved() == .imperial }
 
+    /// The whole section's data, computed once off the render path (the engines fault thousands of
+    /// GPS/HR samples and were previously re-run inside `body` on every re-render).
+    struct Model {
+        var metrics: [TrendAnalytics.SummaryMetric]
+        var ffPoints: [TrendAnalytics.DayPoint]
+        var cadence: [TrendAnalytics.WeekValue]
+        var climbMeters: [TrendAnalytics.WeekValue]
+        var efficiency: [TrendAnalytics.WeekValue]
+
+        static func build(_ workouts: [Workout]) -> Model {
+            Model(metrics: TrendAnalytics.summary(workouts: workouts),
+                  ffPoints: TrendAnalytics.fitnessFreshness(workouts: workouts),
+                  cadence: TrendAnalytics.weeklyCadence(workouts: workouts).filter { $0.value > 0 },
+                  climbMeters: TrendAnalytics.weeklyClimb(workouts: workouts),
+                  efficiency: TrendAnalytics.recentDecoupling(workouts: workouts))
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
-            TrendVitalsStrip(metrics: TrendAnalytics.summary(workouts: workouts), imperial: imperial)
-            FitnessFreshnessCard(points: TrendAnalytics.fitnessFreshness(workouts: workouts), animate: appeared)
-            cadenceCard
-            climbCard
-            efficiencyCard
+            if let model {
+                TrendVitalsStrip(metrics: model.metrics, imperial: imperial)
+                FitnessFreshnessCard(points: model.ffPoints, animate: appeared)
+                cadenceCard(model)
+                climbCard(model)
+                efficiencyCard(model)
+            } else {
+                // Placeholder while the pipeline resolves (one hop) or when locked (never computed).
+                skeleton
+            }
+        }
+        // Compute once per data change, off the first frame. Skip entirely when locked.
+        .task(id: pro ? workouts.count : -1) {
+            guard pro else { return }
+            if model == nil { await Task.yield() }   // let the first frame paint the skeleton
+            model = Model.build(workouts)
         }
         .onAppear {
             if reduceMotion { appeared = true }
@@ -28,21 +61,29 @@ struct ProTrendsSection: View {
         }
     }
 
-    // MARK: Cadence · Climb · Efficiency (weekly)
-
-    private var cadenceCard: some View {
-        let series = TrendAnalytics.weeklyCadence(workouts: workouts).filter { $0.value > 0 }
-        return TrendChartCard(title: "Cadence", subtitle: "Weekly average · steps per minute",
-                              series: series, animate: appeared,
-                              reference: 180, referenceLabel: "180", // the classic efficient turnover
-                              explainer: MetricExplainers.cadence, tint: MetricColor.chart,
-                              format: { "\(Int($0.rounded()))" })
+    private var skeleton: some View {
+        VStack(spacing: Theme.Space.md) {
+            ForEach(0..<3, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                    .frame(height: 120)
+            }
+        }
+        .redacted(reason: .placeholder)
     }
 
-    private var climbCard: some View {
-        let raw = TrendAnalytics.weeklyClimb(workouts: workouts)
-        let series = raw.map { TrendAnalytics.WeekValue(weekStart: $0.weekStart,
-                                                        value: imperial ? $0.value * 3.28084 : $0.value) }
+    // MARK: Cadence · Climb · Efficiency (weekly)
+
+    private func cadenceCard(_ model: Model) -> some View {
+        TrendChartCard(title: "Cadence", subtitle: "Weekly average · steps per minute",
+                       series: model.cadence, animate: appeared,
+                       reference: 180, referenceLabel: "180", // the classic efficient turnover
+                       explainer: MetricExplainers.cadence, tint: MetricColor.chart,
+                       format: { "\(Int($0.rounded()))" })
+    }
+
+    private func climbCard(_ model: Model) -> some View {
+        let series = model.climbMeters.map { TrendAnalytics.WeekValue(weekStart: $0.weekStart,
+                                                                      value: imperial ? $0.value * 3.28084 : $0.value) }
         let unit = imperial ? "feet" : "metres"
         return TrendChartCard(title: "Climb", subtitle: "Total elevation gained per week · \(unit)",
                               series: series, animate: appeared, filled: true,
@@ -50,13 +91,12 @@ struct ProTrendsSection: View {
                               format: { Formatters.compact($0) })
     }
 
-    private var efficiencyCard: some View {
-        let series = TrendAnalytics.recentDecoupling(workouts: workouts)
-        return TrendChartCard(title: "Aerobic efficiency",
-                              subtitle: "Heart-rate drift on steady runs · lower is fitter",
-                              series: series, animate: appeared, lowerIsBetter: true,
-                              explainer: MetricExplainers.aerobicEfficiency, tint: MetricColor.chart,
-                              format: { String(format: "%.1f%%", $0) })
+    private func efficiencyCard(_ model: Model) -> some View {
+        TrendChartCard(title: "Aerobic efficiency",
+                       subtitle: "Heart-rate drift on steady runs · lower is fitter",
+                       series: model.efficiency, animate: appeared, lowerIsBetter: true,
+                       explainer: MetricExplainers.aerobicEfficiency, tint: MetricColor.chart,
+                       format: { String(format: "%.1f%%", $0) })
     }
 }
 
