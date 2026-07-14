@@ -158,6 +158,46 @@ a {
   color: var(--ink);
 }
 
+/* Right-side group (links/CTA + the mobile hamburger). */
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Hamburger — hidden on desktop, revealed on mobile; its bars morph to an X when open. */
+.nav-burger {
+  display: none;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.nav-burger span {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: var(--ink);
+  border-radius: 2px;
+  transition: transform 0.3s ease, opacity 0.2s ease, top 0.3s ease;
+}
+.nav-burger span:nth-child(1) { top: 9px; }
+.nav-burger span:nth-child(2) { top: 15px; }
+.nav-burger span:nth-child(3) { top: 21px; }
+.nav.open .nav-burger span:nth-child(1) { top: 15px; transform: rotate(45deg); }
+.nav.open .nav-burger span:nth-child(2) { opacity: 0; }
+.nav.open .nav-burger span:nth-child(3) { top: 15px; transform: rotate(-45deg); }
+
+/* Mobile dropdown menu — hidden on desktop; a frosted panel that drops from the bar on mobile. */
+.nav-menu {
+  display: none;
+}
+
 .wordmark {
   height: 22px;
   width: auto;
@@ -1621,8 +1661,44 @@ a {
   .manifesto {
     padding: 56px 28px;
   }
+  /* Inline section links collapse into the hamburger menu; the "Get the app" CTA stays in the bar. */
   .nav-links a:not(.btn) {
     display: none;
+  }
+  .nav-burger {
+    display: block;
+  }
+  .nav-menu {
+    display: flex;
+    flex-direction: column;
+    padding: 0 24px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: saturate(140%) blur(18px);
+    -webkit-backdrop-filter: saturate(140%) blur(18px);
+    border-bottom: 1px solid transparent;
+    transition: max-height 0.35s ease, opacity 0.25s ease, padding 0.35s ease, border-color 0.35s ease;
+  }
+  .nav.open .nav-menu {
+    max-height: 60vh;
+    opacity: 1;
+    pointer-events: auto;
+    padding: 4px 24px 16px;
+    border-bottom-color: var(--hairline);
+  }
+  .nav-menu a {
+    font-family: var(--font-d);
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--ink);
+    padding: 15px 2px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .nav-menu a:last-child {
+    border-bottom: none;
   }
   .footer-inner {
     flex-direction: column;
