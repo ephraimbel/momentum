@@ -9,6 +9,11 @@ struct RunAnalysisSection: View {
     let gps: GPSDetail
     let type: WorkoutType
     var distanceUnit: DistanceUnit = .auto
+    /// HR series from Apple Health for the workout window, used ONLY when we didn't capture a live
+    /// series ourselves (an Apple Watch run, or a HealthKit-imported workout — the phone never
+    /// streamed HR, but the Watch wrote it to Health). Resolved by the summary and passed in, so the
+    /// HR chart shows for every run with heart-rate data anywhere — not just BLE-strap runs.
+    var healthHRSeries: [(date: Date, bpm: Double)] = []
 
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
@@ -45,11 +50,16 @@ struct RunAnalysisSection: View {
 
     private struct HRPt { let t: TimeInterval; let bpm: Int }
 
-    /// Locally captured heart-rate readings as elapsed-time points (seconds from the first reading).
+    /// Heart-rate readings as elapsed-time points (seconds from the first reading). Prefers our own
+    /// live-captured series; falls back to the Apple Health series for Watch/imported runs where the
+    /// phone didn't stream HR — so the chart is present for every run that has heart-rate data.
     private var hrPoints: [HRPt] {
-        let readings = gps.hrSamples.filter { $0.bpm > 0 }.sorted { $0.t < $1.t }
+        let local = gps.hrSamples.filter { $0.bpm > 0 }
+            .sorted { $0.t < $1.t }
+            .map { (date: $0.t, bpm: Double($0.bpm)) }
+        let readings = local.count >= 4 ? local : healthHRSeries.sorted { $0.date < $1.date }
         guard let first = readings.first else { return [] }
-        return readings.map { HRPt(t: $0.t.timeIntervalSince(first.t), bpm: $0.bpm) }
+        return readings.map { HRPt(t: $0.date.timeIntervalSince(first.date), bpm: Int($0.bpm.rounded())) }
     }
 
     private struct SplitBar: Identifiable { let id: Int; let unitIndex: Int; let paceSPerUnit: Double; let isBest: Bool }

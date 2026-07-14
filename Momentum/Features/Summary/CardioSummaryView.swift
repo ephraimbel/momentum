@@ -15,7 +15,11 @@ struct CardioSummaryContent: View {
     var mapStyleOverride: MapStyleOption? = nil
 
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @State private var hits: [CardioAchievements.Hit] = []
+    /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
+    /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
+    @State private var healthHR: [(date: Date, bpm: Double)] = []
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -38,12 +42,19 @@ struct CardioSummaryContent: View {
                 PlanProposalCard().reveal(0.34)
                 repsSection(gps).reveal(0.35).id("paceReview")   // a structured run's headline: how each rep landed
                 SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(0.36)
-                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit).reveal(0.38)
+                RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
+                                   healthHRSeries: healthHR).reveal(0.38)
                 TimeInZonesCard(workout: workout).reveal(0.39)
                 splitsSection(gps).reveal(0.40)
             }
             .task {
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
+                // Backfill the HR series from Health when we didn't record one live (Watch / imported
+                // runs). Same window + threshold as the time-in-zones card, so the two agree.
+                if (gps.hrSamples.filter { $0.bpm > 0 }).count < 4 {
+                    let end = workout.startedAt.addingTimeInterval(max(workout.elapsedS, workout.durationS))
+                    healthHR = await services.health.heartRateSeries(start: workout.startedAt, end: end)
+                }
             }
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
@@ -101,9 +112,12 @@ struct CardioSummaryContent: View {
                         format: { String(format: "%.2f", $0) },
                         label: isImperial ? "Miles" : "Kilometers")
             if let competenceText { EarnedLine(text: competenceText) }
-            HStack(spacing: Theme.Space.lg) {
+            // Equal-width stats so the row stays balanced whether it's 3 or 5 — Avg HR joins Time,
+            // pace, and elevation whenever the run has heart-rate data (ours, or backfilled from Health).
+            HStack(alignment: .top, spacing: Theme.Space.md) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
                 stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")
+                if let hr = avgHR(gps), hr > 0 { stat("\(hr)", "Avg HR") }
                 stat("\(Int(gps.elevationGainM)) m", "Elevation")
                 if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
@@ -192,8 +206,19 @@ struct CardioSummaryContent: View {
     private func stat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
             Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.7)
             Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The run's average heart rate — our own captured average, else the mean of the Health series
+    /// we backfilled for a Watch/imported run (nil until that async load lands, then it appears).
+    private func avgHR(_ gps: GPSDetail) -> Int? {
+        if let a = gps.avgHR, a > 0 { return a }
+        guard !healthHR.isEmpty else { return nil }
+        return Int((healthHR.map(\.bpm).reduce(0, +) / Double(healthHR.count)).rounded())
     }
 
     private func samplePoints(_ gps: GPSDetail) -> [CardioMetrics.SamplePoint] {
