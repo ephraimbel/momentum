@@ -71,6 +71,11 @@ struct CardioTrackingView: View {
     /// The locked-on follow viewport — follows the location puck, north-up, at a tight running zoom.
     private var followViewport: Viewport { .followPuck(zoom: followZoom, bearing: .constant(0)) }
 
+    /// What the LIVE map actually renders: the flat 2D equivalent of the athlete's chosen style, so
+    /// a follow-camera over a heavy 3D/satellite basemap can't jank the run screen. Their real
+    /// choice (`mapStyle`) still drives the layers picker and the saved run's snapshot.
+    private var liveStyle: MapStyleOption { mapStyle.liveTrackingStyle }
+
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
 
@@ -116,16 +121,28 @@ struct CardioTrackingView: View {
         }
         // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
         // the athlete centered at the tight running zoom.
-        .onChange(of: routeCoords.count) {
-            updateOffRoute()   // followPuck keeps the camera centered
-            #if DEBUG
-            // Marketing shot: frame the WHOLE clean loop (overview) instead of the tight follow zoom.
-            if LocationService.isMidway, routeCoords.count > 2 {
-                viewport = .overview(geometry: LineString(routeCoords),
-                                     geometryPadding: EdgeInsets(top: 90, leading: 52, bottom: 300, trailing: 52))
+        .onChange(of: routeCoords.count) { updateOffRoute() }   // followPuck keeps the camera centered
+        #if DEBUG
+        // Marketing shot: frame the WHOLE clean loop (overview) instead of the tight follow zoom.
+        // Set it as a few one-shots AFTER the loop has drawn — doing it per-fix starves the engine
+        // (map thrash) and leaves the lap half-run.
+        .task {
+            guard LocationService.isMidway else { return }
+            // Let the whole lap draw first under the fast follow-cam (per-fix map work is cheap while
+            // zoomed in), THEN frame the finished loop — and re-frame a few times so the final shot
+            // always fits the complete loop.
+            try? await Task.sleep(for: .seconds(16))
+            for _ in 0..<5 {
+                if routeCoords.count > 2 {
+                    withAnimation(.easeInOut(duration: 0.7)) {
+                        viewport = .overview(geometry: LineString(routeCoords),
+                                             geometryPadding: EdgeInsets(top: 90, leading: 52, bottom: 300, trailing: 52))
+                    }
+                }
+                try? await Task.sleep(for: .seconds(3))
             }
-            #endif
         }
+        #endif
         // The moment recording starts: drop the start pin at the athlete's known position (instant,
         // no wait for the first route point) and snap the camera in to follow.
         .onChange(of: phase) { _, newPhase in
@@ -166,7 +183,7 @@ struct CardioTrackingView: View {
                 // `.onStyleLoaded` (BrandPuck.apply) — the SwiftUI `Puck2D` crashes on devices where
                 // Mapbox's default puck asset won't load.
             }
-            .mapStyle(mapStyle.mapboxStyle(for: colorScheme))
+            .mapStyle(liveStyle.mapboxStyle(for: colorScheme))
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
             .onStyleLoaded { _ in
@@ -285,7 +302,8 @@ struct CardioTrackingView: View {
     }
 
     /// The guide line reads as a quiet dashed path — lighter over satellite imagery for contrast.
-    private var guideColor: Color { mapStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
+    /// Keyed to the LIVE style actually on screen, not the (possibly 3D) chosen one.
+    private var guideColor: Color { liveStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
 
     /// Green "start" dot (white ring) marking where the run began — matches the completed-route map.
     private var startDot: some View {

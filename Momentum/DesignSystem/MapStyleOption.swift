@@ -135,6 +135,20 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     static let classicSet: [MapStyleOption] = [.standard, .streets, .outdoors, .dark, .satellite]
     static let pickable: [MapStyleOption] = realisticSet + classicSet
 
+    /// The style to RENDER on the LIVE-tracking map. The 3D looks — the Mapbox Standard family
+    /// (Realistic/Dusk/Night) and 3D Satellite — re-rasterize buildings, terrain, and lighting on
+    /// every camera frame, which is brutal for a follow-camera and the source of run-screen jank.
+    /// Live tracking drops each to its flat 2D equivalent so the map glides; the saved run still
+    /// snapshots in the athlete's chosen style, so only the live follow is lightened (like Strava).
+    var liveTrackingStyle: MapStyleOption {
+        switch self {
+        case .realistic, .dusk: .standard          // Standard 3D day/dusk → flat Light
+        case .night: .dark                          // Standard 3D night → flat Dark
+        case .standardSatellite: .satellite         // 3D-draped imagery → flat satellite imagery
+        case .standard, .streets, .outdoors, .dark, .satellite: self   // already flat 2D
+        }
+    }
+
     /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
     /// than over the non-imagery basemaps.
     var isImagery: Bool { self == .satellite || self == .standardSatellite }
