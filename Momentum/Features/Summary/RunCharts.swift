@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import SwiftData
 
 /// Post-run analysis charts (running-excellence R2) — the "pro" layer over the text splits: a
 /// pace-over-distance line, an elevation profile, and a per-split bar chart. Pure read of the stored
@@ -288,5 +289,125 @@ struct RunAnalysisSection: View {
         guard sPerUnit.isFinite, sPerUnit > 0 else { return "--" }
         let t = Int(sPerUnit.rounded())
         return "\(t / 60):\(String(format: "%02d", t % 60))"
+    }
+}
+
+/// "This week" — the run in the context of its seven days, as daily distance bars (Strava's post-run
+/// week strip). Anchored on the *run's* day, not today, so an old run in History reads against the week
+/// it belonged to; a run just finished reads against the current week. The run's own day glints
+/// iridescent — the earned accent, since this card celebrates the effort you just banked. Distance sums
+/// every discipline's GPS metres (matching the Progress "distance" chart), so a cross-training day still
+/// shows up. Self-contained: fetches its own window so any host that shows a run summary gets it free.
+struct WeekContextCard: View {
+    /// The run being summarised — its day is the last (highlighted) bar and the window's right edge.
+    let anchor: Date
+    var distanceUnit: DistanceUnit = .auto
+
+    @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var days: [DayBar] = []
+    @State private var animate = false
+
+    private struct DayBar: Identifiable { let id = UUID(); let dayStart: Date; let distanceM: Double; let isAnchor: Bool }
+
+    private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
+    private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
+    private func disp(_ m: Double) -> Double { m / unitMeters }
+
+    var body: some View {
+        Group {
+            // Need at least two active days for a "week" to mean anything — a lone bar is just the run
+            // we're already looking at, so the card would add nothing.
+            if days.filter({ $0.distanceM > 0 }).count >= 2 {
+                let maxDist = days.map { disp($0.distanceM) }.max() ?? 0
+                let total = days.reduce(0) { $0 + $1.distanceM }
+                let anchorDate = days.first(where: \.isAnchor)?.dayStart
+                card(total: total) {
+                    Chart(days) { d in
+                        BarMark(x: .value("Day", d.dayStart, unit: .day),
+                                y: .value("Distance", animate ? disp(d.distanceM) : 0),
+                                width: .fixed(20))
+                            .foregroundStyle(d.isAnchor ? AnyShapeStyle(IridescentMaterial())
+                                                        : AnyShapeStyle(Theme.ink.opacity(0.18)))
+                            .cornerRadius(3)
+                            .annotation(position: .top, spacing: 4) {
+                                if animate, d.isAnchor, disp(d.distanceM) > 0 {
+                                    let v = disp(d.distanceM)
+                                    Text(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
+                                        .font(.rounded(9, weight: .bold)).monospacedDigit()
+                                        .foregroundStyle(Theme.ink).fixedSize()
+                                }
+                            }
+                    }
+                    .chartXScale(domain: xDomain)
+                    .chartYScale(domain: 0...max(1, maxDist * 1.2))
+                    .chartYAxis(.hidden)
+                    .chartXAxis {
+                        AxisMarks(values: .stride(by: .day)) { value in
+                            AxisValueLabel {
+                                if let d = value.as(Date.self) {
+                                    Text(d, format: .dateTime.weekday(.narrow))
+                                        .font(.rounded(9, weight: d == anchorDate ? .bold : .semibold))
+                                        .foregroundStyle(d == anchorDate ? Theme.ink : Theme.inkTertiary)
+                                }
+                            }
+                        }
+                    }
+                    .frame(height: 118)
+                    .accessibilityLabel("This week's distance by day, with this run's day highlighted")
+                }
+                .task { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { animate = true } }
+            }
+        }
+        .task(id: anchor) { await load() }
+    }
+
+    /// Half-a-day of padding on each edge so the first/last bars aren't clipped by the plot frame.
+    private var xDomain: ClosedRange<Date> {
+        guard let lo = days.first?.dayStart, let hi = days.last?.dayStart, lo <= hi else {
+            return anchor...anchor.addingTimeInterval(1)
+        }
+        return lo.addingTimeInterval(-12 * 3600)...hi.addingTimeInterval(12 * 3600)
+    }
+
+    private func card<Content: View>(total: Double, @ViewBuilder _ content: () -> Content) -> some View {
+        let miles = disp(total)
+        let totalStr = miles >= 10 ? "\(Int(miles.rounded()))" : String(format: "%.1f", miles)
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+                Text("THIS WEEK").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                Text("\(totalStr) \(unitLabel) total").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary.opacity(0.7))
+            }
+            content()
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    /// Fetch the 7-day window ending on the run's day and bucket distance per calendar day.
+    private func load() async {
+        let calendar = Calendar.current
+        let anchorDay = calendar.startOfDay(for: anchor)
+        guard let windowStart = calendar.date(byAdding: .day, value: -6, to: anchorDay),
+              let windowEnd = calendar.date(byAdding: .day, value: 1, to: anchorDay) else { return }
+
+        let descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { $0.startedAt >= windowStart && $0.startedAt < windowEnd })
+        let workouts = (try? context.fetch(descriptor)) ?? []
+
+        var bars: [DayBar] = []
+        for i in stride(from: 6, through: 0, by: -1) {
+            guard let dayStart = calendar.date(byAdding: .day, value: -i, to: anchorDay),
+                  let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { continue }
+            let dist = workouts
+                .filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd }
+                .reduce(0.0) { $0 + ($1.gps?.distanceM ?? 0) }
+            bars.append(DayBar(dayStart: dayStart, distanceM: dist, isAnchor: i == 0))
+        }
+        days = bars
     }
 }
