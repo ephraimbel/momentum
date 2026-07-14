@@ -36,4 +36,17 @@ final class RestActivityController {
         self.activity = nil
         Task { await activity.end(nil, dismissalPolicy: .immediate) }
     }
+
+    /// End rest timers left over from a previous process (force-quit mid-session) — see
+    /// `CardioActivityController.endOrphans`. Called once at launch; the orphan list is snapshotted
+    /// synchronously so a late-running task can never sweep a legitimate new timer.
+    static func endOrphans() {
+        let orphans = Activity<RestActivityAttributes>.activities
+        guard !orphans.isEmpty else { return }
+        Task {
+            for orphan in orphans {
+                await orphan.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+    }
 }

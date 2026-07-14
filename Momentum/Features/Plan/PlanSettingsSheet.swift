@@ -28,6 +28,7 @@ struct PlanSettingsSheet: View {
     @State private var goalHours: Int
     @State private var goalMinutes: Int
     @State private var intensity: PlanIntensity
+    @State private var hybridPriority: HybridPriority
     @State private var days: Int
     @State private var minutes: Int
     @State private var equipment: Equipment
@@ -49,6 +50,7 @@ struct PlanSettingsSheet: View {
         _goalHours = State(initialValue: goalS.map { Int($0) / 3600 } ?? 4)
         _goalMinutes = State(initialValue: goalS.map { (Int($0) % 3600) / 60 } ?? 0)
         _intensity = State(initialValue: profile.planIntensity.flatMap(PlanIntensity.init(rawValue:)) ?? .balanced)
+        _hybridPriority = State(initialValue: profile.hybridPriority.flatMap(HybridPriority.init(rawValue:)) ?? .balanced)
         _days = State(initialValue: profile.daysPerWeek)
         _minutes = State(initialValue: profile.sessionMinutes)
         _equipment = State(initialValue: profile.equipment)
@@ -56,6 +58,12 @@ struct PlanSettingsSheet: View {
 
     private var lifting: Bool { profile.disciplines.contains(Discipline.strength.rawValue) }
     private var racing: Bool { goal == .raceDistance }
+    /// Only athletes who both run AND lift get the balance dial — it's the one control that
+    /// splits the training week between the two (the engine reads it only when both are present).
+    private var hybrid: Bool {
+        profile.disciplines.contains(Discipline.running.rawValue)
+            && profile.disciplines.contains(Discipline.strength.rawValue)
+    }
 
     /// Anything the generator reads changed → save rebuilds the upcoming weeks.
     private var structural: Bool {
@@ -65,6 +73,7 @@ struct PlanSettingsSheet: View {
             || newRaceDate != profile.raceDate
             || newGoalFinishTimeS != profile.goalFinishTimeS
             || intensity.rawValue != (profile.planIntensity ?? PlanIntensity.balanced.rawValue)
+            || (hybrid && hybridPriority.rawValue != (profile.hybridPriority ?? HybridPriority.balanced.rawValue))
     }
 
     private var newRaceDistanceM: Double? { racing ? raceDistance?.meters : nil }
@@ -94,6 +103,7 @@ struct PlanSettingsSheet: View {
                     nameSection
                     goalSection
                     if racing { raceSection }
+                    if hybrid { balanceSection }
                     intensitySection
                     daysSection
                     sessionSection
@@ -278,6 +288,26 @@ struct PlanSettingsSheet: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Run & lift balance — the same three-way emphasis the onboarding offers, so a hybrid athlete
+    /// can re-weight the week (run-first / even / lift-first) anytime. Drives the day split in the
+    /// engine (`HybridPriority.liftFraction`); only shown when the athlete both runs and lifts.
+    private var balanceSection: some View {
+        let opts: [(HybridPriority, String, String, String)] = [
+            (.running, "Running comes first", "Lift to support the miles", "figure.run"),
+            (.balanced, "Balanced", "Both matter, side by side", "figure.run.circle"),
+            (.lifting, "Lifting comes first", "Run to stay conditioned", "dumbbell.fill")]
+        return section("RUN & LIFT BALANCE") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(opts, id: \.0) { o in
+                    SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
+                                  isSelected: hybridPriority == o.0) {
+                        withAnimation(Motion.standard) { hybridPriority = o.0 }
+                    }
+                }
+            }
+        }
+    }
+
     /// How hard to push — the athlete's dial (safety caps from injury history still apply).
     private var intensitySection: some View {
         section("HOW HARD TO PUSH") {
@@ -377,6 +407,7 @@ struct PlanSettingsSheet: View {
         profile.raceDate = newRaceDate
         profile.goalFinishTimeS = newGoalFinishTimeS
         profile.planIntensity = intensity.rawValue
+        if hybrid { profile.hybridPriority = hybridPriority.rawValue }
         if rebuild {
             PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
         }

@@ -483,11 +483,14 @@ struct TodayView: View {
             // Marketing hero (--marketing-hero): a real seeded run traced on the map — white casing
             // under the brand-purple line, exactly the app's route styling — for the website header.
             if marketingHero, heroRouteCoordinates.count > 1 {
+                // Explicit RGB, not UIColor(Theme.route): Mapbox's StyleColor doesn't resolve a
+                // dynamic asset colour and renders it near-black on the dark basemap. Bright
+                // periwinkle (route dark-variant #D0D6FF) over a crisp white casing pops on any style.
                 PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
-                    .lineColor(StyleColor(UIColor.white.withAlphaComponent(0.85)))
+                    .lineColor(StyleColor(UIColor.white))
                     .lineWidth(11).lineJoin(.round)
                 PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
-                    .lineColor(StyleColor(UIColor(Theme.route)))
+                    .lineColor(StyleColor(UIColor(red: 0.816, green: 0.839, blue: 1.0, alpha: 1)))
                     .lineWidth(6).lineJoin(.round)
             }
             // Inline loop suggester — draw the candidates right on the Today map. The unselected loops
@@ -523,7 +526,16 @@ struct TodayView: View {
     /// land, soft clouds and an atmospheric halo over black space (globe projection at low zoom). It's
     /// brighter and livelier than satellite imagery (whose oceans read dark). The one place we leave the
     /// monochrome basemap — a *world* view should feel alive. The street map keeps the chosen explore style.
-    private var activeMapboxStyle: MapboxMaps.MapStyle { mapShowsGlobe ? .standard : mapStyle.mapboxStyle(for: colorScheme) }
+    private var activeMapboxStyle: MapboxMaps.MapStyle {
+        if mapShowsGlobe { return .standard }
+        // Marketing hero in dark: the Standard *night* preset dims overlaid route annotations to
+        // near-black. The flat Dark basemap renders the periwinkle route at full brightness, so the
+        // hero's route pops — the website header's whole point. (Light mode is unaffected.)
+        #if DEBUG
+        if marketingHero, colorScheme == .dark { return .dark }
+        #endif
+        return mapStyle.mapboxStyle(for: colorScheme)
+    }
 
     /// The strength "home" backdrop — shown instead of the map when Strength is the chosen activity,
     /// so lifting has its own identity (the brand orb + a quiet last-session readout), not a dead map.

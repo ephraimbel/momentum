@@ -26,9 +26,4 @@ enum SupabaseClientProvider {
         return try? await client.auth.session.accessToken
     }
 
-    /// The signed-in Supabase user id (auth.uid()), or nil for guests/unconfigured.
-    static func userID() async -> UUID? {
-        guard let client else { return nil }
-        return try? await client.auth.session.user.id
-    }
 }

@@ -43,6 +43,8 @@ final class CardioViewModel {
     // immediately on any pause-state flip.
     private var lastActivityPush = Date.distantPast
     private var lastActivityPaused = false
+    private var lastActivityGPSLost = false
+    private var lastActivityStep: String?
 
     /// True once a fix lands within the lock accuracy band — the cue to leave the "acquiring" gate
     /// and start the countdown (PRD §4.3; mirrors Strava's "GPS Signal Acquired").
@@ -89,6 +91,8 @@ final class CardioViewModel {
     private var structuredTask: Task<Void, Never>?
     private var structuredCompleteAnnounced = false
     private var lastPaceNudgeAt: TimeInterval = 0
+    private var lastEncouragementAt: TimeInterval = 0
+    private var encouragementCount = 0    // cycles the deterministic encouragement lines
     private var lastCountdownSecond = 0   // last whole-second countdown tick fired for the current step
 
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
@@ -181,7 +185,9 @@ final class CardioViewModel {
     /// Begin recording for real (called when the countdown hits GO). From here fixes accumulate
     /// into the route + distance; the elapsed clock starts now.
     func arm() async {
-        startedAt = Date()
+        // --live-run-midway (marketing shot): backdate the clock so the elapsed time agrees with the
+        // ~2 mi the route feed bursts in — the frame reads as a real mid-run, not "2 mi in 0:15".
+        startedAt = LocationService.isMidway ? Date().addingTimeInterval(-1080) : Date()
         await engine.begin(now: startedAt)
         motion.start()      // begin cadence updates now that recording is live
         heartRate.start()   // scan for a BLE HR strap (no-op without one)
@@ -204,7 +210,9 @@ final class CardioViewModel {
                    self.state == .tracking {
                     await self.engine.markGPSLost()
                     self.snapshot = await self.engine.snapshot()
-                    self.liveActivity.update(self.liveState())
+                    // Through the shared path so the gpsLost flip forces past the throttle AND the
+                    // bookkeeping stays in sync (a direct update would re-force on the next tick).
+                    self.pushLiveActivityIfDue()
                 }
             }
         }
@@ -217,6 +225,9 @@ final class CardioViewModel {
                 while !Task.isCancelled {
                     guard let self else { break }
                     self.tickStructured()
+                    // Step flips must reach the lock screen even between GPS fixes (a timed
+                    // recovery while standing still) — the push itself stays throttled.
+                    self.pushLiveActivityIfDue()
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
@@ -274,16 +285,30 @@ final class CardioViewModel {
         voice?.announce(CoachingCueBuilder.workoutComplete())
     }
 
-    /// A throttled pace nudge inside a work step when you drift outside the target band. Held off for
-    /// the first ~10 s of a step so the smoothed pace (EMA) has caught up from the previous step's
-    /// effort — otherwise a rep would open with a spurious "pick it up".
+    /// A throttled pace nudge inside a work step when you drift outside the target band, plus a far
+    /// sparser word of encouragement when you're holding it. Held off for the first ~10 s of a step
+    /// so the smoothed pace (EMA) has caught up from the previous step's effort — otherwise a rep
+    /// would open with a spurious "pick it up".
     private func maybeNudgePace(at now: TimeInterval) {
-        guard voice != nil, now - lastPaceNudgeAt > 25,
-              let t = tracker, now - t.anchorElapsedS > 10 else { return }
+        guard voice != nil, let t = tracker, now - t.anchorElapsedS > 10 else { return }
         let a = stepAdherence
-        guard a == .tooFast || a == .tooSlow else { return }
-        lastPaceNudgeAt = now
-        voice?.announce(CoachingCueBuilder.paceNudge(a))
+        switch a {
+        case .tooFast, .tooSlow:
+            guard now - lastPaceNudgeAt > 25 else { return }
+            lastPaceNudgeAt = now
+            voice?.announce(CoachingCueBuilder.paceNudge(a))
+        case .onPace:
+            // Encouragement is earned and rare: ~30 s into the step actually holding pace, at most
+            // every 2½ minutes, and never on the heels of a correction — silence stays the norm.
+            guard now - t.anchorElapsedS > 30,
+                  now - lastEncouragementAt > 150,
+                  now - lastPaceNudgeAt > 45 else { return }
+            lastEncouragementAt = now
+            voice?.announce(CoachingCueBuilder.encouragement(encouragementCount))
+            encouragementCount += 1
+        case .noTarget:
+            break
+        }
     }
 
     /// Tear down the stream when the user backs out before arming (no workout was ever created).
@@ -326,14 +351,19 @@ final class CardioViewModel {
     func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); pushLiveActivityIfDue(); announcePauseIfChanged() }
 
     /// Push to the Live Activity at most every `liveActivityUpdateS`, or immediately when the
-    /// paused state flips (that change must never wait out the throttle).
+    /// paused state flips or a guided step transitions (those changes must never wait out the
+    /// throttle — the lock screen would show the old rep while you're already recovering).
     private func pushLiveActivityIfDue() {
         let paused = isPaused
-        guard paused != lastActivityPaused
+        let lost = gpsLost
+        let step = structured == nil ? nil : stepTitle
+        guard paused != lastActivityPaused || lost != lastActivityGPSLost || step != lastActivityStep
             || Date().timeIntervalSince(lastActivityPush) >= GPSTrackingEngine.Const.liveActivityUpdateS
         else { return }
         lastActivityPush = Date()
         lastActivityPaused = paused
+        lastActivityGPSLost = lost
+        lastActivityStep = step
         liveActivity.update(liveState())
     }
 
@@ -575,10 +605,39 @@ final class CardioViewModel {
         return .init(
             timerStart: Date().addingTimeInterval(-e),
             paused: isPaused,
+            gpsLost: gpsLost,
             elapsedText: Formatters.duration(s: e),
             distanceText: secondaryDistance,
             paceText: pace.value,
             paceLabel: pace.label,
-            goalFraction: goalMeters.map { $0 > 0 ? max(0, min(1, distanceM / $0)) : 0 })
+            goalFraction: goalMeters.map { $0 > 0 ? max(0, min(1, distanceM / $0)) : 0 },
+            stepText: structured == nil ? nil : stepTitle,
+            route: liveRouteSample())
+    }
+
+    /// The trace downsampled for the Live Activity payload: ≤60 points, normalized into the unit
+    /// square with the geographic aspect preserved (longitude scaled by cos φ), centered on the
+    /// minor axis, y flipped to screen-down, rounded to 3 dp so the encoded payload stays a few
+    /// hundred bytes. The widget strokes it verbatim.
+    private func liveRouteSample() -> [Double]? {
+        let coords = coordinates
+        guard coords.count > 1 else { return nil }
+        let step = max(1, coords.count / 60)
+        var pts = Swift.stride(from: 0, to: coords.count, by: step).map { coords[$0] }
+        if pts.last?.latitude != coords.last?.latitude || pts.last?.longitude != coords.last?.longitude {
+            pts.append(coords.last!)
+        }
+        let lats = pts.map(\.latitude), lons = pts.map(\.longitude)
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLon = lons.min(), let maxLon = lons.max() else { return nil }
+        let cosф = cos((minLat + maxLat) / 2 * .pi / 180)
+        let spanX = (maxLon - minLon) * cosф, spanY = maxLat - minLat
+        let span = max(spanX, spanY, 1e-6)
+        let padX = (1 - spanX / span) / 2, padY = (1 - spanY / span) / 2
+        return pts.flatMap { c in
+            let x = padX + (c.longitude - minLon) * cosф / span
+            let y = padY + (maxLat - c.latitude) / span
+            return [(x * 1000).rounded() / 1000, (y * 1000).rounded() / 1000]
+        }
     }
 }

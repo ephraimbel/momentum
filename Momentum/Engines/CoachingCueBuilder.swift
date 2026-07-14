@@ -52,6 +52,16 @@ enum CoachingCueBuilder {
         }
     }
 
+    /// Occasional positive reinforcement while holding the target pace. Sparse by design (the view
+    /// model throttles hard) so hearing it stays meaningful. The caller passes a running count and
+    /// the lines cycle, keeping the wording deterministic.
+    static func encouragement(_ index: Int) -> String {
+        let lines = ["On pace. Keep this going.",
+                     "Right on target. Stay smooth.",
+                     "On pace. Looking strong."]
+        return lines[max(index, 0) % lines.count]
+    }
+
     static func workoutComplete() -> String { "Workout complete. Strong session." }
 
     /// A step target spoken naturally: "400 meters" / "1 kilometer" / "90 seconds".

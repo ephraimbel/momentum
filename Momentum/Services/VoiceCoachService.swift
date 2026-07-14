@@ -7,7 +7,13 @@ import os
 /// when disabled so the live loop never depends on it.
 @MainActor
 final class VoiceCoachService: NSObject, VoiceCoachServing {
-    var isEnabled = true
+    /// The Settings mute writes the same key (`@AppStorage`), so reading defaults here means a flip
+    /// mid-run silences the very next cue. Defaults to on.
+    static let storageKey = "voiceCoachEnabled"
+    var isEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: Self.storageKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.storageKey) }
+    }
 
     private let synthesizer = AVSpeechSynthesizer()
     private let logger = Logger(subsystem: "com.momentum.app", category: "voicecoach")

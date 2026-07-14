@@ -28,9 +28,19 @@ struct CoachingCueBuilderTests {
         #expect(CoachingCueBuilder.spokenPace(secPerUnit: 0) == "0 seconds")
     }
 
+    @Test func encouragementCyclesDeterministically() {
+        // Same index → same line; consecutive indices walk the list and wrap.
+        #expect(CoachingCueBuilder.encouragement(0) == CoachingCueBuilder.encouragement(0))
+        #expect(CoachingCueBuilder.encouragement(0) == CoachingCueBuilder.encouragement(3))
+        #expect(CoachingCueBuilder.encouragement(0) != CoachingCueBuilder.encouragement(1))
+        #expect(CoachingCueBuilder.encouragement(-1) == CoachingCueBuilder.encouragement(0))  // defensive clamp
+    }
+
     @Test func fixedCuesAreConciseAndClaimFree() {
         let cues = [CoachingCueBuilder.restComplete(), CoachingCueBuilder.paused(),
-                    CoachingCueBuilder.resumed(), CoachingCueBuilder.goalReached()]
+                    CoachingCueBuilder.resumed(), CoachingCueBuilder.goalReached(),
+                    CoachingCueBuilder.encouragement(0), CoachingCueBuilder.encouragement(1),
+                    CoachingCueBuilder.encouragement(2)]
         let banned = ["injur", "pain", "diagnos", "medical"]
         for cue in cues {
             #expect(!cue.isEmpty)

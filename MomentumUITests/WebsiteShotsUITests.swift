@@ -6,6 +6,11 @@ final class WebsiteShotsUITests: XCTestCase {
 
     private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/9e5489bb-10b4-4631-a8cd-f5b4f9789f6e/scratchpad/site"
 
+    /// The website now showcases the app's DARK look. Every shot launches in forced dark via
+    /// `-com.momentum.appearance dark` — an EXPLICIT preference (not System), which also sidesteps
+    /// the System-appearance feed-invalidation loop. Flip to `[]` to shoot the light theme again.
+    private let darkArgs = ["-com.momentum.appearance", "dark"]
+
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     private func dump(_ app: XCUIApplication, _ name: String) {
@@ -16,7 +21,7 @@ final class WebsiteShotsUITests: XCTestCase {
     /// Today (hero), Plan (periodization), Coach chat — tab/nav walk.
     func testDumpTabs() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo"]
+        app.launchArguments = darkArgs + ["--seed-demo"]
         app.launch()
         // A previous (crashed) run can leave the interrupted-workout marker — clear the recovery
         // prompt so it never photobombs a marketing shot.
@@ -55,7 +60,7 @@ final class WebsiteShotsUITests: XCTestCase {
     /// today's plan card — the Runna-style "route + plan" hero, in one authentic app screen.
     func testDumpHero() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--marketing-hero"]
+        app.launchArguments = darkArgs + ["--seed-demo", "--marketing-hero"]
         app.launch()
         let discard = app.buttons["Discard"]
         if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
@@ -63,36 +68,47 @@ final class WebsiteShotsUITests: XCTestCase {
         dump(app, "hero-route")
     }
 
-    /// A live run with the simulated GPS route drawing + simulated HR (live pace, time, HR zone).
-    /// A free run (--live-run) tracks regardless of the permission dialogs, unlike a structured
-    /// run which stalls in "acquiring" behind them — so this is the robust capture.
+    /// A live run mid-flight: `--live-run-midway` fast-forwards the simulated GPS to ~2 mi (real route
+    /// drawn, distance well past 0.0, backdated clock so the pace/time read coherently) with simulated
+    /// HR. A free run (--live-run) tracks regardless of the permission dialogs, unlike a structured run.
     func testDumpLiveRun() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--live-run", "--ui-test-route", "--demo-hr"]
+        app.launchArguments = darkArgs + ["--seed-demo", "--live-run", "--ui-test-route", "--demo-hr", "--live-run-midway"]
         app.launch()
 
         // Dismiss both photobombing springboard dialogs (Location, then Motion & Fitness) as they
         // appear — the run tracks underneath them regardless.
+        // Permissions are pre-granted via `simctl privacy grant` before this runs, so usually no
+        // dialog appears. `waitForExistence` (not a tight `.exists` poll, which throws a springboard
+        // snapshot error under load) mops up any that still slip through — Location then Motion.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allow = springboard.buttons["Allow"]
         let allowLocation = springboard.buttons["Allow While Using App"]
-        for _ in 0..<20 {
-            if allowLocation.exists && allowLocation.isHittable { allowLocation.tap() }
-            if allow.exists && allow.isHittable { allow.tap() }
-            usleep(400_000)
-        }
-        sleep(16)   // let the route trace draw and HR ramp
-        // Final sweep in case a dialog re-armed, then shoot.
-        if allowLocation.exists && allowLocation.isHittable { allowLocation.tap() }
-        if allow.exists && allow.isHittable { allow.tap() }
-        sleep(2)
+        if allowLocation.waitForExistence(timeout: 6) { allowLocation.tap() }
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 4) { allow.tap() }
+        sleep(22)   // let the ~2 mi burst fully process + draw + HR ramp + follow camera settle
         dump(app, "live-run")
+    }
+
+    /// The Profile screen as a FULL, established account — a marathoner's wall of real-route tiles
+    /// with a deep follower/following/posts trio. `--marketing-profile` seeds ~200 posts and renders
+    /// Mapbox tiles (dark basemap in dark mode) for the visible top of the grid.
+    func testDumpMarketingProfile() {
+        let app = XCUIApplication()
+        app.launchArguments = darkArgs + ["--seed-demo", "--marketing-profile"]
+        app.launch()
+        let discard = app.buttons["Discard"]
+        if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
+        app.buttons["Profile"].firstMatch.tap()
+        // The seed renders ~22 route tiles sequentially on the GPU — give it room before the shot.
+        sleep(22)
+        dump(app, "profile-grid")
     }
 
     /// The AI coach chat — the "your week in review" read plus a seeded plan-change proposal card.
     func testDumpCoach() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--coach-card"]
+        app.launchArguments = darkArgs + ["--seed-demo", "--coach-card"]
         app.launch()
 
         // Motion & Fitness permission (springboard) can pop over the chat — dismiss it.
@@ -108,5 +124,18 @@ final class WebsiteShotsUITests: XCTestCase {
         top.press(forDuration: 0.1, thenDragTo: low)
         sleep(2)
         dump(app, "coach")
+    }
+
+    /// Post-run pace review: the guided-run rep breakdown (6×400 with on/slow verdicts) + the coach's
+    /// "Right on your targets" read. `--ui-test-run-detail` opens the seeded reps run; `--detail-scroll-reps`
+    /// frames the reps + pace-review card.
+    func testDumpPaceReview() {
+        let app = XCUIApplication()
+        app.launchArguments = darkArgs + ["--seed-demo", "--ui-test-run-detail", "--detail-scroll-reps"]
+        app.launch()
+        let discard = app.buttons["Discard"]
+        if discard.waitForExistence(timeout: 4) { discard.tap(); sleep(1) }
+        sleep(6)   // detail presents + scroll-to-reps animates + route map settles
+        dump(app, "pace-review")
     }
 }

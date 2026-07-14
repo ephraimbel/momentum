@@ -23,7 +23,12 @@ struct AthletePanel: View {
     let hero: AthleteCallout
     var sub: AthleteCallout?
     let rail: [AthleteCallout]
+    /// When false the physiological rail (readiness/load/resting-heart/focus) is a locked teaser:
+    /// the body and the distance hero stay free, everything the rail reads off the body is Pro.
+    var pro: Bool = true
     var onSelect: (String) -> Void = { _ in }
+    /// Tapped when a locked reading is touched — routes to the paywall like the analytics block.
+    var onLockedTap: () -> Void = {}
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -64,14 +69,20 @@ struct AthletePanel: View {
                     .padding(.top, h * 0.16)
                     .frame(width: w * 0.30, alignment: .topLeading)
                     Spacer(minLength: 0)
-                    // Right: the rail — compact readings separated by hairlines.
-                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                        ForEach(Array(rail.enumerated()), id: \.element.id) { i, c in
-                            if i > 0 {
-                                Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 0.5)
+                    // Right: the rail — compact readings separated by hairlines. Free tier sees the
+                    // labels but the values are locked: the physiology your body carries is Pro.
+                    ZStack {
+                        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                            ForEach(Array(rail.enumerated()), id: \.element.id) { i, c in
+                                if i > 0 {
+                                    Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 0.5)
+                                }
+                                railRow(c)
                             }
-                            railRow(c)
                         }
+                        .blur(radius: pro ? 0 : 6)
+                        .allowsHitTesting(pro)
+                        if !pro { railLock }
                     }
                     .padding(.top, h * 0.05)
                     .frame(width: w * 0.30, alignment: .topLeading)
@@ -124,6 +135,28 @@ struct AthletePanel: View {
             .frame(width: fig.width, height: fig.height)
             .position(x: fig.midX, y: fig.midY)
             .accessibilityHidden(true)   // the columns carry the data; the figure is scenery
+    }
+
+    /// The lock resting over the blurred rail — a small tappable badge that opens the paywall.
+    private var railLock: some View {
+        VStack(spacing: 5) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Theme.ink.opacity(0.55))
+            Text("PRO").font(.rounded(9, weight: .heavy)).tracking(1.2)
+                .foregroundStyle(Theme.inkSecondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(
+            Capsule().fill(.ultraThinMaterial)
+                .overlay(Capsule().stroke(Theme.ink.opacity(0.08), lineWidth: 0.5))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { Haptics.light(); onLockedTap() }
+        .accessibilityElement()
+        .accessibilityLabel("Physiology readings")
+        .accessibilityHint("Unlock with Pro")
+        .accessibilityAddTraits(.isButton)
     }
 
     // MARK: data columns

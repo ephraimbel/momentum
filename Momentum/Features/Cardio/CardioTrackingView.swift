@@ -50,9 +50,6 @@ struct CardioTrackingView: View {
     /// CoreLocation — the dot, the camera, and the trace all track the same clean track, so a
     /// rejected GPS spike can't teleport the dot into a building while the line stays put.
     @State private var puckFeed = PuckFeed()
-    /// Interpolates dot + trace tip between the ~1 Hz fixes at display cadence — the run draws as a
-    /// continuous glide (Strava-smooth), not a once-a-second step.
-    @State private var motion = LiveMotionSmoother()
     @State private var deviationM = 0.0
     @State private var rejoinBearing = 0.0     // compass bearing to the nearest loop point (north-up)
     /// While true the camera stays locked on the athlete (zoomed in, north-up). A pan/pinch drops it;
@@ -138,13 +135,6 @@ struct CardioTrackingView: View {
         .onAppear {
             if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
 
-            // Wire the interpolated dot into the puck up front (not in `.onStyleLoaded`) so the very
-            // first fix during acquiring already shows "you" — style-load timing can't delay it. The
-            // trace-tip render still waits on `motion.map`, which is fine (no trace before a style).
-            motion.puckSink = { [puckFeed] coord in
-                puckFeed.push(lat: coord.latitude, lon: coord.longitude)
-            }
-
             // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
             // begins we follow the location puck (see `recenterOnUser`).
             if case .idle = viewport {
@@ -182,12 +172,14 @@ struct CardioTrackingView: View {
                 let delta = smoother.ingest(routeCoords)
                 syncRouteLayers(proxy.map, delta: delta)
             }
-            // The dot follows the engine's filtered position (raw while acquiring so "you" shows
-            // instantly; Kalman tip once recording), interpolated to display cadence so it glides.
+            // Feed the puck the engine's filtered position per fix (raw while acquiring so "you"
+            // shows instantly; Kalman tip once recording). Mapbox's LocationManager interpolates the
+            // puck between these over ~1.1 s on its own optimized display link, and the follow camera
+            // tracks that smooth position — so the dot and map glide without us driving a second
+            // 60 fps loop (which saturated the GPU and janked the whole map).
             .onChange(of: vm?.puckPoint) { _, point in
-                if let point { motion.push(lat: point.lat, lon: point.lon) }
+                if let point { puckFeed.push(lat: point.lat, lon: point.lon) }
             }
-            .onDisappear { motion.stop() }   // breaks the display link's retain of the smoother
             .ignoresSafeArea()
             // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
             // manual pan or pinch drops the lock; the recenter arrow re-engages it.

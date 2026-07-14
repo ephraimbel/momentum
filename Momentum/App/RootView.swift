@@ -7,6 +7,7 @@ struct RootView: View {
     @Query private var profiles: [UserProfile]
     @Environment(PaywallController.self) private var paywall
     @Environment(AuthController.self) private var auth
+    @Environment(CoachPresenter.self) private var coach
     @Environment(\.modelContext) private var context
     // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
     // and set was persisted as it happened — this prompt is how they come back.
@@ -34,6 +35,9 @@ struct RootView: View {
     // Flipped AFTER insertion (onAppear + delay) — a cover whose isPresented is already true while
     // the view is being inserted can silently fail to present (see the onboarding note below).
     @State private var showSaveScreen = false
+    // Straight to Settings (screenshot verification of the settings surface).
+    @State private var showSettingsDeepLink = false
+    @State private var showWidgetPreview = ProcessInfo.processInfo.arguments.contains("--widget-preview")
     #endif
 
     var body: some View {
@@ -50,6 +54,7 @@ struct RootView: View {
 
     private var mainBody: some View {
         @Bindable var paywall = paywall
+        @Bindable var coach = coach
         @Bindable var auth = auth
         return Group {
             if !auth.isSignedIn {
@@ -73,6 +78,23 @@ struct RootView: View {
                     get: { paywall.onboardingGatePending && !paywall.isPro && !showOnboarding && !profiles.isEmpty },
                     set: { _ in })) {
                     PaywallView(feature: .fullPlan, hard: true)
+                }
+                // The ONE coach chat surface — every entry point (Today's floating button, Settings)
+                // opens the same thread through `CoachPresenter`. Free to talk; Apply is the Pro gate.
+                .fullScreenCover(isPresented: $coach.isPresented) {
+                    CoachChatView { coach.close() }
+                }
+                // A nav card tapped in the chat: the chat dismissed itself; steer the shell.
+                .onChange(of: coach.pendingNav) { _, nav in
+                    guard let nav else { return }
+                    coach.pendingNav = nil
+                    switch nav {
+                    case .startToday: selection = .today
+                    case .viewPlanWeek, .raceBriefing: selection = .plan
+                    case .planSettings: selection = .plan   // PlanView opens its settings sheet (coachWantsSettings)
+                    case .viewProgress: selection = .progress
+                    }
+                    if nav == .planSettings { coach.wantsPlanSettings = true }
                 }
                 #if DEBUG
                 .fullScreenCover(isPresented: $showRunDetail) {
@@ -125,11 +147,39 @@ struct RootView: View {
         // sign-in flips the branch and raises this flag in the same update, and a cover attached
         // to a view being inserted that instant can silently fail to present (blank canvas).
         .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingFlow { showOnboarding = false }
+            OnboardingFlow {
+                showOnboarding = false
+                // The coach says hello the moment there's a plan to explain — a quiet seed the
+                // Today button badges, offered at the peak-curiosity moment. Once ever.
+                if profiles.first?.plan != nil { CoachProactive.seedPlanIntro(in: context) }
+            }
         }
+        // Onboarding owns the screen: the coach cover must never stack over it (proactive seeds
+        // and deep links suspend until the flow completes). No `initial:` — isSuspended already
+        // defaults false, and an initial-render state write can glitch cover presentation.
+        .onChange(of: showOnboarding) { _, showing in coach.isSuspended = showing }
+        #if DEBUG
+        .fullScreenCover(isPresented: $showWidgetPreview) {
+            WidgetPreviewHarness()
+        }
+        .fullScreenCover(isPresented: $showSettingsDeepLink) {
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showSettingsDeepLink = false }
+                        }
+                    }
+            }
+        }
+        #endif
         // Supabase auth links (momentum://auth-callback) — today that's the password-recovery
         // email; the link signs the athlete in, then `needsNewPassword` raises the sheet below.
-        .onOpenURL { auth.handleAuthCallback($0) }
+        // momentum://today is the Home Screen widget's tap target: land on Today.
+        .onOpenURL { url in
+            if url.host == "today" { selection = .today; return }
+            auth.handleAuthCallback(url)
+        }
         .sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
         .onAppear {
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
@@ -151,8 +201,23 @@ struct RootView: View {
             if ProcessInfo.processInfo.arguments.contains("--paywall") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { paywall.present(for: .aiCoach) }
             }
+            if ProcessInfo.processInfo.arguments.contains("--coach") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { coach.open() }
+            }
             if ProcessInfo.processInfo.arguments.contains("--save-screen") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showSaveScreen = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--coach-card") {
+                // Deterministic proposal in the thread (no network) — screenshot the card + Apply flow.
+                CoachDemo.seedProposalIfNeeded(in: context)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { coach.open() }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--coach-badge") {
+                // Seed WITHOUT opening the chat — verifies the unseen-news dot on Today's button.
+                CoachDemo.seedProposalIfNeeded(in: context)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--settings") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettingsDeepLink = true }
             }
             #endif
         }

@@ -81,9 +81,12 @@ struct ConsistencyHeatmap: View {
     }
 
     /// Every column's row `r` is the same weekday (columns are exactly 7 days apart).
+    /// Calendar day arithmetic, not 86 400-second steps — a fall-back DST week would land the
+    /// stepped date at 23:00 the prior day and label the row with the wrong weekday.
     private func weekdayLetter(row: Int) -> String {
-        let date = Calendar.current.startOfDay(for: Date())
-            .addingTimeInterval(TimeInterval(-(6 - row) * 86_400))
+        let cal = Calendar.current
+        let date = cal.date(byAdding: .day, value: -(6 - row), to: cal.startOfDay(for: Date()))
+            ?? Date()
         let symbol = Calendar.current.shortWeekdaySymbols[
             Calendar.current.component(.weekday, from: date) - 1]
         return String(symbol.prefix(1))

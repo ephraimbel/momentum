@@ -79,7 +79,7 @@ final class Services {
             voiceCoach: VoiceCoachService(),
             presence: LivePresenceService(),
             spots: CachingSpotsProvider(wrapping: MapboxSpotsProvider()),
-            social: SupabaseSocialBackend()
+            social: SupabaseSocialBackend(paywall: paywall)
         )
     }
 }

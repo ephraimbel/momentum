@@ -13,6 +13,12 @@ struct CommunityView: View {
     @Environment(FollowStore.self) private var follows
     @Environment(ModerationStore.self) private var moderation
     @Environment(RemoteFeedStore.self) private var remoteFeed
+    @Environment(PaywallController.self) private var paywall
+    @Environment(Services.self) private var services
+    @Environment(\.modelContext) private var modelContext
+    /// Last `is_pro` value published to the backend — lets the entitlement-change hook below
+    /// skip the initial appearance (launch's `claimProfile` already stamped it).
+    @State private var lastPublishedPro: Bool?
     @AppStorage("community.feedScope") private var scopeRaw = CommunityScope.everyone.rawValue
     @State private var selectedAthlete: CommunityAthlete?
     /// Fresh community posts minted by pull-to-refresh (CommunityPulse) — session-scoped.
@@ -61,7 +67,8 @@ struct CommunityView: View {
         // scrolls to. Follows are exempt from the cap (scoped from the FULL stream) so a followed
         // athlete's post never disappears behind it.
         let assembled = (pulsed + FeedAssembler.feed(userWorkouts: Array(shared), profile: profile,
-                                                     community: CommunityFeed.seed()))
+                                                     community: CommunityFeed.seed(),
+                                                     viewerIsPro: paywall.isEntitled(to: .fullPlan)))
             .sorted { $0.date > $1.date }
             .filter(moderation.isVisible)
         let local = scope == .following
@@ -122,6 +129,16 @@ struct CommunityView: View {
         .task(id: scopeRaw) {
             // First load per scope — pull-to-refresh handles the rest. No-op offline/guest/dark.
             if remoteFeed.items.isEmpty { await remoteFeed.refresh(scope: remoteScope) }
+        }
+        .task(id: paywall.isEntitled(to: .fullPlan)) {
+            // Entitlement flipped mid-session (purchase, restore, reinstall's async restore):
+            // re-publish the profile so the server-side `is_pro` — the checkmark every OTHER
+            // athlete sees — updates now, not at the next launch's claimProfile.
+            let pro = paywall.isEntitled(to: .fullPlan)
+            if let last = lastPublishedPro, last != pro, let profile {
+                await services.social.claimProfile(profile, in: modelContext)
+            }
+            lastPublishedPro = pro
         }
         #if DEBUG
         // --athlete-profile: open the first community athlete directly (deterministic sim
@@ -257,4 +274,5 @@ enum CommunityScope: String, CaseIterable {
         .environment(CommentStore())
         .environment(ModerationStore())
         .environment(RemoteFeedStore())
+        .environment(PaywallController())
 }

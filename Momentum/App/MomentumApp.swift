@@ -8,6 +8,7 @@ struct MomentumApp: App {
     @State private var services: Services
     @State private var paywall: PaywallController
     @State private var auth: AuthController
+    @State private var coach = CoachPresenter()
     @State private var follows = FollowStore()
     @State private var reactions = ReactionStore()
     @State private var moderation = ModerationStore()
@@ -52,27 +53,42 @@ struct MomentumApp: App {
         remoteFeed.reactions = reactions
         remoteFeed.follows = follows
         MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
+        // A force-quit mid-workout strands its Live Activity — end leftovers before anything can
+        // start a new one (the workout itself is recovered separately via WorkoutRecovery).
+        CardioActivityController.endOrphans()
+        RestActivityController.endOrphans()
     }
 
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(services)
-                .environment(paywall)
-                .environment(auth)
-                .environment(follows)
-                .environment(reactions)
-                .environment(moderation)
-                .environment(comments)
-                .environment(remoteFeed)
-                .tint(Theme.ink)
-                // Appearance is the athlete's choice (Settings → Appearance). The design system was
-                // born dark-hero and re-cut light-hero — both palettes live in the asset catalog,
-                // so the whole app re-skins from the same tokens. `nil` follows the system.
-                .preferredColorScheme(AppAppearance(rawValue: appearanceRaw)?.colorScheme ?? nil)
+            // Appearance is the athlete's choice (Settings → Appearance). Explicit Light/Dark
+            // installs a concrete preference; System installs NO modifier at all. This is
+            // load-bearing: `preferredColorScheme(nil)` is not a no-op — its nil preference
+            // writer re-propagates every pass and, with map surfaces reading `colorScheme`,
+            // sustains a runaway invalidation loop (the f7e7e5f System-appearance regression:
+            // CommunityView.body re-evaluated 333×/4s). Never reintroduce the `?? nil` form.
+            if let scheme = AppAppearance(rawValue: appearanceRaw)?.colorScheme {
+                root.preferredColorScheme(scheme)
+            } else {
+                root
+            }
         }
         .modelContainer(PersistenceController.shared.container)
+    }
+
+    private var root: some View {
+        RootView()
+            .environment(services)
+            .environment(paywall)
+            .environment(auth)
+            .environment(coach)
+            .environment(follows)
+            .environment(reactions)
+            .environment(moderation)
+            .environment(comments)
+            .environment(remoteFeed)
+            .tint(Theme.ink)
     }
 }

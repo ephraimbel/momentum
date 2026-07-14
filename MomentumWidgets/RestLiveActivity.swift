@@ -2,11 +2,12 @@ import WidgetKit
 import SwiftUI
 import ActivityKit
 
-/// The widget bundle for the `MomentumWidgets` extension. Hosts the rest-timer (strength) and live
-/// cardio Live Activities; home-screen widgets can join here later.
+/// The widget bundle for the `MomentumWidgets` extension: the Today home-screen widget plus the
+/// rest-timer (strength) and live cardio Live Activities.
 @main
 struct MomentumWidgetsBundle: WidgetBundle {
     var body: some Widget {
+        TodayWidget()
         RestLiveActivity()
         CardioLiveActivity()
     }

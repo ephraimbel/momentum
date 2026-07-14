@@ -7,6 +7,7 @@ struct WorkoutDetailView: View {
     var weightUnit: WeightUnit = .default()
     var distanceUnit: DistanceUnit = .auto
     @Environment(\.modelContext) private var context
+    @Environment(CoachPresenter.self) private var coach
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -22,6 +23,7 @@ struct WorkoutDetailView: View {
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit)
                     }
                 }
+                askCoachRow
             }
             .padding(Theme.Space.md)
         }
@@ -36,6 +38,17 @@ struct WorkoutDetailView: View {
                     }
                 }
             }
+            if ProcessInfo.processInfo.arguments.contains("--detail-scroll-coach") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation { proxy.scrollTo("askCoach", anchor: .center) }
+                }
+            }
+            // --detail-scroll-reps: frame the guided-run rep breakdown + pace-review card (website shot).
+            if ProcessInfo.processInfo.arguments.contains("--detail-scroll-reps") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation { proxy.scrollTo("paceReview", anchor: .top) }
+                }
+            }
             #endif
         }
         }
@@ -47,6 +60,39 @@ struct WorkoutDetailView: View {
                 ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
             }
         }
+    }
+
+    /// Debrief with the coach — the discoverable entry (an inline row beats a toolbar glyph;
+    /// this replaced the old sparkles button). Opens the chat pre-typed about THIS workout.
+    private var askCoachRow: some View {
+        Button {
+            Haptics.light()
+            let when = workout.startedAt.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+            coach.open(prefill: "About my \(workout.type.title.lowercased()) on \(when): how did it go?",
+                       workoutID: workout.id)
+        } label: {
+            HStack(spacing: Theme.Space.md) {
+                BrandMark(size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Ask your coach")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("How did this one go? What should change?")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask your coach about this workout")
+        .id("askCoach")
     }
 
     /// Per-workout visibility — overrides the profile default for this one workout (PRD §11).

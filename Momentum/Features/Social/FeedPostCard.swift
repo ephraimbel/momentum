@@ -81,9 +81,16 @@ struct FeedPostCard: View {
         HStack(spacing: Theme.Space.sm) {
             AvatarView(photo: item.avatarData, name: item.authorName, size: 36)
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Text(item.authorName).font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
-                    if item.isCommunity { communityBadge }
+                    // The one thing that may sit beside a name: the Pro checkmark (X-style,
+                    // brand violet). Real paying athletes only — never seeded content.
+                    if item.isPro {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.purple)
+                            .accessibilityLabel("Verified Pro")
+                    }
                 }
                 Text(byline).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary).lineLimit(1)
             }
@@ -95,6 +102,9 @@ struct FeedPostCard: View {
         var parts = [item.date.formatted(.relative(presentation: .named))]
         if let handle = item.authorHandle { parts.insert("@\(handle)", at: 0) }
         if let loc = item.location { parts.append(loc) }
+        // Honest labeling of seeded content moves to the byline — the name row belongs to the
+        // athlete (and their Pro checkmark), but sample posts stay clearly marked.
+        if item.isCommunity { parts.insert("Momentum community", at: 0) }
         return parts.joined(separator: " · ")
     }
 
@@ -191,12 +201,4 @@ struct FeedPostCard: View {
         }
     }
 
-    private var communityBadge: some View {
-        Text("Momentum")
-            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4).foregroundStyle(Theme.ink)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Capsule().fill(IridescentMaterial()).opacity(0.55))
-            .overlay(Capsule().stroke(Theme.hairline))
-            .accessibilityLabel("Momentum community")
-    }
 }

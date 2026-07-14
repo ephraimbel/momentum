@@ -180,6 +180,4 @@ actor GPSTrackingEngine {
         state = .summary
     }
 
-    /// Re-enter after a cold launch with an unfinished workout (the "Resume?" path).
-    func markRecovered() { state = .recovered }
 }

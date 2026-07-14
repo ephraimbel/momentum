@@ -10,7 +10,11 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let authorName: String
     let authorHandle: String?
     let location: String?
-    let isCommunity: Bool          // drives the "Momentum community" badge (honest labeling)
+    let isCommunity: Bool          // drives the "Momentum community" label (honest labeling)
+    /// Verified Pro athlete → the checkmark next to the name. Remote posts carry it from the
+    /// server profile; the viewer's own posts stamp it from the live entitlement. Seeded
+    /// community content is never verified.
+    var isPro: Bool = false
     let type: WorkoutType
     let date: Date
     let title: String
@@ -74,10 +78,10 @@ struct FeedMetric: Identifiable, Sendable, Hashable {
 /// athlete opted route maps in.
 enum FeedAssembler {
     static func feed(userWorkouts: [Workout], profile: UserProfile?,
-                     community: [FeedItem], now: Date = Date()) -> [FeedItem] {
+                     community: [FeedItem], viewerIsPro: Bool = false, now: Date = Date()) -> [FeedItem] {
         let mine = userWorkouts
             .filter { SocialPrivacy.isShared($0) }
-            .map { item(from: $0, profile: profile) }
+            .map { item(from: $0, profile: profile, isPro: viewerIsPro) }
         return (mine + community).sorted { $0.date > $1.date }
     }
 
@@ -88,7 +92,7 @@ enum FeedAssembler {
     }
 
     /// Map a shared `Workout` into a feed card from the owner's point of view.
-    static func item(from w: Workout, profile: UserProfile?) -> FeedItem {
+    static func item(from w: Workout, profile: UserProfile?, isPro: Bool = false) -> FeedItem {
         let weightUnit = WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg
         let distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
         let showRoute = profile.map { SocialPrivacy.showsRoute(w, profile: $0) } ?? false
@@ -100,6 +104,7 @@ enum FeedAssembler {
             authorHandle: profile.flatMap { $0.handle.isEmpty ? nil : $0.handle },
             location: profile.flatMap(SocialPrivacy.publicLocation),
             isCommunity: false,
+            isPro: isPro,
             type: w.type,
             date: w.startedAt,
             title: w.title.isEmpty ? w.type.title : w.title,

@@ -280,7 +280,8 @@ struct EditProfileView: View {
     private func pushToBackend() {
         let backend = services.social
         let avatarData = avatarChanged ? profile.avatarData : nil
-        var dto = SocialSyncEngine.profileDTO(for: profile)
+        var dto = SocialSyncEngine.profileDTO(for: profile,
+                                              isPro: services.paywall.isEntitled(to: .fullPlan))
         Task {
             guard await backend.isAvailable else { dismiss(); return }
             if let avatarData, let path = await backend.uploadAvatar(jpeg: avatarData) {

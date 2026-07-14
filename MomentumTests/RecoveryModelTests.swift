@@ -38,13 +38,22 @@ struct RecoveryModelTests {
         #expect(r.readiness != .primed && r.readiness != .ready)
     }
 
-    @Test func dailyGrindWithNoRestIsDepleted() {
-        let ws = (0..<7).map { run(daysAgo: $0, minutes: 45) }    // same load 7 days straight
+    @Test func dailyGrindWithNoRestIsNotReady() {
+        // Same 45-min load 7 days straight, no easy day: max monotony (−25) + no rest (−15).
+        // With history-normalized chronic load this reads ACWR ≈ 1 — a warning, not the old
+        // "depleted" alarm, which came from the ÷4 divisor inflating a week-one athlete's
+        // ratio to 4 while the identical MONTH-long grinder scored 60. Same grind, same score.
+        let ws = (0..<7).map { run(daysAgo: $0, minutes: 45) }
         let r = RecoveryModel(workouts: ws)
         #expect(r.restDays == 0)
         #expect(r.monotony == 2.5)          // all-equal nonzero days ⇒ max monotony (SD≈0 fallback)
-        #expect(r.readiness == .depleted)
-        #expect(r.score < 25)
+        #expect(r.readiness == .moderate)
+        #expect(r.score == 60)              // 100 − 25 monotony − 15 no-rest, no ACWR artifact
+        #expect(r.readiness != .primed && r.readiness != .ready)
+        // The chronic version of the same grind scores identically — week one is no longer
+        // punished harder than week four.
+        let month = (0..<28).map { run(daysAgo: $0, minutes: 45) }
+        #expect(RecoveryModel(workouts: month).score == 60)
     }
 
     @Test func monotonyMatchesMeanOverSD() {

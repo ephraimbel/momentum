@@ -14,6 +14,9 @@ struct CardioActivityAttributes: ActivityAttributes {
         /// While paused (manual or GPS auto-pause) the native clock can't freeze, so we show this
         /// pre-formatted frozen elapsed instead.
         var paused: Bool
+        /// Signal dropout (tunnel, urban canyon). The card flags it honestly instead of presenting
+        /// frozen distance/pace as current — same contract as the in-app signal chip.
+        var gpsLost: Bool
         var elapsedText: String
         /// Distance, pace/speed — pre-formatted by the app's `Formatters` so the widget needs no
         /// unit logic and the numbers match the live screen exactly.
@@ -22,6 +25,14 @@ struct CardioActivityAttributes: ActivityAttributes {
         var paceLabel: String
         /// Goal progress 0…1 when the session has a distance goal; nil otherwise.
         var goalFraction: Double?
+        /// The guided step in progress ("Rep 3 of 6", "Tempo", …) for a structured run; nil on a
+        /// free session. Pushed immediately on step transitions so the lock screen tracks the plan.
+        var stepText: String?
+        /// The route so far as interleaved x,y pairs normalized into the unit square (aspect-true,
+        /// centered, y already screen-down) — the widget just scales and strokes. Downsampled and
+        /// rounded app-side to stay far under the ActivityKit payload budget. nil until the trace
+        /// has shape (2+ points).
+        var route: [Double]?
     }
 
     /// The discipline being recorded — title ("Run") + SF Symbol, fixed for the session.

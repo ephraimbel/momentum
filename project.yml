@@ -125,15 +125,29 @@ targets:
       - path: MomentumWidgets
       - path: Momentum/Features/Strength/RestActivityAttributes.swift   # shared with the app target
       - path: Momentum/Features/Cardio/CardioActivityAttributes.swift   # shared with the app target
+      - path: Momentum/Features/Widgets/WidgetSnapshot.swift            # shared: app writes, widget reads
+      - path: Momentum/Features/Widgets/TodayWidgetContent.swift        # shared: widget face + in-app preview harness
+      # Brand faces on the lock screen — only the four cuts the Live Activities actually use.
+      - path: Momentum/Resources/Fonts/Inter-SemiBold.ttf
+      - path: Momentum/Resources/Fonts/Inter-Bold.ttf
+      - path: Momentum/Resources/Fonts/SpaceGrotesk-Medium.ttf
+      - path: Momentum/Resources/Fonts/SpaceGrotesk-Bold.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.widgets
+        CODE_SIGN_ENTITLEMENTS: MomentumWidgets/MomentumWidgets.entitlements
     info:
       path: MomentumWidgets/Info.plist
       properties:
         CFBundleDisplayName: momentum
+        CFBundleShortVersionString: 0.1.0   # must match the containing app or the build warns
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        UIAppFonts:
+          - Inter-SemiBold.ttf
+          - Inter-Bold.ttf
+          - SpaceGrotesk-Medium.ttf
+          - SpaceGrotesk-Bold.ttf
 
   # watchOS app (PRD §8.10 / §4.10) — on-wrist GPS cardio + strength logging. Shares only
   # platform-agnostic logic from the phone (enums, formatters, pure math); its views are watch-native.

@@ -38,9 +38,38 @@ struct ProgressScreen: View {
         var id: Self { self }
     }
 
+    /// The trend-chart look-back window. Adding a longer range is one case here — the weekly series,
+    /// axis density, and bar widths all key off `weeks` (6M ≈ 26 and 1Y ≈ 52 arrive once athletes
+    /// have the history to fill them).
+    enum TrendRange: String, CaseIterable, Identifiable {
+        case month = "1M", threeMonths = "3M", sixMonths = "6M", year = "1Y"
+        var id: Self { self }
+        /// The windows offered in the picker. `year` stays defined (weeks + label ready) but off the
+        /// switcher until it earns its place — add `.year` here to light it up in one edit.
+        static let selectable: [TrendRange] = [.month, .threeMonths, .sixMonths]
+        var weeks: Int {
+            switch self {
+            case .month: 5           // ~30 days of rolling weekly windows
+            case .threeMonths: 13    // ~90 days
+            case .sixMonths: 26      // ~6 months
+            case .year: 52           // ~1 year
+            }
+        }
+        var accessibilityLabel: String {
+            switch self {
+            case .month: "Last month"
+            case .threeMonths: "Last three months"
+            case .sixMonths: "Last six months"
+            case .year: "Last year"
+            }
+        }
+    }
+    @State private var trendRange: TrendRange = .month
+
     private var plan: TrainingPlan? { profiles.first?.plan }
 
     private var distanceUnit: DistanceUnit { .auto }
+    private var weightUnit: WeightUnit { WeightUnit(rawValue: profiles.first?.weightUnit ?? "") ?? .default() }
 
     // These aggregates walk EVERY workout (and its sets). As computed vars they re-ran on every
     // property access — `insights` alone is read 30+ times per body evaluation, so one tab switch
@@ -100,7 +129,7 @@ struct ProgressScreen: View {
 
     private func refreshAggregates() {
         cachedStats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
-        cachedInsights = ProgressInsights(workouts: workouts)
+        cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
         cachedRecovery = RecoveryModel(workouts: workouts)
         prBadgeIDs = Set(workouts.filter { feedIsPRUncached($0) }.map(\.id))
         cachedFacts = AthleteModelEngine(workouts: workouts, plan: plan).facts
@@ -137,6 +166,13 @@ struct ProgressScreen: View {
             if let profile = profiles.first {
                 CorrectionSheet(belief: item.value, category: item.category, noteID: item.noteID, profile: profile)
                     .presentationDetents([.medium])
+            }
+        }
+        // Range flips only re-window the weekly series — the ACWR/status verdict and the other
+        // aggregates are window-independent, so nothing else needs recomputing.
+        .onChange(of: trendRange) {
+            withAnimation(.easeOut(duration: 0.35)) {
+                cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
             }
         }
         .task(id: workouts.count) {
@@ -194,40 +230,78 @@ struct ProgressScreen: View {
         .background(Capsule().fill(Theme.surface))
     }
 
+    /// Compact 1M · 3M · 6M window switcher for the trend charts — one tap re-windows the weekly
+    /// series (the axis label density and the whole chart block adapt to the wider ranges).
+    private var trendRangePicker: some View {
+        HStack(spacing: 2) {
+            ForEach(TrendRange.selectable) { range in
+                let on = trendRange == range
+                Button {
+                    Haptics.selection()
+                    withAnimation(Motion.standard) { trendRange = range }
+                } label: {
+                    Text(range.rawValue)
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
+                        .lineLimit(1).fixedSize()
+                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background { if on { Capsule().fill(Theme.ink) } }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(range.accessibilityLabel)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Theme.surface))
+    }
+
     private var trends: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     // The hero: the athlete's own body with the week's physiology read off it.
                     // Every callout is a door into the detail card it summarizes.
+                    // FREE — the athlete's own body, the hero teaser (readable summary callouts;
+                    // the detail each one opens is Pro).
                     AthletePanel(activation: weeklyMuscleActivation,
                                  sex: BodySex(profileSex: profiles.first?.sex),
-                                 hero: panelHero, sub: panelSub, rail: panelRail) { target in
+                                 hero: isAnalyticsPro ? panelHero : panelHeroFree,
+                                 sub: isAnalyticsPro ? panelSub : panelSubFree,
+                                 rail: panelRail,
+                                 pro: isAnalyticsPro,
+                                 onSelect: { target in
                         withAnimation(.easeOut(duration: 0.45)) { proxy.scrollTo(target, anchor: .top) }
-                    }
+                    },
+                                 onLockedTap: { paywallController.present(for: .advancedAnalytics) })
                     .reveal(0)
-                    // Then the fitness read (are you getting fitter?) and the trend graphs —
-                    // the "how I'm progressing" section sits near the top, not buried at the bottom.
-                    fitnessHero().reveal(0.03).id("fitness")
-                    hrZonesCard.reveal(0.05).id("hrZones")
-                    trendMetrics().reveal(0.06)
+                    // FREE — distance is the one chart everyone gets: total + miles per week.
+                    HStack { Spacer(); trendRangePicker }
+                        .reveal(0.02)
+                    distanceChart(insights).reveal(0.03)
+                    // PRO — the fitness read (VO₂max), heart-rate zones, load/pace/intensity, the
+                    // deep-dive analytics, and the coaching. One unlock opens the whole premium page.
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
-                        distanceChart(insights)
+                        fitnessHero().id("fitness")
+                        hrZonesCard.id("hrZones")
+                        trendMetrics()
                         loadChart(insights)
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
-                        if !weeklyMuscleActivation.isEmpty { muscleWeek.id("muscleWeek") }
+                        // The fitness/freshness curve, cadence, climb, aerobic efficiency.
+                        ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit).id("proTrends")
+                        // Strength progression — renders nothing without lifting history.
+                        StrengthProgressSection(workouts: workouts, weightUnit: weightUnit).id("strengthTrends")
+                        // "How am I right now", "what can I run", and what the coach has learned.
+                        formCard(recovery).id("formRace")
+                        raceOutlook()
+                        coachCard(insights)
+                        athleteStory
                     }
-                    .reveal(0.09)
+                    .reveal(0.06)
                     .id("charts")
                     .proLocked(.advancedAnalytics)
-                    // Then "how am I right now" and "what can I run" — the coaching read.
-                    formCard(recovery).reveal(0.14).id("formRace")
-                    raceOutlook().reveal(0.18)
-                    coachCard(insights).reveal(0.22)
-                    // What the coach has learned about *you* (the former You tab, folded in so the
-                    // athlete's story lives under the body it describes).
-                    athleteStory.reveal(0.26)
                 }
                 .padding(Theme.Space.md)
                 .padding(.bottom, Theme.Space.xxl)
@@ -241,6 +315,22 @@ struct ProgressScreen: View {
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-mix") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("intensityMix", anchor: .center) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-protrends") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("proTrends", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-strength") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("strengthTrends", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-charts") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("charts", anchor: .top) }
+                    // Pair with --trend-range-{3m,6m,1y} to land on a wide window (picker verification).
+                    let ranges: [(String, TrendRange)] = [("--trend-range-3m", .threeMonths),
+                                                          ("--trend-range-6m", .sixMonths),
+                                                          ("--trend-range-1y", .year)]
+                    if let hit = ranges.first(where: { ProcessInfo.processInfo.arguments.contains($0.0) }) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { trendRange = hit.1 }
+                    }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
@@ -459,6 +549,7 @@ struct ProgressScreen: View {
                     Spacer()
                     Text("4 WKS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.1)
                         .foregroundStyle(Theme.inkTertiary)
+                    MetricInfoButton(explainer: MetricExplainers.intensityMix).padding(.leading, 2)
                 }
                 GeometryReader { geo in
                     let w = geo.size.width
@@ -502,16 +593,21 @@ struct ProgressScreen: View {
         if let maxHR = profiles.first?.maxHR,
            let zones = HRZones.zones(maxHR: maxHR, restingHR: profiles.first?.restingHR) {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                sectionTitle("Heart rate zones")
+                HStack(alignment: .firstTextBaseline) {
+                    sectionTitle("Heart rate zones")
+                    Spacer()
+                    MetricInfoButton(explainer: MetricExplainers.hrZones)
+                }
                 VStack(spacing: Theme.Space.sm) {
                     ForEach(zones) { z in
                         HStack(spacing: Theme.Space.md) {
                             Text(z.label)
                                 .font(.rounded(Theme.FontSize.caption, weight: .black)).monospacedDigit()
-                                .foregroundStyle(z.index >= 4 ? Theme.background : Theme.ink)
+                                .foregroundStyle(.white)
                                 .frame(width: 34, height: 26)
+                                // Each band wears its zone colour (cool → hot) — effort you can read at a glance.
                                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Theme.ink.opacity(0.06 + 0.18 * Double(z.index))))
+                                    .fill(MetricColor.zone(z.index)))
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(z.name).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
                                 Text(z.purpose).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -575,7 +671,9 @@ struct ProgressScreen: View {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 HStack {
                     sectionTitle("Form & readiness — now")
-                    if signals.hasPhysio { Spacer(); fromDevicesChip }
+                    Spacer()
+                    if signals.hasPhysio { fromDevicesChip }
+                    MetricInfoButton(explainer: MetricExplainers.recoveryForm).padding(.leading, 2)
                 }
                 HStack(spacing: Theme.Space.md) {
                     readinessRing(score: score)
@@ -694,7 +792,8 @@ struct ProgressScreen: View {
     private func metricTile(_ value: String, _ label: String, iris: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value).font(.display(19, weight: .heavy)).monospacedDigit()
-                .foregroundStyle(iris ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                // "Faster" is a good-direction move → legible emerald, matching the vitals chips.
+                .foregroundStyle(iris ? AnyShapeStyle(MetricColor.positive) : AnyShapeStyle(Theme.ink))
             Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.5).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1171,16 +1270,17 @@ struct ProgressScreen: View {
         let slowest = paced.map(\.avgPaceSPerKm).max() ?? 0
         let fastest = paced.map(\.avgPaceSPerKm).min() ?? 1
         let last = paced.last?.weekStart
-        return chartSection("Weekly pace", subtitle: "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))") {
+        return chartSection("Weekly pace", subtitle: "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))",
+                            explainer: MetricExplainers.weeklyPace) {
             if paced.count < 2 { notEnoughData } else {
                 Chart(paced) { wk in
                     LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                              y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
-                        .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
                     PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                               y: .value("Pace", animateCharts ? wk.avgPaceSPerKm : slowest))
-                        .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                        .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
                         .symbolSize(wk.weekStart == last ? 90 : 22)
                         .annotation(position: .top, spacing: 6) {
                             if animateCharts, wk.weekStart == last { valuePill(paceMMSS(wk.avgPaceSPerKm)) }
@@ -1188,7 +1288,7 @@ struct ProgressScreen: View {
                 }
                 .chartXScale(domain: paddedWeekDomain(paced.map(\.weekStart)))
                 .chartYScale(domain: (fastest * 0.93)...(slowest * 1.07))
-                .chartXAxis { weekAxis }
+                .chartXAxis { weekAxis(insights.weeks.count) }
                 .chartYAxis { paceAxis }
                 .frame(height: 172)
             }
@@ -1199,17 +1299,19 @@ struct ProgressScreen: View {
         let maxLoad = insights.weeks.map(\.load).max() ?? 0
         let last = insights.weeks.last?.weekStart
         let usual = insights.chronic   // 4-week average weekly load = the athlete's own baseline
-        return chartSection("Weekly training load", subtitle: "Effort × time, every sport\(trendSuffix(insights.loadTrendPct))") {
+        return chartSection("Weekly training load", subtitle: "Effort × time, every sport\(trendSuffix(insights.loadTrendPct))",
+                            explainer: MetricExplainers.trainingLoad) {
             if maxLoad <= 0 { notEnoughData } else {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     Chart(insights.weeks) { wk in
+                        // Bars slim down as the window widens so 13 or 26 weeks never collide.
                         BarMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                                 y: .value("Load", animateCharts ? wk.load : 0),
-                                width: 18)
+                                width: .fixed(loadBarWidth(insights.weeks.count)))
                             // Earned-iridescent only on the current week; prior weeks are clean ink.
                             .foregroundStyle(wk.weekStart == last
                                              ? AnyShapeStyle(IridescentMaterial())
-                                             : AnyShapeStyle(Theme.ink.opacity(0.85)))
+                                             : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
                             .cornerRadius(3)
                             .annotation(position: .top, spacing: 5) {
                                 if animateCharts, wk.weekStart == last, wk.load > 0 { valuePill(Formatters.compact(wk.load)) }
@@ -1226,7 +1328,7 @@ struct ProgressScreen: View {
                     }
                     .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
                     .chartYScale(domain: 0...max(1, maxLoad * 1.18))
-                    .chartXAxis { weekAxis }
+                    .chartXAxis { weekAxis(insights.weeks.count) }
                     .chartYAxis { valueAxis }
                     .frame(height: 172)
                     Text("Runs and lifts on one scale — how hard × how long you trained. The line is your recent norm.")
@@ -1242,22 +1344,23 @@ struct ProgressScreen: View {
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
         let maxDist = insights.weeks.map { disp($0.distanceM) }.max() ?? 0
         let last = insights.weeks.last?.weekStart
-        return chartSection("Weekly distance", subtitle: "\(unit == "mi" ? "Miles" : "Kilometres") per week\(trendSuffix(insights.distanceTrendPct))") {
+        return chartSection("Weekly distance", subtitle: "\(unit == "mi" ? "Miles" : "Kilometres") per week\(trendSuffix(insights.distanceTrendPct))",
+                            explainer: MetricExplainers.weeklyDistance) {
             if maxDist <= 0 { notEnoughData } else {
                 Chart(insights.weeks) { wk in
                     AreaMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                              y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                        .foregroundStyle(LinearGradient(colors: [Theme.ink.opacity(0.10), .clear],
+                        .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear],
                                                         startPoint: .top, endPoint: .bottom))
                         .interpolationMethod(.monotone)
                     LineMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                              y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                        .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
                     if disp(wk.distanceM) > 0 {
                         PointMark(x: .value("Week", wk.weekStart, unit: .weekOfYear),
                                   y: .value("Distance", animateCharts ? disp(wk.distanceM) : 0))
-                            .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                            .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
                             .symbolSize(wk.weekStart == last ? 90 : 22)
                             .annotation(position: .top, spacing: 6) {
                                 if animateCharts, wk.weekStart == last {
@@ -1269,7 +1372,7 @@ struct ProgressScreen: View {
                 }
                 .chartXScale(domain: paddedWeekDomain(insights.weeks.map(\.weekStart)))
                 .chartYScale(domain: 0...max(1, maxDist * 1.18))
-                .chartXAxis { weekAxis }
+                .chartXAxis { weekAxis(insights.weeks.count) }
                 .chartYAxis { valueAxis }
                 .frame(height: 172)
             }
@@ -1279,10 +1382,25 @@ struct ProgressScreen: View {
     // MARK: Shared chart axes — a quiet week timeline + faint value gridlines, so every chart reads
     // as tracking something over time (not a floating squiggle).
 
-    /// X axis: a week/date timeline, labelled every other week.
-    private var weekAxis: some AxisContent {
-        AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { _ in
-            AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+    /// Load-bar width for the number of weeks on screen — full-bodied at 1M, slim by 6M, so bars
+    /// never touch. Steps (not a continuous scale) keep the look consistent within each range.
+    private func loadBarWidth(_ weekCount: Int) -> CGFloat {
+        switch weekCount {
+        case ...8: 18     // 1M (5 weeks)
+        case ...14: 10    // 3M (13 weeks)
+        default: 6        // 6M (26 weeks) and beyond
+        }
+    }
+
+    /// X axis: a week/date timeline. Both density and granularity adapt to the range — 1M/3M label
+    /// every-few-weeks with month+day; at 6M+ the resolution drops to month-only (like Health when
+    /// zoomed out), which reads cleaner and stops the right-edge label clipping off ("Jun…").
+    private func weekAxis(_ weekCount: Int) -> some AxisContent {
+        let stride = max(2, Int((Double(weekCount) / 5).rounded(.up)))
+        let monthOnly = weekCount > 14
+        return AxisMarks(values: .stride(by: .weekOfYear, count: stride)) { _ in
+            AxisValueLabel(format: monthOnly ? .dateTime.month(.abbreviated)
+                                             : .dateTime.month(.abbreviated).day())
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
         }
@@ -1349,11 +1467,19 @@ struct ProgressScreen: View {
         .frame(height: 100)
     }
 
-    private func chartSection<C: View>(_ title: String, subtitle: String, @ViewBuilder _ content: () -> C) -> some View {
+    private func chartSection<C: View>(_ title: String, subtitle: String,
+                                       explainer: MetricExplainer? = nil,
+                                       @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
-                Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
+                if let explainer {
+                    Spacer(minLength: Theme.Space.sm)
+                    MetricInfoButton(explainer: explainer)
+                }
             }
             content()
         }
@@ -1377,26 +1503,6 @@ struct ProgressScreen: View {
         let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
         let recent = workouts.filter { $0.type.isStrengthStyle && $0.startedAt >= cutoff }
         return MuscleActivation.from(workouts: recent)
-    }
-
-    /// A body map of where the week's volume landed, plus the most- and least-worked callouts so
-    /// neglected muscles surface (the coaching value of seeing balance over time).
-    private var muscleWeek: some View {
-        let activation = weeklyMuscleActivation
-        let ranked = activation.filter { $0.value > 0 }.sorted { $0.value > $1.value }
-        return VStack(alignment: .leading, spacing: Theme.Space.md) {
-            sectionTitle("This week's muscles")
-            MuscleMapView(activation: activation, sex: BodySex(profileSex: profiles.first?.sex))
-                .frame(height: 260)
-                .frame(maxWidth: .infinity)
-            if let top = ranked.first {
-                Text("Most worked: \(top.key.displayName).")
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background(card)
     }
 
     private func sectionTitle(_ text: String) -> some View {
@@ -1612,6 +1718,26 @@ struct ProgressScreen: View {
         .background(card)
     }
 
+    /// Whether the deep analytics are unlocked — the whole Progress page's Pro gate.
+    private var isAnalyticsPro: Bool { paywallController.isEntitled(to: .advancedAnalytics) }
+
+    /// Free-tier anchor: distance, not VO₂max. Everyone gets to see the miles they ran; the
+    /// fitness read (and everything the body's rail carries) is the Pro upgrade.
+    private var panelHeroFree: AthleteCallout {
+        let weekM = insights.weeks.last?.distanceM ?? 0
+        return AthleteCallout(label: "THIS WEEK", value: Formatters.distance(meters: weekM, unit: distanceUnit),
+                              unit: nil,
+                              context: insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered",
+                              target: "charts")
+    }
+
+    /// Under the free-tier hero: total distance over the visible range — the "miles banked" number.
+    private var panelSubFree: AthleteCallout {
+        let totalM = insights.weeks.reduce(0.0) { $0 + $1.distanceM }
+        return AthleteCallout(label: "TOTAL", value: Formatters.distance(meters: totalM, unit: distanceUnit),
+                              unit: nil, context: "Across this range", target: "charts")
+    }
+
     /// The Athlete Panel's anchor stat — VO₂max, the fitness index. Device measurement wins;
     /// context prefers the 8-week trend when the model has one.
     private var panelHero: AthleteCallout {
@@ -1676,7 +1802,7 @@ struct ProgressScreen: View {
         // Muscle focus — falls back to the intensity mix when the week was all cardio.
         if let top = weeklyMuscleActivation.filter({ $0.key != .fullBody && $0.value > 0 }).max(by: { $0.value < $1.value }) {
             out.append(AthleteCallout(label: "MUSCLE FOCUS", value: top.key.rawValue.capitalized, unit: nil,
-                                      context: "Most worked this week", target: "muscleWeek"))
+                                      context: "Most worked this week", target: "strengthTrends"))
         } else {
             out.append(AthleteCallout(label: "WEEK FOCUS", value: "Endurance", unit: nil,
                                       context: "All cardio this week", target: "intensityMix"))

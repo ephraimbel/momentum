@@ -7,6 +7,7 @@ struct NotificationsView: View {
     @Query(sort: \AppNotification.date, order: .reverse) private var notifications: [AppNotification]
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(CoachPresenter.self) private var coach
 
     var body: some View {
         NavigationStack {
@@ -35,7 +36,46 @@ struct NotificationsView: View {
         .scrollIndicators(.hidden)
     }
 
+    /// A notification is a promise — tapping it keeps it. Coaching notes open the coach chat,
+    /// reminders and streak nudges land on Today, achievements open Progress. System notes are
+    /// informational and stay put (no chevron, no dead tap).
+    private enum Destination { case coach, today, progress }
+
+    private func destination(for kind: AppNotification.Kind) -> Destination? {
+        switch kind {
+        case .coaching: .coach
+        case .reminder, .streak: .today
+        case .achievement: .progress
+        case .system: nil
+        }
+    }
+
+    private func open(_ destination: Destination) {
+        Haptics.light()
+        dismiss()
+        switch destination {
+        case .coach:
+            // Let the sheet's dismissal settle before presenting the cover — presenting during
+            // a dismissal transition drops the presentation on the floor.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { coach.open() }
+        case .today:
+            coach.navigate(.startToday)
+        case .progress:
+            coach.navigate(.viewProgress)
+        }
+    }
+
+    @ViewBuilder
     private func row(_ n: AppNotification) -> some View {
+        if let destination = destination(for: n.kind) {
+            Button { open(destination) } label: { rowContent(n, chevron: true) }
+                .buttonStyle(.plain)
+        } else {
+            rowContent(n, chevron: false)
+        }
+    }
+
+    private func rowContent(_ n: AppNotification, chevron: Bool) -> some View {
         HStack(alignment: .top, spacing: Theme.Space.md) {
             Image(systemName: n.kind.systemImage)
                 .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -53,6 +93,12 @@ struct NotificationsView: View {
                 Text(n.body).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .frame(maxHeight: .infinity, alignment: .center)
+            }
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -60,6 +106,7 @@ struct NotificationsView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
     }
 
     private var emptyState: some View {

@@ -32,6 +32,8 @@ struct ProfileScreen: View {
     #if DEBUG
     // --share-card: open the share composer on the latest workout for sim verification.
     @State private var debugSharing = ProcessInfo.processInfo.arguments.contains("--share-card")
+    // --analytics-lab: preview the Pro Trends analytics section in isolation for sim verification.
+    @State private var debugAnalytics = ProcessInfo.processInfo.arguments.contains("--analytics-lab")
     #endif
 
     private var profile: UserProfile? { profiles.first }
@@ -127,6 +129,25 @@ struct ProfileScreen: View {
                 ShareCardView(workout: latest, weightUnit: weightUnit, distanceUnit: distanceUnit)
             }
         }
+        .sheet(isPresented: $debugAnalytics) {
+            ScrollView {
+                VStack(spacing: Theme.Space.lg) {
+                    ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit)
+                    StrengthProgressSection(workouts: workouts, weightUnit: weightUnit)
+                }
+                .padding(Theme.Space.md)
+            }
+            .background(Theme.background)
+            // --metric-info: auto-open a detail sheet to verify the "how it's calculated" design.
+            .overlay {
+                if ProcessInfo.processInfo.arguments.contains("--metric-info") {
+                    Color.clear.sheet(isPresented: .constant(true)) {
+                        MetricDetailSheet(explainer: MetricExplainers.fitnessFreshness)
+                            .presentationDetents([.medium, .large])
+                    }
+                }
+            }
+        }
         #endif
         .task(id: workouts.count) {
             // .task(id:) re-fires on every tab visit; the stats walk only needs to re-run
@@ -218,7 +239,7 @@ struct ProfileScreen: View {
             trioDivider
             trioCell("\(followerCount)", "Followers")
             trioDivider
-            trioCell("\(follows.count)", "Following")
+            trioCell("\(followingCount)", "Following")
         }
         .padding(.horizontal, Theme.Space.xl)
     }
@@ -238,8 +259,23 @@ struct ProfileScreen: View {
     }
 
     /// Honest presence: no fabricated audience. Until the social backend reports real followers,
-    /// this is simply zero.
-    private var followerCount: Int { 0 }
+    /// this is simply zero. (DEBUG `--marketing-profile` fills a plausible established-athlete
+    /// audience for the website's App-Store-style Profile screenshot only — never a shipping build.)
+    private var followerCount: Int {
+        #if DEBUG
+        if Self.marketingProfile { return 4_812 }
+        #endif
+        return 0
+    }
+    private var followingCount: Int {
+        #if DEBUG
+        if Self.marketingProfile { return 386 }
+        #endif
+        return follows.count
+    }
+    #if DEBUG
+    private static let marketingProfile = ProcessInfo.processInfo.arguments.contains("--marketing-profile")
+    #endif
 
     private var displayName: String {
         let name = profile?.displayName.trimmingCharacters(in: .whitespaces) ?? ""

@@ -1,7 +1,9 @@
 import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
+import WatchFrame from "@/components/WatchFrame";
 import Reveal from "@/components/Reveal";
 import RaceCalc from "@/components/RaceCalc";
+import Nav from "@/components/Nav";
 
 export default function Home() {
   return (
@@ -26,34 +28,13 @@ export default function Home() {
   );
 }
 
-function Nav() {
-  return (
-    <header className="nav">
-      <div className="wrap nav-inner">
-        <a href="#top" aria-label="momentum home">
-          <Image className="wordmark" src="/wordmark-black.png" alt="momentum" width={640} height={128} priority />
-        </a>
-        <nav className="nav-links" aria-label="Primary">
-          <a href="#product">Product</a>
-          <a href="#intelligence">Intelligence</a>
-          <a href="#method">Method</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#faq">FAQ</a>
-          <a className="btn btn-ink btn-sm" href="#download">
-            Get the app
-          </a>
-        </nav>
-      </div>
-    </header>
-  );
-}
 
 function Hero() {
   return (
     <section className="hero" id="top">
-      <div className="aura aura-1" aria-hidden />
-      <div className="aura aura-2" aria-hidden />
-      <div className="aura aura-3" aria-hidden />
+      {/* Living iridescent field: two slowly-drifting pastel layers behind everything (incl. the
+          transparent nav), masked to melt into white as the hero meets the page below. */}
+      <div className="hero-aura" aria-hidden />
       {/* The self-drawing route — the app's welcome motif, redrawn across the header. */}
       <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
         <path d="M -60 470 C 180 380 260 560 470 470 S 760 300 980 400 S 1280 540 1520 380" />
@@ -92,6 +73,10 @@ function Hero() {
         </div>
         <div className="hero-device rise rise-5">
           <PhoneFrame src="/shots/hero-route.png" alt="momentum Today screen: a real running route traced on the map with today's plan card" priority />
+          {/* Paired Apple Watch — the live heart-rate zone gauge, in front of the phone (Runna-style). */}
+          <div className="hero-watch">
+            <WatchFrame src="/shots/watch-run.png" alt="momentum on Apple Watch: the live heart-rate zone gauge during a run" />
+          </div>
           {/* Floating brand accents — layered UI chips that lift the device off the page (Runna/Strava-style depth). */}
           <div className="float-chip float-plan" aria-hidden>
             <span className="fc-eyebrow">TODAY</span>

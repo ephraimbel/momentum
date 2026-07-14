@@ -8,6 +8,7 @@ import SwiftData
 struct PlanView: View {
     @Environment(\.modelContext) private var context
     @Environment(PaywallController.self) private var paywall
+    @Environment(CoachPresenter.self) private var coach
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
     @State private var weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
@@ -50,14 +51,10 @@ struct PlanView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         header
                         weekStrip
-                        weekHero
                         if isCurrentWeek { tuneSection }
-                        VStack(spacing: Theme.Space.sm) {
-                            ForEach(Array(days.enumerated()), id: \.element) { i, day in
-                                dayRow(day).reveal(min(Double(i) * 0.04, 0.28))
-                            }
-                        }
-                        .proLocked(.fullPlan, active: !isCurrentWeek)
+                        weekBoard
+                            .reveal(0.06)
+                            .proLocked(.fullPlan, active: !isCurrentWeek)
                         coachsRead
                     }
                     .padding(Theme.Space.md)
@@ -89,7 +86,18 @@ struct PlanView: View {
         .sheet(isPresented: $showNewPlan) {
             if let p = profiles.first { PlanSettingsSheet(profile: p, mode: .create) { showNewPlan = false } }
         }
+        // A coach nav card asked for plan settings — open the sheet the shell steered us toward
+        // (onChange covers the case where Plan was already the visible tab).
+        .onChange(of: coach.wantsPlanSettings) { _, wants in
+            guard wants else { return }
+            coach.wantsPlanSettings = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { showSettings = true }
+        }
         .onAppear {
+            if coach.wantsPlanSettings {
+                coach.wantsPlanSettings = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { showSettings = true }
+            }
             #if DEBUG
             // --plan-settings: open the plan-settings sheet (screenshot verification; sim can't tap).
             if ProcessInfo.processInfo.arguments.contains("--plan-settings") {
@@ -354,7 +362,10 @@ struct PlanView: View {
         .accessibilityLabel("Week \(index + 1)\(isCurrent ? ", current" : "")\(selected ? ", selected" : "")")
     }
 
-    private var weekHero: some View {
+    /// The board's header: the week's story (title, phase, intent) and its progress. Lives INSIDE
+    /// the board card now — no surface of its own — so the week reads as one object: story on top,
+    /// schedule below, a single hairline between them.
+    private var boardHeader: some View {
         let (done, total) = weekProgress
         return VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
@@ -405,8 +416,10 @@ struct PlanView: View {
                 }
             }
         }
-        .padding(Theme.Space.lg)
-        .background(card)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.top, Theme.Space.md)
+        .padding(.bottom, Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase — \($0.intent)" } ?? weekSummary), \(done) of \(total) sessions done")
     }
@@ -496,73 +509,117 @@ struct PlanView: View {
         }
     }
 
-    // MARK: Day rows
+    // MARK: The week board — the whole week as one organized object
 
-    private func dayRow(_ day: Date) -> some View {
-        let sessions = PlanCoaching.todaySessions(plan, on: day)
-        let isToday = Calendar.current.isDateInToday(day)
-        return HStack(alignment: .top, spacing: Theme.Space.md) {
-            dateBadge(day, isToday: isToday, hasSessions: !sessions.isEmpty)
-            VStack(spacing: Theme.Space.sm) {
-                if sessions.isEmpty {
-                    restRow(day)
-                } else {
-                    ForEach(sessions, id: \.persistentModelID) { session in
-                        sessionCard(session)
-                            .contextMenu {
-                                Button { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context); Haptics.success() } label: {
-                                    Label(session.status == .completed ? "Mark not done" : "Mark done",
-                                          systemImage: session.status == .completed ? "arrow.uturn.left" : "checkmark")
-                                }
-                                Button { editing = EditingSession(session: session) } label: { Label("Adjust…", systemImage: "slider.horizontal.3") }
-                                Button(role: .destructive) { delete(session) } label: { Label("Remove", systemImage: "trash") }
-                            }
-                    }
+    /// A single card holding all seven days as rows, hairline-separated, today banded and pilled.
+    /// Zooming the week out into one surface makes the schedule read at a glance and binds every
+    /// session unmistakably to its day (same row, date anchored left). Replaces the old free-floating
+    /// day rows.
+    private var weekBoard: some View {
+        VStack(spacing: 0) {
+            boardHeader
+            // A full-bleed hairline splits the week's story from its schedule.
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+            ForEach(Array(days.enumerated()), id: \.element) { i, day in
+                boardDayRow(day)
+                if i < days.count - 1 {
+                    Rectangle().fill(Theme.hairline)
+                        .frame(height: 0.5)
+                        .padding(.leading, Self.dateColWidth + Theme.Space.md * 2)
                 }
             }
         }
-    }
-
-    private func dateBadge(_ day: Date, isToday: Bool, hasSessions: Bool) -> some View {
-        VStack(spacing: 2) {
-            Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
-                .font(.rounded(Theme.FontSize.label, weight: .bold))
-                .tracking(0.5)
-            Text(day.formatted(.dateTime.day()))
-                .font(.display(18, weight: .heavy)).monospacedDigit()
-        }
-        // Hierarchy: today fills ink; days with sessions read full-ink; rest days recede.
-        .foregroundStyle(isToday ? Theme.background : (hasSessions ? Theme.ink : Theme.inkTertiary))
-        .frame(width: 46, height: 54)
         .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(isToday ? Theme.ink : Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(isToday ? Color.clear : Theme.hairline)
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
         }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
-    private func sessionCard(_ session: PlannedSession) -> some View {
+    private static let dateColWidth: CGFloat = 42
+
+    private func boardDayRow(_ day: Date) -> some View {
+        let sessions = PlanCoaching.todaySessions(plan, on: day)
+        let isToday = Calendar.current.isDateInToday(day)
+        return HStack(alignment: .top, spacing: Theme.Space.md) {
+            boardDateColumn(day, isToday: isToday, hasSessions: !sessions.isEmpty)
+            Group {
+                if sessions.isEmpty {
+                    boardRestLine(day)
+                } else {
+                    VStack(spacing: Theme.Space.sm + 2) {
+                        ForEach(sessions, id: \.persistentModelID) { session in
+                            sessionLine(session)
+                                .contextMenu {
+                                    Button { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context); Haptics.success() } label: {
+                                        Label(session.status == .completed ? "Mark not done" : "Mark done",
+                                              systemImage: session.status == .completed ? "arrow.uturn.left" : "checkmark")
+                                    }
+                                    Button { editing = EditingSession(session: session) } label: { Label("Adjust…", systemImage: "slider.horizontal.3") }
+                                    Button(role: .destructive) { delete(session) } label: { Label("Remove", systemImage: "trash") }
+                                }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, sessions.isEmpty ? 11 : 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Today wears a whisper of tint so the eye lands on it inside the week.
+        .background(isToday ? Theme.ink.opacity(0.045) : Color.clear)
+    }
+
+    /// The day's anchor: weekday + date, left-aligned. Today fills an ink pill; days with work read
+    /// full-ink; rest days recede to tertiary. Sits slightly below the divider so it aligns with the
+    /// first session's title rather than the icon top.
+    private func boardDateColumn(_ day: Date, isToday: Bool, hasSessions: Bool) -> some View {
+        VStack(spacing: 0) {
+            Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                .font(.rounded(9.5, weight: .black)).tracking(0.4)
+            Text(day.formatted(.dateTime.day()))
+                .font(.display(19, weight: .heavy)).monospacedDigit()
+        }
+        .foregroundStyle(isToday ? Theme.background : (hasSessions ? Theme.ink : Theme.inkTertiary))
+        .frame(width: Self.dateColWidth, height: 44)
+        .background {
+            if isToday {
+                RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.ink)
+            }
+        }
+        .padding(.top, 1)
+    }
+
+    /// A session, flattened onto the board (no card of its own — the board provides the surface).
+    /// Tap the body to adjust/move; tap the trailing circle to check it off. Completed reads with a
+    /// soft strike so the week's progress is legible at a glance.
+    private func sessionLine(_ session: PlannedSession) -> some View {
         let done = session.status == .completed
-        let isToday = Calendar.current.isDateInToday(session.date)
-        return HStack(spacing: Theme.Space.md) {
-            // The card body opens the detail/adjust sheet…
+        return HStack(spacing: Theme.Space.sm + 2) {
             Button { editing = EditingSession(session: session) } label: {
                 HStack(spacing: Theme.Space.sm + 2) {
                     Image(systemName: PlanCoaching.icon(for: session))
-                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(done ? Theme.inkTertiary : Theme.ink)
+                        .frame(width: 34, height: 34)
                         .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         if let kind = sessionKindLabel(session) {
                             Text(kind)
                                 .font(.rounded(9, weight: .black)).tracking(1)
                                 .foregroundStyle(Theme.inkTertiary)
                         }
                         Text(PlanCoaching.brief(for: session, distanceUnit: distanceUnit))
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(done ? Theme.inkTertiary : Theme.ink)
+                            .strikethrough(done, color: Theme.inkTertiary)
+                            .lineLimit(1).minimumScaleFactor(0.85)
                             .multilineTextAlignment(.leading)
                         if session.status == .moved, let why = session.rationale {
-                            Text(why).font(.rounded(Theme.FontSize.caption, weight: .regular)).foregroundStyle(Theme.inkTertiary)
-                                .multilineTextAlignment(.leading)
+                            Text(why).font(.rounded(Theme.FontSize.caption, weight: .regular))
+                                .foregroundStyle(Theme.inkTertiary)
+                                .lineLimit(2).multilineTextAlignment(.leading)
                         }
                     }
                     Spacer(minLength: 0)
@@ -570,16 +627,7 @@ struct PlanView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            // …and the trailing circle is a quick check-off.
             checkButton(session, done: done)
-        }
-        .padding(Theme.Space.sm + 2)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            if done { RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.16) }
-            // Today's work wears the ink edge — the one card the athlete came here for.
-            RoundedRectangle(cornerRadius: Theme.Radius.card)
-                .stroke(isToday && !done ? Theme.ink : Theme.hairline, lineWidth: isToday && !done ? 1.5 : 1)
         }
         .frame(maxWidth: .infinity)
     }
@@ -602,24 +650,28 @@ struct PlanView: View {
         } label: {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(done ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkTertiary))
-                .frame(width: 34, height: 34)
+                .foregroundStyle(done ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkTertiary.opacity(0.7)))
+                .frame(width: 34, height: 44, alignment: .center)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(done ? "Completed. Tap to undo." : "Mark done")
     }
 
-    /// A rest day is a non-event by design — a bare hairline row that recedes completely, so the
-    /// five of them in a normal week stop dominating the page. Still tappable to add a session.
-    private func restRow(_ day: Date) -> some View {
+    /// A rest day is a non-event by design — one quiet line that recedes, so the four or five of
+    /// them in a normal week never dominate the board. Still tappable to add a session.
+    private func boardRestLine(_ day: Date) -> some View {
         Button { presentAdd(for: day) } label: {
             HStack(spacing: Theme.Space.sm) {
-                Text("Rest").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary.opacity(0.8))
-                Rectangle().fill(Theme.hairline.opacity(0.6)).frame(height: 0.5)
-                Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.inkTertiary.opacity(0.8))
+                Text("Rest day")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .foregroundStyle(Theme.inkTertiary.opacity(0.75))
+                Spacer(minLength: 0)
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.inkTertiary.opacity(0.55))
             }
-            .frame(height: 54)
+            .frame(minHeight: 34)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }

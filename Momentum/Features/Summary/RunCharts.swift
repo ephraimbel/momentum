@@ -56,12 +56,14 @@ struct RunAnalysisSection: View {
 
     private var splitBars: [SplitBar] {
         let splits = CardioMetrics.splits(points.map { .init(t: $0.t, cumulativeM: $0.distanceM) }, unitMeters: unitMeters)
+        // Only full units on the chart — a partial's short sample yields an unreliable pace that
+        // towers over the real splits and distorts the "fastest" read. The partial still appears
+        // in the text SPLITS list below.
         let full = splits.filter { !$0.isPartial }
-        // Fastest full split earns the iridescent bar.
         let bestPace = full.map { $0.durationS / ($0.distanceM / unitMeters) }.min()
-        return splits.map { s in
+        return full.map { s in
             let pace = s.durationS / max(1, s.distanceM / unitMeters)
-            let isBest = !s.isPartial && bestPace.map { abs(pace - $0) < 0.5 } == true
+            let isBest = bestPace.map { abs(pace - $0) < 0.5 } == true
             return SplitBar(id: s.index, unitIndex: s.index + 1, paceSPerUnit: pace, isBest: isBest)
         }
     }
@@ -167,7 +169,14 @@ struct RunAnalysisSection: View {
         // matching the pace line's up-is-faster reading right above it. The m:ss annotation carries the
         // exact value, so the inverted magnitude is never read directly.
         let base = (maxPace - minPace) * 0.4 + 4
-        return chartCard("Splits", subtitle: "Per \(unitLabel) · taller is faster") {
+        // Per-bar time labels only fit for shorter runs; past ~8 splits they collide into an
+        // unreadable stack, so we label just the fastest split (its exact time — and every
+        // other split's — lives in the SPLITS list right below). Long runs still read as the
+        // shape of the effort, with your best in colour.
+        let labelEvery = bars.count <= 8
+        let subtitle = labelEvery ? "Per \(unitLabel) · taller is faster"
+                                  : "Per \(unitLabel) · taller is faster · best in colour"
+        return chartCard("Splits", subtitle: subtitle) {
             Chart(bars) { bar in
                 BarMark(x: .value("Split", "\(bar.unitIndex)"),
                         y: .value("Speed", (maxPace - bar.paceSPerUnit) + base),
@@ -175,12 +184,26 @@ struct RunAnalysisSection: View {
                     .foregroundStyle(bar.isBest ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.85)))
                     .cornerRadius(4)
                     .annotation(position: .top, alignment: .center) {
-                        Text(pace(bar.paceSPerUnit)).font(.rounded(9, weight: .bold)).monospacedDigit()
-                            .foregroundStyle(Theme.inkSecondary)
+                        if labelEvery || bar.isBest {
+                            Text(pace(bar.paceSPerUnit)).font(.rounded(9, weight: .bold)).monospacedDigit()
+                                .foregroundStyle(bar.isBest ? Theme.ink : Theme.inkSecondary)
+                                .fixedSize()
+                        }
                     }
             }
             .chartYAxis(.hidden)
-            .chartXAxis { AxisMarks { _ in AxisValueLabel() } }
+            // Thin the axis labels so 20+ split numbers never crowd — every split for a short
+            // run, roughly every 5th once the run is long.
+            .chartXAxis {
+                AxisMarks { value in
+                    if labelEvery {
+                        AxisValueLabel()
+                    } else if let s = value.as(String.self), let n = Int(s),
+                              n == 1 || n % 5 == 0 || n == bars.count {
+                        AxisValueLabel()
+                    }
+                }
+            }
             .frame(height: 150)
         }
     }

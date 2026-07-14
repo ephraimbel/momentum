@@ -2,12 +2,15 @@ import SwiftUI
 import SwiftData
 import AuthenticationServices
 
-/// Settings — currently the **subscription / billing** surface (PRD §10 honesty bar: status, plain
-/// renewal terms, cancel in ≤2 taps, restore). Units / equipment / privacy / export land later.
+/// Settings (PRD §10 honesty bar: status, plain renewal terms, cancel in ≤2 taps, restore).
+/// One quiet row grammar throughout: 28pt icon chips, slim rows, inset hairlines, and explainer
+/// copy demoted to section footers so the cards themselves stay lean. About is a centered colophon,
+/// not a card — the page ends quietly.
 struct SettingsView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
     @Environment(AuthController.self) private var auth
+    @Environment(CoachPresenter.self) private var coach
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
@@ -23,7 +26,11 @@ struct SettingsView: View {
     @State private var confirmDeleteAccount = false
     @State private var deletingAccount = false
     @State private var deleteAccountFailed = false
-    @State private var showCoachChat = false
+
+    @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
+    /// Persisted mute for the run voice coach — the live service reads this same key, so flipping it
+    /// takes effect on the very next cue, mid-run included.
+    @AppStorage(VoiceCoachService.storageKey) private var voiceCoachEnabled = true
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
     private let manageURL = URL(string: "https://apps.apple.com/account/subscriptions")!
@@ -31,26 +38,30 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                section("APPEARANCE") { AnyView(appearanceCard) }
-                section("SUBSCRIPTION") { paywall.isPro ? AnyView(proCard) : AnyView(freeCard) }
-                section("COACH") { AnyView(coachCard) }
-                section("APPLE HEALTH") { AnyView(healthCard) }
-                section("DATA & PRIVACY") { AnyView(dataCard) }
-                section("ACCOUNT") { AnyView(accountCard) }
-                section("ABOUT") { AnyView(aboutCard) }
+                identityHeader
+                section("MEMBERSHIP", footer: membershipFooter) { membershipCard }
+                section("PREFERENCES", footer: preferencesFooter) { preferencesCard }
+                section("APPLE HEALTH", footer: healthFooter) { healthCard }
+                section("DATA & PRIVACY") { dataCard }
+                section("ACCOUNT", footer: accountFooter) { accountCard }
+                colophon
             }
             .padding(Theme.Space.lg)
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
+        #if DEBUG
+        // Screenshot verification: open pre-scrolled to the page's end (colophon).
+        .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--settings-bottom") ? .bottom : .top)
+        #endif
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .onAppear { healthConnected = services.health.isAuthorized }
-        .fullScreenCover(isPresented: $showCoachChat) {
-            CoachChatView { showCoachChat = false }
-        }
         .fileExporter(isPresented: $showExporter, document: exportFile,
                       contentType: .json, defaultFilename: "momentum-data") { _ in }
+        .fullScreenCover(isPresented: $showingSignInOptions) {
+            SignInView(startOnSignInPage: true)
+        }
         .confirmationDialog("Delete all data?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete everything", role: .destructive) {
                 DataManager.deleteAllUserData(in: context)
@@ -59,189 +70,6 @@ struct SettingsView: View {
         } message: {
             Text("This permanently removes your profile, plan, and every workout from this device. This can’t be undone.")
         }
-    }
-
-    // MARK: Coach chat
-
-    /// The immersive AI coach chat. It no longer occupies a tab (Profile took that slot); it lives
-    /// here as an on-demand surface so the feature stays reachable without a permanent tab.
-    private var coachCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text("Ask your coach anything — pace, programming, or how a session felt.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            actionRow("Open coach chat", icon: "sparkles") { showCoachChat = true }
-        }
-        .padding(Theme.Space.lg)
-        .background(card)
-    }
-
-    // MARK: Apple Health
-
-    private var healthCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            if healthConnected {
-                HStack(spacing: Theme.Space.md) {
-                    Image(systemName: "heart.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(.pink).frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Connected").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                        Text("New workouts are saved to Apple Health.")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                Divider().overlay(Theme.hairline)
-                Text("Import runs and rides from Apple Watch, Garmin, and anything else that syncs to Apple Health.")
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                actionRow("Import from Apple Health", icon: "square.and.arrow.down", busy: importingHealth) {
-                    Task {
-                        importingHealth = true
-                        importMessage = nil
-                        let n = await services.health.importExternalWorkouts(into: context, since: nil)
-                        importMessage = n == 0 ? "No new workouts to import."
-                            : "Imported \(n) workout\(n == 1 ? "" : "s")."
-                        importingHealth = false
-                    }
-                }
-                if let importMessage {
-                    Text(importMessage)
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                }
-            } else {
-                Text("Save your runs, rides, and lifts to Apple Health.")
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                OversizedButton(title: "Connect Apple Health", systemImage: "heart.fill", isEnabled: !connectingHealth) {
-                    Task {
-                        connectingHealth = true
-                        _ = await services.health.requestAuthorization()
-                        healthConnected = services.health.isAuthorized
-                        if healthConnected, let profile = profiles.first {
-                            let metrics = await services.health.importedBodyMetrics()
-                            if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
-                            if let rhr = metrics.restingHR { profile.restingHR = rhr }
-                            try? context.save()
-                        }
-                        connectingHealth = false
-                    }
-                }
-            }
-        }
-        .padding(Theme.Space.lg)
-        .background(card)
-    }
-
-    // MARK: Account
-
-    @ViewBuilder
-    private var accountCard: some View {
-        if auth.isGuest { guestAccountCard } else { signedInAccountCard }
-    }
-
-    /// A guest can keep everything they've logged by upgrading to Sign in with Apple — surfaced here
-    /// as the back-up/sync prompt rather than ever blocking them.
-    private var guestAccountCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: "person.crop.circle").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Guest").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text("Saved on this device only").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                }
-                Spacer(minLength: 0)
-            }
-            SignInWithAppleButton(.signIn) { request in
-                auth.prepareAppleSignIn(request)   // scopes + Supabase nonce when configured
-            } onCompletion: { result in
-                if case .success(let authResult) = result,
-                   let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
-                    // Upgrading from guest keeps all local data (see AuthController.signIn);
-                    // when Supabase is configured this also bridges to a cloud session (JWT).
-                    auth.signIn(credential: credential)
-                }
-            }
-            .signInWithAppleButtonStyle(.black)
-            .frame(height: 48)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-            Button {
-                Haptics.light()
-                showingSignInOptions = true
-            } label: {
-                Text("More ways to sign in — Google or email")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Text("Back up your training and sync across devices. Keeps everything you've logged so far.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(Theme.Space.lg)
-        .background(card)
-        .fullScreenCover(isPresented: $showingSignInOptions) {
-            SignInView(startOnSignInPage: true)
-        }
-    }
-
-    /// The account row reflects how they actually signed in — Apple / Google / email.
-    private var accountProvider: (icon: String, label: String) {
-        let id = auth.userID ?? ""
-        if id.hasPrefix("email:") { return ("envelope.fill", "Email account") }
-        if id.hasPrefix("google:") { return ("globe", "Google account") }
-        return ("applelogo", "Sign in with Apple")
-    }
-
-    private var signedInAccountCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: accountProvider.icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(auth.displayName ?? auth.email ?? "Signed in")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text(accountProvider.label).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 10)
-            Divider().overlay(Theme.hairline)
-            Button { auth.signOut() } label: {
-                HStack(spacing: Theme.Space.md) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
-                    Text("Sign out").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Divider().overlay(Theme.hairline)
-            // App Store 5.1.1(v): account deletion, in-app, no support-ticket detour.
-            Button { confirmDeleteAccount = true } label: {
-                HStack(spacing: Theme.Space.md) {
-                    if deletingAccount {
-                        ProgressView().tint(.red).frame(width: 24)
-                    } else {
-                        Image(systemName: "person.crop.circle.badge.xmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(.red).frame(width: 24)
-                    }
-                    Text("Delete account").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(.red)
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(deletingAccount)
-            if deleteAccountFailed {
-                Text("Couldn't delete the account — check your connection and try again.")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .padding(.bottom, 8)
-            }
-        }
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.vertical, Theme.Space.xs)
-        .background(card)
         .confirmationDialog("Delete your account?", isPresented: $confirmDeleteAccount, titleVisibility: .visible) {
             Button("Delete my account", role: .destructive) {
                 Task {
@@ -258,160 +86,430 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Data & privacy
+    // MARK: Identity header
 
-    private var dataCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            actionRow("Export my data", icon: "square.and.arrow.up") {
-                exportFile = JSONExportFile(data: DataManager.exportJSON(in: context))
-                showExporter = true
-            }
-            Divider().overlay(Theme.hairline)
-            Button(role: .destructive) { confirmDelete = true } label: {
-                HStack(spacing: Theme.Space.md) {
-                    Image(systemName: "trash").font(.system(size: 15, weight: .semibold)).foregroundStyle(.red).frame(width: 24)
-                    Text("Delete all data").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(.red)
-                    Spacer(minLength: 0)
+    /// Who this is — monogram, name, how they're signed in. Reads before any card does.
+    private var identityHeader: some View {
+        HStack(spacing: Theme.Space.md) {
+            ZStack {
+                Circle().fill(Theme.surface)
+                Circle().stroke(Theme.hairline)
+                if auth.isGuest {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 19, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                } else {
+                    Text(monogram).font(.display(20, weight: .semibold)).foregroundStyle(Theme.ink)
                 }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .frame(width: 52, height: 52)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(identityTitle)
+                    .font(.display(Theme.FontSize.headline, weight: .semibold)).foregroundStyle(Theme.ink)
+                Text(identitySubtitle)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.vertical, Theme.Space.xs)
-        .background(card)
     }
 
-    // MARK: Subscription
+    private var monogram: String {
+        String((auth.displayName ?? auth.email ?? "?").trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+    }
+    private var identityTitle: String {
+        auth.isGuest ? "Guest" : (auth.displayName ?? auth.email ?? "Signed in")
+    }
+    private var identitySubtitle: String {
+        auth.isGuest ? "Saved on this device only" : accountProvider.label
+    }
+
+    /// The account row reflects how they actually signed in — Apple / Google / email.
+    private var accountProvider: (icon: String, label: String) {
+        let id = auth.userID ?? ""
+        if id.hasPrefix("email:") { return ("envelope.fill", "Email account") }
+        if id.hasPrefix("google:") { return ("globe", "Google account") }
+        return ("applelogo", "Sign in with Apple")
+    }
+
+    // MARK: Membership
+
+    @ViewBuilder
+    private var membershipCard: some View {
+        if paywall.isPro { proCard } else { freeCard }
+    }
+
+    private var membershipFooter: String? {
+        paywall.isPro
+            ? "Manage or cancel anytime in the App Store — we’ll remind you before it renews."
+            : "Unlock the AI coach, full multi-discipline plans, advanced analytics, and your full history."
+    }
 
     private var proCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        card {
             HStack(spacing: Theme.Space.md) {
-                BrandMark(size: 40)
+                BrandMark(size: 34)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Momentum Pro").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text("Active").font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    Text("Momentum Pro").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    HStack(spacing: 5) {
+                        Circle().fill(Theme.success).frame(width: 6, height: 6)
+                        Text("Active").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    }
                 }
                 Spacer(minLength: 0)
             }
-            Text("Manage or cancel anytime in the App Store — we’ll remind you before it renews.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            Divider().overlay(Theme.hairline)
+            .padding(.vertical, 11)
+            inset
             actionRow("Manage subscription", icon: "creditcard") { openURL(manageURL) }
+            inset
             actionRow("Restore purchases", icon: "arrow.clockwise", busy: restoring) { restore() }
         }
-        .padding(Theme.Space.lg)
-        .background(card)
     }
 
     private var freeCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text("You’re on the free plan").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-            Text("Unlock the AI coach, full multi-discipline plans, advanced analytics, and your full history.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            OversizedButton(title: "Go Pro", systemImage: "sparkles") { paywall.present(for: .aiCoach) }
-                .padding(.top, 2)
-            Button("Restore purchases") { restore() }
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                .frame(maxWidth: .infinity)
+        card {
+            Button {
+                Haptics.light()
+                paywall.present(for: .aiCoach)
+            } label: {
+                HStack(spacing: Theme.Space.md) {
+                    BrandMark(size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Momentum Pro").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Text("Coach, plans, analytics").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Text("Upgrade")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.background)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.ink))
+                }
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            inset
+            actionRow("Restore purchases", icon: "arrow.clockwise", busy: restoring) { restore() }
         }
-        .padding(Theme.Space.lg)
-        .background(card)
     }
 
-    private var aboutCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            infoRow("Version", value: appVersion)
-            Divider().overlay(Theme.hairline)
-            actionRow("Terms of Service", icon: "doc.text") { open("https://momentum.fit/terms") }
-            Divider().overlay(Theme.hairline)
-            actionRow("Privacy Policy", icon: "hand.raised") { open("https://momentum.fit/privacy") }
-            Divider().overlay(Theme.hairline)
-            // Map attribution (the on-map Mapbox/OSM credit is hidden, so it lives here).
-            actionRow("Map data © Mapbox", icon: "map") { open("https://www.mapbox.com/about/maps/") }
-            Divider().overlay(Theme.hairline)
-            actionRow("Map data © OpenStreetMap", icon: "globe") { open("https://www.openstreetmap.org/copyright") }
+    // MARK: Preferences
+
+    private var preferencesCard: some View {
+        card {
+            HStack(spacing: Theme.Space.md) {
+                iconChip("circle.lefthalf.filled")
+                Text("Appearance").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).fixedSize()
+                Spacer(minLength: Theme.Space.sm)
+                appearancePicker
+            }
+            .padding(.vertical, 9)
+            inset
+            actionRow("Coach chat", icon: "sparkles") { coach.open() }
+            // The mute only makes sense once the voice coach exists for this user (it's Pro).
+            if services.paywall.isEntitled(to: .voiceCoach) {
+                inset
+                HStack(spacing: Theme.Space.md) {
+                    iconChip("waveform")
+                    Toggle(isOn: $voiceCoachEnabled) {
+                        Text("Voice coach").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    }
+                    .tint(Theme.ink)
+                }
+                .padding(.vertical, 9)
+                .accessibilityLabel("Voice coach")
+            }
         }
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.vertical, Theme.Space.xs)
-        .background(card)
     }
 
-    // MARK: Building blocks
+    private var preferencesFooter: String? {
+        services.paywall.isEntitled(to: .voiceCoach)
+            ? "The voice coach speaks splits, step changes, and pace cues on guided runs."
+            : nil
+    }
 
-    // MARK: Appearance
-
-    @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
-
-    /// Light is the daylight hero; Dark is the original true-black night look. One tap, app-wide.
-    private var appearanceCard: some View {
-        HStack(spacing: Theme.Space.sm) {
+    /// A compact monochrome segmented control — System · Light · Dark. One tap, app-wide.
+    private var appearancePicker: some View {
+        HStack(spacing: 2) {
             ForEach(AppAppearance.allCases) { option in
                 let on = appearanceRaw == option.rawValue
                 Button {
                     Haptics.selection()
                     withAnimation(.easeOut(duration: 0.2)) { appearanceRaw = option.rawValue }
                 } label: {
-                    VStack(spacing: 5) {
-                        Image(systemName: option.systemImage).font(.system(size: 15, weight: .semibold))
-                        Text(option.label).font(.rounded(Theme.FontSize.caption, weight: .bold))
-                    }
-                    .foregroundStyle(on ? Theme.background : Theme.ink)
-                    .frame(maxWidth: .infinity).frame(height: 62)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card)
-                            .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                        if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-                    }
-                    .contentShape(Rectangle())
+                    Text(option.label)
+                        .font(.rounded(12, weight: .semibold))
+                        .lineLimit(1).fixedSize()
+                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background { if on { Capsule().fill(Theme.ink) } }
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(option.label) appearance")
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
-    }
-
-    private func section(_ title: String, @ViewBuilder _ content: () -> AnyView) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text(title).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-            content()
+        .padding(2)
+        .background {
+            Capsule().fill(Theme.background)
+            Capsule().stroke(Theme.hairline)
         }
     }
 
-    private func actionRow(_ title: String, icon: String, busy: Bool = false, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
-                Text(title).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                Spacer(minLength: 0)
-                if busy { ProgressView().controlSize(.small) }
-                else { Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary) }
+    // MARK: Apple Health
+
+    private var healthCard: some View {
+        card {
+            if healthConnected {
+                HStack(spacing: Theme.Space.md) {
+                    iconChip("heart.fill", tint: .pink)
+                    Text("Apple Health").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                    HStack(spacing: 5) {
+                        Circle().fill(Theme.success).frame(width: 6, height: 6)
+                        Text("Connected").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                .padding(.vertical, 11)
+                inset
+                actionRow("Import workouts", icon: "square.and.arrow.down", busy: importingHealth) {
+                    Task {
+                        importingHealth = true
+                        importMessage = nil
+                        let n = await services.health.importExternalWorkouts(into: context, since: nil)
+                        importMessage = n == 0 ? "No new workouts to import."
+                            : "Imported \(n) workout\(n == 1 ? "" : "s")."
+                        importingHealth = false
+                    }
+                }
+                if let importMessage {
+                    Text(importMessage)
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .padding(.leading, 40).padding(.bottom, 10)
+                }
+            } else {
+                Button {
+                    Haptics.light()
+                    Task {
+                        connectingHealth = true
+                        _ = await services.health.requestAuthorization()
+                        healthConnected = services.health.isAuthorized
+                        if healthConnected, let profile = profiles.first {
+                            let metrics = await services.health.importedBodyMetrics()
+                            if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
+                            if let rhr = metrics.restingHR { profile.restingHR = rhr }
+                            try? context.save()
+                        }
+                        connectingHealth = false
+                    }
+                } label: {
+                    HStack(spacing: Theme.Space.md) {
+                        iconChip("heart.fill", tint: .pink)
+                        Text("Apple Health").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                        Spacer(minLength: 0)
+                        if connectingHealth {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Connect")
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.background)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(Capsule().fill(Theme.ink))
+                        }
+                    }
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(connectingHealth)
             }
-            .padding(.vertical, 10)
+        }
+    }
+
+    private var healthFooter: String? {
+        healthConnected
+            ? "New workouts save to Apple Health. Import brings in runs and rides from Apple Watch, Garmin, and anything else that syncs there."
+            : "Save your runs, rides, and lifts to Apple Health — and import from Apple Watch, Garmin, and more."
+    }
+
+    // MARK: Data & privacy
+
+    private var dataCard: some View {
+        card {
+            actionRow("Export my data", icon: "square.and.arrow.up") {
+                exportFile = JSONExportFile(data: DataManager.exportJSON(in: context))
+                showExporter = true
+            }
+            inset
+            actionRow("Delete all data", icon: "trash", tint: .red) { confirmDelete = true }
+        }
+    }
+
+    // MARK: Account
+
+    @ViewBuilder
+    private var accountCard: some View {
+        if auth.isGuest { guestAccountCard } else { signedInAccountCard }
+    }
+
+    private var accountFooter: String? {
+        auth.isGuest
+            ? "Back up your training and sync across devices. Keeps everything you've logged so far."
+            : nil
+    }
+
+    /// A guest can keep everything they've logged by upgrading to Sign in with Apple — surfaced here
+    /// as the back-up/sync prompt rather than ever blocking them.
+    private var guestAccountCard: some View {
+        card {
+            SignInWithAppleButton(.signIn) { request in
+                auth.prepareAppleSignIn(request)   // scopes + Supabase nonce when configured
+            } onCompletion: { result in
+                if case .success(let authResult) = result,
+                   let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
+                    // Upgrading from guest keeps all local data (see AuthController.signIn);
+                    // when Supabase is configured this also bridges to a cloud session (JWT).
+                    auth.signIn(credential: credential)
+                }
+            }
+            .signInWithAppleButtonStyle(.black)
+            .frame(height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.chip))
+            .padding(.vertical, Theme.Space.md)
+            Button {
+                Haptics.light()
+                showingSignInOptions = true
+            } label: {
+                Text("More ways to sign in — Google or email")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, Theme.Space.md)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var signedInAccountCard: some View {
+        card {
+            actionRow("Sign out", icon: "rectangle.portrait.and.arrow.right") { auth.signOut() }
+            inset
+            // App Store 5.1.1(v): account deletion, in-app, no support-ticket detour.
+            actionRow("Delete account", icon: "person.crop.circle.badge.xmark", tint: .red,
+                      busy: deletingAccount) { confirmDeleteAccount = true }
+            if deleteAccountFailed {
+                Text("Couldn't delete the account — check your connection and try again.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .padding(.leading, 40).padding(.bottom, 10)
+            }
+        }
+    }
+
+    // MARK: Colophon
+
+    /// The quiet end of the page — mark, version, legal. Attribution lives here because the on-map
+    /// Mapbox/OSM credit is hidden.
+    private var colophon: some View {
+        VStack(spacing: Theme.Space.sm) {
+            BrandMark(size: 28)
+            Text("Version \(appVersion)")
+                .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
+                .foregroundStyle(Theme.inkTertiary)
+            HStack(spacing: Theme.Space.xs) {
+                colophonLink("Terms", url: "https://momentum.fit/terms")
+                dot
+                colophonLink("Privacy", url: "https://momentum.fit/privacy")
+                dot
+                colophonLink("© Mapbox", url: "https://www.mapbox.com/about/maps/")
+                dot
+                colophonLink("© OpenStreetMap", url: "https://www.openstreetmap.org/copyright")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, Theme.Space.md)
+    }
+
+    private var dot: some View {
+        Text("·").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+    }
+
+    private func colophonLink(_ title: String, url: String) -> some View {
+        Button { open(url) } label: {
+            Text(title).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .underline()
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Building blocks
+
+    /// The one card shell: soft surface, hairline edge, content inset to the shared grid.
+    private func card(@ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .padding(.horizontal, Theme.Space.md)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            }
+    }
+
+    /// A hairline between rows, inset past the icon chips so titles align through it.
+    private var inset: some View {
+        Divider().overlay(Theme.hairline).padding(.leading, 40)
+    }
+
+    /// The 28pt icon chip that leads every row — background-on-surface for a quiet two-tone depth.
+    private func iconChip(_ systemName: String, tint: Color = Theme.ink) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 28, height: 28)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.background)
+                RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+            }
+    }
+
+    private func section(_ title: String, footer: String? = nil,
+                         @ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(title)
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                .foregroundStyle(Theme.inkTertiary)
+                .padding(.leading, Theme.Space.md)
+            content()
+            if let footer {
+                Text(footer)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Theme.Space.md)
+            }
+        }
+    }
+
+    private func actionRow(_ title: String, icon: String, tint: Color = Theme.ink,
+                           busy: Bool = false, _ action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            HStack(spacing: Theme.Space.md) {
+                if busy {
+                    ProgressView().controlSize(.small).frame(width: 28, height: 28)
+                } else {
+                    iconChip(icon, tint: tint)
+                }
+                Text(title).font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(tint == .red ? .red : Theme.ink)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(busy)
-    }
-
-    private func infoRow(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-            Spacer()
-            Text(value).font(.rounded(Theme.FontSize.body, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
-        }
-        .padding(.vertical, 10)
-    }
-
-    private var card: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
     }
 
     private var appVersion: String {

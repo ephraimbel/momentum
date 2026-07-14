@@ -14,6 +14,9 @@ private let socialLog = Logger(subsystem: "com.momentum.app", category: "social"
 @MainActor
 protocol SocialBackending: AnyObject {
     var isAvailable: Bool { get async }
+    /// Whether the signed-in athlete holds a Pro subscription — stamped onto the published
+    /// profile as the verification checkmark (display status, never a server gate).
+    var viewerIsPro: Bool { get }
 
     // Profile
     func pushProfile(_ dto: SocialSyncEngine.ProfileDTO) async throws
@@ -94,7 +97,7 @@ extension SocialBackending {
             socialLog.info("claimProfile skipped: backend unavailable (guest or unconfigured)")
             return
         }
-        var dto = SocialSyncEngine.profileDTO(for: profile)
+        var dto = SocialSyncEngine.profileDTO(for: profile, isPro: viewerIsPro)
         guard !dto.handle.isEmpty || !dto.displayName.isEmpty else { return }
         if let avatar = profile.avatarData, let path = await uploadAvatar(jpeg: avatar) {
             dto.avatarPath = path
@@ -144,6 +147,7 @@ extension SocialBackending {
 @MainActor
 final class StubSocialBackend: SocialBackending {
     var isAvailable: Bool { false }
+    var viewerIsPro: Bool { false }
     func pushProfile(_ dto: SocialSyncEngine.ProfileDTO) async throws {}
     func uploadAvatar(jpeg: Data) async -> String? { nil }
     func handleAvailability(_ handle: String) async -> Bool? { nil }
@@ -167,6 +171,16 @@ final class StubSocialBackend: SocialBackending {
 /// The live Supabase transport. All SDK usage in the app is contained here + the provider.
 @MainActor
 final class SupabaseSocialBackend: SocialBackending {
+
+    /// For stamping `is_pro` on the profile projection at publish (every `Feature` requires
+    /// Pro, so probing any one of them reads the subscription itself).
+    private let paywall: (any PaywallServing)?
+
+    init(paywall: (any PaywallServing)? = nil) {
+        self.paywall = paywall
+    }
+
+    var viewerIsPro: Bool { paywall?.isEntitled(to: .fullPlan) ?? false }
 
     private var client: SupabaseClient? { SupabaseClientProvider.client }
 
@@ -195,12 +209,13 @@ final class SupabaseSocialBackend: SocialBackending {
             let public_location: String?
             let avatar_path: String?
             let discoverable: Bool
+            let is_pro: Bool
             let updated_at: Date
         }
         let row = Row(id: session.user.id, handle: dto.handle, display_name: dto.displayName,
                       bio: dto.bio, public_location: dto.publicLocation,
                       avatar_path: dto.avatarPath, discoverable: dto.discoverable,
-                      updated_at: Date())
+                      is_pro: dto.isPro, updated_at: Date())
         do {
             try await client.from("profiles").upsert(row).execute()
         } catch {

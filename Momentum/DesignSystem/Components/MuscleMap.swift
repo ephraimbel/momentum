@@ -98,14 +98,14 @@ private struct BodyFigure: View {
                 // Worked muscles: one flowing oil-slick, revealed only through worked regions, each at
                 // an alpha proportional to its volume. (Mask alpha = per-muscle intensity.)
                 IridescentView(intensity: 1.0, isStatic: reduceMotion || forceStatic)
-                    .mask(
-                        ZStack {
-                            ForEach(parts.indices, id: \.self) { i in
-                                let intensity = intensity(parts[i].muscle)
-                                if intensity > 0 { shape(parts[i].path).fill(.white.opacity(intensity)) }
-                            }
-                        }
-                    )
+                    .mask(workedMask)
+
+                // A soft top-lit sheen over the lit muscles — a subtle gloss so a covered body reads
+                // glassy and premium, not flat. Static (no per-frame blur) so it's free on animation.
+                LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.04), .clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .blendMode(.softLight)
+                    .mask(workedMask)
 
                 // Worked muscles get a defining edge so the glow reads clearly against white.
                 ForEach(parts.indices, id: \.self) { i in
@@ -129,10 +129,22 @@ private struct BodyFigure: View {
 
     private func shape(_ path: Path) -> ScaledBodyShape { ScaledBodyShape(source: path, originX: originX) }
 
-    /// Worked → 0.55…1.0 (even a light muscle is clearly lit); unworked → 0.
+    /// The worked-muscle mask: each lit region filled at its per-muscle intensity. Shared by the
+    /// iridescent fill and the gloss sheen so both reveal through exactly the same shapes.
+    private var workedMask: some View {
+        ZStack {
+            ForEach(parts.indices, id: \.self) { i in
+                let intensity = intensity(parts[i].muscle)
+                if intensity > 0 { shape(parts[i].path).fill(.white.opacity(intensity)) }
+            }
+        }
+    }
+
+    /// Worked → 0.62…1.0 (even a light muscle is richly lit); unworked → 0. A higher floor makes the
+    /// covered body glow fuller and more premium than a faint wash.
     private func intensity(_ muscle: MuscleGroup?) -> Double {
         guard let muscle, let v = activation[muscle], v > 0, maxVal > 0 else { return 0 }
-        return 0.55 + 0.45 * min(1, v / maxVal)
+        return 0.62 + 0.38 * min(1, v / maxVal)
     }
 }
 

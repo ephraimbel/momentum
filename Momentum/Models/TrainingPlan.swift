@@ -14,6 +14,9 @@ final class TrainingPlan {
     var p5kSPerKm: Double = 360       // calibrated running pace (if running)
     var createdAt: Date = Date()
     var lastAdaptedAt: Date?          // last automatic load adaptation — gates auto-adapt to ≤1/week
+    /// Set while the plan is paused (travel/illness — CoachActions): future sessions were shifted past
+    /// this date and `reconcileMissed` stands down until it passes. Cleared by resume.
+    var pausedUntil: Date?
     /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from the first session) —
     /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
     var weekPhases: [String] = []
