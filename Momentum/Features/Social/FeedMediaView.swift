@@ -11,6 +11,8 @@ struct FeedMediaView: View {
     /// `.fill` crops photos to the compact feed band; the reading view passes `.fit` so the whole
     /// photo shows (with `height` as a max cap).
     var photoContentMode: ContentMode = .fill
+    /// Reading view only: its route map takes the render fast lane and retries while visible.
+    var urgentRoute = false
 
     @ViewBuilder
     var body: some View {
@@ -18,7 +20,8 @@ struct FeedMediaView: View {
         if !item.photosData.isEmpty && hasRoute && !item.type.isStrengthStyle {
             // A run with photos leads with its route map, then pages the photos — both live on the
             // card so the route never gets hidden behind a photo (running-first, decision 2026-07-15).
-            RoutePhotoCarousel(item: item, height: height, contentMode: photoContentMode)
+            RoutePhotoCarousel(item: item, height: height, contentMode: photoContentMode,
+                               urgentRoute: urgentRoute)
         } else if !item.photosData.isEmpty {
             // Photos page horizontally in a native paging ScrollView that cooperates with the
             // parent's vertical scroll (so the reading view never gets "stuck" on a photo).
@@ -29,7 +32,7 @@ struct FeedMediaView: View {
         } else if hasRoute {
             // A cached STATIC snapshot of the route on its basemap — a live map engine per post is
             // what made Community slow to populate and heavy to scroll.
-            FeedRouteMap(item: item, height: height)
+            FeedRouteMap(item: item, height: height, urgent: urgentRoute)
         } else if item.type.isTimed {
             // Timed sports (pool swim, erg, yoga…) have no route or muscle map — a discipline card
             // gives the post a visual anchor so the feed reads consistently, not text-only.

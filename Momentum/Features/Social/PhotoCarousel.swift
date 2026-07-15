@@ -74,6 +74,8 @@ struct RoutePhotoCarousel: View {
     let item: FeedItem
     var height: CGFloat = 200
     var contentMode: ContentMode = .fill
+    /// Reading view only — see `FeedRouteMap.urgent`.
+    var urgentRoute = false
 
     @State private var page: Int? = 0
 
@@ -82,7 +84,7 @@ struct RoutePhotoCarousel: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 0) {
-                FeedRouteMap(item: item, height: height)
+                FeedRouteMap(item: item, height: height, urgent: urgentRoute)
                     .containerRelativeFrame(.horizontal)
                     .id(0)
                 ForEach(Array(item.photosData.enumerated()), id: \.offset) { i, data in

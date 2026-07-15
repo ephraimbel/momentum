@@ -6,6 +6,11 @@ import SwiftUI
 /// by tapping a post's content in the feed; the byline still routes to the profile.
 struct PostDetailView: View {
     let item: FeedItem
+    /// True when this view is PUSHED inside an existing NavigationStack (the athlete-profile grid)
+    /// rather than presented as a cover. A pushed view must never carry its own NavigationStack —
+    /// nesting stacks is unsupported and rendered the reading view clipped/cut off — and the outer
+    /// stack's back button already handles dismissal, so the Done button is hidden too.
+    var isPushed = false
     @Environment(ReactionStore.self) private var reactions
     @Environment(ModerationStore.self) private var moderation
     @Environment(CommentStore.self) private var comments
@@ -14,39 +19,41 @@ struct PostDetailView: View {
     @State private var showingComments = false
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                    byline
-                    Text(item.title)
-                        .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let pr = item.prBadge { PRBadge(text: pr) }
-                    // Reading view shows the WHOLE photo (fit, not cropped), taller than the feed band.
-                    FeedMediaView(item: item, height: 360, photoContentMode: .fit)
-                    StatGrid(cells: item.metrics.map { .init(value: $0.value, label: $0.label) },
-                             valueSize: 20, leading: true)
-                        .padding(.vertical, Theme.Space.sm)
-                        .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-                        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-                    if let caption = item.caption {
-                        Text(caption)
-                            .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.ink)
-                            .lineSpacing(6).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let read = item.aiRead { momentumRead(read) }
-                    footer
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                byline
+                Text(item.title)
+                    .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let pr = item.prBadge { PRBadge(text: pr) }
+                // Reading view shows the WHOLE photo (fit, not cropped), taller than the feed band.
+                // Its route map takes the render fast lane (urgent) — this is the one map the athlete
+                // is actively looking at, so it must never sit behind the feed's render backlog.
+                FeedMediaView(item: item, height: 360, photoContentMode: .fit, urgentRoute: true)
+                StatGrid(cells: item.metrics.map { .init(value: $0.value, label: $0.label) },
+                         valueSize: 20, leading: true)
+                    .padding(.vertical, Theme.Space.sm)
+                    .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+                    .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+                if let caption = item.caption {
+                    Text(caption)
+                        .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.ink)
+                        .lineSpacing(6).fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(Theme.Space.lg)
-                .padding(.bottom, Theme.Space.xxl)
+                if let read = item.aiRead { momentumRead(read) }
+                footer
             }
-            .background(Theme.background)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
+            .padding(Theme.Space.lg)
+            .padding(.bottom, Theme.Space.xxl)
+        }
+        .background(Theme.background)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !isPushed {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
             }
-            .sheet(isPresented: $showingComments) { PostCommentsView(item: item) }
         }
+        .sheet(isPresented: $showingComments) { PostCommentsView(item: item) }
     }
 
     // MARK: Byline
@@ -125,7 +132,9 @@ struct PostDetailView: View {
     }
 
     private var commentCount: Int {
-        (CommunityComments.seed(for: item.id, postDate: item.date) + comments.comments(for: item.id))
+        (CommunityComments.seed(for: item.id, postDate: item.date, reactions: item.baseReactions,
+                                type: item.type, authorHandle: item.authorHandle)
+            + comments.comments(for: item.id))
             .filter(moderation.isVisible).count
     }
 

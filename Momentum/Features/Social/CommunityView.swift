@@ -157,6 +157,14 @@ struct CommunityView: View {
                     selectedAthlete = CommunityDirectory.all().first
                 }
             }
+            // --athlete-profile-strength: first GENERATED strength-primary athlete — verifies the
+            // non-runner profile coherence (sport-led grid, workouts-logged hero, no distance claim).
+            if args.contains("--athlete-profile-strength"), selectedAthlete == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    selectedAthlete = CommunityDirectory.all().dropFirst(8)
+                        .first { $0.posts.first?.type.isStrengthStyle == true }
+                }
+            }
             if args.contains("--find-athletes") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showingSearch = true }
             }
@@ -192,7 +200,7 @@ struct CommunityView: View {
             // appearance so it reads on either canvas (Substack-style masthead, decision 2026-07-15).
             Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
                 .resizable().scaledToFit()
-                .frame(height: 30)
+                .frame(height: 17)   // quiet masthead scale (Substack-like) — 30 read as a billboard
                 .frame(maxWidth: .infinity)
                 .padding(.top, Theme.Space.sm)
                 .accessibilityAddTraits(.isHeader)
