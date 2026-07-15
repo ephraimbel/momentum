@@ -66,6 +66,56 @@ struct PhotoCarousel: View {
     }
 }
 
+/// A run with BOTH a route and photos leads with the route map, then pages through the photos — one
+/// Strava-style carousel so the map AND the athlete's shots both live on the feed card (running-first,
+/// user decision 2026-07-15). Same native paging `ScrollView` as `PhotoCarousel` so it cooperates with
+/// the feed's vertical scroll; the route is slide 1, photos follow, and the dot count spans both.
+struct RoutePhotoCarousel: View {
+    let item: FeedItem
+    var height: CGFloat = 200
+    var contentMode: ContentMode = .fill
+
+    @State private var page: Int? = 0
+
+    private var slideCount: Int { 1 + item.photosData.count }   // route map + each photo
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
+                FeedRouteMap(item: item, height: height)
+                    .containerRelativeFrame(.horizontal)
+                    .id(0)
+                ForEach(Array(item.photosData.enumerated()), id: \.offset) { i, data in
+                    CarouselPhoto(data: data, height: height, contentMode: contentMode, uniform: true)
+                        .containerRelativeFrame(.horizontal)
+                        .id(i + 1)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+        .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $page)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .overlay(alignment: .bottom) { pageDots }
+        .accessibilityLabel("Route and \(item.photosData.count) photo\(item.photosData.count == 1 ? "" : "s")")
+    }
+
+    private var pageDots: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<slideCount, id: \.self) { i in
+                Circle().fill(.white.opacity(i == (page ?? 0) ? 0.95 : 0.4))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Capsule().fill(.black.opacity(0.28)))
+        .padding(.bottom, 10)
+        .allowsHitTesting(false)
+    }
+}
+
 /// One photo in the carousel. Decodes **once, off-main, downsampled** into `@State` — a feed of
 /// `UIImage(data:)` calls in `body` re-decoded full-resolution JPEGs on every render (and on every
 /// like-toggle, since cards observe the reaction store). `.fill` crops to `height`; `.fit` shows the

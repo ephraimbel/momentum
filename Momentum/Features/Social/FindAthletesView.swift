@@ -126,7 +126,10 @@ struct FindAthletesView: View {
         HStack(spacing: Theme.Space.sm) {
             Button { onOpen(athlete.handle) } label: {
                 HStack(spacing: Theme.Space.sm) {
-                    AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42, imageName: athlete.communityAvatarAsset)
+                    // Clean initials chip, not the seeded community's synthetic face assets — those read
+                    // as odd stock photos in a list (user ask 2026-07-15). Real athletes' own photos
+                    // (avatarData) still show; seeded community falls back to a monogram.
+                    AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(athlete.name)
                             .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)

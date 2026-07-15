@@ -14,14 +14,19 @@ struct FeedMediaView: View {
 
     @ViewBuilder
     var body: some View {
-        if !item.photosData.isEmpty {
+        let hasRoute = (item.routeCoordinates?.count ?? 0) > 1
+        if !item.photosData.isEmpty && hasRoute && !item.type.isStrengthStyle {
+            // A run with photos leads with its route map, then pages the photos — both live on the
+            // card so the route never gets hidden behind a photo (running-first, decision 2026-07-15).
+            RoutePhotoCarousel(item: item, height: height, contentMode: photoContentMode)
+        } else if !item.photosData.isEmpty {
             // Photos page horizontally in a native paging ScrollView that cooperates with the
             // parent's vertical scroll (so the reading view never gets "stuck" on a photo).
             PhotoCarousel(photosData: item.photosData, height: height, contentMode: photoContentMode)
         } else if item.type.isStrengthStyle, let muscles = item.muscles, !muscles.isEmpty {
             // The lift counterpart to the route map: the body, with worked muscles glowing iridescent.
             muscleMedia(muscles)
-        } else if item.routeCoordinates?.count ?? 0 > 1 {
+        } else if hasRoute {
             // A cached STATIC snapshot of the route on its basemap — a live map engine per post is
             // what made Community slow to populate and heavy to scroll.
             FeedRouteMap(item: item, height: height)

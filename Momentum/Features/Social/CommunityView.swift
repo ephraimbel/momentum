@@ -16,6 +16,7 @@ struct CommunityView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.colorScheme) private var colorScheme
     /// Last `is_pro` value published to the backend — lets the entitlement-change hook below
     /// skip the initial appearance (launch's `claimProfile` already stamped it).
     @State private var lastPublishedPro: Bool?
@@ -98,6 +99,7 @@ struct CommunityView: View {
                 }
             }
             .padding(.horizontal, Theme.Space.md)
+            .padding(.top, Theme.Space.md)     // breathing room under the masthead — a more spacious feel
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
@@ -127,8 +129,11 @@ struct CommunityView: View {
             items = assembleFeed()
         }
         .task(id: scopeRaw) {
-            // First load per scope — pull-to-refresh handles the rest. No-op offline/guest/dark.
-            if remoteFeed.items.isEmpty { await remoteFeed.refresh(scope: remoteScope) }
+            // Refetch whenever the scope changes — Following and Everyone are different server
+            // queries, so an emptiness guard would leave the previous scope's rows in place and
+            // leak un-followed athletes into Following. `refresh` guards !isLoading and swaps
+            // items per scope; it's a no-op offline/guest/dark.
+            await remoteFeed.refresh(scope: remoteScope)
         }
         .task(id: paywall.isEntitled(to: .fullPlan)) {
             // Entitlement flipped mid-session (purchase, restore, reinstall's async restore):
@@ -159,7 +164,7 @@ struct CommunityView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { debugDetailPost = items.first }
             }
         }
-        .fullScreenCover(item: $debugDetailPost) { PostDetailView(item: $0) }
+        .fullScreenCover(item: $debugDetailPost) { post in NavigationStack { PostDetailView(item: post) } }
         #endif
     }
 
@@ -183,21 +188,33 @@ struct CommunityView: View {
 
     private var header: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Community").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
-                Spacer()
-                Button { showingSearch = true } label: {
+            // Centered brand wordmark — the monochrome "momentum" logo, swapping black/white with the
+            // appearance so it reads on either canvas (Substack-style masthead, decision 2026-07-15).
+            Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
+                .resizable().scaledToFit()
+                .frame(height: 30)
+                .frame(maxWidth: .infinity)
+                .padding(.top, Theme.Space.sm)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityLabel("Momentum")
+            // A real search field (opens athlete search) — the masthead's second row.
+            Button { showingSearch = true } label: {
+                HStack(spacing: Theme.Space.sm) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.surface))
-                        .overlay(Circle().stroke(Theme.hairline))
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    Text("Search athletes")
+                        .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Find athletes")
+                .padding(.horizontal, Theme.Space.md).frame(height: 42)
+                .background(Capsule().fill(Theme.surface))
+                .overlay(Capsule().stroke(Theme.hairline))
+                .contentShape(Capsule())
             }
+            .buttonStyle(.plain)
             .padding(.horizontal, Theme.Space.md)
-            .padding(.top, Theme.Space.sm)
+            .padding(.top, Theme.Space.md)
+            .accessibilityLabel("Find athletes")
             scopeBar
         }
         .background(Theme.background)
@@ -262,7 +279,7 @@ enum CommunityScope: String, CaseIterable {
     var label: String {
         switch self {
         case .following: "Following"
-        case .everyone: "Everyone"
+        case .everyone: "Global"   // rawValue stays "everyone" (persisted); label is the Substack-style "Global"
         }
     }
 }

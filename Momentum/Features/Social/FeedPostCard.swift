@@ -48,8 +48,10 @@ struct FeedPostCard: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
         .contextMenu { moderationMenu }
         // Full-screen, not a sheet — the sheet's card presentation clipped the reading view on
-        // device (user report 2026-07-10); the post now opens as a clean full-page view.
-        .fullScreenCover(isPresented: $showingDetail) { PostDetailView(item: item) }
+        // device (user report 2026-07-10); the post now opens as a clean full-page view. The cover
+        // supplies the NavigationStack (for the Done toolbar) — the detail view itself is stack-less
+        // so the profile grid can PUSH it without nesting stacks (which clipped it, 2026-07-15).
+        .fullScreenCover(isPresented: $showingDetail) { NavigationStack { PostDetailView(item: item) } }
         .confirmationDialog("Report this post?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
                 Button(reason.rawValue) { moderation.reportPost(item.id, reason: reason); Haptics.success() }
@@ -133,7 +135,7 @@ struct FeedPostCard: View {
 
     // MARK: Media (photo > muscle map > route map > timed discipline card)
 
-    private var media: some View { FeedMediaView(item: item, height: 200) }
+    private var media: some View { FeedMediaView(item: item, height: 168) }
 
     // MARK: Footer (reaction)
 
@@ -194,7 +196,9 @@ struct FeedPostCard: View {
     @ViewBuilder
     private var moderationMenu: some View {
         Button { confirmingReport = true } label: { Label("Report post", systemImage: "flag") }
-        if item.isCommunity, let handle = item.authorHandle {
+        // Block any *other* athlete — a badged community author or a real network athlete — but never
+        // the viewer's own posts, whose byline is inert (callers pass `onOpenAuthor == nil` for those).
+        if let handle = item.authorHandle, item.isCommunity || onOpenAuthor != nil {
             Button(role: .destructive) { moderation.block(handle); Haptics.medium() } label: {
                 Label("Block \(item.authorName)", systemImage: "hand.raised")
             }
