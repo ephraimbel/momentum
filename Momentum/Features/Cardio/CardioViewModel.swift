@@ -187,7 +187,11 @@ final class CardioViewModel {
     func arm() async {
         // --live-run-midway (marketing shot): backdate the clock so the elapsed time agrees with the
         // ~2 mi the route feed bursts in — the frame reads as a real mid-run, not "2 mi in 0:15".
-        startedAt = LocationService.isMidway ? Date().addingTimeInterval(-1080) : Date()
+        // --ui-test-run4 (core-flow E2E) bursts a 4 mi trace fast, so backdate ~24 min (4 mi @ 6:00/mi)
+        // for an honest saved avg pace instead of "4 mi in 0:24".
+        startedAt = LocationService.isMidway ? Date().addingTimeInterval(-1080)
+            : LocationService.isRun4 ? Date().addingTimeInterval(-1350)
+            : Date()
         await engine.begin(now: startedAt)
         motion.start()      // begin cadence updates now that recording is live
         heartRate.start()   // scan for a BLE HR strap (no-op without one)

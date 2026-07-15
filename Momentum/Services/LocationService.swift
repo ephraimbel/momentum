@@ -46,9 +46,12 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         // UI tests drive a synthetic route (see `fixes()`); skip the real prompt so no system alert
         // interrupts the flow, report authorized so the acquiring gate behaves normally, and seed a
         // last-known location so the home map centers (as it would with a real fix).
-        if Self.isUITestRoute {
+        if Self.isUITestRoute || Self.isRun4 {
             authorizationStatus = .authorizedWhenInUse
-            lastLocation = CLLocationCoordinate2D(latitude: 37.7917, longitude: -122.3996)
+            // Center the home map where the run will actually begin, so it doesn't jump when tracking starts.
+            lastLocation = Self.isRun4
+                ? CLLocationCoordinate2D(latitude: 37.7735, longitude: -122.4825)      // run4 snake-route start
+                : CLLocationCoordinate2D(latitude: 37.7917, longitude: -122.3996)      // --ui-test-route track
             return
         }
 #endif
@@ -94,7 +97,7 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     /// Stream accepted-or-not raw fixes. The engine's `GPSProcessor` applies the accept gate.
     func fixes() -> AsyncStream<GPSProcessor.Fix> {
 #if DEBUG
-        if Self.isUITestRoute { return simulatedRouteFixes() }
+        if Self.isUITestRoute || Self.isRun4 { return simulatedRouteFixes() }
 #endif
         // Must exist before updates begin, and must outlive the stream — otherwise iOS stops
         // delivering fixes the moment the screen locks.
@@ -141,13 +144,21 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         backgroundSession = nil
     }
 
-#if DEBUG
+    // Launch-arg test/marketing hooks — defined in ALL configs (NOT behind #if DEBUG) so the call
+    // sites in the app + services compile in Release. They are pure ProcessInfo checks, always false
+    // in production (users never pass these args); the simulated-route machinery they gate stays
+    // DEBUG-only below. Guarding here, at the source, keeps every call site safe without scattering
+    // #if DEBUG across in-flight view/view-model files.
     /// Launched for the live-run UI test, which can't rely on a real CoreLocation feed in the sim.
     static var isUITestRoute: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test-route") }
-
     /// Marketing shot: fast-forward the simulated run to a ~2 mi mid-run state (route drawn, distance
     /// well past 0.0) instead of the ~48 m a real-time feed reaches in a screenshot window.
     static var isMidway: Bool { ProcessInfo.processInfo.arguments.contains("--live-run-midway") }
+    /// Core-flow E2E test (`--ui-test-run4`): a full **4-mile run at 6:00/mi**, traced fast (burst)
+    /// then held real-time so an XCUITest has time to Pause/Resume/Finish.
+    static var isRun4: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test-run4") }
+
+#if DEBUG
 
     /// A deterministic ~3 m/s track: tight-accuracy fixes every 0.5 s so the run engine locks GPS,
     /// leaves `.acquiring` for `.tracking`, and stays above the auto-pause speed gate — exactly the
@@ -165,6 +176,38 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         // fix carries a virtual timestamp advancing at ~3 m/s along the real geometry (so pace + the
         // Doppler gate stay honest; future-dated fixes pass the age gate), and the wall-clock sleep is
         // tiny until ~2 mi is drawn, then real-time for the live tip.
+        // `--ui-test-run4`: 4 miles @ 6:00/mi (4.47 m/s). Densify the ~2 mi loop to ~6 m spacing (a
+        // realistic 1.3 s between fixes at this pace — a proper test that the trace stays smooth and
+        // never breaks up at speed), loop it until 4 mi is covered, burst it fast, then hold real-time.
+        if Self.isRun4, let base0 = Self.snakeRoute(), base0.count > 1 {
+            let route = Self.densify(base0, everyMeters: 6)
+            return AsyncStream { continuation in
+                let task = Task {
+                    let base = Date()
+                    var vt = 0.0, i = 0, meters = 0.0
+                    let target = 4.0 * Formatters.metersPerMile   // 4 miles
+                    while !Task.isCancelled {
+                        let p = route[i % route.count]
+                        continuation.yield(GPSProcessor.Fix(
+                            t: base.addingTimeInterval(vt), lat: p.0, lon: p.1,
+                            accuracyM: 5, speedMS: 4.47, altitudeM: 0))
+                        let next = route[(i + 1) % route.count]
+                        let d = Geo.distance(lat1: p.0, lon1: p.1, lat2: next.0, lon2: next.1)
+                        vt += max(0.3, d / 4.47)          // 6:00/mi virtual pace keeps the Doppler gate honest
+                        meters += d
+                        let bursting = meters < target     // draw the whole 4 mi fast, then crawl real-time
+                        i += 1
+                        // ~55 ms/fix keeps the trace-render rate ≈10 Hz — Mapbox draws each update
+                        // cleanly (a 9 ms firehose flickered the growing tip into transient gaps),
+                        // and the dot's follow-camera keeps up so the puck stays glued to the tip.
+                        try? await Task.sleep(for: .milliseconds(bursting ? 55 : 500))
+                    }
+                    continuation.finish()
+                }
+                self.streamTask = task
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
         if Self.isMidway, let route = Self.landRoute(), route.count > 1 {
             return AsyncStream { continuation in
                 let task = Task {
@@ -213,6 +256,22 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         }
     }
 
+    /// A clean, non-self-overlapping ~6 mi path through the Inner Richmond grid for the core-flow E2E
+    /// test (`--ui-test-run4`): E-W legs along successive streets joined by short N-S hops
+    /// (boustrophedon), so the 4 mi we draw is a single sweep that never laps over itself. A *looped*
+    /// route's self-overlap made it impossible to see whether the puck sits at the trace tip (and the
+    /// overlapping lines z-fought into false "breakages") — a single pass keeps both unambiguous.
+    private static func snakeRoute() -> [(Double, Double)]? {
+        let lonW = -122.4825, lonE = -122.4665     // ~24th Ave ↔ ~14th Ave, ~1.4 km E-W legs
+        let lats = [37.7735, 37.7757, 37.7779, 37.7801, 37.7823, 37.7845]   // successive E-W streets, S→N
+        var pts: [(Double, Double)] = []
+        for (r, lat) in lats.enumerated() {
+            let ends = r % 2 == 0 ? (lonW, lonE) : (lonE, lonW)
+            pts.append((lat, ends.0)); pts.append((lat, ends.1))
+        }
+        return pts
+    }
+
     /// A clean, real ~2 mi closed loop that FOLLOWS STREETS — a Richmond-district grid loop, snapped
     /// to real roads via the Mapbox Directions API, de-spurred and downsampled (see
     /// `scripts` fetch flow). Reads as a genuine run around the neighborhood; kept to ~58 points so
@@ -234,6 +293,24 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         (37.77921, -122.48165), (37.77966, -122.48153), (37.78012, -122.48146), (37.78019, -122.48088),
         (37.78023, -122.48029), (37.78026, -122.47970), (37.78029, -122.47911), (37.78032, -122.47852),
         ]
+    }
+
+    /// Linearly interpolate a coarse route so consecutive points sit ~`everyMeters` apart — a dense,
+    /// realistic GPS cadence (the raw loop's ~55 m hops would read as a jerky feed at 6:00/mi). Over
+    /// ~55 m segments the great-circle curvature error is sub-metre, so straight lerp is fine here.
+    private static func densify(_ pts: [(Double, Double)], everyMeters: Double) -> [(Double, Double)] {
+        guard pts.count > 1, everyMeters > 0 else { return pts }
+        var out: [(Double, Double)] = [pts[0]]
+        for k in 1..<pts.count {
+            let a = pts[k - 1], b = pts[k]
+            let d = Geo.distance(lat1: a.0, lon1: a.1, lat2: b.0, lon2: b.1)
+            let steps = max(1, Int((d / everyMeters).rounded()))
+            for s in 1...steps {
+                let f = Double(s) / Double(steps)
+                out.append((a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f))
+            }
+        }
+        return out
     }
 #endif
 }

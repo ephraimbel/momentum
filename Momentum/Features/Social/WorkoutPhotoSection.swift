@@ -50,6 +50,17 @@ struct WorkoutPhotoSection: View {
     }
 
     private func addPhotos() {
+        #if DEBUG
+        // The system Photos picker is out-of-process on the Simulator (XCUITest can't reliably drive
+        // it), so under the core-flow E2E flag a tap attaches a bundled demo image directly — the
+        // real append path, just without the picker — so the photo → save → feed → grid flow is testable.
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-run4"),
+           let url = Bundle.main.url(forResource: "demo-avatar", withExtension: "jpg"),
+           let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
+            append(img)
+            return
+        }
+        #endif
         if Self.cameraAvailable { choosingSource = true } else { showingLibrary = true }
     }
 
