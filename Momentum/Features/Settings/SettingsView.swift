@@ -112,11 +112,17 @@ struct SettingsView: View {
         }
     }
 
+    /// The athlete's chosen profile name — the identity shown everywhere else (Profile, feed). Settings
+    /// mirrors it so the account row never diverges from the app, and never surfaces a raw auth default.
+    private var profileName: String? {
+        let n = (profiles.first?.displayName ?? "").trimmingCharacters(in: .whitespaces)
+        return n.isEmpty ? nil : n
+    }
     private var monogram: String {
-        String((auth.displayName ?? auth.email ?? "?").trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+        String((profileName ?? auth.displayName ?? auth.email ?? "?").trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
     }
     private var identityTitle: String {
-        auth.isGuest ? "Guest" : (auth.displayName ?? auth.email ?? "Signed in")
+        auth.isGuest ? "Guest" : (profileName ?? auth.displayName ?? auth.email ?? "Signed in")
     }
     private var identitySubtitle: String {
         auth.isGuest ? "Saved on this device only" : accountProvider.label
@@ -416,9 +422,9 @@ struct SettingsView: View {
                 .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
                 .foregroundStyle(Theme.inkTertiary)
             HStack(spacing: Theme.Space.xs) {
-                colophonLink("Terms", url: "https://momentum.fit/terms")
+                colophonLink("Terms", url: "https://momentumco.app/terms")
                 dot
-                colophonLink("Privacy", url: "https://momentum.fit/privacy")
+                colophonLink("Privacy", url: "https://momentumco.app/privacy")
                 dot
                 colophonLink("© Mapbox", url: "https://www.mapbox.com/about/maps/")
                 dot
