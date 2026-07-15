@@ -46,6 +46,16 @@ struct CardioTrackingView: View {
     /// multi-hour session). Frozen chunks are appended to the Mapbox source once and never re-sent;
     /// only the short live tail is replaced per fix, so map payloads stay constant-size too.
     @State private var smoother = RouteSmoothing.LiveSmoother()
+    /// Mapbox interpolates the location puck toward each pushed position over ~1.1 s, so the dot's
+    /// *visual* position trails the newest fix. If we drew the trace to that newest fix immediately,
+    /// the line would race ahead of the dot (badly, on fast descents or dense fixes — the dot ends up
+    /// mid-trace instead of at the tip). So we hold the trace's leading tip back by the same lag: the
+    /// smoother is fed only points that arrived ≥ `puckLagS` ago, which is ≈ where the puck has
+    /// actually interpolated to — so the athlete's dot always sits exactly at the tip of the line.
+    private static let puckLagS: TimeInterval = 0.5
+    /// (wall-clock arrival, route-point count) samples, so we can look up how many points existed
+    /// ≈`puckLagS` ago and draw the trace only that far — pruned to a small trailing window.
+    @State private var traceReleaseLog: [(t: Date, count: Int)] = []
     /// Drives the puck (and its follow camera) from our Kalman-filtered position instead of raw
     /// CoreLocation — the dot, the camera, and the trace all track the same clean track, so a
     /// rejected GPS spike can't teleport the dot into a building while the line stays put.
@@ -195,7 +205,16 @@ struct CardioTrackingView: View {
             // and replace the short live tail. No full re-smooth, no full re-upload — per-fix work
             // stays constant no matter how long the session gets.
             .onChange(of: routeCoords.count) {
-                let delta = smoother.ingest(routeCoords)
+                let coords = routeCoords
+                let now = Date()
+                traceReleaseLog.append((now, coords.count))
+                traceReleaseLog.removeAll { $0.t < now.addingTimeInterval(-Self.puckLagS - 1) }
+                // Draw only up to where the puck has interpolated to (the point count as of ~puckLagS
+                // ago), so the trace tip tracks the dot instead of racing ahead of it. Fewer, calmer
+                // tail updates also keep the line from flickering into gaps under a fast fix stream.
+                let visibleCount = traceReleaseLog.last { $0.t <= now.addingTimeInterval(-Self.puckLagS) }?.count ?? 0
+                guard visibleCount > 0 else { return }
+                let delta = smoother.ingest(Array(coords.prefix(visibleCount)))
                 syncRouteLayers(proxy.map, delta: delta)
             }
             // Feed the puck the engine's filtered position per fix (raw while acquiring so "you"
