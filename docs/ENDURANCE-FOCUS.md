@@ -29,8 +29,12 @@ first**, because:
 - **Adaptation is deterministic, bounded, and explainable.** HRV/sleep are noisy; a plan that lurches on
   one bad night feels broken and destroys trust. Rules-based, capped, always with a one-line reason,
   never a red "failed" state.
-- **Fueling, not dieting.** Evidence-based long-run/race fueling + hydration only. No calories/macros/
-  medical/weight advice.
+- **Fueling, not dieting.** Evidence-based fueling for the training in front of you. *(Amended
+  2026-07-16: FUEL now includes light meal tracking — one sentence/photo per meal, AI-estimated
+  kcal/carbs/protein/fat/sodium/fluids, judged by the deterministic `FuelReadiness` engine against
+  the athlete's sessions.)* Every target is a FLOOR ("enough to fund the work"), never a ceiling:
+  no deficits, no weight-loss framing, no diet ledger, no medical advice. Under-fueling gets the
+  gentle warning — the health-positive direction for endurance athletes (RED-S runs on under-eating).
 - **No medical claims, ever.** Injury guidance is general management + "see a professional," never a
   diagnosis. Beginners / health conditions get a "check with your doctor first" nudge.
 
@@ -309,7 +313,8 @@ fueling. Free = tracking + a basic plan. (Paywall redesigned; purple accent.) Th
 to pay.
 
 ## 16. Non-goals (for now)
-Ultra-specific training (later), social feed/kudos (deferred), personalized nutrition/dieting (never),
+Ultra-specific training (later), social feed/kudos (deferred), dieting/weight-loss coaching (never —
+fueling-readiness meal tracking shipped 2026-07-16 is floors-only, see the guardrail above),
 non-endurance sports as a headline (trackable, not marketed).
 
 ---

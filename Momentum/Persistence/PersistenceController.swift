@@ -22,6 +22,7 @@ final class PersistenceController {
         CoachingEvent.self,
         AppNotification.self,
         DailyCheckin.self,
+        Meal.self,
     ]
 
     private init(inMemory: Bool = false) {
@@ -30,7 +31,17 @@ final class PersistenceController {
         do {
             container = try ModelContainer(for: schema, configurations: [config])
         } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
+            // A failed lightweight migration or a corrupt store must NOT become a permanent
+            // launch crash-loop escapable only by delete-and-reinstall. Reset the on-disk store
+            // once and retry — recreating an empty store is strictly better than an unrecoverable
+            // crash (and, for a first release with no migration history, essentially can't lose real
+            // data). In-memory configs have no file to reset, so a failure there is genuinely fatal.
+            if !inMemory { Self.destroyStore(at: config.url) }
+            do {
+                container = try ModelContainer(for: schema, configurations: [config])
+            } catch {
+                fatalError("Failed to create ModelContainer even after a store reset: \(error)")
+            }
         }
         ExerciseLibrarySeed.seedIfNeeded(into: container.mainContext)
         #if DEBUG
@@ -40,4 +51,15 @@ final class PersistenceController {
 
     /// In-memory container for tests and previews.
     static func inMemory() -> PersistenceController { PersistenceController(inMemory: true) }
+
+    /// Delete the SwiftData store and its SQLite sidecars so a corrupt or unmigratable store can be
+    /// recreated empty on the retry instead of crash-looping the app on launch.
+    private static func destroyStore(at url: URL) {
+        let fm = FileManager.default
+        let dir = url.deletingLastPathComponent()
+        let name = url.lastPathComponent
+        for file in [name, "\(name)-wal", "\(name)-shm"] {
+            try? fm.removeItem(at: dir.appendingPathComponent(file))
+        }
+    }
 }

@@ -50,6 +50,7 @@ struct TodayView: View {
     @State private var showLogWorkout = false
     @State private var showInjuryReport = false
     @State private var showCheckin = false
+    @State private var showFuel = false
     /// The morning readout for the deck's utility line — one honest 0–100, computed off-render.
     @State private var morningReadiness: MorningReadiness?
     /// Throttles the appear-time orchestration — `onAppear` re-fires on every tab switch.
@@ -255,6 +256,7 @@ struct TodayView: View {
             NavigationStack { ProfileScreen(onClose: { showProfile = false }) }
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showFuel) { FuelView() }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
         .sheet(isPresented: $showSpots, onDismiss: {
@@ -290,6 +292,9 @@ struct TodayView: View {
            Date().timeIntervalSince(last.at) < 240 { return }
         lastBootstrap = (at: Date(), day: day)
 
+        // Post-race continuation first: once race day has passed, the result recalibrates paces and
+        // the plan rolls into a recovery-lead-in block — BEFORE reconcile could touch the old plan.
+        if let p = profiles.first { PlanService.completeRace(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
         // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
         // notification permission on first run.
@@ -375,6 +380,10 @@ struct TodayView: View {
         }
         if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
+        }
+        // --fuel: open the fueling readout + meal log for verification.
+        if ProcessInfo.processInfo.arguments.contains("--fuel") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showFuel = true }
         }
         if ProcessInfo.processInfo.arguments.contains("--log-workout") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
@@ -707,6 +716,7 @@ struct TodayView: View {
                 .background(Circle().fill(.regularMaterial).padding(-3))
                 .mapSafeTap("Your profile") { Haptics.light(); showProfile = true }
             bellButton
+            fuelButton
             Spacer(minLength: Theme.Space.xs)
             activitySelector
             Spacer(minLength: Theme.Space.xs)
@@ -746,6 +756,14 @@ struct TodayView: View {
     }
 
     private var unreadCount: Int { appNotifications.filter { !$0.read }.count }
+
+    /// FUEL, one tap from home — the fueling readout + meal log (pillar 2026-07-16). Same glass
+    /// circle language as the bell; the page itself carries all the numbers.
+    private var fuelButton: some View {
+        Image(systemName: "fork.knife").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .mapSafeTap("Fuel") { Haptics.light(); showFuel = true }
+    }
 
     private var bellButton: some View {
         Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
