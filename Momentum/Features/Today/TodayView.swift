@@ -24,7 +24,7 @@ struct TodayView: View {
     // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
     @State private var activity: WorkoutType =
-        ProcessInfo.processInfo.arguments.contains("--ui-test-strength") ? .strength : .run
+        debugFlag("--ui-test-strength") ? .strength : .run
     @State private var goalKind: GoalKind = .open
     @State private var goalValue = 3.0
     @State private var viewport: Viewport = .idle
@@ -69,16 +69,16 @@ struct TodayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // The Today map zoomed all the way out to the globe of everyone on Momentum (no separate tab).
     // `--world` opens straight on the globe (DEBUG deep link for deterministic sim verification).
-    @State private var worldMode = ProcessInfo.processInfo.arguments.contains("--world")
+    @State private var worldMode = debugFlag("--world")
     // Basemap is decoupled from `worldMode` so the satellite↔light swap never lands mid-fly (a style
     // reload during a camera animation cancels it). We flip this only when the fly has settled.
-    @State private var mapShowsGlobe = ProcessInfo.processInfo.arguments.contains("--world")
+    @State private var mapShowsGlobe = debugFlag("--world")
     @State private var liveCount = 0
     @State private var selectedAthlete: CommunityAthlete?
     // DEBUG marketing capture (--marketing-hero, pair with --seed-demo): trace a real seeded run's
     // route on the Today map + overview it, so the website header shows a route AND today's plan
     // card in one authentic app shot.
-    @State private var marketingHero = ProcessInfo.processInfo.arguments.contains("--marketing-hero")
+    @State private var marketingHero = debugFlag("--marketing-hero")
     // One-shot: the hero course is framed in `.onStyleLoaded` (once the map is actually ready), not
     // on a fixed onAppear delay that raced the tile load and left the camera on the puck.
     @State private var heroFramed = false

@@ -150,13 +150,13 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     // DEBUG-only below. Guarding here, at the source, keeps every call site safe without scattering
     // #if DEBUG across in-flight view/view-model files.
     /// Launched for the live-run UI test, which can't rely on a real CoreLocation feed in the sim.
-    static var isUITestRoute: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test-route") }
+    static var isUITestRoute: Bool { debugFlag("--ui-test-route") }
     /// Marketing shot: fast-forward the simulated run to a ~2 mi mid-run state (route drawn, distance
     /// well past 0.0) instead of the ~48 m a real-time feed reaches in a screenshot window.
-    static var isMidway: Bool { ProcessInfo.processInfo.arguments.contains("--live-run-midway") }
+    static var isMidway: Bool { debugFlag("--live-run-midway") }
     /// Core-flow E2E test (`--ui-test-run4`): a full **4-mile run at 6:00/mi**, traced fast (burst)
     /// then held real-time so an XCUITest has time to Pause/Resume/Finish.
-    static var isRun4: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test-run4") }
+    static var isRun4: Bool { debugFlag("--ui-test-run4") }
 
 #if DEBUG
 

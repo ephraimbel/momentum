@@ -438,6 +438,10 @@ extension MorningReadiness.PillarKind {
 
 // MARK: - Previews
 
+// Previews compile into Release unless gated — and these lean on the DEBUG-only demo
+// signal fixtures (production-readiness sweep 2026-07-16).
+#if DEBUG
+
 #Preview("Scored") {
     ScrollView {
         ReadinessHeroCard(readiness: MorningReadiness(signals: .demo),
@@ -482,3 +486,4 @@ extension MorningReadiness.PillarKind {
     }
     .background(Theme.background)
 }
+#endif
