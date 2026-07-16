@@ -10,13 +10,20 @@ import UIKit
 /// estimates a meal's numbers — every target and verdict is engine math.
 ///
 /// Framing rules carried from the engine: floors, never ceilings; no diet/weight language;
-/// every number reads ≈. A meal logs instantly offline and estimates when it can.
+/// every number reads ≈. A meal logs instantly offline and estimates when it can (pending
+/// estimates retry when the page appears).
+///
+/// Motion (house rules — transforms only, reduce-motion honored): the page enters as a reveal
+/// cascade; the carb bar grows by scale (never layout) and earns iridescence exactly when the
+/// floor is met; totals roll with numeric text; rows lift in as they're logged and crossfade
+/// as estimates land; the refuel banner slides in only while the recovery window is open.
 struct FuelView: View {
     /// false when tab-hosted (RootView) — the tab bar is the way out, so no Done button. true when
     /// presented as a sheet (previews/one-off entry points).
     var showsDone = true
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \Meal.eatenAt, order: .reverse) private var meals: [Meal]
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
@@ -33,19 +40,24 @@ struct FuelView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                    readoutHeader
-                    if readout.refuelDue { refuelBanner }
-                    composer
-                    todaysMeals
-                    weekStrip
+                    readoutHeader.reveal(0)
+                    if readout.refuelDue {
+                        refuelBanner
+                            .transition(bannerTransition)
+                    }
+                    composer.reveal(0.10)
+                    todaysMeals.reveal(0.16)
+                    weekStrip.reveal(0.22)
                     Text(FuelingGuide.Guidance.disclaimer)
                         .font(.rounded(Theme.FontSize.label, weight: .medium))
                         .foregroundStyle(Theme.inkTertiary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.top, Theme.Space.sm)
+                        .reveal(0.28)
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
+                .animation(Motion.standard, value: readout.refuelDue)
             }
             .background(Theme.background)
             .navigationTitle("Fuel")
@@ -63,11 +75,14 @@ struct FuelView: View {
                 guard let item else { return }
                 Task {
                     if let data = try? await item.loadTransferable(type: Data.self) {
-                        photoData = WorkoutPhotoSection.downscaled(data)
+                        withAnimation(Motion.standard) { photoData = WorkoutPhotoSection.downscaled(data) }
                     }
                     photoItem = nil
                 }
             }
+            // Estimates that couldn't run at log time (offline, function down) retry quietly
+            // whenever the page appears — the loop self-heals without the athlete doing anything.
+            .task { await retryPendingEstimates() }
         }
     }
 
@@ -100,32 +115,44 @@ struct FuelView: View {
 
     private var readoutHeader: some View {
         let r = readout
+        let fraction = min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG)))
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             Text(r.headline)
                 .font(.display(22, weight: .bold)).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            // Carbs — the readiness bar. Earned iridescence exactly when the floor is met.
+                .contentTransition(.opacity)
+                .animation(Motion.standard, value: r.headline)
+            // Carbs — the readiness bar. Grows by TRANSFORM (scale from the leading edge, never a
+            // layout change) and earns iridescence exactly when the floor is met.
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("≈\(r.carbsG) g").font(.display(28, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    Text("≈\(r.carbsG) g")
+                        .font(.display(28, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .contentTransition(.numericText())
+                        .animation(Motion.standard, value: r.carbsG)
                     Text("of \(r.carbsFloorG)–\(r.carbsHighG) g carbs")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     Spacer(minLength: 0)
                     if r.pendingCount > 0 {
                         Text("\(r.pendingCount) estimating…")
                             .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                            .transition(.opacity)
                     }
                 }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.surface)
+                Capsule().fill(Theme.surface)
+                    .overlay(alignment: .leading) {
                         Capsule()
                             .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
-                            .frame(width: geo.size.width * min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG))))
+                            .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
+                            .opacity(r.carbsG > 0 ? 1 : 0)
                     }
-                }
-                .frame(height: 10)
-                .clipShape(Capsule())
+                    .frame(height: 10)
+                    .clipShape(Capsule())
+                    .animation(Motion.lively, value: fraction)
+                    .animation(Motion.standard, value: r.status)
+                    .accessibilityElement()
+                    .accessibilityLabel("Carbohydrates")
+                    .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams")
             }
             // The floors — quiet, ≈, never a ceiling.
             HStack(spacing: 0) {
@@ -133,6 +160,7 @@ struct FuelView: View {
                 floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ protein")
                 floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
             }
+            .animation(Motion.standard, value: r)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
@@ -142,9 +170,14 @@ struct FuelView: View {
     private func floorCell(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value).font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                .contentTransition(.numericText())
             Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var bannerTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 
     private var refuelBanner: some View {
@@ -180,6 +213,7 @@ struct FuelView: View {
                         .foregroundStyle(photoData == nil ? Theme.inkSecondary : Theme.purple)
                         .frame(width: 36, height: 36)
                         .background(Circle().fill(Theme.surface))
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .accessibilityLabel(photoData == nil ? "Add a plate photo" : "Photo attached")
                 Button(action: log) {
@@ -187,6 +221,8 @@ struct FuelView: View {
                         .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.background)
                         .frame(width: 36, height: 36)
                         .background(Circle().fill(canLog ? Theme.ink : Theme.inkTertiary))
+                        .scaleEffect(canLog ? 1 : 0.92)
+                        .animation(Motion.lively, value: canLog)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canLog)
@@ -195,10 +231,12 @@ struct FuelView: View {
             if photoData != nil {
                 Text("Photo attached — the estimate will read the plate.")
                     .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .transition(.opacity)
             }
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        .animation(Motion.standard, value: photoData != nil)
     }
 
     private var canLog: Bool {
@@ -210,21 +248,40 @@ struct FuelView: View {
         let meal = Meal()
         meal.text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         meal.photoData = photoData
-        context.insert(meal)
-        try? context.save()
+        withAnimation(Motion.standard) {
+            context.insert(meal)
+            try? context.save()
+        }
         Haptics.success()
         let label = readout.drivingSession
         draft = ""
         photoData = nil
         composing = false
+        estimate(meal, sessionLabel: label)
+    }
+
+    /// Fire (or re-fire) the estimate for one meal. Manual numbers always survive (`apply` guards).
+    private func estimate(_ meal: Meal, sessionLabel: String?) {
         estimating.insert(meal.id)
         Task {
             if let e = await estimator.estimate(text: meal.text, photoJPEG: meal.photoData,
-                                                sessionLabel: label, durationS: nil) {
-                FuelEstimator.apply(e, to: meal)
-                try? context.save()
+                                                sessionLabel: sessionLabel, durationS: nil) {
+                withAnimation(Motion.standard) {
+                    FuelEstimator.apply(e, to: meal)
+                    try? context.save()
+                }
+                Haptics.light()
             }
-            estimating.remove(meal.id)
+            _ = withAnimation(Motion.standard) { estimating.remove(meal.id) }
+        }
+    }
+
+    /// Self-heal: pending meals from an offline log (or a not-yet-deployed function) retry when the
+    /// page appears. Bounded to today's few — never a backlog storm.
+    private func retryPendingEstimates() async {
+        let label = readout.drivingSession
+        for meal in todayMeals.filter({ $0.source == "pending" && $0.carbsG == nil && !estimating.contains($0.id) }).prefix(5) {
+            estimate(meal, sessionLabel: label)
         }
     }
 
@@ -232,6 +289,10 @@ struct FuelView: View {
 
     private var todayMeals: [Meal] {
         meals.filter { Calendar.current.isDateInToday($0.eatenAt) }
+    }
+
+    private var rowTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
     }
 
     @ViewBuilder
@@ -244,6 +305,7 @@ struct FuelView: View {
                 VStack(spacing: 0) {
                     ForEach(rows) { meal in
                         mealRow(meal)
+                            .transition(rowTransition)
                         if meal.id != rows.last?.id {
                             Rectangle().fill(Theme.hairline).frame(height: 0.5)
                         }
@@ -252,6 +314,7 @@ struct FuelView: View {
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
                 .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
             }
+            .animation(Motion.standard, value: rows.map(\.id))
         }
     }
 
@@ -272,23 +335,30 @@ struct FuelView: View {
                         Text(meal.eatenAt.formatted(date: .omitted, time: .shortened))
                             .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     }
-                    if estimating.contains(meal.id) {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.mini)
-                            Text("Estimating…").font(.rounded(Theme.FontSize.label, weight: .medium))
-                                .foregroundStyle(Theme.inkTertiary)
+                    Group {
+                        if estimating.contains(meal.id) {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini)
+                                Text("Estimating…").font(.rounded(Theme.FontSize.label, weight: .medium))
+                                    .foregroundStyle(Theme.inkTertiary)
+                            }
+                            .transition(.opacity)
+                        } else if let carbs = meal.carbsG {
+                            Text(numbersLine(meal, carbs: carbs))
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(Theme.inkSecondary)
+                                .transition(.opacity)
+                        } else {
+                            Text("Couldn't estimate — tap to set the numbers")
+                                .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.purple)
+                                .transition(.opacity)
                         }
-                    } else if let carbs = meal.carbsG {
-                        Text(numbersLine(meal, carbs: carbs))
-                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(Theme.inkSecondary)
-                    } else {
-                        Text("Couldn't estimate — tap to set the numbers")
-                            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.purple)
                     }
+                    .animation(Motion.standard, value: estimating.contains(meal.id))
                     if let note = meal.note, !note.isEmpty {
                         Text(note).font(.rounded(Theme.FontSize.label, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary).lineLimit(2)
+                            .transition(.opacity)
                     }
                 }
             }
@@ -296,6 +366,15 @@ struct FuelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) {
+                withAnimation(Motion.standard) {
+                    context.delete(meal)
+                    try? context.save()
+                }
+                Haptics.medium()
+            } label: { Label("Delete meal", systemImage: "trash") }
+        }
         .accessibilityLabel("Meal: \(meal.text.isEmpty ? "photo" : meal.text)")
     }
 
@@ -350,6 +429,7 @@ private struct MealEditSheet: View {
     @State private var carbs = ""
     @State private var kcal = ""
     @State private var protein = ""
+    @State private var fat = ""
     @State private var sodium = ""
 
     var body: some View {
@@ -365,6 +445,8 @@ private struct MealEditSheet: View {
                         numberRow("Energy", unit: "kcal", text: $kcal)
                         Rectangle().fill(Theme.hairline).frame(height: 0.5)
                         numberRow("Protein", unit: "g", text: $protein)
+                        Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                        numberRow("Fat", unit: "g", text: $fat)
                         Rectangle().fill(Theme.hairline).frame(height: 0.5)
                         numberRow("Sodium", unit: "mg", text: $sodium)
                     }
@@ -394,6 +476,7 @@ private struct MealEditSheet: View {
                 carbs = meal.carbsG.map(String.init) ?? ""
                 kcal = meal.kcal.map(String.init) ?? ""
                 protein = meal.proteinG.map(String.init) ?? ""
+                fat = meal.fatG.map(String.init) ?? ""
                 sodium = meal.sodiumMg.map(String.init) ?? ""
             }
         }
@@ -421,6 +504,7 @@ private struct MealEditSheet: View {
         meal.carbsG = Int(carbs)
         meal.kcal = Int(kcal)
         meal.proteinG = Int(protein)
+        meal.fatG = Int(fat)
         meal.sodiumMg = Int(sodium)
         meal.source = "manual"
         try? context.save()
