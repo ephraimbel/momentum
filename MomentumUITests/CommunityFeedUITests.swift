@@ -11,7 +11,8 @@ final class CommunityFeedUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testFeedScopesAndBylineNavigation() {
+    func testFeedScopesAndBylineNavigation() throws {
+        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
         let app = XCUIApplication()
         // --ui-test-social keeps feed maps as instant silhouettes; XCTest's accessibility snapshot
         // realizes every lazy row, and a fleet of live Mapbox renders times the queries out.
@@ -63,7 +64,8 @@ final class CommunityFeedUITests: XCTestCase {
     /// Athlete search: name/@handle queries surface matches with a working Follow; and tapping a
     /// post's body opens the full-page reading view (fullScreenCover, 2026-07-10 — the sheet
     /// presentation was clipping the post on device).
-    func testSearchFollowAndFullPagePostDetail() {
+    func testSearchFollowAndFullPagePostDetail() throws {
+        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--community-tab", "--reset-social", "--ui-test-social"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
@@ -113,7 +115,8 @@ final class CommunityFeedUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Everyone"].waitForExistence(timeout: 5), "Did not return to the feed.")
     }
 
-    func testSaveScreenCarriesTheShareMoment() {
+    func testSaveScreenCarriesTheShareMoment() throws {
+        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
         let app = XCUIApplication()
         // `--ui-test-strength` opens Today in strength; `--ui-test-route` self-authorizes location.
         app.launchArguments = ["--seed-demo", "--ui-test-strength", "--ui-test-route"]

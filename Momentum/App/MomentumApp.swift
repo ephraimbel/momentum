@@ -9,11 +9,10 @@ struct MomentumApp: App {
     @State private var paywall: PaywallController
     @State private var auth: AuthController
     @State private var coach = CoachPresenter()
-    @State private var follows = FollowStore()
-    @State private var reactions = ReactionStore()
-    @State private var moderation = ModerationStore()
-    @State private var comments = CommentStore()
-    @State private var remoteFeed = RemoteFeedStore()
+    @State private var router = AppRouter()          // cross-tab routing mailbox (Health segment, RECOVERY-HUB-PLAN §2)
+    // Social stores + backend wiring removed 2026-07-16: Community is back-burnered from v1 —
+    // the app ships solo-first (Bevel-for-endurance positioning). The stores, feed, and Supabase
+    // social backend all remain in the repo, dormant; re-wire here when community returns.
 
     init() {
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
@@ -25,8 +24,8 @@ struct MomentumApp: App {
         _services = State(initialValue: services)
         let authController = AuthController()
         // First-ever cloud session (fresh sign-in or guest upgrade): re-mark everything dirty so
-        // the sync + publish sweeps re-upload local history under the new account (idempotent —
-        // upserts are id-keyed).
+        // the personal sync re-uploads local history under the new account (idempotent — upserts
+        // are id-keyed). postPublishedAt resets too so a future community return starts honest.
         authController.onFirstCloudSession = {
             let context = PersistenceController.shared.container.mainContext
             let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
@@ -35,23 +34,15 @@ struct MomentumApp: App {
                 workout.postPublishedAt = nil
             }
             try? context.save()
-            // A guest who onboarded already picked an identity — claim it under the new account
-            // (conflicts surface as one inbox notification). No profile yet = gate sign-in before
-            // onboarding; that path claims right after onboarding's finish() instead.
-            if let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
-                Task { await services.social.claimProfile(profile, in: context) }
-            }
+        }
+        // A DIFFERENT real account signing in on this device (shared/hand-me-down) must never see the
+        // prior owner's data: wipe local SwiftData so they start clean. RootView re-onboards the
+        // moment `profiles.isEmpty` flips true. Guest→real upgrade + first sign-in never reach here.
+        authController.onAccountSwitch = {
+            DataManager.deleteAllUserData(in: PersistenceController.shared.container.mainContext)
         }
         authController.refresh()   // sign out if the Apple credential was revoked
         _auth = State(initialValue: authController)
-        // The social stores stay the UI's source of truth; the backend syncs behind them.
-        follows.backend = services.social
-        reactions.backend = services.social
-        moderation.backend = services.social
-        comments.backend = services.social
-        remoteFeed.backend = services.social
-        remoteFeed.reactions = reactions
-        remoteFeed.follows = follows
         MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
         // A force-quit mid-workout strands its Live Activity — end leftovers before anything can
         // start a new one (the workout itself is recovered separately via WorkoutRecovery).
@@ -84,11 +75,7 @@ struct MomentumApp: App {
             .environment(paywall)
             .environment(auth)
             .environment(coach)
-            .environment(follows)
-            .environment(reactions)
-            .environment(moderation)
-            .environment(comments)
-            .environment(remoteFeed)
+            .environment(router)
             .tint(Theme.ink)
     }
 }

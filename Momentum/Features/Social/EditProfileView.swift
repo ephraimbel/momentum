@@ -2,19 +2,17 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 
-/// Edit the social profile + the full privacy matrix (docs/SOCIAL-LAYER.md). Every control defaults
-/// conservative; nothing is shared until the athlete opts in here. Writes straight to the SwiftData
-/// `UserProfile` and saves on Done.
+/// Edit the athlete's profile — solo-first (2026-07-16): name, photo, bio, and the body basics
+/// that tune the engines (sex → anatomy figure; height/weight → fueling floors + calorie burn).
+/// The social matrix that used to live here (@handle, default visibility, sharing toggles,
+/// location granularity) left with the community back-burner; it returns with the feed.
+/// Writes straight to the SwiftData `UserProfile` and saves on Done.
 struct EditProfileView: View {
     @Bindable var profile: UserProfile
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
-    @Environment(Services.self) private var services
 
-    @State private var handle: String = ""
     @State private var pickedAvatar: PhotosPickerItem?
-    @State private var avatarChanged = false
-    @State private var handleTaken = false
 
     var body: some View {
         NavigationStack {
@@ -23,8 +21,6 @@ struct EditProfileView: View {
                     avatarPicker
                     section("YOU") { AnyView(identityCard) }
                     section("ABOUT YOU") { AnyView(aboutCard) }
-                    section("DEFAULT VISIBILITY") { AnyView(visibilityCard) }
-                    section("SHARING") { AnyView(sharingCard) }
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
@@ -36,13 +32,7 @@ struct EditProfileView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { save() }.fontWeight(.semibold) }
             }
-            .onAppear { handle = profile.handle }
             .onChange(of: pickedAvatar) { _, item in Task { await loadAvatar(item) } }
-            .alert("That handle is taken", isPresented: $handleTaken) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Another athlete already uses @\(handle). Pick a different one — your other changes are saved.")
-            }
         }
     }
 
@@ -73,7 +63,6 @@ struct EditProfileView: View {
     private func loadAvatar(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
         profile.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
-        avatarChanged = true
         try? context.save()
         Haptics.success()
     }
@@ -83,13 +72,6 @@ struct EditProfileView: View {
     private var identityCard: some View {
         VStack(spacing: 0) {
             field("Name", text: $profile.displayName, placeholder: "Your name")
-            divider
-            HandleField(handle: $handle, backend: services.social,
-                        suggestions: HandleSuggester.candidates(
-                            name: profile.displayName, email: nil,
-                            seed: UInt64(bitPattern: Int64(profile.id.hashValue))))
-            divider
-            field("City", text: $profile.city, placeholder: "Optional")
             divider
             field("Bio", text: $profile.bio, placeholder: "A line about you", axis: .vertical)
         }
@@ -170,63 +152,7 @@ struct EditProfileView: View {
         }
     }
 
-    // MARK: Default visibility
-
-    private var visibilityCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Picker("Default", selection: visibility) {
-                ForEach(WorkoutPrivacy.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            Text("New workouts start at this visibility. You can change any single workout later.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(Theme.Space.lg)
-        .background(card)
-    }
-
-    // MARK: Sharing toggles
-
-    private var sharingCard: some View {
-        VStack(spacing: 0) {
-            toggle("Appear on the map", "Show as a fuzzed dot while active. Never your exact location.",
-                   isOn: $profile.appearOnMap)
-            divider
-            toggle("Public route maps", "Include trimmed, fuzzed routes on public posts.",
-                   isOn: $profile.publicRouteMaps)
-            divider
-            toggle("Show exact numbers", "Pace and weights on your public posts.",
-                   isOn: $profile.showExactNumbers)
-            divider
-            toggle("Discoverable", "Let others find you in search and suggestions.",
-                   isOn: $profile.discoverable)
-            divider
-            HStack {
-                Text("Location shown").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                Spacer()
-                Picker("", selection: granularity) {
-                    ForEach(LocationGranularity.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.menu).tint(Theme.inkSecondary)
-            }
-            .padding(.vertical, 8)
-        }
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.vertical, Theme.Space.xs)
-        .background(card)
-    }
-
-    // MARK: Bindings + building blocks
-
-    private var visibility: Binding<WorkoutPrivacy> {
-        Binding(get: { WorkoutPrivacy(rawValue: profile.defaultWorkoutVisibility) ?? .private },
-                set: { profile.defaultWorkoutVisibility = $0.rawValue })
-    }
-    private var granularity: Binding<LocationGranularity> {
-        Binding(get: { LocationGranularity(rawValue: profile.locationGranularity) ?? .off },
-                set: { profile.locationGranularity = $0.rawValue })
-    }
+    // MARK: Building blocks
 
     private func field(_ label: String, text: Binding<String>, placeholder: String, axis: Axis = .horizontal) -> some View {
         HStack(alignment: .top) {
@@ -235,19 +161,6 @@ struct EditProfileView: View {
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
         }
         .padding(.vertical, 12)
-    }
-
-    private func toggle(_ title: String, _ subtitle: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .tint(Theme.ink)
-        .padding(.vertical, 10)
-        .accessibilityLabel(title)
     }
 
     private func section(_ title: String, @ViewBuilder _ content: () -> AnyView) -> some View {
@@ -266,36 +179,9 @@ struct EditProfileView: View {
     }
 
     private func save() {
-        profile.handle = SocialPrivacy.normalizedHandle(handle)
         profile.displayName = profile.displayName.trimmingCharacters(in: .whitespaces)
         profile.bio = profile.bio.trimmingCharacters(in: .whitespaces)
-        profile.city = profile.city.trimmingCharacters(in: .whitespaces)
         try? context.save()
-        pushToBackend()
-    }
-
-    /// Offline-first: the local save above already succeeded; this pushes the public projection
-    /// up when a session exists. A taken handle keeps the sheet open so it can be changed —
-    /// every other outcome (offline, guest, dark build) just leaves the row to sync later.
-    private func pushToBackend() {
-        let backend = services.social
-        let avatarData = avatarChanged ? profile.avatarData : nil
-        var dto = SocialSyncEngine.profileDTO(for: profile,
-                                              isPro: services.paywall.isEntitled(to: .fullPlan))
-        Task {
-            guard await backend.isAvailable else { dismiss(); return }
-            if let avatarData, let path = await backend.uploadAvatar(jpeg: avatarData) {
-                dto.avatarPath = path
-            }
-            do {
-                try await backend.pushProfile(dto)
-                dismiss()
-            } catch SocialBackendError.handleTaken {
-                Haptics.medium()
-                handleTaken = true
-            } catch {
-                dismiss()   // transient/offline — profile stays local, re-pushed on next edit
-            }
-        }
+        dismiss()
     }
 }

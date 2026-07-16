@@ -184,11 +184,10 @@ final class AuthFlowsUITests: XCTestCase {
         add(shot)
     }
 
-    /// Profile lost its tab to Fuel (2026-07-16): its front door is the avatar on Today's header.
+    /// Profile is a tab again (community back-burnered 2026-07-16).
     private func openProfileSheet(_ app: XCUIApplication) {
-        app.tabBars.buttons["Today"].tap()
-        let avatar = app.buttons["Your profile"]
-        XCTAssertTrue(avatar.waitForExistence(timeout: 10), "Today's avatar (profile front door) not found")
-        avatar.tap()
+        let tab = app.tabBars.buttons["Profile"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10), "Profile tab not found")
+        tab.tap()
     }
 }

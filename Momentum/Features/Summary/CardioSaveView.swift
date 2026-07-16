@@ -25,7 +25,6 @@ struct CardioSaveView: View {
     @State private var desc = ""
     @State private var sportType: WorkoutType = .run
     @State private var effort: Int?
-    @State private var visibility: WorkoutPrivacy = .private
     /// The map style THIS run renders with — previewed live on the hero map, persisted on Save.
     @State private var mapStyle: MapStyleOption = .persisted
     @State private var initialMapStyle: MapStyleOption = .persisted
@@ -93,8 +92,6 @@ struct CardioSaveView: View {
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
                 hasRoute = (workout.gps?.routeCoordinates(type: workout.type).count ?? 0) > 1
-                // The share moment starts from the athlete's chosen default (never silently public).
-                visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
             }
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
@@ -127,8 +124,6 @@ struct CardioSaveView: View {
             }
             Divider().overlay(Theme.hairline)
             effortRow
-            Divider().overlay(Theme.hairline)
-            ShareVisibilityRow(privacy: $visibility, boxed: false, showsHint: true)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -187,10 +182,11 @@ struct CardioSaveView: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(option.label).font(.rounded(Theme.FontSize.caption, weight: .semibold))
             }
-            .foregroundStyle(selected ? Theme.background : (locked ? Theme.inkTertiary : Theme.ink))
+            .foregroundStyle(selected ? Theme.background : Theme.ink)
             .padding(.horizontal, Theme.Space.md).padding(.vertical, 7)
-            .background(Capsule().fill(selected ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background)))
-            .overlay(Capsule().stroke(selected ? .clear : Theme.hairline))
+            .background(Capsule().fill(selected ? AnyShapeStyle(Theme.ink)
+                                       : (locked ? AnyShapeStyle(Theme.route.opacity(0.16)) : AnyShapeStyle(Theme.background))))
+            .overlay(Capsule().stroke(selected ? Color.clear : (locked ? Theme.route.opacity(0.45) : Theme.hairline)))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(locked ? "\(option.label), Pro style" : option.label)
@@ -242,7 +238,6 @@ struct CardioSaveView: View {
                 $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
                 $0.type = sportType
                 $0.perceivedEffort = effort
-                $0.privacy = visibility
                 $0.gps?.mapStyleRaw = mapStyle.rawValue
                 // Recompute on the fresh context so the estimate sees the complete GPS detail.
                 $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
@@ -263,10 +258,19 @@ struct CardioSaveView: View {
             }
             // Persist any records this run set (detected against the fresh context, so the samples
             // are complete) — the PR shelf is what the "PRs" stat counts.
-            let hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: reader.context)
-            PersonalRecord.persist(hits.compactMap { hit in
-                hit.prType.map { (type: $0, value: hit.value, exercise: nil) }
-            }, workout: workout, in: reader.context)
+            let recordsContext = reader.context
+            var records: [(type: PRType, value: Double, exercise: Exercise?)] =
+                CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: recordsContext)
+                    .compactMap { hit in hit.prType.map { (type: $0, value: hit.value, exercise: Exercise?.none) } }
+            // A first-of-discipline workout earns no "you got better" headline (detect guards on an
+            // empty prior), yet its own bests must still SEED the record book — mirror how StrengthPRs
+            // records the first lift off a 0 baseline. persist dedupes per (type, workout), so a run
+            // that also headlined can never double-log.
+            if CardioAchievements.isFirstOfType(workout, in: recordsContext) {
+                records += RecordsBook.cardioCandidates(workout)
+                    .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
+            }
+            PersonalRecord.persist(records, workout: workout, in: recordsContext)
             // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
             // (a never-locked GPS run finished by accident has nothing worth exporting).
             if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
@@ -283,6 +287,13 @@ struct CardioSaveView: View {
     /// detail, samples, and splits; the recovery marker was cleared when the workout finished.
     private func discard() {
         focus = nil
+        // Un-credit the plan before the cascade: `finish` may have marked a planned session complete
+        // off this run. A discard must not leave that phantom completion behind — reopen the session
+        // and sever the link (the inverse of `PlanCoaching.markComplete`), through the same fresh
+        // context so the relationship resolves. Do this before delete, while the link still exists.
+        if let reader, let session = reader.workout?.plannedSession {
+            PlanCoaching.setCompletion(session, done: false, in: reader.context)
+        }
         reader?.delete()
         Haptics.medium()
         onDone()

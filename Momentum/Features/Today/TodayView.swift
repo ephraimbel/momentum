@@ -63,7 +63,6 @@ struct TodayView: View {
     @State private var confirmResume = false
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
-    @Environment(ModerationStore.self) private var moderation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // The Today map zoomed all the way out to the globe of everyone on Momentum (no separate tab).
     // `--world` opens straight on the globe (DEBUG deep link for deterministic sim verification).
@@ -249,11 +248,11 @@ struct TodayView: View {
         } message: {
             Text("We'll start with a short recovery run and easy miles — quality work returns once you're settled.")
         }
-        .sheet(isPresented: $showProfile) {
-            // ProfileScreen hides the navigation bar (custom header), so a toolbar "Done" from out
-            // here would never render — the close control is the screen's own, via `onClose`.
-            NavigationStack { ProfileScreen(onClose: { showProfile = false }) }
-                .presentationDragIndicator(.visible)
+        // The profile opens as a FULL page pushed onto the tab's stack — a real destination with a
+        // back chevron (ProfileScreen's own header), not a sheet (user call 2026-07-16; the sheet
+        // read as a popup once Profile lost its tab to Fuel).
+        .navigationDestination(isPresented: $showProfile) {
+            ProfileScreen(showsBackButton: true)
         }
         // Spots is hidden; reachable via the `--spots` deep link. On dismiss, a "Loop here" choice
         // enters inline loop mode at that spot (transitioning to it on the same tick misbehaves).
@@ -336,9 +335,6 @@ struct TodayView: View {
         }
         // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
         Task { await services.sync.sync(workouts, in: context) }
-        // Publish/unpublish shared workouts as feed posts — same opportunistic-retry model
-        // (no-op for guests/dark builds; failures stay unstamped and retry on the next appear).
-        Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
         // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
         // load in the danger zone + the body agreeing forces a real cutback week (throttled to
         // one/week); otherwise two warning signs just ease *today's* quality session.
@@ -1296,10 +1292,10 @@ struct TodayView: View {
 
     // MARK: World globe (the Today map zoomed out)
 
-    /// Everyone on Momentum, minus anyone the user has blocked.
-    private var communityAthletes: [CommunityAthlete] {
-        CommunityDirectory.all().filter { !moderation.isBlocked($0.handle) }
-    }
+    /// Community back-burnered from v1 (2026-07-16): the globe stays — a beautiful zoom-out of
+    /// YOUR world — but the seeded community pins are gone with the rest of the social layer.
+    /// Restore `CommunityDirectory.all()` (moderation-filtered) when community returns.
+    private var communityAthletes: [CommunityAthlete] { [] }
     private var onMap: Bool { profiles.first?.appearOnMap ?? false }
 
     /// Slide the cards away and fly the camera from the street all the way out to the globe. Mapbox's

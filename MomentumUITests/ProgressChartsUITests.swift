@@ -53,12 +53,9 @@ final class ProgressChartsUITests: XCTestCase {
 
         // The consistency summary lives on Profile → Highlights (decision: consistency is a
         // Profile section, not a Progress chart) — the original assertion scrolled the wrong tab.
-        // Profile lost its tab to Fuel (2026-07-16) — open it via Today's avatar sheet.
-        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 15), "Tab bar not found.")
-        app.tabBars.buttons["Today"].tap()
-        let avatar = app.buttons["Your profile"]
-        XCTAssertTrue(avatar.waitForExistence(timeout: 10), "Today's avatar (profile front door) not found.")
-        avatar.tap()
+        let profileTab = app.tabBars.buttons["Profile"]
+        XCTAssertTrue(profileTab.waitForExistence(timeout: 15), "Profile tab not found.")
+        profileTab.tap()
         let highlights = app.buttons["Highlights"]
         XCTAssertTrue(highlights.waitForExistence(timeout: 10), "Highlights tab not found.")
         highlights.tap()

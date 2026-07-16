@@ -25,6 +25,8 @@ struct CommunityView: View {
     /// Fresh community posts minted by pull-to-refresh (CommunityPulse) — session-scoped.
     @State private var pulsed: [FeedItem] = []
     @State private var showingSearch = false
+    /// The masthead avatar → the athlete's own FULL profile page (pushed, back chevron).
+    @State private var showOwnProfile = false
     #if DEBUG
     @State private var debugDetailPost: FeedItem?
     #endif
@@ -106,6 +108,7 @@ struct CommunityView: View {
         .navigationBarHidden(true)
         .safeAreaInset(edge: .top) { header }
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
+        .navigationDestination(isPresented: $showOwnProfile) { ProfileScreen(showsBackButton: true) }
         .sheet(isPresented: $showingSearch) {
             FindAthletesView { handle in
                 showingSearch = false
@@ -198,6 +201,8 @@ struct CommunityView: View {
         VStack(spacing: 0) {
             // Centered brand wordmark — the monochrome "momentum" logo, swapping black/white with the
             // appearance so it reads on either canvas (Substack-style masthead, decision 2026-07-15).
+            // The athlete's own avatar sits top-left (Substack's pattern mirrored) and opens the FULL
+            // profile page, pushed with a back chevron — never a sheet (user call 2026-07-16).
             Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
                 .resizable().scaledToFit()
                 .frame(height: 17)   // quiet masthead scale (Substack-like) — 30 read as a billboard
@@ -205,6 +210,14 @@ struct CommunityView: View {
                 .padding(.top, Theme.Space.sm)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityLabel("Momentum")
+                .overlay(alignment: .leading) {
+                    Button { showOwnProfile = true } label: {
+                        AvatarView(photo: profile?.avatarData, name: profile?.displayName ?? "", size: 34)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, Theme.Space.md)
+                    .accessibilityLabel("Your profile")
+                }
             // A real search field (opens athlete search) — the masthead's second row.
             Button { showingSearch = true } label: {
                 HStack(spacing: Theme.Space.sm) {

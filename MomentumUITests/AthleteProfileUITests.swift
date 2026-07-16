@@ -13,7 +13,8 @@ final class AthleteProfileUITests: XCTestCase {
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/\(name).png"))
     }
 
-    func testVisitedProfileMirrorsOwnStructure() {
+    func testVisitedProfileMirrorsOwnStructure() throws {
+        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
         let app = XCUIApplication()
         // --athlete-profile opens the first community athlete deterministically (feed taps are
         // flaky under the glass bar; the entry point itself is covered by CommunityView).

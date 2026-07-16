@@ -25,6 +25,7 @@ struct OnboardingFlow: View {
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
+    @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
     @State private var showReview = false             // the rating priming beat, the last thing before the app
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
@@ -36,11 +37,8 @@ struct OnboardingFlow: View {
         ZStack {
             Theme.background.ignoresSafeArea()
             if vm.step == .building {
-                // The hero beat renders full-bleed (the map must escape the flow's padding). Strength
-                // and hybrid plans build over the body lighting up; pure cardio over the route draw.
-                BuildingPlanView(lines: vm.buildingLines(),
-                                 anatomy: vm.includesStrength ? vm.targetMuscles() : nil,
-                                 sex: vm.bodySex)
+                // A calm, centered loader — renders full-bleed so it escapes the flow's padding.
+                BuildingPlanView(lines: vm.buildingLines())
                     .task { await buildPlan() }
                     .transition(.opacity)
             } else {
@@ -85,6 +83,10 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-hybrid") { vm.activities = [.run, .strength]; vm.step = .hybridFocus }
             if args.contains("--onboarding-disciplines") { vm.step = .disciplines }
             if args.contains("--onboarding-notifications") { vm.step = .notifications }
+            if args.contains("--onboarding-building") {
+                vm.activities = args.contains("--building-lift") ? [.run, .strength] : [.run]
+                vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.name = "Maya"; vm.step = .building
+            }
             if args.contains("--onboarding-reveal"), let demo = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
                 profile = demo
                 // --onboarding-reveal-runs hides the anatomy block so the first-week dropdowns sit higher.
@@ -142,7 +144,7 @@ struct OnboardingFlow: View {
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
         .fullScreenCover(isPresented: $showPaywall, onDismiss: { goNext() }) {
-            PaywallView(feature: .fullPlan, hard: true)
+            PaywallView(feature: .fullPlan, hard: false)
         }
     }
 
@@ -234,11 +236,12 @@ struct OnboardingFlow: View {
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) {
-            // The hard gate (user call 2026-07-10): every new athlete meets the paywall after the
-            // plan reveal — the only ways forward are trial/subscribe/restore. Already entitled
-            // (restored subscribers, demo runs) sail straight through.
+            // Freemium (2026-07-14): every new athlete meets the paywall after the plan reveal, but
+            // it's SOFT — subscribe/trial to unlock the coach + full plan, or close it and continue
+            // into the app on the free tier (tracking, runs, fueling, and week 1 of the plan).
+            // Already entitled (restored subscribers, demo runs) sail straight through.
             if paywall.isPro { goNext() }
-            else { paywall.onboardingGatePending = true; showPaywall = true }
+            else { showPaywall = true }
         }
         case .notifications: notificationsStep
         case .primers: primersStep
@@ -292,15 +295,11 @@ struct OnboardingFlow: View {
         }
     }
 
-    /// The @handle claim — the athlete's name on the Community feed, unique across momentum.
-    /// Prefilled with an available suggestion (one tap for most people); availability is advisory
-    /// (guests get real checks via the anon RPC; the claim itself is race-safe server-side).
-    /// The avatar is deliberately optional and quiet — no permission pressure mid-flow.
+    /// A face for the work — the profile photo, optional and quiet (no permission pressure
+    /// mid-flow). The @handle claim that used to live here left with the community back-burner
+    /// (2026-07-16); the step stays for the photo, which the profile page and share cards use.
     private var identityStep: some View {
-        questionScaffold("Claim your @handle", subtitle: "Your name on momentum — how friends find and cheer you. Yours alone.") {
-            HandleField(handle: $vm.handle, backend: services.social,
-                        suggestions: identitySuggestions, boxed: true, showsOfflineHint: true)
-                .reveal(cascade(0))
+        questionScaffold("Make it yours", subtitle: "A photo for your profile — optional, and only ever yours.") {
             HStack(spacing: Theme.Space.md) {
                 AvatarView(photo: vm.avatarData, name: vm.name.isEmpty ? "You" : vm.name, size: 56)
                 PhotosPicker(selection: $pickedOnboardingAvatar, matching: .images) {
@@ -318,7 +317,7 @@ struct OnboardingFlow: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
             }
-            .reveal(cascade(1))
+            .reveal(cascade(0))
         }
         .onChange(of: pickedOnboardingAvatar) { _, item in
             guard let item else { return }
@@ -329,27 +328,6 @@ struct OnboardingFlow: View {
                 }
             }
         }
-        .task { await seedHandleSuggestion() }
-    }
-
-    /// Candidates offered by the field when the typed handle is taken.
-    @State private var identitySuggestionSeed = UInt64.random(in: .min ... .max)
-    private var identitySuggestions: [String] {
-        HandleSuggester.candidates(name: vm.name, email: auth.email, seed: identitySuggestionSeed)
-    }
-
-    /// Prefill the handle with the first *available* candidate (≤3 probes; offline/guest-dark
-    /// falls back to the first candidate unchecked). Never overwrites a typed handle.
-    private func seedHandleSuggestion() async {
-        guard vm.handle.isEmpty else { return }
-        let candidates = identitySuggestions
-        for candidate in candidates.prefix(3) {
-            if await services.social.handleAvailability(candidate) == true {
-                if vm.handle.isEmpty { vm.handle = candidate }
-                return
-            }
-        }
-        if vm.handle.isEmpty { vm.handle = candidates.first ?? "" }
     }
 
     private var goalStep: some View {
@@ -405,7 +383,9 @@ struct OnboardingFlow: View {
     private var distanceUnitLabel: String { useMetricDistance ? "km" : "mi" }
     private func volumeDisplay(_ meters: Double?) -> Double { (meters ?? 0) / metersPerUnit }
     private func volumeLabel(_ meters: Double?) -> String { "\(Int(volumeDisplay(meters).rounded())) \(distanceUnitLabel)" }
-    private func setWeekly(_ d: Double) { Haptics.light(); vm.weeklyRunVolumeM = min(200, max(0, d.rounded())) * metersPerUnit }
+    // Cap 250 display units: in km locales that clears elite-marathon mileage (~220 km/wk);
+    // 200 km clipped it. (250 mi is beyond any human, harmlessly.)
+    private func setWeekly(_ d: Double) { Haptics.light(); vm.weeklyRunVolumeM = min(250, max(0, d.rounded())) * metersPerUnit }
     private func setLongest(_ d: Double) { Haptics.light(); vm.longestRunM = min(60, max(1, d.rounded())) * metersPerUnit }
     /// Anchor the steppers on a sensible starting guess by experience (the athlete adjusts from there).
     private func seedVolumeDefaultsIfNeeded() {
@@ -786,11 +766,15 @@ struct OnboardingFlow: View {
                 HStack(spacing: Theme.Space.md) {
                     Text("Time").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     Spacer()
-                    Button { Haptics.light(); adjustTime(-vm.benchmark.step) } label: { metricStep("minus") }.buttonStyle(.plain)
+                    // Press-and-hold repeats: the range spans a 12:00 elite 5K to a 60:00 walk-jog,
+                    // and nobody should tap 30 times to reach their real time.
+                    Button { Haptics.light(); adjustTime(-vm.benchmark.step) } label: { metricStep("minus") }
+                        .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
                     Text(Formatters.duration(s: vm.recentRunSeconds))
                         .font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                         .frame(minWidth: 84).contentTransition(.numericText())
-                    Button { Haptics.light(); adjustTime(vm.benchmark.step) } label: { metricStep("plus") }.buttonStyle(.plain)
+                    Button { Haptics.light(); adjustTime(vm.benchmark.step) } label: { metricStep("plus") }
+                        .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
                 }
                 .animation(.snappy(duration: 0.2), value: vm.recentRunSeconds)
                 Text(paceHint).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -965,20 +949,35 @@ struct OnboardingFlow: View {
 
     private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
     private var ageDisplay: Int { vm.birthYear.map { currentYear - $0 } ?? 30 }
-    // Weight is entered imperial (lb) but stored SI (kg) per the units rule.
-    private var weightLb: Double { (vm.bodyMassKg ?? 72.5748) * Formatters.lbPerKg } // default 160 lb
+    // Weight is entered in the athlete's stored unit (kg elsewhere, lb in the US/UK) so onboarding
+    // matches what the app shows afterward (finish() sets profile.weightUnit = WeightUnit.default()),
+    // but is always STORED in kg (SI). Mirrors the runVolume step's km/mi localization.
+    private var useMetricWeight: Bool { WeightUnit.default() == .kg }
+    private var enteredMassKg: Double { vm.bodyMassKg ?? 72.5748 }        // default ≈ 160 lb ≈ 72.6 kg
+    private var weightDisplayValue: Int {
+        Int((useMetricWeight ? enteredMassKg : enteredMassKg * Formatters.lbPerKg).rounded())
+    }
 
     private var metricsStep: some View {
         questionScaffold("A bit about you", subtitle: "Optional — sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
             sexSelector.reveal(cascade(0))
             metricRow("Age", "\(ageDisplay)", { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
-            metricRow("Weight", "\(Int(weightLb.rounded())) lb",
-                      { setWeight(lb: weightLb - 5) }, { setWeight(lb: weightLb + 5) }).reveal(cascade(2))
+            metricRow("Weight", "\(weightDisplayValue) \(useMetricWeight ? "kg" : "lb")",
+                      { adjustWeight(useMetricWeight ? -2 : -5) }, { adjustWeight(useMetricWeight ? 2 : 5) }).reveal(cascade(2))
         }
     }
 
     private func setAge(_ a: Int) { vm.birthYear = currentYear - min(90, max(13, a)) }
-    private func setWeight(lb: Double) { vm.bodyMassKg = min(400, max(80, lb.rounded())) * Formatters.kgPerLb }
+    /// Nudge stored bodyMass by `delta` in the DISPLAYED unit (kg or lb), rounding + clamping in that
+    /// unit so the shown number steps cleanly (2 kg / 5 lb); always persists kg.
+    private func adjustWeight(_ delta: Double) {
+        if useMetricWeight {
+            vm.bodyMassKg = min(181, max(36, (enteredMassKg + delta).rounded()))
+        } else {
+            let lb = min(400, max(80, (enteredMassKg * Formatters.lbPerKg + delta).rounded()))
+            vm.bodyMassKg = lb * Formatters.kgPerLb
+        }
+    }
 
     private var sexSelector: some View {
         HStack(spacing: Theme.Space.sm) {
@@ -1003,12 +1002,16 @@ struct OnboardingFlow: View {
         HStack(spacing: Theme.Space.md) {
             Text(label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
             Spacer()
+            // Repeats on press-and-hold — a high-mileage athlete adjusting from the seeded default
+            // to their real number shouldn't need dozens of taps.
             Button { Haptics.light(); minus() } label: { metricStep("minus") }.buttonStyle(.plain)
+                .buttonRepeatBehavior(.enabled)
                 .accessibilityLabel("Decrease \(label)")
             Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                 .frame(minWidth: 76).contentTransition(.numericText())
                 .accessibilityLabel("\(label), \(value)")
             Button { Haptics.light(); plus() } label: { metricStep("plus") }.buttonStyle(.plain)
+                .buttonRepeatBehavior(.enabled)
                 .accessibilityLabel("Increase \(label)")
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
@@ -1061,9 +1064,31 @@ struct OnboardingFlow: View {
     /// Notification opt-in — a Runna-style beat: an iPhone showing a real momentum workout reminder,
     /// the retention hook, and a single "Turn on reminders" that asks for permission.
     private var notificationsStep: some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer(minLength: 0)
-            phoneNotificationMockup.reveal(0.05)
+        VStack(spacing: 0) {
+            // The iPhone rises from the top of the screen; only its top half is drawn — the lower half
+            // is masked to transparent so the device dissolves straight into the headline below.
+            phoneNotificationMockup
+                .frame(maxWidth: .infinity)               // center in the full width
+                .frame(height: 372, alignment: .top)      // reserve only the top ~half in layout
+                // A long, continuous dissolve — crisp through the notification, then many small,
+                // even steps so the rate never visibly changes (no choppiness), vanishing on a soft tail.
+                .mask(
+                    LinearGradient(stops: [
+                        .init(color: .black, location: 0.00),
+                        .init(color: .black, location: 0.30),
+                        .init(color: .black.opacity(0.97), location: 0.40),
+                        .init(color: .black.opacity(0.92), location: 0.48),
+                        .init(color: .black.opacity(0.84), location: 0.56),
+                        .init(color: .black.opacity(0.74), location: 0.64),
+                        .init(color: .black.opacity(0.62), location: 0.71),
+                        .init(color: .black.opacity(0.49), location: 0.78),
+                        .init(color: .black.opacity(0.36), location: 0.85),
+                        .init(color: .black.opacity(0.23), location: 0.91),
+                        .init(color: .black.opacity(0.11), location: 0.96),
+                        .init(color: .clear, location: 1.00),
+                    ], startPoint: .top, endPoint: .bottom)
+                )
+                .reveal(0.05)
             VStack(spacing: Theme.Space.sm) {
                 (Text("You're ") + Text("2× more likely").fontWeight(.bold) + Text(" to finish your plan with reminders"))
                     .font(.serif(27, weight: .medium))
@@ -1075,6 +1100,7 @@ struct OnboardingFlow: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.top, Theme.Space.sm)
             .reveal(0.18)
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.sm) {
@@ -1090,58 +1116,103 @@ struct OnboardingFlow: View {
             .reveal(0.3)
         }
         .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            notificationPopped = false
+            // Let the phone settle in first, then the reminder arrives a beat later — the real moment.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                withAnimation(reduceMotion ? .easeIn(duration: 0.3)
+                                           : .spring(response: 0.5, dampingFraction: 0.86)) {
+                    notificationPopped = true
+                }
+            }
+        }
     }
 
-    /// A tilted iPhone showing a momentum workout-reminder notification on a soft lock screen — reads as
-    /// a real device, not a flat card.
+    /// A realistic iPhone caught mid-notification — Dynamic Island, a real status bar, and the momentum
+    /// reminder as a frosted lock-screen banner at the top of the screen, on a dark wallpaper. Rendered
+    /// at full height; the step masks the lower half so the device dissolves into the copy below.
     private var phoneNotificationMockup: some View {
-        VStack(spacing: 0) {
-            // Notification banner (frosted, like a real iOS lock-screen alert).
-            HStack(spacing: 10) {
-                Image("BrandIcon").resizable().scaledToFit().frame(width: 34, height: 34)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack {
-                        Text("MOMENTUM").font(.rounded(10, weight: .bold)).tracking(0.4).foregroundStyle(.secondary)
-                        Spacer()
-                        Text("now").font(.rounded(10, weight: .medium)).foregroundStyle(.secondary)
+        let unit = DistanceUnit.auto.resolved() == .imperial ? "3 mi" : "5 km"
+        // Warm-graphite wallpaper, on-brand with the monochrome aesthetic (and the warm-charcoal dark
+        // mode): a deep warm charcoal at the top so the reminder reads crisp, lifting to a warm near-
+        // white at the bottom so the screen melts into the page instead of ending on a hard dark edge.
+        let wallpaper = LinearGradient(stops: [
+            .init(color: Color(red: 0.14, green: 0.13, blue: 0.12), location: 0.0),
+            .init(color: Color(red: 0.27, green: 0.26, blue: 0.24), location: 0.30),
+            .init(color: Color(red: 0.54, green: 0.53, blue: 0.51), location: 0.60),
+            .init(color: Color(red: 0.87, green: 0.87, blue: 0.865), location: 0.85),
+            .init(color: Color(red: 0.97, green: 0.97, blue: 0.965), location: 1.0),
+        ], startPoint: .top, endPoint: .bottom)
+        return RoundedRectangle(cornerRadius: 60, style: .continuous)
+            .fill(LinearGradient(colors: [Color(white: 0.30), Color(white: 0.12)],
+                                 startPoint: .topLeading, endPoint: .bottomTrailing))   // titanium rail
+            .overlay {
+                RoundedRectangle(cornerRadius: 52, style: .continuous)
+                    .fill(wallpaper)
+                    // A soft neutral highlight behind the notification for depth (no colour cast).
+                    .overlay {
+                        RadialGradient(colors: [Color.white.opacity(0.10), .clear],
+                                       center: UnitPoint(x: 0.5, y: 0.26), startRadius: 2, endRadius: 210)
+                            .blendMode(.screen)
                     }
-                    Text("Time for today's run").font(.rounded(13, weight: .semibold)).foregroundStyle(.primary)
-                    Text("Easy run · 5 km, ~30 min").font(.rounded(12, weight: .regular)).foregroundStyle(.secondary)
-                }
-            }
-            .padding(11)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .padding(.horizontal, 14)
-            .padding(.top, 44)
-            // Faint app-grid placeholders so the screen reads as a home/lock screen.
-            VStack(spacing: 14) {
-                ForEach(0..<3) { _ in
-                    HStack(spacing: 14) {
-                        ForEach(0..<4) { _ in
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .fill(Color.white.opacity(0.16)).frame(width: 42, height: 42)
+                    // Status bar, flanking the island — the indicators clear the island's right edge
+                    // (island is 92pt wide/centred; the icons live in the right ~62pt), like real iOS.
+                    .overlay(alignment: .top) {
+                        HStack(spacing: 0) {
+                            Text("9:41").font(.system(size: 14, weight: .semibold, design: .rounded))
+                            Spacer(minLength: 0)
+                            HStack(spacing: 5) {
+                                Image(systemName: "cellularbars")
+                                Image(systemName: "wifi")
+                                Image(systemName: "battery.75")
+                            }.font(.system(size: 12, weight: .semibold))
                         }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 22).padding(.top, 21)
                     }
-                }
+                    // The reminder slides down from above as ONE solid, opaque unit (hidden by the
+                    // screen's clip, not by fading — so no part of it appears on its own timing), and
+                    // settles with a gentle spring, exactly like a real iOS banner. Reduce Motion fades.
+                    .overlay(alignment: .top) {
+                        lockNotification(unit)
+                            .padding(.horizontal, 14).padding(.top, 64)
+                            .offset(y: (notificationPopped || reduceMotion) ? 0 : -155)
+                            .opacity(reduceMotion ? (notificationPopped ? 1 : 0) : 1)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 52, style: .continuous))
+                    .padding(6)   // bezel thickness
             }
-            .padding(.top, 22)
-            Spacer(minLength: 0)
+            .overlay(alignment: .top) {
+                Capsule().fill(.black).frame(width: 92, height: 31).padding(.top, 15)   // dynamic island
+            }
+            .frame(width: 300, height: 640)
+            .accessibilityHidden(true)   // no shadow: it should dissolve into the page, not float on a halo
+    }
+
+    /// One iOS lock-screen notification: a light frosted panel with dark text (forced light so it reads
+    /// like the real thing on the dark wallpaper, whatever the app's appearance).
+    private func lockNotification(_ unit: String) -> some View {
+        HStack(spacing: 11) {
+            Image("BrandIcon").resizable().scaledToFit().frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("MOMENTUM").font(.system(size: 11, weight: .bold, design: .rounded)).tracking(0.5)
+                    Spacer()
+                    Text("now").font(.system(size: 11, weight: .medium, design: .rounded))
+                }
+                .foregroundStyle(.secondary)
+                Text("Time for today's run").font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(.primary)
+                Text("Easy run · \(unit), ~30 min").font(.system(size: 13, weight: .regular, design: .rounded)).foregroundStyle(.secondary)
+            }
         }
-        .frame(width: 236, height: 340)
-        .background(
-            LinearGradient(colors: [Color(white: 0.34), Color(white: 0.14)], startPoint: .top, endPoint: .bottom)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
-        .overlay(alignment: .top) {
-            Capsule().fill(.black).frame(width: 82, height: 22).padding(.top, 11)   // dynamic island
-        }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 46, style: .continuous).fill(.black))   // bezel
-        .shadow(color: .black.opacity(0.22), radius: 26, y: 14)
-        .rotationEffect(.degrees(-2.5))
-        .accessibilityHidden(true)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .environment(\.colorScheme, .light)   // a light frosted panel on the dark wallpaper, like real iOS
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
     }
 
     private var primersStep: some View {
@@ -1175,11 +1246,11 @@ struct OnboardingFlow: View {
             Spacer(minLength: 0)
             ratingStars
             VStack(spacing: Theme.Space.sm) {
-                Text("Enjoying momentum?")
+                Text("Help the next runner")
                     .font(.serif(27, weight: .medium)).foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("A quick rating helps other runners find their plan too. It takes a second.")
+                Text("A quick rating is how they find momentum. It takes a second.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1283,13 +1354,6 @@ struct OnboardingFlow: View {
     private func buildPlan() async {
         if profile == nil {
             profile = vm.finish(in: context)
-            // Claim the identity on the backend (signed-in athletes; guests no-op and claim on
-            // first sign-in). Fire-and-forget — never delays the building beat.
-            if let claimed = profile {
-                let backend = services.social
-                let claimContext = context
-                Task { await backend.claimProfile(claimed, in: claimContext) }
-            }
         }
         services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
         // Long enough for the route to finish drawing and the head to pulse before the reveal.

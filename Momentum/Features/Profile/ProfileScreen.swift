@@ -17,7 +17,6 @@ struct ProfileScreen: View {
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     /// PR shelf — tiles whose workout holds a current record carry the earned iridescent mark.
     @Query private var records: [PersonalRecord]
-    @Environment(FollowStore.self) private var follows
     @Environment(PaywallController.self) private var paywall
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
@@ -78,11 +77,8 @@ struct ProfileScreen: View {
                 .padding(.horizontal, Theme.Space.md)
 
                 if stats.totalWorkouts == 0 {
-                    Group {
-                        firstRunCard
-                        if let profile { privacyCard(profile) }
-                    }
-                    .padding(.horizontal, Theme.Space.md)
+                    firstRunCard
+                        .padding(.horizontal, Theme.Space.md)
                 } else {
                     // The grid rides high — the athlete's training is the hero. Lifetime totals,
                     // discipline mix, and consistency now live one tap away under "Highlights".
@@ -94,9 +90,6 @@ struct ProfileScreen: View {
                         }
                     } header: {
                         ProfileGridTabBar(tab: $gridTab)
-                    }
-                    if gridTab == .highlights, let profile {
-                        privacyCard(profile).padding(.horizontal, Theme.Space.md)
                     }
                 }
             }
@@ -210,38 +203,33 @@ struct ProfileScreen: View {
                             .accessibilityLabel("Verified Pro")
                     }
                 }
-                if handleText != nil || profile.flatMap(SocialPrivacy.publicLocation) != nil {
-                    HStack(spacing: 6) {
-                        if let handle = handleText {
-                            Text(handle).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                        }
-                        if handleText != nil, profile.flatMap(SocialPrivacy.publicLocation) != nil {
-                            Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
-                        }
-                        if let location = profile.flatMap(SocialPrivacy.publicLocation) {
-                            Label(location, systemImage: "mappin.and.ellipse")
-                                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        }
-                    }
-                }
             }
-            socialTrio
+            statTrio
         }
         .frame(maxWidth: .infinity)
     }
 
-    /// The platform-standard counts row (posts · followers · following), momentum-styled: bare
-    /// numbers on the canvas, hairline-divided — no boxed card competing with the grid below. Every
-    /// workout is a post here; followers stay honest (the real backend count, never fabricated).
-    private var socialTrio: some View {
+    /// The athlete's own ledger (solo-first, 2026-07-16 — followers/following left with the
+    /// community back-burner): volume, distance, achievement. Bare numbers on the canvas,
+    /// hairline-divided — no boxed card competing with the grid below.
+    private var statTrio: some View {
         HStack(spacing: 0) {
-            trioCell("\(stats.totalWorkouts)", "Posts")
+            trioCell("\(stats.totalWorkouts)", "Workouts")
             trioDivider
-            trioCell("\(followerCount)", "Followers")
+            trioCell(distanceTotalText, distanceUnitLabel)
             trioDivider
-            trioCell("\(followingCount)", "Following")
+            trioCell("\(records.count)", "PRs")
         }
         .padding(.horizontal, Theme.Space.xl)
+    }
+
+    /// Lifetime GPS distance in the athlete's display unit, whole numbers ("312").
+    private var distanceTotalText: String {
+        let perUnit = distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000.0
+        return "\(Int((stats.totalDistanceM / perUnit).rounded()))"
+    }
+    private var distanceUnitLabel: String {
+        distanceUnit.resolved() == .imperial ? "Miles" : "Kilometers"
     }
 
     private func trioCell(_ value: String, _ label: String) -> some View {
@@ -258,55 +246,9 @@ struct ProfileScreen: View {
         Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 28)
     }
 
-    /// Honest presence: no fabricated audience. Until the social backend reports real followers,
-    /// this is simply zero. (DEBUG `--marketing-profile` fills a plausible established-athlete
-    /// audience for the website's App-Store-style Profile screenshot only — never a shipping build.)
-    private var followerCount: Int {
-        #if DEBUG
-        if Self.marketingProfile { return 4_812 }
-        #endif
-        return 0
-    }
-    private var followingCount: Int {
-        #if DEBUG
-        if Self.marketingProfile { return 386 }
-        #endif
-        return follows.count
-    }
-    #if DEBUG
-    private static let marketingProfile = ProcessInfo.processInfo.arguments.contains("--marketing-profile")
-    #endif
-
     private var displayName: String {
         let name = profile?.displayName.trimmingCharacters(in: .whitespaces) ?? ""
         return name.isEmpty ? "Athlete" : name
-    }
-    private var handleText: String? {
-        guard let h = profile?.handle, !h.isEmpty else { return nil }
-        return "@\(h)"
-    }
-
-    // MARK: Privacy chip
-
-    private func privacyCard(_ profile: UserProfile) -> some View {
-        Button { editing = true } label: {
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: SocialPrivacy.defaultVisibility(profile).icon)
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Privacy").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text(SocialPrivacy.exposureSummary(profile))
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-            }
-            .padding(Theme.Space.lg)
-            .background(card)
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Edit your sharing and privacy settings")
     }
 
     // MARK: First-run (no workouts yet)

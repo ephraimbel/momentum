@@ -2,8 +2,9 @@ import XCTest
 
 /// The app's CORE flow, end to end, in one pass: record a ~4-mile run at 6:00/mi (self-contained
 /// `--ui-test-run4` GPS feed), watch the trace draw smoothly, Pause → Resume → Finish, edit the save
-/// page (name it, attach a photo, make it visible to Everyone, Save), then confirm the run surfaces on
-/// the Community feed (route + details) and the Profile grid. A screenshot is attached at every stage.
+/// page (name it, attach a photo, Save), then confirm the run surfaces on the Profile grid and the
+/// Fuel tab renders. Solo-first (2026-07-16): the social steps left with the community back-burner.
+/// A screenshot is attached at every stage.
 ///
 /// `continueAfterFailure = true` so the run walks the WHOLE flow and captures every screenshot even if
 /// one assertion trips — this is a verification pass, not a fail-fast gate.
@@ -117,22 +118,10 @@ final class CoreRunFlowUITests: XCTestCase {
             XCTFail("Title field ‘Name your run’ not found.")
         }
 
-        // 7c. Make it visible to Everyone.
-        let visibility = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Workout visibility")).firstMatch
-        if visibility.waitForExistence(timeout: 4) {
-            scrollToHittable(visibility, in: app)
-            visibility.tap()
-            sleep(1)
-            let everyoneBtn = app.buttons["Everyone"]
-            let everyoneItem = app.menuItems["Everyone"]
-            if everyoneBtn.waitForExistence(timeout: 3) { everyoneBtn.tap() }
-            else if everyoneItem.waitForExistence(timeout: 2) { everyoneItem.tap() }
-            attach("7-visibility-everyone")
-            XCTAssertTrue(app.buttons["Workout visibility, Everyone"].waitForExistence(timeout: 4),
-                          "Visibility didn't switch to Everyone.")
-        } else {
-            XCTFail("Visibility control not found on the save page.")
-        }
+        // 7c. Solo-first: the save page carries NO visibility control (social back-burnered).
+        XCTAssertFalse(
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Workout visibility")).firstMatch.exists,
+            "The visibility control should be gone from the save page (social is back-burnered).")
 
         // 7d. Save.
         let save = app.navigationBars.buttons["Save"].firstMatch
@@ -141,51 +130,23 @@ final class CoreRunFlowUITests: XCTestCase {
         sleep(3)                          // completion celebration auto-dismisses (~1.4s) → back to app
         attach("8-after-save")
 
-        // ── 8. Community — the shared run appears (local assembly, default ‘Everyone’ scope) ──
-        if app.tabBars.buttons["Community"].waitForExistence(timeout: 8) {
-            app.tabBars.buttons["Community"].tap()
-        }
-        // Force the Global scope in case a prior session persisted ‘Following’.
-        if app.buttons["Global"].waitForExistence(timeout: 4) { app.buttons["Global"].tap() }
-        sleep(3)                          // async feed assembly on workouts.count change
-        // The run carries an honest 24-min backdate (so its saved pace reads ~6:00/mi, not "4 mi in
-        // 0:24"), which sorts it below newer seeded posts — so scroll the feed to reach it.
-        let feedItem = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", core)).firstMatch
-        var feedScrolls = 0
-        while !feedItem.exists && feedScrolls < 30 { app.swipeUp(); feedScrolls += 1 }
-        attach("9-community")
-        XCTAssertTrue(feedItem.waitForExistence(timeout: 6),
-                      "The shared run ‘\(title)’ did not appear on the Community feed.")
-        // Open the post's reading view (full-size route+photo carousel) by tapping its title — tapping
-        // the title opens PostDetailView, not the comment sheet. Dismiss with ‘Done’ so nothing covers
-        // the Profile grid next.
-        feedItem.tap()
-        sleep(2)
-        attach("10-community-post-detail")
-        if app.buttons["Done"].waitForExistence(timeout: 4) { app.buttons["Done"].tap() }
-        sleep(1)
+        // ── 8. There is NO Community tab — the bar is Today · Plan · Progress · Fuel · Profile.
+        XCTAssertFalse(app.tabBars.buttons["Community"].exists,
+                       "The Community tab must not ship in v1 (back-burnered).")
 
-        // ── 9. Profile — the run is the newest tile in the grid. Profile lost its tab to Fuel
-        // (2026-07-16): its front door is the avatar on Today's header, which opens the sheet.
-        if app.tabBars.buttons["Today"].waitForExistence(timeout: 8) {
-            app.tabBars.buttons["Today"].tap()
-        }
-        sleep(1)
-        let avatar = app.buttons["Your profile"]
-        XCTAssertTrue(avatar.waitForExistence(timeout: 8), "Today's avatar (profile front door) not found.")
-        avatar.tap()
+        // ── 9. Profile — the run is the newest tile in the grid (Profile is a tab again).
+        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 8), "Profile tab missing.")
+        app.tabBars.buttons["Profile"].tap()
         sleep(2)
-        attach("11-profile")
+        attach("9-profile")
         let runTile = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Run,")).firstMatch
         XCTAssertTrue(runTile.waitForExistence(timeout: 12), "The run tile did not appear on the Profile grid.")
 
-        // ── 10. Fuel — the new tab is present and renders its readout ─────────────────
-        if app.buttons["Back"].exists { app.buttons["Back"].tap() }   // close the profile sheet
-        sleep(1)
+        // ── 10. Fuel — the tab renders its readout ────────────────────────────────────
         if app.tabBars.buttons["Fuel"].waitForExistence(timeout: 6) {
             app.tabBars.buttons["Fuel"].tap()
             sleep(2)
-            attach("12-fuel-tab")
+            attach("10-fuel-tab")
         }
     }
 

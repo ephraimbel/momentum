@@ -23,7 +23,6 @@ struct StrengthSaveView: View {
 
     @State private var title = ""
     @State private var desc = ""
-    @State private var visibility: WorkoutPrivacy = .private
     @State private var celebrating = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -39,6 +38,14 @@ struct StrengthSaveView: View {
                         editor
                     }
                     .padding(Theme.Space.md)
+                } else if reader != nil {
+                    // The finished workout couldn't be read — never trap the athlete on an endless
+                    // spinner; give a plain message and a way out.
+                    ContentUnavailableView {
+                        Label("Couldn't load this workout", systemImage: "questionmark")
+                    } actions: {
+                        Button("Close") { onDone() }
+                    }
                 } else {
                     ProgressView().padding(.top, Theme.Space.xxl)
                 }
@@ -66,7 +73,6 @@ struct StrengthSaveView: View {
                 title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
                 desc = workout.note
                 // The share moment starts from the athlete's chosen default (never silently public).
-                visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
             }
         }
     }
@@ -84,8 +90,6 @@ struct StrengthSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
-            Divider().overlay(Theme.hairline)
-            ShareVisibilityRow(privacy: $visibility, boxed: false, showsHint: true)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -97,7 +101,6 @@ struct StrengthSaveView: View {
         reader?.commit {
             $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-            $0.privacy = visibility
         }
         // Persist the records this session set (fresh context — the logged sets are complete there).
         if let reader, let workout = reader.workout {
@@ -147,7 +150,11 @@ final class FinishedWorkoutReader {
     init(container: ModelContainer, workoutId: UUID) {
         let context = ModelContext(container)
         self.context = context
-        self.workout = (try? context.fetch(FetchDescriptor<Workout>()))?.first { $0.id == workoutId }
+        // Fetch this one workout by id (predicate + limit 1) — let the store do the lookup instead
+        // of loading the whole Workout table into memory and scanning it on every save.
+        var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == workoutId })
+        descriptor.fetchLimit = 1
+        self.workout = try? context.fetch(descriptor).first
     }
 
     func commit(title: String, note: String) {

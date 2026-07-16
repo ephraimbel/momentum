@@ -17,7 +17,6 @@ struct TimedSaveView: View {
     @State private var title = ""
     @State private var desc = ""
     @State private var effort: Int?
-    @State private var visibility: WorkoutPrivacy = .private
     @State private var celebrating = false
     @State private var confirmDiscard = false
     @FocusState private var focus: Field?
@@ -61,7 +60,6 @@ struct TimedSaveView: View {
             desc = workout.note
             effort = workout.perceivedEffort
             // The share moment starts from the athlete's chosen default (never silently public).
-            visibility = profiles.first.map(SocialPrivacy.defaultVisibility) ?? workout.privacy
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
@@ -87,8 +85,6 @@ struct TimedSaveView: View {
                 .focused($focus, equals: .desc)
             Divider().overlay(Theme.hairline)
             effortRow
-            Divider().overlay(Theme.hairline)
-            ShareVisibilityRow(privacy: $visibility, boxed: false, showsHint: true)
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -136,7 +132,6 @@ struct TimedSaveView: View {
             workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             workout.perceivedEffort = effort
-            workout.privacy = visibility
             try? context.save()
             let saved = workout
             Task { await services.health.save(saved) }   // mirror to Apple Health

@@ -313,9 +313,11 @@ fueling. Free = tracking + a basic plan. (Paywall redesigned; purple accent.) Th
 to pay.
 
 ## 16. Non-goals (for now)
-Ultra-specific training (later), social feed/kudos (deferred), dieting/weight-loss coaching (never —
-fueling-readiness meal tracking shipped 2026-07-16 is floors-only, see the guardrail above),
-non-endurance sports as a headline (trackable, not marketed).
+Ultra-specific training (later), **social feed/kudos (built, back-burnered from v1 2026-07-16 —
+code + Supabase backend preserved; ships solo-first, "Bevel for endurance athletes", and the feed
+returns once a real user base exists)**, dieting/weight-loss coaching (never — fueling-readiness
+meal tracking shipped 2026-07-16 is floors-only, see the guardrail above), non-endurance sports as
+a headline (trackable, not marketed).
 
 ---
 

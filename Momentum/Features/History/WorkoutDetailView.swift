@@ -13,7 +13,6 @@ struct WorkoutDetailView: View {
         ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: Theme.Space.md) {
-                visibilityRow
                 Group {
                     if workout.type.isStrengthStyle {
                         StrengthSummaryContent(workout: workout, weightUnit: weightUnit)
@@ -95,12 +94,4 @@ struct WorkoutDetailView: View {
         .id("askCoach")
     }
 
-    /// Per-workout visibility — overrides the profile default for this one workout (PRD §11).
-    private var visibilityRow: some View {
-        ShareVisibilityRow(privacy: visibility)
-    }
-
-    private var visibility: Binding<WorkoutPrivacy> {
-        Binding(get: { workout.privacy }, set: { workout.privacy = $0; try? context.save() })
-    }
 }

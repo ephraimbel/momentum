@@ -7,7 +7,8 @@ final class GlobeLookUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    func testGlobeLooksRealistic() {
+    func testGlobeLooksRealistic() throws {
+        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--world"]
         app.launch()

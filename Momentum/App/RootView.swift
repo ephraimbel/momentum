@@ -24,11 +24,9 @@ struct RootView: View {
         // Deterministic deep-links for sim verification (tab-bar taps are unreliable in the sim).
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--fuel") || args.contains("--fuel-tab") { return .fuel }
-        // --profile-tab: the Profile lost its tab to Fuel (2026-07-16) — land on Today, whose
-        // avatar opens the profile sheet (TodayView handles `--today-profile` for direct opens).
+        if args.contains("--profile-tab") { return .profile }
         if args.contains("--plan-tab") { return .plan }
         if args.contains("--progress-tab") { return .progress }
-        if args.contains("--community-tab") { return .community }
         #endif
         return .today
     }()
@@ -274,8 +272,8 @@ struct RootView: View {
         case .today: TodayView()
         case .plan: PlanView()
         case .progress: ProgressScreen()
-        case .community: CommunityView()
         case .fuel: FuelView(showsDone: false)   // tab-hosted: the tab bar is the way out, no Done
+        case .profile: ProfileScreen()
         }
     }
 }

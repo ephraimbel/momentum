@@ -136,8 +136,8 @@ final class OnboardingViewModel {
         // → race specifics → schedule → equipment/focus → motivation → pace → build → reveal → opt-ins.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
-        // `identity` (the @handle claim) follows `name` — who you are, then your name on the
-        // Community feed, both before any training questions.
+        // `identity` (the profile photo — the @handle claim left with the community back-burner,
+        // 2026-07-16) follows `name`, both before any training questions.
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
              calibration, health, intensity, building, reveal, notifications, primers
@@ -186,8 +186,12 @@ final class OnboardingViewModel {
 
     var canAdvance: Bool {
         switch step {
-        case .identity: return !SocialPrivacy.normalizedHandle(handle).isEmpty
-        case .disciplines: return !activities.isEmpty
+        case .identity: return true   // photo-only since the handle left (2026-07-16) — always optional
+        // Require at least one PROGRAMMABLE discipline (run/strength/…), not just any activity: extras
+        // like yoga/swim/row map to `discipline == nil`, and advancing on those alone made finish()
+        // silently inject a running plan the user never asked for. A training plan needs something the
+        // engine actually programs; the extras still ride along as cross-training.
+        case .disciplines: return !disciplines.isEmpty
         case .race: return raceDistance != nil
         default: return true
         }
@@ -452,6 +456,10 @@ enum RunBenchmark: String, CaseIterable, Identifiable {
     var meters: Double { switch self { case .mile: 1_609.344; case .fiveK: 5_000; case .tenK: 10_000 } }
     var label: String { switch self { case .mile: "1 mile"; case .fiveK: "5K"; case .tenK: "10K" } }
     var defaultSeconds: Double { switch self { case .mile: 600; case .fiveK: 1_800; case .tenK: 3_600 } }
-    var range: ClosedRange<Double> { switch self { case .mile: 300...1_200; case .fiveK: 900...3_600; case .tenK: 1_800...7_200 } }
+    /// Floors sit just under the world records (mile 3:43, 5K ~12:35, 10K ~26:11) so ANY real
+    /// athlete — including an elite — can enter their true time; the engine's Daniels/VDOT zones are
+    /// curvilinear and handle that fitness correctly. The old floors (5:00 / 15:00 / 30:00) silently
+    /// capped a sub-elite's seed and started their whole plan 8–15% too slow.
+    var range: ClosedRange<Double> { switch self { case .mile: 210...1_200; case .fiveK: 720...3_600; case .tenK: 1_500...7_200 } }
     var step: Double { switch self { case .mile: 15; case .fiveK: 30; case .tenK: 60 } }
 }
