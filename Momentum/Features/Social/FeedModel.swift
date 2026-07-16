@@ -40,7 +40,7 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     /// The bundled synthetic-face asset for a seeded community author (deterministic per name), so
     /// community posts show a real-feeling face instead of an initials chip. nil for the user's own
     /// and real network posts (they carry `avatarData`). See `CommunityAvatars`.
-    var communityAvatarAsset: String? { isCommunity ? CommunityAvatars.assetName(forDisplayName: authorName) : nil }
+    var communityAvatarAsset: String? { isCommunity ? authorHandle.flatMap { CommunityAvatars.assetName(forHandle: $0) } : nil }
     /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
     /// post's reading view. The user's own posts carry their `aiSummary`; community posts are seeded.
     var aiRead: String? = nil

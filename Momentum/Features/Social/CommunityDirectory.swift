@@ -23,7 +23,7 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
     var id: String { handle }
     /// The seeded athlete's bundled synthetic-face asset (deterministic per name); nil for real
     /// network athletes. See `CommunityAvatars`.
-    var communityAvatarAsset: String? { isSample ? CommunityAvatars.assetName(forDisplayName: name) : nil }
+    var communityAvatarAsset: String? { isSample ? CommunityAvatars.assetName(forHandle: handle) : nil }
 }
 
 enum CommunityDirectory {
@@ -123,7 +123,10 @@ enum CommunityDirectory {
         if let cached = gridCache[athlete.handle] { return cached }
         var seed = SeededRNG(athlete.handle.utf8.reduce(3) { ($0 &* 61 &+ Int($1)) & 0xFFFF })
         let history = CommunityGenerator.historyPosts(
-            handle: athlete.handle, name: athlete.name, city: athlete.location ?? "Austin",
+            // The fallback must be a real `CommunityRoutes` KEY ("Austin, TX", not "Austin") — a miss
+            // meant every GPS history post for a no-location athlete shipped WITHOUT its route map.
+            handle: athlete.handle, name: athlete.name, city: athlete.location ?? "Austin, TX",
+            primary: athlete.primaryType,   // the grid trains THEIR sport, not a blanket 62% running
             count: 11 + seed.int(0...7), now: now)
         let posts = (athlete.posts + history).sorted { $0.date > $1.date }
         gridCache[athlete.handle] = posts

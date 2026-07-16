@@ -30,6 +30,12 @@ final class RemoteFeedStore {
         if let remoteFollowing = await backend.pullFollowing() {
             follows?.merge(remote: remoteFollowing)
         }
+        // Switching scope: drop the old scope's rows up front so a failed fetch yields an empty
+        // correct-scope list, never stale cross-scope athletes (e.g. Everyone's under Following).
+        if scope != scopeLoaded {
+            items = []
+            scopeLoaded = scope
+        }
         guard let page = await backend.feed(scope: scope, cursor: nil, limit: Self.pageSize) else { return }
         cursor = page.next
         scopeLoaded = scope

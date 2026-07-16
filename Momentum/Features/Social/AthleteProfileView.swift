@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreLocation
+import UIKit
 
 /// Another athlete's profile (docs/SOCIAL-LAYER.md, Slice 2) — structured EXACTLY like the
 /// athlete's own `ProfileScreen` so visiting someone feels like visiting a peer, not a different
@@ -147,12 +148,14 @@ struct AthleteProfileView: View {
     }
 
     /// Deterministic per-athlete sample counts (stable across launches — hashed from the handle),
-    /// plus the viewer's own follow. Real athletes: only what we actually know.
+    /// plus the viewer's own follow. Scaled by the athlete's body of work so a 12-workout beginner
+    /// and a 900-workout veteran don't look socially identical (a coherence tell). Real athletes:
+    /// only what we actually know.
     private var followerCount: Int {
         let mine = follows.isFollowing(athlete.handle) ? 1 : 0
         guard athlete.isSample else { return mine }
         let seed = athlete.handle.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }
-        return 40 + seed % 860 + mine
+        return 20 + athlete.totalWorkouts / 6 + seed % 220 + mine
     }
 
     private var followingCount: Int {
@@ -202,7 +205,9 @@ struct AthleteProfileView: View {
         } else {
             LazyVGrid(columns: columns, spacing: Theme.Space.sm) {
                 ForEach(gridPosts) { post in
-                    NavigationLink { PostDetailView(item: post) } label: {
+                    // Pushed (isPushed) — the tab's stack provides the bar; the detail must not nest
+                    // its own NavigationStack (that rendered the reading view cut off).
+                    NavigationLink { PostDetailView(item: post, isPushed: true) } label: {
                         PostTile(item: post)
                     }
                     .buttonStyle(.plain)
@@ -220,12 +225,23 @@ struct AthleteProfileView: View {
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
             if athlete.isSample {
                 section("Lifetime") {
+                    // Distance is the hero only for distance sports — a lifter/yogi headlining
+                    // "4,200 km covered" contradicted their whole profile. Their body of work is
+                    // the session count.
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit))
-                            .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                            .lineLimit(1).minimumScaleFactor(0.6)
-                        Text("distance covered")
-                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        if athlete.primaryType.isGPS, athlete.totalDistanceM > 0 {
+                            Text(Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit))
+                                .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                                .lineLimit(1).minimumScaleFactor(0.6)
+                            Text("distance covered")
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        } else {
+                            Text("\(athlete.totalWorkouts)")
+                                .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                                .lineLimit(1).minimumScaleFactor(0.6)
+                            Text("workouts logged")
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -234,7 +250,8 @@ struct AthleteProfileView: View {
                         .padding(Theme.Space.lg).background(card)
                 }
                 section("Consistency") {
-                    ConsistencyHeatmap(countingDays: athlete.consistencyDays)
+                    ConsistencyHeatmap(countingDays: athlete.consistencyDays,
+                                       dayMinutes: athlete.consistencyMinutes)
                         .padding(Theme.Space.lg).background(card)
                 }
                 if !records.prs.isEmpty || records.longestRunM > 0 || records.longestDurationS > 0 {
@@ -300,14 +317,10 @@ private struct PostTile: View {
                     .padding(Theme.Space.sm)
             }
         } else if let route = routeCoords, route.count > 1 {
-            // A lightweight route silhouette (the real map is one tap away in the post's reading view).
-            // A grid of live Mapbox snapshots is far heavier than the feed's 2–3 and hurt scroll.
-            ZStack {
-                Theme.background
-                RouteSilhouette(coords: route)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .padding(Theme.Space.md)
-            }
+            // The route over its REAL map — a cached STATIC snapshot (never a live engine), sharing the
+            // feed's snapshot cache + 4-render cap so a whole grid renders a few at a time then scrolls
+            // as plain images. A silhouette shows instantly and crossfades to the map when it lands.
+            RouteTileMap(item: item, coords: route)
         } else {
             ZStack {
                 LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
@@ -339,6 +352,57 @@ private struct PostTile: View {
     /// The stat line's headline number (it reads "5.2 mi · 8:41 /mi" — the tile shows the first).
     private var metric: String {
         item.statLine.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespaces) ?? item.statLine
+    }
+}
+
+// MARK: - Route tile map (a grid cell's real map, rendered once and cached)
+
+/// A profile-grid cell's route drawn over its **real map**, using the same shared, cached, rate-capped
+/// `FeedRouteSnapshots` engine as the feed — so the map behind the route matches the feed exactly and a
+/// grid of ~15 tiles renders a few at a time (never a live Mapbox engine per cell) then scrolls as plain
+/// images. The route silhouette shows instantly and crossfades to the snapshot when it lands, so a cell
+/// is never blank and never stalls. Portrait size fits the 3:4 tile; the shared cache means a post seen
+/// in both feed and grid renders at most once per appearance.
+private struct RouteTileMap: View {
+    let item: FeedItem
+    let coords: [CLLocationCoordinate2D]
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            Theme.background
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
+            } else {
+                // The route's shape, instantly — the cell never looks blank while the map renders.
+                RouteSilhouette(coords: coords)
+                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                    .padding(Theme.Space.md)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: image != nil)
+        .task(id: "\(item.id)-\(colorScheme == .dark)") {
+            #if DEBUG
+            // UI tests keep the instant silhouette: XCUITest realizes every lazy grid cell at once,
+            // and dozens of queued render engines starve the main thread (mirrors FeedRouteMap).
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
+            #endif
+            for attempt in 0..<3 {
+                if Task.isCancelled { return }
+                // routeWidth 6: this 300pt-wide render displays in a ~112pt tile (0.37×), so 6 reads
+                // ~2.2pt — visually matched to the feed's thin 3-on-420 line, never a fat marker.
+                if let rendered = await FeedRouteSnapshots.image(
+                    post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
+                    size: CGSize(width: 300, height: 400), routeWidth: 6) {
+                    image = rendered
+                    return
+                }
+                try? await Task.sleep(for: .seconds(Double(attempt + 1) * 2))
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 

@@ -18,10 +18,14 @@ enum FeedRouteSnapshots {
     private static let maxConcurrentRenders = 4
     private static var active = 0
 
+    /// `routeWidth` is per-surface (in the snapshot's point space): the default 3 reads ~2.6pt on a
+    /// full-width feed/reading card — Strava-thin; the profile grid renders a smaller image into a
+    /// smaller tile and passes a proportionally larger width. Part of the cache key: the same post
+    /// rendered for two surfaces must not collide.
     static func image(post: UUID, coordinates: [CLLocationCoordinate2D],
                       style: MapStyleOption, scheme: ColorScheme, size: CGSize,
-                      urgent: Bool = false) async -> UIImage? {
-        let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")"
+                      urgent: Bool = false, routeWidth: CGFloat = 3) async -> UIImage? {
+        let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))"
         if let hit = cache[key] { return hit }
         return await withCheckedContinuation { continuation in
             waiters[key, default: []].append(continuation)
@@ -36,7 +40,8 @@ enum FeedRouteSnapshots {
                 }
                 active += 1
                 let data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
-                                                           styleURI: style.styleURI(for: scheme))
+                                                           styleURI: style.styleURI(for: scheme),
+                                                           routeWidth: routeWidth)
                 active -= 1
                 let image = data.flatMap(UIImage.init(data:))
                 if let image { cache[key] = image }

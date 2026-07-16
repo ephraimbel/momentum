@@ -167,7 +167,9 @@ struct FeedPostCard: View {
 
     /// Visible comment count = seeded community + the user's own, minus moderation-hidden.
     private var commentCount: Int {
-        (CommunityComments.seed(for: item.id, postDate: item.date) + comments.comments(for: item.id))
+        (CommunityComments.seed(for: item.id, postDate: item.date, reactions: item.baseReactions,
+                                type: item.type, authorHandle: item.authorHandle)
+            + comments.comments(for: item.id))
             .filter(moderation.isVisible).count
     }
 

@@ -17,33 +17,43 @@ struct PostDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showingComments = false
+    /// The tapped byline's athlete — pushed within the presenting cover's NavigationStack.
+    @State private var shownAthlete: CommunityAthlete?
 
     var body: some View {
+        // A Substack-style reading rhythm: explicit per-section air (not one uniform gap), a media
+        // band sized to leave room for the words and numbers around it, and a Strava-clean stat row.
+        // The old uniform-spacing stack with a 360pt media band read cramped (user, 2026-07-15).
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            VStack(alignment: .leading, spacing: 0) {
                 byline
                 Text(item.title)
                     .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                if let pr = item.prBadge { PRBadge(text: pr) }
-                // Reading view shows the WHOLE photo (fit, not cropped), taller than the feed band.
-                // Its route map takes the render fast lane (urgent) — this is the one map the athlete
-                // is actively looking at, so it must never sit behind the feed's render backlog.
-                FeedMediaView(item: item, height: 360, photoContentMode: .fit, urgentRoute: true)
+                    .padding(.top, Theme.Space.md)
+                if let pr = item.prBadge { PRBadge(text: pr).padding(.top, Theme.Space.sm) }
+                // Reading view shows the WHOLE photo (fit, not cropped). Its route map takes the
+                // render fast lane (urgent) — this is the one map the athlete is actively looking
+                // at, so it must never sit behind the feed's render backlog.
+                FeedMediaView(item: item, height: 280, photoContentMode: .fit, urgentRoute: true)
+                    .padding(.top, Theme.Space.lg)
                 StatGrid(cells: item.metrics.map { .init(value: $0.value, label: $0.label) },
                          valueSize: 20, leading: true)
-                    .padding(.vertical, Theme.Space.sm)
+                    .padding(.vertical, Theme.Space.md)
                     .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
                     .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+                    .padding(.top, Theme.Space.lg)
                 if let caption = item.caption {
                     Text(caption)
                         .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.ink)
-                        .lineSpacing(6).fixedSize(horizontal: false, vertical: true)
+                        .lineSpacing(7).fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, Theme.Space.lg)
                 }
-                if let read = item.aiRead { momentumRead(read) }
-                footer
+                if let read = item.aiRead { momentumRead(read).padding(.top, Theme.Space.xl) }
+                footer.padding(.top, Theme.Space.lg)
             }
-            .padding(Theme.Space.lg)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
@@ -54,11 +64,39 @@ struct PostDetailView: View {
             }
         }
         .sheet(isPresented: $showingComments) { PostCommentsView(item: item) }
+        .navigationDestination(item: $shownAthlete) { AthleteProfileView(athlete: $0) }
+        #if DEBUG
+        // --tap-detail-byline: fire the byline's exact action (sim taps are flaky) — verifies the
+        // detail→profile push inside the presenting cover's NavigationStack.
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--tap-detail-byline"),
+               item.isCommunity, let h = item.authorHandle {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    shownAthlete = CommunityDirectory.athlete(handle: h)
+                }
+            }
+        }
+        #endif
     }
 
     // MARK: Byline
 
+    /// Tapping the name/avatar opens the athlete — the basic social contract (user report
+    /// 2026-07-15). Pushed-from-their-profile posts keep an inert byline (you're already there),
+    /// matching the feed's own profile-context rule.
+    @ViewBuilder
     private var byline: some View {
+        if !isPushed, item.isCommunity, let handle = item.authorHandle,
+           CommunityDirectory.athlete(handle: handle) != nil {
+            Button { shownAthlete = CommunityDirectory.athlete(handle: handle) } label: { bylineIdentity }
+                .buttonStyle(.plain)
+                .accessibilityLabel("View \(item.authorName)'s profile")
+        } else {
+            bylineIdentity
+        }
+    }
+
+    private var bylineIdentity: some View {
         HStack(spacing: Theme.Space.sm) {
             AvatarView(photo: item.avatarData, name: item.authorName, size: 44, imageName: item.communityAvatarAsset)
             VStack(alignment: .leading, spacing: 2) {
@@ -70,6 +108,7 @@ struct PostDetailView: View {
             }
             Spacer(minLength: 0)
         }
+        .contentShape(Rectangle())
     }
 
     private var metaLine: String {
