@@ -46,7 +46,7 @@ const SCHEMA = {
     sodium_mg: { type: "integer" },
     fluids_ml: { type: "integer" },
     confidence: { type: "number" },
-    tags: { type: "array", items: { type: "string" }, maxItems: 3 },
+    tags: { type: "array", items: { type: "string" } },   // "up to 3" enforced by the prompt — the schema validator rejects maxItems
     note: { type: "string" },
   },
   required: ["kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml", "confidence", "tags", "note"],

@@ -8,7 +8,16 @@ import CoreLocation
 @MainActor
 enum DemoSeed {
     static func seedIfRequested(_ context: ModelContext) {
+        // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
+        if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
+            for meal in (try? context.fetch(FetchDescriptor<Meal>())) ?? [] { context.delete(meal) }
+            try? context.save()
+        }
         seedInterruptedWorkoutIfRequested(context)
+        // --seed-empty: a genuine JUST-ONBOARDED user — a profile + a generated plan and NOTHING else
+        // (zero workouts, PRs, notifications, coaching history), so the true new-user empty slate can be
+        // screenshotted deterministically without driving the onboarding UI. DEBUG-only, like the rest.
+        if ProcessInfo.processInfo.arguments.contains("--seed-empty") { seedEmptyProfile(context); return }
         guard ProcessInfo.processInfo.arguments.contains("--seed-demo") else { return }
         let existing = (try? context.fetch(FetchDescriptor<UserProfile>())) ?? []
         guard existing.isEmpty else { return }
@@ -16,6 +25,7 @@ enum DemoSeed {
         let profile = UserProfile()
         profile.displayName = "Alex Rivera"
         profile.handle = "alexrivera"   // display name and @handle are distinct (username vs name)
+        profile.publicRouteMaps = true  // DEBUG demo shares (fuzzed) routes so feed posts show the run's map
         profile.disciplines = ["running", "strength"]
         profile.goal = .buildMuscle
         profile.daysPerWeek = 4
@@ -30,6 +40,12 @@ enum DemoSeed {
         }
         context.insert(profile)
         PlanService.regenerate(for: profile, in: context)
+        // --plan-renewal: regenerate the rolling block starting ~6 weeks back so "today" lands at the
+        // end of the block, surfacing the Plan page's block-renewal checkpoint card for verification.
+        if ProcessInfo.processInfo.arguments.contains("--plan-renewal"),
+           let back = Calendar.current.date(byAdding: .weekOfYear, value: -6, to: Date()) {
+            PlanService.regenerate(for: profile, startDate: back, in: context)
+        }
         // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
         if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
             profile.plan?.name = "Austin Marathon"
@@ -355,6 +371,25 @@ enum DemoSeed {
         context.insert(w)
         try? context.save()
         ActiveWorkoutMarker.set(w.id)
+    }
+
+    /// The minimal state of a user who JUST finished onboarding: a profile they filled in + the plan the
+    /// engine generated from it, and nothing else. No workouts, PRs, notifications, or coaching history —
+    /// so every screen renders its true empty state. Mirrors what `OnboardingViewModel.finish()` produces
+    /// in release (profile + `PlanService.regenerate`), minus the AI memory notes/coach hello.
+    private static func seedEmptyProfile(_ context: ModelContext) {
+        guard ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? []).isEmpty else { return }
+        let profile = UserProfile()
+        profile.displayName = "Sam Rivera"      // a name the user typed — not fabricated history
+        profile.handle = "samrivera"
+        profile.disciplines = ["running"]
+        profile.goal = .generalFitness
+        profile.daysPerWeek = 4
+        profile.experience = ["running": "some"]
+        profile.weightUnit = WeightUnit.default().rawValue
+        context.insert(profile)
+        PlanService.regenerate(for: profile, in: context)   // prescriptions only, all dated from today
+        try? context.save()
     }
 
     private static func demoLifts() -> [Exercise] {

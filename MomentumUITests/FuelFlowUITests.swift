@@ -9,7 +9,7 @@ final class FuelFlowUITests: XCTestCase {
 
     func testLogEditAndReadoutLoop() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--fuel"]
+        app.launchArguments = ["--seed-demo", "--fuel", "--reset-fuel"]
         app.launch()
 
         // The deep link lands on the Fuel tab.
@@ -26,20 +26,26 @@ final class FuelFlowUITests: XCTestCase {
         field.typeText("big pasta dinner with chicken")
         app.buttons["Log meal"].tap()
 
-        // The row lands instantly (offline-first), then the estimate resolves — in the test rig the
-        // function isn't reachable, so the honest fallback must appear.
+        // The row lands instantly (offline-first), then the estimate resolves — to REAL numbers when
+        // the deployed function is reachable, or to the honest set-it-yourself fallback when not.
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "big pasta dinner")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 8), "Logged meal row didn't appear.")
         let fallback = app.staticTexts["Couldn't estimate — tap to set the numbers"]
-        XCTAssertTrue(fallback.waitForExistence(timeout: 20), "Pending estimate never resolved to the manual fallback.")
-        shot(app, "2-meal-logged-fallback")
+        let numbers = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "g carbs")).firstMatch
+        let resolved = NSPredicate { _, _ in fallback.exists || numbers.exists }
+        let wait = XCTNSPredicateExpectation(predicate: resolved, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [wait], timeout: 25), .completed,
+                       "Pending estimate never resolved (neither numbers nor fallback).")
+        shot(app, "2-meal-logged-resolved")
 
         // Set the numbers by hand — carbs first field in the edit sheet.
         row.tap()
         XCTAssertTrue(app.navigationBars["Edit meal"].waitForExistence(timeout: 8), "Edit sheet didn't open.")
         let carbsField = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "—")).element(boundBy: 0)
         XCTAssertTrue(carbsField.waitForExistence(timeout: 5), "Carbs field not found.")
-        carbsField.tap()
+        // A live estimate may have pre-filled the field; double-tap selects the existing number so
+        // typing REPLACES it (tap+delete is cursor-position roulette in XCUITest).
+        carbsField.doubleTap()
         carbsField.typeText("150")
         shot(app, "3-edit-sheet")
         app.buttons["Save"].tap()
