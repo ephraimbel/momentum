@@ -20,9 +20,9 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.69";
 
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
-const GEMINI_MODEL = Deno.env.get("MEAL_MODEL") ?? "gemini-2.5-flash";
+const GEMINI_MODEL = Deno.env.get("MEAL_MODEL") ?? "gemini-flash-latest";   // rolling alias — 2.5-flash is sunset for new keys
 const FALLBACK_MODEL = Deno.env.get("MEAL_FALLBACK_MODEL") ?? "claude-haiku-4-5-20251001";
-const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "300");
+const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "600");
 
 const SYSTEM = `You estimate the nutrition of ONE meal for an endurance athlete's fueling readout. \
 You get the athlete's own description ("chicken rice bowl", "2 gels + banana") and light context \
@@ -40,23 +40,8 @@ cutting, or medical advice. No em dashes.
 
 Output STRICT JSON matching the schema.`;
 
-// One logical schema, two dialects (Gemini's OpenAPI subset vs Anthropic's JSON Schema — and
-// Anthropic's structured-outputs validator rejects maxItems, so the prompt caps the tags list).
-const GEMINI_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    kcal: { type: "INTEGER" },
-    carbs_g: { type: "INTEGER" },
-    protein_g: { type: "INTEGER" },
-    fat_g: { type: "INTEGER" },
-    sodium_mg: { type: "INTEGER" },
-    fluids_ml: { type: "INTEGER" },
-    confidence: { type: "NUMBER" },
-    tags: { type: "ARRAY", items: { type: "STRING" } },
-    note: { type: "STRING" },
-  },
-  required: ["kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml", "confidence", "tags", "note"],
-};
+// Anthropic keeps strict structured outputs (its validator rejects maxItems — the prompt caps
+// the tags list). Gemini runs JSON-mode + prompt contract; see estimateWithGemini.
 const ANTHROPIC_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -84,15 +69,43 @@ async function estimateWithGemini(userJSON: string): Promise<unknown> {
       contents: [{ role: "user", parts: [{ text: userJSON }] }],
       generationConfig: {
         maxOutputTokens: MAX_TOKENS,
+        // A nutrition estimate needs no chain-of-thought — default thinking burned the whole
+        // output budget on gemini-3.5-flash and returned an empty payload. "low" is the minimum
+        // this generation accepts ("none" is not a valid ThinkingLevel).
+        thinkingConfig: { thinkingLevel: "low" },
+        // 3-era structured outputs: `responseJsonSchema` takes STANDARD JSON Schema (the old
+        // OpenAPI-dialect `responseSchema` is 2.5-only). JSON mode alone let 3.5-flash drop keys.
         responseMimeType: "application/json",
-        responseSchema: GEMINI_SCHEMA,
+        responseJsonSchema: {
+          type: "object",
+          properties: {
+            kcal: { type: "integer" },
+            carbs_g: { type: "integer" },
+            protein_g: { type: "integer" },
+            fat_g: { type: "integer" },
+            sodium_mg: { type: "integer" },
+            fluids_ml: { type: "integer" },
+            confidence: { type: "number" },
+            tags: { type: "array", items: { type: "string" } },
+            note: { type: "string" },
+          },
+          required: ["kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml", "confidence", "tags", "note"],
+        },
       },
     }),
   });
   if (!res.ok) throw new Error(`gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-  return JSON.parse(text);
+  // Newer Flash models think: part 0 can be a thought — the JSON rides in the non-thought text parts.
+  const parts = data?.candidates?.[0]?.content?.parts ?? [];
+  const text = parts.filter((p: { text?: string; thought?: boolean }) => p.text && !p.thought)
+    .map((p: { text?: string }) => p.text).join("") || "{}";
+  // Prose-tolerant: take the outermost {...} block, whatever the model wrapped it in.
+  const start = text.indexOf("{"), end = text.lastIndexOf("}");
+  const jsonText = start >= 0 && end > start ? text.slice(start, end + 1) : "{}";
+  const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  parsed.model = data?.modelVersion ?? GEMINI_MODEL;
+  return parsed;
 }
 
 async function estimateWithClaude(userJSON: string): Promise<unknown> {
@@ -118,14 +131,17 @@ Deno.serve(async (req) => {
     if (!text) return json({ error: "empty" }, 400);
     const userJSON = JSON.stringify({ meal: text, context: payload.context ?? {} });
 
+    // `provider` rides along for observability (the app's decoder ignores unknown fields).
     if (GEMINI_KEY) {
       try {
-        return json(await estimateWithGemini(userJSON), 200);
+        const out = await estimateWithGemini(userJSON) as Record<string, unknown>;
+        return json({ ...out, provider: "gemini" }, 200);
       } catch (_g) {
         // fall through to Claude — a transient Gemini error must never cost the athlete an estimate
       }
     }
-    return json(await estimateWithClaude(userJSON), 200);
+    const out = await estimateWithClaude(userJSON) as Record<string, unknown>;
+    return json({ ...out, provider: "claude" }, 200);
   } catch (_e) {
     // The app keeps the meal as "pending" with a manual-entry affordance — never block a log.
     return json({ error: "estimate_unavailable" }, 503);
