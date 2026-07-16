@@ -75,3 +75,57 @@ extension View {
         shadow(color: token.color, radius: token.radius, y: token.y)
     }
 }
+
+// MARK: - Health domain palette (Recovery Hub, docs/RECOVERY-HUB-PLAN.md §6)
+// Doctrine: ink draws, pastel breathes, iridescence is earned. Each health domain owns exactly
+// ONE pastel *wash* (backgrounds only: fills 10–14%, band ribbons 12%, ring tracks 20–25%) and
+// one *ink* (every mark: lines, dots, bars, ring fills). Structure, text, axes, numerals stay
+// monochrome — text never wears a data color. The two-step is load-bearing: raw pastels fail as
+// chart marks (contrast vs white as low as 1.09:1, gray under CVD); the ink set passes lightness,
+// chroma, CVD separation ≥ 16 ΔE, and ≥ 3:1 contrast on BOTH the light surface and dark #1E1D1B.
+extension Theme {
+    enum Health {
+        // MARK: Domain pairs — same hex in light and dark (inks are validated for both surfaces;
+        // washes warm via `darkWashOpacity` + glow, never by re-anodizing the base color).
+
+        /// Sleep — periwinkle.
+        static let sleepWash = Color(hex: "B8C0FF")
+        static let sleepInk  = Color(hex: "5B6BD6")
+
+        /// Recovery / readiness — mint.
+        static let recoveryWash = Color(hex: "C8FFE0")
+        static let recoveryInk  = Color(hex: "2E9E6B")
+
+        /// Strain / load — peach.
+        static let strainWash = Color(hex: "FFD8C2")
+        static let strainInk  = Color(hex: "C96F3B")
+
+        /// Vitals (HRV / resting HR / respiratory) — ice.
+        static let vitalsWash = Color(hex: "C2F0FF")
+        static let vitalsInk  = Color(hex: "1E90C0")
+
+        /// Temperature / illness-watch — lilac + words, never red.
+        static let temperatureWash = Color(hex: "E6C2FF")
+        static let temperatureInk  = Color(hex: "9A5BD6")
+
+        // MARK: Wash opacity — the standard fill level; call sites pick per §6's usage table
+        // (fills 10–14%, ribbons 12%, tracks 20–25%) with these as the default fill.
+
+        /// Standard wash fill opacity on the light surface.
+        static let washOpacity = 0.12
+        /// Standard wash fill opacity in dark mode (#1E1D1B / #2A2926): washes warm to 14–16%,
+        /// paired with a soft same-tint glow — `shadow(color: wash.opacity(0.20), radius: 12)` —
+        /// warm, never neon. Inks are unchanged between modes.
+        static let darkWashOpacity = 0.16
+
+        // MARK: Sleep-stage depth ramp — single-hue periwinkle, deepest stage darkest
+        // (SleepCard stage bar; Awake renders as `Theme.hairline`, not a ramp step).
+        static let sleepDeep = Color(hex: "5B6BD6")  // deep — the body shift
+        static let sleepCore = Color(hex: "8F9BFF")  // core — knits the cycles
+        static let sleepREM  = Color(hex: "B8C0FF")  // REM — the brain shift
+
+        // Never: pastel text, pastel chart lines, ink backgrounds, or two domain tints on one
+        // chart — BalanceCard's mint+peach is the sole sanctioned pairing (legend + shape-coded
+        // end markers). Multi-hue only where a recognized convention demands it (MetricColor.zones).
+    }
+}
