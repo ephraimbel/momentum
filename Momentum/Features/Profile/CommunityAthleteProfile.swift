@@ -51,6 +51,18 @@ extension CommunityAthlete {
         return days
     }
 
+    /// Per-active-day training minutes (seeded) so a visited grid shows the same stepped
+    /// light/mid/full intensity as the athlete's own heatmap — a flat single-level grid was a
+    /// generator tell. Mostly everyday sessions, with occasional big days hitting full intensity.
+    var consistencyMinutes: [Int: Double] {
+        var rng = SeededRNG(seed &+ 13)
+        var out: [Int: Double] = [:]
+        for day in consistencyDays.sorted() {   // sorted → deterministic rng-to-day mapping
+            out[day] = rng.int(0...6) == 0 ? rng.double(80, 150) : rng.double(22, 74)
+        }
+        return out
+    }
+
     /// Sample bests shaped by the primary sport — lifters get e1RMs, distance athletes a long run.
     var personalRecords: (prs: [(name: String, e1RMKg: Double)], longestRunM: Double, longestDurationS: Double) {
         var rng = SeededRNG(seed &+ 21)
