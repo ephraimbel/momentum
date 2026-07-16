@@ -64,7 +64,7 @@ struct FuelGoalsSheet: View {
 
     private var goalPicker: some View {
         VStack(spacing: 0) {
-            goalRow(.fuel, "Fuel for training", "Floors that fund the work — the default.")
+            goalRow(.fuel, fuelForTitle, fuelForLine)
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
             goalRow(.leaner, "Leaner", "A gentle deficit that never raids training. Protein rises to protect muscle.")
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
@@ -74,6 +74,32 @@ struct FuelGoalsSheet: View {
         }
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+    }
+
+    /// The default option wears the plan the athlete actually made: "Fuel for the Austin
+    /// Marathon" (named plan) → "Fuel for your half marathon" (dated race) → "Fuel for training".
+    private var fuelForTitle: String {
+        if let name = profiles.first?.plan?.name, !name.isEmpty {
+            let article = name.lowercased().hasPrefix("the ") ? "" : "the "
+            return "Fuel for \(article)\(name)"
+        }
+        if let m = profiles.first?.raceDistanceM, m > 0 {
+            let label = RaceDistance.nearest(toMeters: m).label
+            // "Half marathon" reads as "your half marathon"; digit labels (5K, 10K) keep their case.
+            let spoken = label.contains(where: \.isNumber) ? label : label.lowercased()
+            return "Fuel for your \(spoken)"
+        }
+        return "Fuel for training"
+    }
+
+    private var fuelForLine: String {
+        if let race = profiles.first?.raceDate {
+            let weeks = max(0, Calendar.current.dateComponents([.weekOfYear], from: Date(), to: race).weekOfYear ?? 0)
+            if weeks > 0 {
+                return "Floors that fund the work — \(weeks) week\(weeks == 1 ? "" : "s") out. The default."
+            }
+        }
+        return "Floors that fund the work — the default."
     }
 
     private func goalRow(_ k: FuelReadiness.GoalInput.Kind, _ title: String, _ line: String) -> some View {

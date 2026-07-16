@@ -60,6 +60,13 @@ enum DemoSeed {
         if ProcessInfo.processInfo.arguments.contains("--seed-fuel-history") {
             seedFuelHistory(context)
         }
+        // --seed-plan-name on an ALREADY-seeded container: name the existing plan too, so UI
+        // tests get the named-plan experience regardless of which test seeded the store first.
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-name"),
+           let plan = try? context.fetch(FetchDescriptor<TrainingPlan>()).first, plan.name.isEmpty {
+            plan.name = "Austin Marathon"
+            try? context.save()
+        }
         seedInterruptedWorkoutIfRequested(context)
         // --seed-empty: a genuine JUST-ONBOARDED user — a profile + a generated plan and NOTHING else
         // (zero workouts, PRs, notifications, coaching history), so the true new-user empty slate can be

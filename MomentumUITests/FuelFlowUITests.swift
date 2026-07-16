@@ -129,12 +129,15 @@ final class FuelFlowUITests: XCTestCase {
     /// flips from the classic floor ("+ kcal") to a goal ("kcal today").
     func testFuelingGoalsAdjuster() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--fuel", "--reset-fuel"]
+        app.launchArguments = ["--seed-demo", "--fuel", "--reset-fuel", "--seed-plan-name"]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
 
         app.buttons["Fueling goals"].tap()
         XCTAssertTrue(app.navigationBars["Fueling goals"].waitForExistence(timeout: 6), "Adjuster didn't open.")
+        // The default option wears the athlete's own plan by name.
+        XCTAssertTrue(app.staticTexts["Fuel for the Austin Marathon"].waitForExistence(timeout: 4),
+                      "Goal card didn't pick up the plan name.")
         shot(app, "6-goals-sheet")
         app.buttons["goal-leaner"].firstMatch.tap()
         shot(app, "6a-goals-leaner")

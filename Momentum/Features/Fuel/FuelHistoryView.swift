@@ -3,7 +3,8 @@ import SwiftData
 
 /// The look-back journal (top-right calendar on Fuel), built for months of data:
 /// **search** (always visible — meal words, item names, even the coach note) over a year's window,
-/// **sticky month headers** with a logged-days count for orientation, then each day with its Σ line
+/// **month headers** (static — they scroll with their days; user call 2026-07-16) with a
+/// logged-days count for orientation, then each day with its Σ line
 /// and meals in the same row language as the main page. Read-first, but tapping a meal opens the
 /// same portion editor (fixing history is legitimate; totals update live). The iridescent dot
 /// beside a date marks a day that met the easy carb floor — earned, as always.
@@ -18,7 +19,7 @@ struct FuelHistoryView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                 if months.isEmpty {
                     emptyState
                         .reveal(0.05)
@@ -85,7 +86,7 @@ struct FuelHistoryView: View {
             .sorted { $0.month > $1.month }
     }
 
-    // MARK: Month header — the orientation rail (sticks while its days scroll)
+    // MARK: Month header — the orientation rail (static: it scrolls with its days)
 
     private func monthHeader(_ entry: (month: Date, days: [(day: Date, rows: [Meal])])) -> some View {
         HStack(alignment: .firstTextBaseline) {
@@ -99,7 +100,6 @@ struct FuelHistoryView: View {
         }
         .padding(.vertical, Theme.Space.sm)
         .frame(maxWidth: .infinity)
-        .background(Theme.background.opacity(0.97))
     }
 
     /// "JULY" for this year, "JULY 2025" once the journal crosses a year line.
