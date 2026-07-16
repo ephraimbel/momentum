@@ -77,6 +77,15 @@ final class FuelFlowUITests: XCTestCase {
             .firstMatch.waitForExistence(timeout: 5), "Meal row numbers line didn't update.")
         shot(app, "4-readout-updated")
 
+        // One-tap repeat: the logged meal is now a "usual" chip; tapping re-logs it instantly
+        // (numbers copied, no estimate round-trip) and the day's carbs double.
+        let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Log again:")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 5), "Usuals chip didn't appear.")
+        chip.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "≈300 of"))
+            .firstMatch.waitForExistence(timeout: 6), "Repeat log didn't roll the strip to ≈300.")
+        shot(app, "4a-usual-repeated")
+
         // History: the top-right calendar opens the day-by-day journal with today's meal in it,
         // organized under month headers with an always-visible search field.
         app.buttons["Meal history"].tap()

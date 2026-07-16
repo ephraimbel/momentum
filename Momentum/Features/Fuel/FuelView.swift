@@ -55,7 +55,8 @@ struct FuelView: View {
                     readoutStrip.reveal(0.05)
                     ringsRow.reveal(0.10)
                     composer.reveal(0.16)
-                    todaysMeals.reveal(0.22)
+                    usualsRow.reveal(0.20)
+                    todaysMeals.reveal(0.24)
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
@@ -397,6 +398,87 @@ struct FuelView: View {
         }
         .padding(.vertical, Theme.Space.xs)
         .animation(Motion.standard, value: r)
+    }
+
+    // MARK: Your usuals — one-tap repeat (the numbers are already known; nothing waits)
+
+    /// Most-repeated meals with numbers ready to reuse, recency-breaking ties — an established
+    /// athlete sees their true usuals, a new one sees recents. Same rule, no cliff.
+    private var usuals: [Meal] {
+        var byKey: [String: (count: Int, latest: Meal)] = [:]
+        for meal in meals.prefix(200) where meal.carbsG != nil {
+            let key = meal.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
+            if var entry = byKey[key] {
+                entry.count += 1
+                if meal.eatenAt > entry.latest.eatenAt { entry.latest = meal }
+                byKey[key] = entry
+            } else {
+                byKey[key] = (1, meal)
+            }
+        }
+        return byKey.values
+            .sorted { ($0.count, $0.latest.eatenAt) > ($1.count, $1.latest.eatenAt) }
+            .prefix(5)
+            .map(\.latest)
+    }
+
+    @ViewBuilder
+    private var usualsRow: some View {
+        let list = usuals
+        if !list.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Theme.Space.xs) {
+                    ForEach(list) { meal in
+                        Button {
+                            repeatMeal(meal)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Theme.inkTertiary)
+                                Text(meal.journalTitle)
+                                    .font(.rounded(Theme.FontSize.label, weight: .semibold))
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, Theme.Space.sm + 2)
+                            .padding(.vertical, 7)
+                            .frame(maxWidth: 210)
+                            .background(Capsule().fill(Theme.surface))
+                            .overlay(Capsule().stroke(Theme.hairline))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Log again: \(meal.journalTitle)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// One tap re-logs a usual: numbers and items copy over, the clock is now, and the old note
+    /// stays behind (it narrated a different day's session). No AI round-trip, no waiting.
+    private func repeatMeal(_ source: Meal) {
+        let meal = Meal()
+        meal.text = source.text
+        meal.itemsData = source.itemsData
+        meal.kcal = source.kcal
+        meal.carbsG = source.carbsG
+        meal.proteinG = source.proteinG
+        meal.fatG = source.fatG
+        meal.sodiumMg = source.sodiumMg
+        meal.fluidsMl = source.fluidsMl
+        meal.potassiumMg = source.potassiumMg
+        meal.magnesiumMg = source.magnesiumMg
+        meal.ironMg = source.ironMg
+        meal.calciumMg = source.calciumMg
+        meal.source = source.source
+        meal.confidence = source.confidence
+        withAnimation(Motion.standard) {
+            context.insert(meal)
+            try? context.save()
+        }
+        Haptics.success()
     }
 
     // MARK: Today's meals

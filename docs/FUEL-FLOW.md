@@ -86,6 +86,12 @@ baseline + the day's real burn, protein 1.4 g/kg, sodium baseline + sweat add-on
 - Motion: transforms only, reveal-cascade entry, reduce-motion honored everywhere.
 - No calories-left, no deficits, no diet or weight language, ever.
 
+**1.5 · Repeat (the usuals)** — under the composer, up to five chips of the athlete's
+most-repeated meals (recency breaks ties; new users see recents — same rule, no cliff). One tap
+re-logs it instantly: numbers and items copy over, the clock is now, the stale session note stays
+behind. No AI round-trip, no waiting — the daily-logger's path is one tap.
+
 ## Later (explicitly deferred)
-Quick-repeat ("your usual breakfast") · add-an-item inside an existing meal · widgets/streak
-flair · fueling in MorningReadiness. *(Day-history browsing shipped 2026-07-16 — `FuelHistoryView`.)*
+Add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness ·
+fueling trends in Progress · refuel push notification · pre-race dinner reminder.
+*(Day-history browsing + quick-repeat shipped 2026-07-16.)*
