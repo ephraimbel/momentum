@@ -527,13 +527,11 @@ final class CoachChatViewModel {
         // before tomorrow?" gets answered from the athlete's actual journal.
         let mealRows = (try? context.fetch(FetchDescriptor<Meal>(
             sortBy: [SortDescriptor(\.eatenAt, order: .reverse)]))) ?? []
-        let waterRows = (try? context.fetch(FetchDescriptor<WaterEntry>())) ?? []
         let fuelingLine = FuelReadoutBuilder.coachLine(
             FuelReadoutBuilder.readout(meals: mealRows,
                                        plan: plan,
                                        workouts: workouts.sorted { $0.startedAt > $1.startedAt },
                                        profile: profile,
-                                       water: waterRows,
                                        now: now))
         let race: CoachResponder.RaceInfo? = profile?.raceDate.map {
             CoachResponder.RaceInfo(

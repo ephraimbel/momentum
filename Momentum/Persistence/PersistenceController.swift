@@ -22,7 +22,7 @@ final class PersistenceController {
         CoachingEvent.self,
         AppNotification.self,
         DailyCheckin.self,
-        Meal.self, WaterEntry.self,
+        Meal.self,
     ]
 
     private init(inMemory: Bool = false) {

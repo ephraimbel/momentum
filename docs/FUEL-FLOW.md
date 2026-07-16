@@ -39,13 +39,6 @@ nagging). **Tap the strip → the full story** (`FuelReadoutSheet`, medium deten
 plain-words headline, display-size carb number, full bar, floor cells, and what session the
 target is keyed to. One engine, two zoom levels.
 
-**0.5 · Hydrate** — the water line sits under the rings: an aqua droplet, "≈500 of 3,072 ml",
-and two quick-add chips (+250 / +500). One tap logs a pour (`WaterEntry` — deliberately not a
-Meal, so water never clutters the journal); drinks inside meals still count via their fluids.
-The floor is gentle (33 ml/kg + 500 ml per training hour — in-session the rule stays "drink to
-thirst"), the bar fills aqua and goes iridescent at the floor, the droplet nods on every add,
-and long-press undoes the last pour.
-
 **1 · Capture** — one composer, two ways in, zero friction:
 - **Type** it like a note: "2 eggs, toast with butter, coffee".
 - **Speak** it: the mic button live-transcribes (on-device `SFSpeechRecognizer`) into the same

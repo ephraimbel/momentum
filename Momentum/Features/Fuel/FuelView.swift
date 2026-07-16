@@ -29,7 +29,6 @@ struct FuelView: View {
     @Query(sort: \Meal.eatenAt, order: .reverse) private var meals: [Meal]
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
-    @Query(sort: \WaterEntry.loggedAt) private var waterEntries: [WaterEntry]
 
     @State private var draft = ""
     @State private var estimating: Set<UUID> = []
@@ -56,10 +55,9 @@ struct FuelView: View {
                     kcalHeadline.reveal(0)
                     readoutStrip.reveal(0.05)
                     ringsRow.reveal(0.10)
-                    hydrationRow.reveal(0.14)
-                    composer.reveal(0.18)
-                    usualsRow.reveal(0.22)
-                    todaysMeals.reveal(0.26)
+                    composer.reveal(0.16)
+                    usualsRow.reveal(0.20)
+                    todaysMeals.reveal(0.24)
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
@@ -130,8 +128,7 @@ struct FuelView: View {
 
     private var readout: FuelReadiness.DayReadout {
         FuelReadoutBuilder.readout(meals: Array(meals), plan: profiles.first?.plan,
-                                   workouts: Array(workouts), profile: profiles.first,
-                                   water: Array(waterEntries))
+                                   workouts: Array(workouts), profile: profiles.first)
     }
 
     // MARK: Readout strip — the judgment at a glance, deliberately quiet; tap for the full story
@@ -232,88 +229,6 @@ struct FuelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.purple.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.purple.opacity(0.25)))
-    }
-
-    // MARK: Hydration — the water line (one glance, two taps; drinks in meals count too)
-
-    private var todaysWater: [WaterEntry] {
-        waterEntries.filter { Calendar.current.isDateInToday($0.loggedAt) }
-    }
-
-    private var hydrationRow: some View {
-        let r = readout
-        let fueled = r.fluidsFloorMl > 0 && r.fluidsMl >= r.fluidsFloorMl
-        let fraction = min(1, CGFloat(r.fluidsMl) / CGFloat(max(1, r.fluidsFloorMl)))
-        return VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "drop.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.Fuel.water))
-                    .symbolEffect(.bounce, value: reduceMotion ? 0 : r.fluidsMl)
-                Text("≈\(r.fluidsMl.formatted())")
-                    .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
-                    .foregroundStyle(Theme.ink)
-                    .contentTransition(.numericText())
-                Text("of \(r.fluidsFloorMl.formatted()) ml")
-                    .font(.rounded(Theme.FontSize.label, weight: .semibold))
-                    .foregroundStyle(Theme.inkTertiary)
-                Spacer(minLength: 0)
-                waterChip(250)
-                waterChip(500)
-            }
-            // The same earned language as every gauge: aqua while filling, iridescent at the floor.
-            Capsule().fill(Theme.surface)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.Fuel.water))
-                        .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
-                        .opacity(r.fluidsMl > 0 ? 1 : 0)
-                        .shadow(color: Theme.Fuel.water.opacity(0.4), radius: 3)
-                }
-                .frame(height: 4)
-                .clipShape(Capsule())
-                .animation(Motion.lively, value: fraction)
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, Theme.Space.sm + 2)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-        .animation(Motion.standard, value: r.fluidsMl)
-        .contextMenu {
-            if let last = todaysWater.last {
-                Button(role: .destructive) {
-                    withAnimation(Motion.standard) {
-                        context.delete(last)
-                        try? context.save()
-                    }
-                    Haptics.medium()
-                } label: { Label("Undo last +\(last.ml) ml", systemImage: "arrow.uturn.backward") }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Hydration")
-        .accessibilityValue("about \(r.fluidsMl) of \(r.fluidsFloorMl) milliliters")
-    }
-
-    /// One pour, one tap — the droplet nods, the numeral rolls, the bar grows by transform.
-    private func waterChip(_ ml: Int) -> some View {
-        Button {
-            withAnimation(Motion.lively) {
-                context.insert(WaterEntry(ml: ml))
-                try? context.save()
-            }
-            Haptics.light()
-        } label: {
-            Text("+\(ml)")
-                .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
-                .foregroundStyle(Theme.Fuel.water)
-                .padding(.horizontal, Theme.Space.sm)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Theme.Fuel.water.opacity(0.10)))
-                .overlay(Capsule().stroke(Theme.Fuel.water.opacity(0.25)))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Add \(ml) milliliters of water")
     }
 
     // MARK: Composer — jot it like a note, or speak it (Amy-style); logging never blocks
@@ -704,7 +619,6 @@ private struct FuelReadoutSheet: View {
                         floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
                         floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
-                        floorCell("≈\(r.fluidsMl.formatted())", "of \(r.fluidsFloorMl.formatted())+ ml fluids")
                     }
                     .reveal(0.14)
                     if let driving = r.drivingSession {

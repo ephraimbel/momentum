@@ -53,7 +53,6 @@ enum DemoSeed {
         // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
         if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
             for meal in (try? context.fetch(FetchDescriptor<Meal>())) ?? [] { context.delete(meal) }
-            for pour in (try? context.fetch(FetchDescriptor<WaterEntry>())) ?? [] { context.delete(pour) }
             try? context.save()
         }
         // --seed-fuel-history: months of plausible journal days (deterministic) so the History

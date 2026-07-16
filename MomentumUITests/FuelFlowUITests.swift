@@ -86,13 +86,6 @@ final class FuelFlowUITests: XCTestCase {
             .firstMatch.waitForExistence(timeout: 6), "Repeat log didn't roll the strip to ≈300.")
         shot(app, "4a-usual-repeated")
 
-        // Hydration: two quick taps bank half a liter — the water line rolls to ≈500.
-        app.buttons["Add 250 milliliters of water"].tap()
-        app.buttons["Add 250 milliliters of water"].tap()
-        XCTAssertTrue(app.staticTexts["≈500"].waitForExistence(timeout: 5),
-                      "Water line didn't roll to ≈500.")
-        shot(app, "4b-hydration")
-
         // History: the top-right calendar opens the day-by-day journal with today's meal in it,
         // organized under month headers with an always-visible search field.
         app.buttons["Meal history"].tap()

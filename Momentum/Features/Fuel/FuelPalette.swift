@@ -12,7 +12,6 @@ extension Theme {
         static let protein = Color(hex: "2E8CE8")    // bright azure
         static let fat = Color(hex: "C96F3B")        // peach
         static let sodium = Color(hex: "9A5BD6")     // lilac
-        static let water = Color(hex: "1FB4D8")      // aqua — the hydration line
         // Micros are collected but NOT displayed (user call 2026-07-16): iron/calcium/K/Mg are
         // slow-moving health markers — the future surface is a monthly coach insight, not daily
         // rings built on the AI's roughest estimates. Inks reserved for that day:
