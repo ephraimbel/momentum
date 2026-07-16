@@ -23,6 +23,7 @@ struct FuelTipsTests {
             proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
             status: status, drivingSession: driving,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
+            kcalIsGoal: false, goalNote: nil,
             headline: "", refuelDue: refuelDue)
     }
 

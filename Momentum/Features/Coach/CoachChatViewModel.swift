@@ -531,7 +531,7 @@ final class CoachChatViewModel {
             FuelReadoutBuilder.readout(meals: mealRows,
                                        plan: plan,
                                        workouts: workouts.sorted { $0.startedAt > $1.startedAt },
-                                       bodyMassKg: profile?.bodyMassKg,
+                                       profile: profile,
                                        now: now))
         let race: CoachResponder.RaceInfo? = profile?.raceDate.map {
             CoachResponder.RaceInfo(

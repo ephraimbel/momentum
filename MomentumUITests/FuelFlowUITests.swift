@@ -84,6 +84,27 @@ final class FuelFlowUITests: XCTestCase {
         shot(app, "5-history")
     }
 
+    /// The fueling adjuster: open from the top-left, choose Leaner, save — the energy headline
+    /// flips from the classic floor ("+ kcal") to a goal ("kcal today").
+    func testFuelingGoalsAdjuster() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--fuel", "--reset-fuel"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
+
+        app.buttons["Fueling goals"].tap()
+        XCTAssertTrue(app.navigationBars["Fueling goals"].waitForExistence(timeout: 6), "Adjuster didn't open.")
+        shot(app, "6-goals-sheet")
+        app.buttons["goal-leaner"].firstMatch.tap()
+        shot(app, "6a-goals-leaner")
+        app.buttons["Save"].tap()
+
+        // The headline now reads a goal, not a floor.
+        let goalLine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "kcal today")).firstMatch
+        XCTAssertTrue(goalLine.waitForExistence(timeout: 6), "Energy headline didn't switch to the goal.")
+        shot(app, "6b-goal-live")
+    }
+
     private func shot(_ app: XCUIApplication, _ name: String) {
         let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         a.name = name

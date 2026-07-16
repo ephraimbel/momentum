@@ -109,4 +109,50 @@ struct FuelReadinessTests {
         #expect(r.carbsFloorG == 210)
         #expect(r.kcalFloor == 2100)
     }
+
+    // MARK: The fueling adjuster (goal math — Mifflin-St Jeor × 1.35 daily base + real burn)
+
+    /// 70 kg / 172 cm / male, `now` is 2025 → age 35 → BMR 1605, maintenance ≈ 2167.
+    private func goal(_ kind: FuelReadiness.GoalInput.Kind,
+                      customKcal: Int? = nil, customCarbs: Int? = nil) -> FuelReadiness.GoalInput {
+        .init(kind: kind, heightCm: 172,
+              birthYear: Calendar.current.component(.year, from: now) - 35, isMale: true,
+              customKcal: customKcal, customCarbsG: customCarbs)
+    }
+
+    @Test func leanerRunsAGentleDeficitWithHigherProtein() {
+        let r = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [],
+                                      bodyMassKg: 70, goal: goal(.leaner), now: now)
+        #expect(r.kcalFloor == 1767)              // max(2167 − 400, 1605 × 1.1) — the guard binds
+        #expect(r.kcalIsGoal)
+        #expect(r.proteinFloorG == 133)           // 1.9 g/kg protects muscle in a deficit
+        #expect(r.goalNote == nil)
+    }
+
+    @Test func deficitPausesWhenTheTrainingTalks() {
+        let race = FuelReadiness.SessionInput(date: now.addingTimeInterval(86_400),
+                                              durationS: 3 * 3600, isRace: true)
+        let r = FuelReadiness.readout(meals: [], sessions: [race], workoutsToday: [],
+                                      bodyMassKg: 70, goal: goal(.leaner), now: now)
+        #expect(r.kcalFloor == 2167)              // full maintenance — no deficit on race eve
+        #expect(r.goalNote != nil)
+        #expect(r.carbsFloorG == 560)             // the classic load is untouched
+    }
+
+    @Test func buildAddsASmallSurplusAndTrainingBurnStillAdds() {
+        let ride = FuelReadiness.WorkoutInput(endedAt: now.addingTimeInterval(-3 * 3600),
+                                              durationS: 3600, kcal: 500)
+        let r = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [ride],
+                                      bodyMassKg: 70, goal: goal(.build), now: now)
+        #expect(r.kcalFloor == 2167 + 300 + 500)  // maintenance + surplus + the day's real burn
+    }
+
+    @Test func customNumbersOutrankTheMath() {
+        let r = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [],
+                                      bodyMassKg: 70,
+                                      goal: goal(.custom, customKcal: 2800, customCarbs: 400), now: now)
+        #expect(r.kcalFloor == 2800)
+        #expect(r.carbsFloorG == 400)             // the athlete's carbs replace the session key
+        #expect(r.carbsHighG == 400 + 140)        // band width (2 g/kg) still shows above it
+    }
 }

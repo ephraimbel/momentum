@@ -9,7 +9,9 @@ enum FuelReadoutBuilder {
     static func readout(meals: [Meal],
                         plan: TrainingPlan?,
                         workouts: [Workout],
-                        bodyMassKg: Double?,
+                        profile: UserProfile?,
+                        goalOverride: FuelReadiness.GoalInput? = nil,
+                        massOverride: Double? = nil,
                         now: Date = Date()) -> FuelReadiness.DayReadout {
         let cal = Calendar.current
         let mealInputs = meals.prefix(80).map {
@@ -30,7 +32,23 @@ enum FuelReadoutBuilder {
             .map { FuelReadiness.WorkoutInput(endedAt: $0.startedAt.addingTimeInterval($0.durationS),
                                               durationS: $0.durationS, kcal: $0.calories.map(Int.init)) }
         return FuelReadiness.readout(meals: Array(mealInputs), sessions: sessions,
-                                     workoutsToday: today, bodyMassKg: bodyMassKg, now: now)
+                                     workoutsToday: today,
+                                     bodyMassKg: massOverride ?? profile?.bodyMassKg,
+                                     goal: goalOverride ?? goalInput(profile), now: now)
+    }
+
+    /// The saved adjuster choice, engine-shaped. Missing/unknown → the classic floors.
+    static func goalInput(_ p: UserProfile?) -> FuelReadiness.GoalInput {
+        guard let p else { return .init() }
+        return .init(kind: p.fuelGoalKind.flatMap { FuelReadiness.GoalInput.Kind(rawValue: $0) } ?? .fuel,
+                     heightCm: p.heightCm,
+                     birthYear: p.birthYear,
+                     isMale: p.sex == "male" ? true : (p.sex == "female" ? false : nil),
+                     customKcal: p.fuelCustomKcal,
+                     customProteinG: p.fuelCustomProteinG,
+                     customCarbsG: p.fuelCustomCarbsG,
+                     customFatG: p.fuelCustomFatG,
+                     customSodiumMg: p.fuelCustomSodiumMg)
     }
 
     /// One compact line for the coach's context ("how am I fueling?" gets a personal answer).

@@ -42,6 +42,24 @@ enum FuelReadiness {
         let kcal: Int?
     }
 
+    /// How the daily energy target is set (the fueling adjuster). Default `.fuel` reproduces the
+    /// classic floors exactly; the other kinds move the ENERGY number only — carbs stay keyed to
+    /// training (that's the moat), protein rises to protect muscle in a deficit, and the RED-S
+    /// guard means a deficit never dips below basal headroom and always funds the day's real burn.
+    struct GoalInput: Sendable {
+        enum Kind: String, Sendable, CaseIterable { case fuel, leaner, build, custom }
+        var kind: Kind = .fuel
+        var heightCm: Double? = nil
+        var birthYear: Int? = nil
+        /// nil = unknown/unspecified → the sex-neutral BMR constant.
+        var isMale: Bool? = nil
+        var customKcal: Int? = nil
+        var customProteinG: Int? = nil
+        var customCarbsG: Int? = nil
+        var customFatG: Int? = nil
+        var customSodiumMg: Int? = nil
+    }
+
     // MARK: Output
 
     enum Status: String, Sendable { case fueled, onTrack, behind, empty }
@@ -70,6 +88,11 @@ enum FuelReadiness {
         /// (front-loading matters). Both false on an easy horizon — `FuelTips` keys off these.
         let raceEve: Bool
         let drivingIsToday: Bool
+        /// The energy number is a chosen GOAL (leaner/build/custom), not the classic floor —
+        /// display drops the "+" and reads "today's goal".
+        let kcalIsGoal: Bool
+        /// One honest line when the goal steps aside ("Deficit paused — big session ahead.").
+        let goalNote: String?
         /// Plain-words one-liner for the page header.
         let headline: String
         /// A completed ≥1h session ended inside the refuel window with no meal since.
@@ -86,6 +109,16 @@ enum FuelReadiness {
     static let sodiumBaselineMg = 1500
     static let sodiumPerLongHourMg = 700
     static let fallbackMassKg = 70.0
+    // Goal math (Mifflin-St Jeor BMR × a daily-life base; the day's REAL training burn adds on top,
+    // so no survey "activity level" ever double-counts a workout).
+    static let activityBase = 1.35
+    static let leanerDeficitKcal = 400       // gentle: ~0.25-0.4 kg/week, training protected
+    static let buildSurplusKcal = 300
+    static let leanerBMRGuard = 1.1          // a deficit never dips below 1.1 × basal (+ burn)
+    static let proteinPerKgLeaner = 1.9      // protect muscle inside a deficit
+    static let proteinPerKgBuild = 1.6
+    static let fallbackHeightCm = 172.0
+    static let fallbackAge = 35
     /// Carb g/kg floors by the driving session's demand tier.
     static let carbsPerKgEasy = 3.0        // no meaningful session in the horizon
     static let carbsPerKgModerate = 5.0    // ≥1 h session today/tomorrow
@@ -104,6 +137,7 @@ enum FuelReadiness {
                         sessions: [SessionInput],
                         workoutsToday: [WorkoutInput],
                         bodyMassKg: Double?,
+                        goal: GoalInput = GoalInput(),
                         now: Date,
                         calendar: Calendar = .current) -> DayReadout {
         let kg = bodyMassKg ?? fallbackMassKg
@@ -139,18 +173,59 @@ enum FuelReadiness {
         }
 
         let trainedKcal = workoutsToday.compactMap(\.kcal).reduce(0, +)
-        let kcalFloor = Int((baselineKcalPerKg * kg).rounded()) + trainedKcal
-        let carbsFloor = Int((carbsPerKg * kg).rounded())
-        let carbsHigh = Int(((carbsPerKg + carbsBandWidthPerKg) * kg).rounded())
-        let proteinFloor = Int((proteinPerKgFloor * kg).rounded())
-        let fatFloor = Int((fatPerKgFloor * kg).rounded())
+        // Energy: the classic floor, or the adjuster's goal. A deficit steps aside when the
+        // training does the talking (race eve / a long driver) — fuel the work first.
+        let age = goal.birthYear.map { max(14, calendar.component(.year, from: now) - $0) } ?? fallbackAge
+        let basal = bmr(kg: kg, heightCm: goal.heightCm ?? fallbackHeightCm, age: age, isMale: goal.isMale)
+        let maintenance = basal * activityBase
+        let bigDay = raceEve || carbsPerKg >= carbsPerKgLong
+        var kcalIsGoal = true
+        var goalNote: String?
+        let kcalBase: Double
+        switch goal.kind {
+        case .fuel:
+            kcalIsGoal = false
+            kcalBase = baselineKcalPerKg * kg
+        case .leaner:
+            if bigDay {
+                kcalBase = maintenance
+                goalNote = "Deficit paused — big session ahead. Fuel the work first."
+            } else {
+                kcalBase = max(maintenance - Double(leanerDeficitKcal), basal * leanerBMRGuard)
+            }
+        case .build:
+            kcalBase = maintenance + Double(buildSurplusKcal)
+        case .custom:
+            kcalBase = Double(goal.customKcal ?? Int(maintenance.rounded()))
+        }
+        let kcalFloor = Int(kcalBase.rounded()) + trainedKcal
+
+        var carbsFloor = Int((carbsPerKg * kg).rounded())
+        var carbsHigh = Int(((carbsPerKg + carbsBandWidthPerKg) * kg).rounded())
+        if goal.kind == .custom, let c = goal.customCarbsG {
+            carbsFloor = c
+            carbsHigh = c + Int((carbsBandWidthPerKg * kg).rounded())
+        }
+        let proteinPerKg: Double = switch goal.kind {
+        case .leaner: proteinPerKgLeaner
+        case .build: proteinPerKgBuild
+        default: proteinPerKgFloor
+        }
+        let proteinFloor = goal.kind == .custom
+            ? (goal.customProteinG ?? Int((proteinPerKgFloor * kg).rounded()))
+            : Int((proteinPerKg * kg).rounded())
+        let fatFloor = goal.kind == .custom
+            ? (goal.customFatG ?? Int((fatPerKgFloor * kg).rounded()))
+            : Int((fatPerKgFloor * kg).rounded())
         let doneS: Double = workoutsToday.map(\.durationS).reduce(0, +)
         let plannedTodayS: Double = horizon
             .filter { calendar.isDate($0.date, inSameDayAs: now) }
             .map(\.durationS).reduce(0, +)
         let longHours: Double = (doneS + plannedTodayS).clamped(to: 0...(12 * 3600)) / 3600
         let sweatMg: Double = Double(sodiumPerLongHourMg) * max(0, longHours - 1)
-        let sodiumFloor = sodiumBaselineMg + Int(sweatMg.rounded())
+        let sodiumFloor = goal.kind == .custom
+            ? (goal.customSodiumMg ?? sodiumBaselineMg + Int(sweatMg.rounded()))
+            : sodiumBaselineMg + Int(sweatMg.rounded())
 
         // Status paces the carb floor across the waking day, so 09:00 isn't judged against dinner.
         let status: Status
@@ -180,6 +255,7 @@ enum FuelReadiness {
             proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
             status: status, drivingSession: drivingLabel,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
+            kcalIsGoal: kcalIsGoal, goalNote: goalNote,
             headline: headline(status: status, carbs: carbs, floor: carbsFloor,
                                driving: drivingLabel, refuelDue: refuelDue),
             refuelDue: refuelDue)
@@ -196,6 +272,13 @@ enum FuelReadiness {
         case .onTrack: return "On track — ≈\(carbs) g of \(floor) g \(target)."
         case .fueled: return "Fueled — ≈\(carbs) g of carbs banked \(target)."
         }
+    }
+
+    /// Mifflin-St Jeor — the standard resting-energy estimate. Unknown sex uses the midpoint
+    /// constant; every output downstream reads "≈" anyway.
+    static func bmr(kg: Double, heightCm: Double, age: Int, isMale: Bool?) -> Double {
+        let sexTerm: Double = isMale == true ? 5 : (isMale == false ? -161 : -78)
+        return 10 * kg + 6.25 * heightCm - 5 * Double(age) + sexTerm
     }
 
     private static func durationLabel(_ s: Double) -> String {

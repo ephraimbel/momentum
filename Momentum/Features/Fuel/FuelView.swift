@@ -34,6 +34,7 @@ struct FuelView: View {
     @State private var estimating: Set<UUID> = []
     @State private var editing: Meal?
     @State private var showingReadout = false
+    @State private var showingGoals = false
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
     @FocusState private var composing: Bool
@@ -63,6 +64,15 @@ struct FuelView: View {
             .navigationTitle("Fuel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // The fueling adjuster — the plan adjuster's sibling (goals, body inputs, custom).
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showingGoals = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                    }
+                    .accessibilityLabel("Fueling goals")
+                }
                 // The page title wears the brand: lowercase Space Grotesk, the wordmark's voice.
                 ToolbarItem(placement: .principal) {
                     Text("fuel")
@@ -86,6 +96,7 @@ struct FuelView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $editing) { MealDetailSheet(meal: $0) }
+            .sheet(isPresented: $showingGoals) { FuelGoalsSheet() }
             // Dictation streams into the composer as it's recognized — voice is input sugar;
             // everything downstream of the field is identical to typing.
             .onChange(of: voice.transcript) { _, spoken in
@@ -111,7 +122,7 @@ struct FuelView: View {
 
     private var readout: FuelReadiness.DayReadout {
         FuelReadoutBuilder.readout(meals: Array(meals), plan: profiles.first?.plan,
-                                   workouts: Array(workouts), bodyMassKg: profiles.first?.bodyMassKg)
+                                   workouts: Array(workouts), profile: profiles.first)
     }
 
     // MARK: Readout strip — the judgment at a glance, deliberately quiet; tap for the full story
@@ -348,8 +359,13 @@ struct FuelView: View {
                 Text("≈\(r.kcal.formatted())")
                     .font(.display(26, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                     .contentTransition(.numericText())
-                Text("of \(r.kcalFloor.formatted())+ kcal")
+                Text(r.kcalIsGoal ? "of \(r.kcalFloor.formatted()) kcal today" : "of \(r.kcalFloor.formatted())+ kcal")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            if let note = r.goalNote {
+                Text(note)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .transition(.opacity)
             }
             HStack(alignment: .top, spacing: 0) {
                 FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0)
@@ -499,7 +515,7 @@ private struct FuelReadoutSheet: View {
                     .reveal(0.08)
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
                               alignment: .leading, spacing: Theme.Space.md) {
-                        floorCell("≈\(r.kcal)", "of \(r.kcalFloor)+ kcal")
+                        floorCell("≈\(r.kcal)", r.kcalIsGoal ? "of \(r.kcalFloor) kcal today" : "of \(r.kcalFloor)+ kcal")
                         floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
                         floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
