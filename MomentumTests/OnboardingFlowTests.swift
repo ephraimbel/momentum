@@ -86,11 +86,10 @@ struct OnboardingFlowTests {
         vm.activities = []
         #expect(!vm.canAdvance)                        // must pick at least one
 
-        // The identity step gates on a usable handle (prefill makes it one tap in practice).
+        // The identity step is the (optional) profile photo since the @handle claim left with
+        // the community back-burner (2026-07-16) — always passable, photo or not.
         vm.step = .identity
         vm.handle = ""
-        #expect(!vm.canAdvance)
-        vm.handle = "Maya Runs!"                      // normalizes to "mayaruns" → valid
         #expect(vm.canAdvance)
     }
 

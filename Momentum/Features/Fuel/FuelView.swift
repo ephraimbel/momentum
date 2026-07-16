@@ -1,13 +1,13 @@
 import SwiftUI
 import SwiftData
-import PhotosUI
-import UIKit
 
 /// FUEL — the fueling readout + meal log (pillar decision 2026-07-16). One page that answers
 /// "am I fueled for the work?": the deterministic `FuelReadiness` readout up top (carbs vs the
-/// session that's driving the target, energy/protein/sodium floors), a one-sentence-or-photo
-/// composer, and today's meals. The AI (`FuelEstimator` → meal-estimate Edge Function) only
-/// estimates a meal's numbers — every target and verdict is engine math.
+/// session that's driving the target, energy/protein/sodium floors), a notes-app composer —
+/// Amy Food Journal style (user call 2026-07-16): jot what you ate in plain words, the AI parses
+/// the numbers; NO photo capture (plate photos estimate too loosely) — and today's meals as a
+/// running journal. The AI (`FuelEstimator` → meal-estimate Edge Function) only estimates a
+/// meal's numbers — every target and verdict is engine math.
 ///
 /// Framing rules carried from the engine: floors, never ceilings; no diet/weight language;
 /// every number reads ≈. A meal logs instantly offline and estimates when it can (pending
@@ -29,8 +29,6 @@ struct FuelView: View {
     @Query private var profiles: [UserProfile]
 
     @State private var draft = ""
-    @State private var photoItem: PhotosPickerItem?
-    @State private var photoData: Data?
     @State private var estimating: Set<UUID> = []
     @State private var editing: Meal?
     @FocusState private var composing: Bool
@@ -71,15 +69,6 @@ struct FuelView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $editing) { MealEditSheet(meal: $0) }
-            .onChange(of: photoItem) { _, item in
-                guard let item else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self) {
-                        withAnimation(Motion.standard) { photoData = WorkoutPhotoSection.downscaled(data) }
-                    }
-                    photoItem = nil
-                }
-            }
             // Estimates that couldn't run at log time (offline, function down) retry quietly
             // whenever the page appears — the loop self-heals without the athlete doing anything.
             .task { await retryPendingEstimates() }
@@ -196,58 +185,40 @@ struct FuelView: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.purple.opacity(0.25)))
     }
 
-    // MARK: Composer — one sentence and/or a photo; logging never blocks
+    // MARK: Composer — jot it like a note (Amy-style); the AI parses the numbers, logging never blocks
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack(spacing: Theme.Space.sm) {
-                TextField("What did you eat?", text: $draft, axis: .vertical)
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                    .lineLimit(1...3)
-                    .focused($composing)
-                    .submitLabel(.send)
-                    .onSubmit(log)
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Image(systemName: photoData == nil ? "camera" : "camera.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(photoData == nil ? Theme.inkSecondary : Theme.purple)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.surface))
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .accessibilityLabel(photoData == nil ? "Add a plate photo" : "Photo attached")
-                Button(action: log) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.background)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(canLog ? Theme.ink : Theme.inkTertiary))
-                        .scaleEffect(canLog ? 1 : 0.92)
-                        .animation(Motion.lively, value: canLog)
-                }
-                .buttonStyle(.plain)
-                .disabled(!canLog)
-                .accessibilityLabel("Log meal")
+        HStack(alignment: .bottom, spacing: Theme.Space.sm) {
+            TextField("What did you eat? \u{201C}2 eggs, toast, coffee\u{201D}", text: $draft, axis: .vertical)
+                .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                .lineLimit(1...4)
+                .focused($composing)
+                .submitLabel(.send)
+                .onSubmit(log)
+            Button(action: log) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.background)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(canLog ? Theme.ink : Theme.inkTertiary))
+                    .scaleEffect(canLog ? 1 : 0.92)
+                    .animation(Motion.lively, value: canLog)
             }
-            if photoData != nil {
-                Text("Photo attached — the estimate will read the plate.")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .transition(.opacity)
-            }
+            .buttonStyle(.plain)
+            .disabled(!canLog)
+            .accessibilityLabel("Log meal")
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .animation(Motion.standard, value: photoData != nil)
     }
 
     private var canLog: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || photoData != nil
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func log() {
         guard canLog else { return }
         let meal = Meal()
         meal.text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        meal.photoData = photoData
         withAnimation(Motion.standard) {
             context.insert(meal)
             try? context.save()
@@ -255,7 +226,6 @@ struct FuelView: View {
         Haptics.success()
         let label = readout.drivingSession
         draft = ""
-        photoData = nil
         composing = false
         estimate(meal, sessionLabel: label)
     }
@@ -264,7 +234,7 @@ struct FuelView: View {
     private func estimate(_ meal: Meal, sessionLabel: String?) {
         estimating.insert(meal.id)
         Task {
-            if let e = await estimator.estimate(text: meal.text, photoJPEG: meal.photoData,
+            if let e = await estimator.estimate(text: meal.text, photoJPEG: nil,
                                                 sessionLabel: sessionLabel, durationS: nil) {
                 withAnimation(Motion.standard) {
                     FuelEstimator.apply(e, to: meal)
@@ -321,14 +291,9 @@ struct FuelView: View {
     private func mealRow(_ meal: Meal) -> some View {
         Button { editing = meal } label: {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
-                if let photo = meal.photoData, let ui = UIImage(data: photo) {
-                    Image(uiImage: ui).resizable().scaledToFill()
-                        .frame(width: 44, height: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.chip))
-                }
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Theme.Space.sm) {
-                        Text(meal.text.isEmpty ? "Photo meal" : meal.text)
+                        Text(meal.text)
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .lineLimit(2).multilineTextAlignment(.leading)
                         Spacer(minLength: 0)
@@ -375,7 +340,7 @@ struct FuelView: View {
                 Haptics.medium()
             } label: { Label("Delete meal", systemImage: "trash") }
         }
-        .accessibilityLabel("Meal: \(meal.text.isEmpty ? "photo" : meal.text)")
+        .accessibilityLabel("Meal: \(meal.text)")
     }
 
     private func numbersLine(_ meal: Meal, carbs: Int) -> String {

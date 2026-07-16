@@ -19,7 +19,7 @@ final class FuelFlowUITests: XCTestCase {
 
         // Log a meal by sentence. (The composer is a vertical-axis TextField — match by placeholder
         // across element types so the query survives how XCUITest surfaces it.)
-        let byPlaceholder = NSPredicate(format: "placeholderValue == %@", "What did you eat?")
+        let byPlaceholder = NSPredicate(format: "placeholderValue BEGINSWITH %@", "What did you eat?")
         let field = app.descendants(matching: .any).matching(byPlaceholder).firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 8), "Composer field not found.")
         field.tap()
