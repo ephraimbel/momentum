@@ -63,6 +63,13 @@ struct FuelView: View {
             .navigationTitle("Fuel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // The page title wears the brand: lowercase Space Grotesk, the wordmark's voice.
+                ToolbarItem(placement: .principal) {
+                    Text("fuel")
+                        .font(.display(20, weight: .bold))
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { FuelHistoryView() } label: {
                         Image(systemName: "calendar")
@@ -328,19 +335,28 @@ struct FuelView: View {
         }
     }
 
-    // MARK: The fuel gauges — five rings, each filling toward its FLOOR
+    // MARK: The fuel gauges — energy as the headline number, four rings beneath
 
-    /// Carbs · kcal · protein · fat · sodium, drawing toward their floors and earning iridescence
-    /// exactly when a floor is met. Draw-in staggers left-to-right on appear (`trim`, transform-only,
-    /// Reduce Motion renders complete); a landing estimate rolls ring and numeral together.
+    /// Calories lead as a plain display numeral (the day's energy, Amy's big number); beneath it
+    /// carbs · protein · fat · sodium draw toward their floors and earn iridescence exactly when
+    /// a floor is met. Draw-in staggers left-to-right on appear (`trim`, transform-only, Reduce
+    /// Motion renders complete); a landing estimate rolls rings and numerals together.
     private var ringsRow: some View {
         let r = readout
-        return HStack(alignment: .top, spacing: 0) {
-            FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0)
-            FuelRing(value: r.kcal, floor: r.kcalFloor, label: "kcal", index: 1)
-            FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 2)
-            FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 3)
-            FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 4)
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("≈\(r.kcal.formatted())")
+                    .font(.display(26, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    .contentTransition(.numericText())
+                Text("of \(r.kcalFloor.formatted())+ kcal")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            HStack(alignment: .top, spacing: 0) {
+                FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0)
+                FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1)
+                FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2)
+                FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3)
+            }
         }
         .padding(.vertical, Theme.Space.xs)
         .animation(Motion.standard, value: r)
