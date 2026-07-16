@@ -11,12 +11,15 @@ enum PlanService {
     static func regenerate(for profile: UserProfile,
                            calibration: CalibrationSeed = .none,
                            startDate: Date = Date(),
+                           blockIndex: Int = 0,
+                           recoveryWeeks: Int = 0,
                            in context: ModelContext) -> TrainingPlan {
         let catalogItems = catalog(in: context)
-        let inputs = planInputs(from: profile, startDate: startDate)
+        var inputs = planInputs(from: profile, startDate: startDate)
+        inputs.postRaceRecoveryWeeks = recoveryWeeks
         let generated = PlanEngine.generate(profile: inputs, catalog: catalogItems,
                                             calibration: calibration, startDate: startDate)
-        return persist(generated, for: profile, startDate: startDate, in: context)
+        return persist(generated, for: profile, startDate: startDate, blockIndex: blockIndex, in: context)
     }
 
     /// Add tracked cross-training the engine doesn't program (swim/row/yoga…) as one recurring
@@ -61,13 +64,20 @@ enum PlanService {
     /// (total distinct days ≤ daysPerWeek), preserves the calibrated 5k pace unless a fresh calibration
     /// is supplied, and re-adds the athlete's cross-training. Starts the plan from `startDate`.
     static func rebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
-                        startDate: Date = Date(), in context: ModelContext) {
+                        startDate: Date = Date(), blockIndex: Int = 0, recoveryWeeks: Int = 0,
+                        in context: ModelContext) {
         // A running goal implies you run: if the athlete switched to a race/endurance focus (via the
         // coach or plan settings) without running among their disciplines, add it — otherwise the
         // engine would build a race plan with no runs. Guards every rebuild caller in one place.
         let runningGoal = profile.goal == .raceDistance || profile.goal == .endurance
         if runningGoal, !profile.disciplines.contains(Discipline.running.rawValue) {
             profile.disciplines = [Discipline.running.rawValue] + profile.disciplines
+        }
+        // Symmetric guard: a strength goal implies you lift — a runner who tells the coach "get
+        // stronger" must get strength sessions, not a run-only plan pointed at a barbell.
+        let strengthGoal = profile.goal == .getStronger || profile.goal == .buildMuscle
+        if strengthGoal, !profile.disciplines.contains(Discipline.strength.rawValue) {
+            profile.disciplines += [Discipline.strength.rawValue]
         }
         let extras = profile.crossTraining.compactMap(WorkoutType.init(rawValue:))
         let disciplines = profile.disciplines.compactMap(Discipline.init(rawValue:))
@@ -77,11 +87,105 @@ enum PlanService {
         let seed = calibration ?? (profile.plan.map { CalibrationSeed(estimatedP5kSPerKm: $0.p5kSPerKm) } ?? .none)
 
         profile.daysPerWeek = structuredDays
-        regenerate(for: profile, calibration: seed, startDate: startDate, in: context)
+        regenerate(for: profile, calibration: seed, startDate: startDate, blockIndex: blockIndex,
+                   recoveryWeeks: recoveryWeeks, in: context)
         profile.daysPerWeek = userDays   // restore the athlete's actual choice (plan + display)
         if let plan = profile.plan, !extras.isEmpty {
             addCrossTraining(extras, to: plan, startDate: startDate, in: context, totalDaysPerWeek: userDays)
         }
+    }
+
+    /// The post-race continuation (the coaching arc's close): once race day has passed, the season
+    /// rolls into what comes next instead of dead-ending —
+    ///  1. **The race result recalibrates the athlete.** A finished race is the gold-standard
+    ///     fitness measurement: its Riegel-equivalent 5k replaces the plan's assumed pace when it's
+    ///     faster (a rough day never slows the targets — no-shame, evidence-only).
+    ///  2. **A recovery block opens the next plan.** The weeks after a goal race are running's
+    ///     highest re-injury window, so the fresh rolling block leads with a distance-scaled
+    ///     reverse taper (5K/half ≈ 1 easy week, marathon 2, ultra 3) before training resumes.
+    ///     A race that was never run skips the recovery lead-in — there's nothing to recover from.
+    ///  3. **The goal resets.** The dated race clears (its name too); the athlete picks the next
+    ///     one whenever they're ready, and the plan keeps rolling block-to-block until then.
+    /// Runs the day AFTER the race, not race evening — the finish line belongs to the athlete.
+    /// Idempotent: the transition clears `raceDate`, so a second call is a no-op. Returns the
+    /// coaching headline when a transition happened.
+    @discardableResult
+    static func completeRace(for profile: UserProfile, today: Date = Date(),
+                             in context: ModelContext, calendar: Calendar = .current) -> String? {
+        guard let plan = profile.plan, let raceDate = profile.raceDate ?? plan.raceDate else { return nil }
+        guard let dayAfter = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: raceDate)),
+              calendar.startOfDay(for: today) >= calendar.startOfDay(for: dayAfter) else { return nil }
+
+        // 1) Recalibrate from the result, when the race was actually run and logged.
+        let raceM = profile.raceDistanceM
+        let raceWorkout = plan.sessions.first { $0.runType == .race }?.completedWorkout
+        var seedP5k = plan.p5kSPerKm
+        var raced = false
+        if let w = raceWorkout, w.durationS > 60, let raceM, raceM > 0 {
+            raced = true
+            let equivalent = PlanEngine.riegelP5k(distanceM: raceM, timeS: w.durationS)
+            if equivalent < seedP5k, equivalent >= 150 {
+                let delta = Int((seedP5k - equivalent).rounded())
+                seedP5k = equivalent
+                CoachingEvent.record(kind: .recalibrate, headline: "Your race reset your paces",
+                                     detail: "That finish line is the truest fitness test there is — your training paces just got about \(max(1, delta)) s/km faster. You ran your way there.",
+                                     on: today, in: context, calendar: calendar)
+            }
+        }
+
+        // 2 + 3) Clear the finished goal and roll into the next block, recovery lead-in first.
+        let recovery = raced ? PlanEngine.postRaceRecoveryWeeks(forRaceM: raceM ?? 5_000) : 0
+        profile.raceDate = nil
+        profile.raceDistanceM = nil
+        profile.goalFinishTimeS = nil
+        rebuild(for: profile, calibration: CalibrationSeed(estimatedP5kSPerKm: seedP5k),
+                startDate: today, blockIndex: plan.blockIndex + 1, recoveryWeeks: recovery, in: context)
+        profile.plan?.name = ""   // the season was named for the race that's now behind them
+
+        let headline = raced ? "Race done — recovery block first" : "Race week's behind you"
+        let detail = raced
+            ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy — the fitness you built gets locked in by the recovery, not the next hard run. Then we roll."
+            : "Your plan rolled into a fresh block. Whenever the next start line calls, set it and the season builds toward it."
+        CoachingEvent.record(kind: .recover, headline: headline, detail: detail,
+                             on: today, in: context, calendar: calendar)
+        try? context.save()
+        return headline
+    }
+
+    /// Roll an open-ended plan into its next block — the "we'll see where you're at" moment.
+    /// Reassesses the athlete's ACTUAL recent running (trailing 4 weeks of logged runs) so the new
+    /// block honestly starts where they now are — a strong block steps up, a rough one holds, and the
+    /// ACWR governor still caps week-over-week — then regenerates one fresh mesocycle from today and
+    /// advances the block counter. No-op for dated-race plans: they periodize continuously to race day
+    /// and are never "renewed." Returns the new plan, or nil when there's nothing to renew.
+    @discardableResult
+    static func renewBlock(for profile: UserProfile, startDate: Date = Date(),
+                           in context: ModelContext, calendar: Calendar = .current) -> TrainingPlan? {
+        guard let plan = profile.plan, plan.raceDate == nil else { return nil }
+        let nextIndex = plan.blockIndex + 1
+        // Reassess: what did they actually run over the last 4 weeks? That achieved volume seeds the
+        // next block so progression is earned, never assumed. Only overwrite when there's real signal
+        // — otherwise keep their declared/prior figure so a quiet month doesn't zero the plan out.
+        if let achieved = recentWeeklyRunVolumeM(endingAt: startDate, weeks: 4, in: context, calendar: calendar) {
+            profile.weeklyRunVolumeM = achieved
+        }
+        let seed = CalibrationSeed(estimatedP5kSPerKm: plan.p5kSPerKm)
+        rebuild(for: profile, calibration: seed, startDate: startDate, blockIndex: nextIndex, in: context)
+        return profile.plan
+    }
+
+    /// The athlete's real running volume per week over the trailing `weeks`, in meters — the average
+    /// of logged run/trail-run distance. `nil` when there's not enough logged to be meaningful (no
+    /// GPS distance at all), so callers can fall back to the declared figure rather than trust a zero.
+    static func recentWeeklyRunVolumeM(endingAt end: Date = Date(), weeks: Int = 4,
+                                       in context: ModelContext, calendar: Calendar = .current) -> Double? {
+        guard let since = calendar.date(byAdding: .day, value: -7 * weeks, to: end) else { return nil }
+        let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? []).filter {
+            $0.type.discipline == .running && $0.startedAt >= since && $0.startedAt <= end
+        }
+        let total = recent.compactMap { $0.gps?.distanceM }.reduce(0, +)
+        guard total > 0 else { return nil }
+        return total / Double(weeks)
     }
 
     /// Snapshot the exercise library for the engine.
@@ -123,7 +227,7 @@ enum PlanService {
     }
 
     static func persist(_ plan: GeneratedPlan, for profile: UserProfile,
-                        startDate: Date, in context: ModelContext,
+                        startDate: Date, blockIndex: Int = 0, in context: ModelContext,
                         calendar: Calendar = .current) -> TrainingPlan {
         // Replace any existing plan — but the athlete's name for it survives the rebuild.
         let carriedName = profile.plan?.name ?? ""
@@ -138,6 +242,7 @@ enum PlanService {
 
         let trainingPlan = TrainingPlan()
         trainingPlan.name = carriedName
+        trainingPlan.blockIndex = blockIndex
         trainingPlan.goal = profile.goal
         trainingPlan.disciplines = profile.disciplines
         trainingPlan.raceDate = profile.raceDate

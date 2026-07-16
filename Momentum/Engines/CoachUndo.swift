@@ -29,6 +29,11 @@ enum CoachUndo {
         var activeInjuryUntil: Date?
         // The plan itself.
         var plan: PlanState?
+        // Additive (2026-07-15, renewBlock): the declared weekly volume the renewal reassesses.
+        // Optional so snapshots captured before this field still decode; `weeklyVolumeCaptured`
+        // disambiguates "captured as nil" from "not captured" (optionals encode as absent).
+        var weeklyRunVolumeM: Double? = nil
+        var weeklyVolumeCaptured: Bool? = nil
 
         struct PlanState: Codable, Equatable {
             var name: String
@@ -41,6 +46,7 @@ enum CoachUndo {
             var pausedUntil: Date?
             var weekPhases: [String]
             var sessions: [SessionState]
+            var blockIndex: Int? = nil   // additive: rolling-block counter (absent in old snapshots)
         }
 
         struct SessionState: Codable, Equatable {
@@ -90,6 +96,8 @@ enum CoachUndo {
             activeInjurySeverity: profile.activeInjurySeverity,
             activeInjuryUntil: profile.activeInjuryUntil,
             plan: nil)
+        snap.weeklyRunVolumeM = profile.weeklyRunVolumeM
+        snap.weeklyVolumeCaptured = true
         if let plan = profile.plan {
             snap.plan = Snapshot.PlanState(
                 name: plan.name,
@@ -123,6 +131,7 @@ enum CoachUndo {
                                 progression: pe.progression)
                         })
                 })
+            snap.plan?.blockIndex = plan.blockIndex
         }
         guard let data = try? JSONEncoder().encode(snap) else { return nil }
         return String(decoding: data, as: UTF8.self)
@@ -149,6 +158,8 @@ enum CoachUndo {
         profile.activeInjuryArea = snap.activeInjuryArea
         profile.activeInjurySeverity = snap.activeInjurySeverity
         profile.activeInjuryUntil = snap.activeInjuryUntil
+        // Only restore when this snapshot actually captured it (older snapshots predate the field).
+        if snap.weeklyVolumeCaptured == true { profile.weeklyRunVolumeM = snap.weeklyRunVolumeM }
 
         // Replace the plan wholesale with the captured one (state restore, not operation reversal).
         if let old = profile.plan {
@@ -171,6 +182,7 @@ enum CoachUndo {
             plan.lastAdaptedAt = planState.lastAdaptedAt
             plan.pausedUntil = planState.pausedUntil
             plan.weekPhases = planState.weekPhases
+            plan.blockIndex = planState.blockIndex ?? 0   // absent in pre-rolling-block snapshots
             context.insert(plan)
 
             var sessions: [PlannedSession] = []

@@ -99,4 +99,78 @@ begin
   raise notice 'RLS matrix: all checks passed';
 end $$;
 
+-- ── Vendor connections (docs/WEARABLES-DIRECT.md) ───────────────────────────
+-- The previous block's set_config('role', …) is transaction-scoped and outlives the block —
+-- drop back to the owning role so the seed inserts below bypass RLS like the ones at the top.
+reset role;
+
+-- Seeded as service role: a Garmin connection + tokens + one staged activity for A.
+insert into public.vendor_connections (id, user_id, vendor, vendor_user_id) values
+  ('00000000-0000-0000-0004-000000000001', '00000000-0000-0000-0000-00000000000a', 'garmin', 'garmin-user-a');
+
+insert into public.vendor_tokens (connection_id, access_token, refresh_token) values
+  ('00000000-0000-0000-0004-000000000001', 'secret-access', 'secret-refresh');
+
+insert into public.vendor_activities (id, user_id, vendor, vendor_activity_id, started_at, duration_s, distance_m) values
+  ('00000000-0000-0000-0005-000000000001', '00000000-0000-0000-0000-00000000000a', 'garmin', 'act-1', now(), 1800, 5000);
+
+do $$
+declare
+  n int;
+begin
+  -- ── Act as B (stranger): A's vendor world is invisible ────────────────────
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', true);
+
+  select count(*) into n from public.vendor_connections;
+  if n <> 0 then raise exception 'FAIL: stranger can read vendor connections (%)', n; end if;
+
+  select count(*) into n from public.vendor_activities;
+  if n <> 0 then raise exception 'FAIL: stranger can read vendor activities (%)', n; end if;
+
+  -- ── Act as A (owner) ──────────────────────────────────────────────────────
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', true);
+
+  select count(*) into n from public.vendor_connections;
+  if n <> 1 then raise exception 'FAIL: owner should see their connection, saw %', n; end if;
+
+  -- Tokens are service-role only — even the owner must be locked out entirely.
+  begin
+    select count(*) into n from public.vendor_tokens;
+    raise exception 'FAIL: owner can read vendor tokens';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- Owner may flip `processed` on a staged activity…
+  update public.vendor_activities set processed = true
+  where id = '00000000-0000-0000-0005-000000000001';
+  select count(*) into n from public.vendor_activities where processed;
+  if n <> 1 then raise exception 'FAIL: owner could not mark activity processed'; end if;
+
+  -- …but no other column (column-level grant).
+  begin
+    update public.vendor_activities set distance_m = 1
+    where id = '00000000-0000-0000-0005-000000000001';
+    raise exception 'FAIL: owner mutated a staged activity beyond processed';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- No client inserts into the staging inbox (webhook/service role only).
+  begin
+    insert into public.vendor_activities (user_id, vendor, vendor_activity_id, started_at)
+    values ('00000000-0000-0000-0000-00000000000a', 'garmin', 'act-forged', now());
+    raise exception 'FAIL: client inserted into vendor_activities';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- Disconnect = owner deletes the connection (tokens cascade).
+  delete from public.vendor_connections where vendor = 'garmin';
+  select count(*) into n from public.vendor_connections;
+  if n <> 0 then raise exception 'FAIL: owner could not disconnect vendor'; end if;
+
+  raise notice 'RLS matrix (vendor): all checks passed';
+end $$;
+
 rollback;

@@ -55,8 +55,10 @@ enum InjuryResponse {
         if let plan = profile.plan {
             let p5k = plan.p5kSPerKm
             let unit = (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()   // keep returns clean
+            // `.moved` sessions are still upcoming work — reconcileMissed rolls slipped days forward
+            // as .moved, and an injured athlete must not keep a quality session just because it slid.
             let window = plan.sessions.filter {
-                $0.status == .planned && $0.completedWorkout == nil
+                ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && $0.discipline == .running
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && $0.date <= until
@@ -129,7 +131,7 @@ enum InjuryResponse {
             let p5k = plan.p5kSPerKm
             let unit = (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()
             let mine = plan.sessions.filter {
-                $0.status == .planned && $0.completedWorkout == nil
+                ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && ($0.rationale?.hasPrefix(marker) ?? false)
             }.sorted { $0.date < $1.date }
@@ -156,7 +158,7 @@ enum InjuryResponse {
             // fine and the plan still says "intervals".
             let gateEnd = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: today)) ?? today
             let eager = plan.sessions.filter {
-                $0.status == .planned && $0.completedWorkout == nil
+                ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && $0.discipline == .running
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && $0.date <= gateEnd

@@ -417,10 +417,10 @@ function Pricing() {
               <span className="plan-badge">7-day free trial</span>
               <h3>momentum Pro</h3>
               <div className="plan-price">
-                $119.99 <small>/ year</small>
+                $109.99 <small>/ year</small>
               </div>
               <p className="plan-cycle">
-                7 days free, then $119.99/year (about $10/month) · or $19.99/month, cancel anytime
+                7 days free, then $109.99/year (about $9/month) · or $14.99/month, cancel anytime
               </p>
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
@@ -526,7 +526,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $119.99/year with a 7-day free trial, or $19.99/month.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",

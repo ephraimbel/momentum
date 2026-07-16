@@ -1,17 +1,16 @@
 import XCTest
 
-/// The onboarding hard gate (user call 2026-07-10): after the plan reveal, every new athlete meets
-/// the paywall — no close button, no swipe-away — and the only ways forward are trial/subscribe/
-/// restore. Verifies the full moment end-to-end: reveal → hard paywall → trial CTA → the flow
-/// continues into notifications. Uses the local purchase seam (no RevenueCat in DEBUG), so the
-/// trial tap genuinely exercises the grant → dismiss → advance path.
+/// The onboarding paywall (freemium, 2026-07-14): after the plan reveal every new athlete meets the
+/// paywall, but it's SOFT — subscribe/trial to unlock the coach + full plan, or close it and continue
+/// into the app on the free tier. Verifies BOTH paths: close-to-free-tier, and trial-grants-and-advances.
+/// Uses the local purchase seam (no RevenueCat in DEBUG), so the trial tap genuinely exercises the
+/// grant → dismiss → advance path.
 final class OnboardingPaywallUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    func testHardPaywallGatesTheRevealAndTrialUnlocks() {
-        let app = XCUIApplication()
-        // Seeded profile (reveal needs one) + forced-free entitlement so the gate actually shows.
+    private func launchToPaywall(_ app: XCUIApplication) {
+        // Seeded profile (reveal needs one) + forced-free entitlement so the paywall actually shows.
         app.launchArguments = ["--seed-demo", "--debug-free", "--onboarding", "--onboarding-reveal"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
@@ -27,14 +26,29 @@ final class OnboardingPaywallUITests: XCTestCase {
         let revealCTA = app.buttons["This looks great"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 15), "Plan reveal didn't show its CTA.")
         revealCTA.tap()
+    }
 
-        // The paywall appears — and it is HARD: no close affordance anywhere.
+    /// SOFT: the paywall offers a close affordance, and closing it drops the athlete into the app on
+    /// the free tier — the flow continues to the notifications step.
+    func testSoftPaywallClosesIntoTheFreeTier() {
+        let app = XCUIApplication()
+        launchToPaywall(app)
+
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10),
+                      "The onboarding paywall must offer a close button (soft/freemium).")
+        close.tap()
+        XCTAssertTrue(app.buttons["Turn on reminders"].waitForExistence(timeout: 10),
+                      "Closing the soft paywall didn't continue onboarding into the free tier (notifications step).")
+    }
+
+    /// The trial CTA still grants entitlement and advances — the paid path is unchanged.
+    func testTrialUnlocksAndAdvances() {
+        let app = XCUIApplication()
+        launchToPaywall(app)
+
         let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
-        XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "Hard paywall didn't appear after the reveal.")
-        XCTAssertFalse(app.buttons["Close"].exists, "The onboarding paywall must not offer a close button.")
-
-        // Starting the trial (local seam grants entitlement) dismisses the gate and the flow
-        // continues exactly where it should: the notifications step.
+        XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "Paywall didn't appear after the reveal.")
         trialCTA.tap()
         XCTAssertTrue(app.buttons["Turn on reminders"].waitForExistence(timeout: 10),
                       "Subscribing didn't advance onboarding to the notifications step.")

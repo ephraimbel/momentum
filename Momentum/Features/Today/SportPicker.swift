@@ -12,6 +12,9 @@ struct SportPicker: View {
     @State private var query = ""
     @State private var favorites = SportFavorites()
     @Query private var workouts: [Workout]
+    /// Per-sport log counts, snapshotted once on present — grouping the whole workout table inside a
+    /// computed property re-ran per body evaluation (every search keystroke, every star toggle).
+    @State private var loggedCounts: [WorkoutType: Int] = [:]
 
     private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
     private func matches(_ t: WorkoutType) -> Bool {
@@ -23,8 +26,7 @@ struct SportPicker: View {
     /// ones not already starred. Capped so it stays a quick-pick, not a second full list.
     private var topActivities: [WorkoutType] {
         var out = favorites.favorites
-        let counts = Dictionary(grouping: workouts, by: \.type).mapValues(\.count)
-        let mostUsed = counts.sorted { $0.value > $1.value }.map(\.key).filter { !out.contains($0) }
+        let mostUsed = loggedCounts.sorted { $0.value > $1.value }.map(\.key).filter { !out.contains($0) }
         out += mostUsed
         return Array(out.prefix(5))
     }
@@ -52,6 +54,7 @@ struct SportPicker: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
+            .task { loggedCounts = Dictionary(grouping: workouts, by: \.type).mapValues(\.count) }
             .background(Theme.background)
             .navigationTitle("Choose Activity")
             .navigationBarTitleDisplayMode(.inline)

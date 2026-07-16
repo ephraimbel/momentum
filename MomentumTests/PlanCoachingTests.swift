@@ -47,6 +47,26 @@ struct PlanCoachingTests {
         #expect(session.completedWorkout?.id == workout.id)
     }
 
+    @Test func creditsMovedSessionsToo() throws {
+        // reconcileMissed rolls slipped days forward as `.moved` — an athlete who then does the work
+        // must get the credit (the old `.planned`-only filter left the day reading as undone).
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let session = PlannedSession()
+        session.date = Calendar.current.startOfDay(for: Date())
+        session.discipline = .strength
+        session.status = .moved
+        let plan = makePlan(in: ctx, sessions: [session])
+
+        let workout = Workout()
+        workout.type = .strength
+        workout.startedAt = Date()
+        ctx.insert(workout)
+
+        #expect(PlanCoaching.creditWorkout(workout, to: plan, in: ctx) != nil)
+        #expect(session.status == .completed)
+    }
+
     @Test func doesNotCreditWrongDiscipline() throws {
         let container = try makeContainer()
         let ctx = container.mainContext
@@ -507,5 +527,85 @@ struct PlanCoachingTests {
         #expect(PlanCoaching.easeStrengthOnRPECreep(plan, workouts: [w1, w2], in: ctx) == nil)
         #expect(pe.targetSets == 4)
         #expect(plan.lastAdaptedAt == nil)
+    }
+
+    // MARK: Post-race continuation (PlanService.completeRace — the arc's close)
+
+    /// A real race plan whose race date is already `raceDaysAgo` in the past: generated from far
+    /// enough back that the race session landed on the calendar.
+    private func raceProfile(in ctx: ModelContext, raceDaysAgo: Int) -> UserProfile {
+        let cal = Calendar.current
+        let profile = UserProfile()
+        profile.distanceUnit = "metric"
+        profile.disciplines = ["running"]
+        profile.goal = .raceDistance
+        profile.daysPerWeek = 4
+        profile.raceDate = cal.date(byAdding: .day, value: -raceDaysAgo, to: cal.startOfDay(for: Date()))
+        profile.raceDistanceM = 42_195
+        ctx.insert(profile)
+        let start = cal.date(byAdding: .weekOfYear, value: -8, to: Date())!
+        PlanService.regenerate(for: profile, startDate: start, in: ctx)
+        return profile
+    }
+
+    @Test func completeRaceRecalibratesAndOpensRecoveryBlock() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = raceProfile(in: ctx, raceDaysAgo: 2)
+        let plan = try #require(profile.plan)
+        let raceSession = try #require(plan.sessions.first { $0.runType == .race },
+                                       "race plan must carry its race session")
+        // The athlete ran a 3:00 marathon — a big fitness statement vs the assumed 330 s/km 5K.
+        let race = Workout()
+        race.type = .run
+        race.startedAt = raceSession.date
+        race.durationS = 10_800
+        ctx.insert(race)
+        PlanCoaching.markComplete(raceSession, with: race, in: ctx)
+
+        let headline = PlanService.completeRace(for: profile, today: Date(), in: ctx)
+        #expect(headline != nil)
+        let next = try #require(profile.plan)
+        // The goal cleared; the season's name went with it; the block counter advanced.
+        #expect(profile.raceDate == nil && profile.raceDistanceM == nil)
+        #expect(next.raceDate == nil)
+        #expect(next.blockIndex == 1)
+        #expect(next.name.isEmpty)
+        // The race result set the paces (3:00 marathon ⇒ Riegel 5k ≈ 225 s/km, was 330).
+        #expect(abs(next.p5kSPerKm - 225) < 3, "race result should recalibrate, got \(next.p5kSPerKm)")
+        // Marathon ⇒ the new block opens with a 2-week recovery lead-in, all easy.
+        #expect(next.weekPhases.prefix(2).allSatisfy { $0 == PlanPhase.recovery.rawValue })
+        let cal = Calendar.current
+        let fortnight = cal.date(byAdding: .day, value: 14, to: cal.startOfDay(for: Date()))!
+        let leadIn = next.sessions.filter { $0.date < fortnight && $0.discipline == .running }
+        #expect(!leadIn.isEmpty)
+        #expect(leadIn.allSatisfy { !($0.runType?.isQuality ?? false) })
+        // Idempotent: the race is behind them — a second pass changes nothing.
+        #expect(PlanService.completeRace(for: profile, today: Date(), in: ctx) == nil)
+    }
+
+    @Test func missedRaceRollsForwardWithoutRecovery() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = raceProfile(in: ctx, raceDaysAgo: 3)   // race day passed, never run
+        let oldP5k = try #require(profile.plan).p5kSPerKm
+
+        let headline = PlanService.completeRace(for: profile, today: Date(), in: ctx)
+        #expect(headline != nil)
+        let next = try #require(profile.plan)
+        #expect(profile.raceDate == nil)
+        #expect(next.blockIndex == 1)
+        #expect(next.p5kSPerKm == oldP5k)                     // nothing to recalibrate from
+        // No race run ⇒ nothing to recover from ⇒ the block starts training immediately.
+        #expect(next.weekPhases.first != PlanPhase.recovery.rawValue)
+    }
+
+    @Test func completeRaceWaitsForRaceDayToPass() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = raceProfile(in: ctx, raceDaysAgo: 0)    // race is TODAY — hands off
+        #expect(PlanService.completeRace(for: profile, today: Date(), in: ctx) == nil)
+        #expect(profile.raceDate != nil)                      // the goal stands until the day passes
+        #expect(profile.plan?.blockIndex == 0)
     }
 }

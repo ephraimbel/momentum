@@ -28,13 +28,22 @@ struct ProTrendsSection: View {
         var efficiency: [TrendAnalytics.WeekValue]
 
         static func build(_ workouts: [Workout]) -> Model {
-            Model(metrics: TrendAnalytics.summary(workouts: workouts),
-                  ffPoints: TrendAnalytics.fitnessFreshness(workouts: workouts),
-                  cadence: TrendAnalytics.weeklyCadence(workouts: workouts).filter { $0.value > 0 },
-                  climbMeters: TrendAnalytics.weeklyClimb(workouts: workouts),
-                  efficiency: TrendAnalytics.recentDecoupling(workouts: workouts))
+            // Decoupling is the heaviest walk here (every run's full HR+GPS series) — compute it
+            // once and share it with `summary()` instead of paying it twice per build.
+            let efficiency = TrendAnalytics.recentDecoupling(workouts: workouts)
+            return Model(metrics: TrendAnalytics.summary(workouts: workouts, decoupling: efficiency),
+                         ffPoints: TrendAnalytics.fitnessFreshness(workouts: workouts),
+                         cadence: TrendAnalytics.weeklyCadence(workouts: workouts).filter { $0.value > 0 },
+                         climbMeters: TrendAnalytics.weeklyClimb(workouts: workouts),
+                         efficiency: efficiency)
         }
     }
+
+    /// Session cache: the whole Trends branch — and this view's `@State` — is destroyed on every
+    /// segment flip, and `.task(id:)` re-fires on every tab visit, so an unguarded build re-ran
+    /// the full pipeline per visit. The analytics are deterministic from the workout array, so
+    /// count is a complete key; pure value types only (never cache SwiftData refs).
+    @MainActor private static var modelCache: (count: Int, model: Model)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -52,8 +61,14 @@ struct ProTrendsSection: View {
         // Compute once per data change, off the first frame. Skip entirely when locked.
         .task(id: pro ? workouts.count : -1) {
             guard pro else { return }
+            if let cached = Self.modelCache, cached.count == workouts.count {
+                if model == nil { model = cached.model }   // instant remount after a segment flip
+                return
+            }
             if model == nil { await Task.yield() }   // let the first frame paint the skeleton
-            model = Model.build(workouts)
+            let built = Model.build(workouts)
+            Self.modelCache = (workouts.count, built)
+            model = built
         }
         .onAppear {
             if reduceMotion { appeared = true }
@@ -273,7 +288,10 @@ struct FitnessFreshnessCard: View {
     /// history, showing months of leading flat-zero reads as a broken chart. A continuous
     /// athlete has no leading zero, so this is a no-op for them.
     private var plotted: [TrendAnalytics.DayPoint] {
-        guard let onset = points.firstIndex(where: { $0.ctl > 1 || $0.atl > 1 }) else { return points }
+        // No day has accrued real load yet (a brand-new athlete) → plot NOTHING, so the card shows its
+        // "a few weeks of training will draw your curve" state instead of a flat-zero line reading as a
+        // real (empty) fitness curve. A continuous athlete finds an onset and is unaffected.
+        guard let onset = points.firstIndex(where: { $0.ctl > 1 || $0.atl > 1 }) else { return [] }
         return Array(points[max(0, onset - 3)...])
     }
 

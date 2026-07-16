@@ -9,7 +9,10 @@ import SwiftData
 final class AthleteModelService: AthleteModelServing {
 
     func ingest(profile: UserProfile, in context: ModelContext, now: Date) {
-        let facts = AthleteModelEngine(workouts: profile.workouts, plan: profile.plan, now: now).facts
+        // Single-profile app: workouts aren't scoped per profile, and `profile.workouts` has no
+        // inverse so it's never populated — fetch every workout from the store instead.
+        let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
+        let facts = AthleteModelEngine(workouts: workouts, plan: profile.plan, now: now).facts
 
         let model = profile.athlete ?? {
             let m = AthleteModel()
@@ -19,7 +22,7 @@ final class AthleteModelService: AthleteModelServing {
         }()
 
         apply(facts, to: model)
-        upsertSnapshot(for: profile, facts: facts, now: now, into: model)
+        upsertSnapshot(for: profile, workouts: workouts, facts: facts, now: now, into: model)
         model.updatedAt = now
         try? context.save()
     }
@@ -115,12 +118,12 @@ final class AthleteModelService: AthleteModelServing {
 
     // MARK: - Weekly snapshot
 
-    private func upsertSnapshot(for profile: UserProfile, facts: AthleteFacts,
+    private func upsertSnapshot(for profile: UserProfile, workouts: [Workout], facts: AthleteFacts,
                                 now: Date, into model: AthleteModel) {
         let cal = Calendar.current
         let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? cal.startOfDay(for: now)
 
-        let insights = ProgressInsights(workouts: profile.workouts, now: now)
+        let insights = ProgressInsights(workouts: workouts, now: now)
         let thisWeek = insights.weeks.last
 
         let snapshot = model.snapshots.first { cal.isDate($0.weekStart, equalTo: weekStart, toGranularity: .day) }
@@ -135,7 +138,7 @@ final class AthleteModelService: AthleteModelServing {
         snapshot.weeklyDistanceM = thisWeek?.distanceM ?? 0
         snapshot.acwr = facts.currentACWR
         snapshot.p5kEquivSPerKm = profile.plan?.p5kSPerKm
-        snapshot.topE1RMByLift = Self.topE1RMByLift(profile.workouts, now: now, calendar: cal)
+        snapshot.topE1RMByLift = Self.topE1RMByLift(workouts, now: now, calendar: cal)
     }
 
     /// Best e1RM per lift over the trailing 56 days — the strength markers for the snapshot.

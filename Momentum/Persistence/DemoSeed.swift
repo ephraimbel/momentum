@@ -39,6 +39,14 @@ enum DemoSeed {
             profile.avatarData = data
         }
         context.insert(profile)
+        // --seed-race-plan: a dated half-marathon race THIS week (2 days out) — the race-day
+        // session, shakeout, and taper phases all render on the current week's Plan board.
+        if ProcessInfo.processInfo.arguments.contains("--seed-race-plan") {
+            profile.goal = .raceDistance
+            profile.raceDistanceM = RaceDistance.half.meters
+            profile.raceDate = Calendar.current.date(byAdding: .day, value: 2, to: Date())
+            profile.goalFinishTimeS = 5_400   // chasing 1:30
+        }
         PlanService.regenerate(for: profile, in: context)
         // --plan-renewal: regenerate the rolling block starting ~6 weeks back so "today" lands at the
         // end of the block, surfacing the Plan page's block-renewal checkpoint card for verification.

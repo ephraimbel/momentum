@@ -216,6 +216,9 @@ enum RaceCatalog {
         "marathon", "half", "full", "the", "a", "run", "running", "race", "road", "ultra",
         "5k", "10k", "50k", "city", "international", "authentic", "waterfront", "for", "to",
         "my", "want", "do", "next", "train", "training", "plan", "on", "in", "at", "of",
+        // "new" alone must never identify a race ("start over with a NEW plan" is not the NEW York
+        // Marathon); "york"/"nyc" stay distinctive, so the real ask still resolves.
+        "new",
     ]
 
     static func match(freeText: String, after date: Date = Date(), calendar: Calendar = .current) -> Match? {

@@ -111,7 +111,9 @@ final class WatchCardioModel: NSObject {
     /// Request authorization, then start the session + live collection + the route stream.
     func start() async {
         zones = HRZones.zones(maxHR: 190) ?? []          // placeholder until DOB resolves
+        #if DEBUG
         if demo { startDemo(); return }
+        #endif
         guard HKHealthStore.isHealthDataAvailable() else { failed = true; return }
         let share: Set = [HKQuantityType.workoutType(), HKQuantityType(.activeEnergyBurned),
                           HKSeriesType.workoutRoute()]
@@ -199,7 +201,9 @@ final class WatchCardioModel: NSObject {
 
     private func tick() {
         guard running, !hasEnded else { lastTickAt = Date(); return }
+        #if DEBUG
         if demo { demoAdvance() }
+        #endif
         guard !paused else { lastTickAt = Date(); return }
         // Accrue by real elapsed time, not per fire: with the screen off the system coalesces
         // run-loop timers, and counting fires would silently shrink time-in-zone on long runs.
@@ -311,9 +315,9 @@ extension WatchCardioModel: CLLocationManagerDelegate {
         guard !accepted.isEmpty else { return }
         Task { @MainActor in
             guard !paused, !hasEnded else { return }
-            // Full-fidelity trail into HealthKit (the phone draws this after import)…
-            try? await routeBuilder?.insertRouteData(accepted)
-            // …decimated coordinates (≥ 3 m apart) for the on-wrist map, so hours stay light.
+            // Decimated coordinates (≥ 3 m apart) for the on-wrist map, so hours stay light —
+            // appended synchronously (before the HK await) so `route` follows arrival order, not
+            // the order two close callbacks happen to resume in after insertRouteData.
             for coord in accepted.map(\.coordinate) {
                 if let last = route.last {
                     let d = CLLocation(latitude: last.latitude, longitude: last.longitude)
@@ -322,6 +326,8 @@ extension WatchCardioModel: CLLocationManagerDelegate {
                 }
                 route.append(coord)
             }
+            // …and the full-fidelity trail into HealthKit (the phone draws this after import).
+            try? await routeBuilder?.insertRouteData(accepted)
         }
     }
 

@@ -149,13 +149,21 @@ struct ProfileGrid: View {
     }
 
     /// Active minutes per local day — the consistency chart's intensity signal (a 20-minute jog
-    /// and a two-hour long run are different days, and the chart should say so).
+    /// and a two-hour long run are different days, and the chart should say so). Memoized per data
+    /// change: `Calendar.ordinality` per workout is expensive and this re-ran on every Highlights
+    /// body evaluation (the sibling walks in ProfileScreen cache for exactly this reason).
+    private final class DayMinutesMemo { var count = -1; var value: [Int: Double] = [:] }
+    @State private var dayMinutesMemo = DayMinutesMemo()
     private var dayMinutes: [Int: Double] {
-        var out: [Int: Double] = [:]
-        for w in workouts {
-            out[StreakCalculator.localDay(w.startedAt), default: 0] += w.durationS / 60
+        if dayMinutesMemo.count != workouts.count {
+            var out: [Int: Double] = [:]
+            for w in workouts {
+                out[StreakCalculator.localDay(w.startedAt), default: 0] += w.durationS / 60
+            }
+            dayMinutesMemo.count = workouts.count
+            dayMinutesMemo.value = out
         }
-        return out
+        return dayMinutesMemo.value
     }
 
     /// The GitHub-grade consistency graph: month axis, weekday hints, today ring — plus the one

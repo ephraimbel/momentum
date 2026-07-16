@@ -59,8 +59,12 @@ enum PlanCoaching {
     static func creditWorkout(_ workout: Workout, to plan: TrainingPlan?, in context: ModelContext,
                               calendar: Calendar = .current) -> PlannedSession? {
         guard let plan else { return nil }
+        // `.moved` counts as open: reconcileMissed rolls every past-due session forward as .moved
+        // (routine after any slipped day), and the athlete who then does the work must get the
+        // credit — markComplete already accepts moved sessions.
         let open = todaySessions(plan, on: workout.startedAt, calendar: calendar).filter {
-            $0.status == .planned && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
+            ($0.status == .planned || $0.status == .moved)
+                && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
         }
         guard !open.isEmpty else { return nil }
         let candidates = open.map {
@@ -92,6 +96,7 @@ enum PlanCoaching {
         for session in plan.sessions
             where session.status == .planned
             && session.completedWorkout == nil
+            && session.runType != .race        // a missed race never auto-reschedules — that's the athlete's call
             && calendar.startOfDay(for: session.date) < todayStart {
 
             var moved = false
@@ -124,22 +129,35 @@ enum PlanCoaching {
         } ?? false
         if movedCount >= 3, !recentlyAdapted, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
             let unit = displayUnit(in: context)
+            // Comeback paces: time away costs fitness, so the assumed 5k eases ~2% BEFORE the week
+            // is softened (the converted easy sessions then price at the eased fitness). Recalibration
+            // earns it back the first time a quality run proves the old level — paces only ever
+            // tighten from evidence, so this can't spiral downward.
+            if plan.p5kSPerKm > 0 { plan.p5kSPerKm *= 1.02 }
             for s in plan.sessions
-                where s.status != .completed && s.completedWorkout == nil
+                where s.status != .completed && s.completedWorkout == nil && s.runType != .race
                       && calendar.startOfDay(for: s.date) >= todayStart && s.date < horizon {
                 if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.7, unit: unit) }
                 if let dur = s.targetDurationS { s.targetDurationS = (dur * 0.7).rounded() }
                 if let rt = s.runType, rt.isQuality {
                     s.runType = .easy
                     s.intervals = nil
-                    s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: plan.p5kSPerKm)
                 }
                 for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.7).rounded())) }
                 s.rationale = "Rebuild week — easing back in at ~70% after time away. The plan meets you here."
             }
+            // Re-derive every future planned pace at the eased fitness (this week's converted easies
+            // AND the weeks beyond — a comeback's interval day shouldn't demand last month's legs).
+            for s in plan.sessions
+                where s.status != .completed && s.completedWorkout == nil
+                      && calendar.startOfDay(for: s.date) >= todayStart {
+                guard let rt = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
+                s.targetPaceSPerKm = PlanEngine.sessionPace(rt, p5k: plan.p5kSPerKm, intervals: s.intervals,
+                                                            raceDistanceM: goalRaceDistanceM(in: context))
+            }
             plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
             CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
-                                 detail: "You were away a bit, so this week restarts at about 70%. Cramming the missed work back in is how comebacks end early.",
+                                 detail: "You were away a bit, so this week restarts at about 70% and your paces ease a touch. One good session earns them right back.",
                                  on: today, in: context, calendar: calendar)
         }
         if changed { try? context.save() }
@@ -160,9 +178,12 @@ enum PlanCoaching {
         let todayStart = calendar.startOfDay(for: date)
         // Injury-converted sessions are off-limits: softening one would corrupt the swap (easy-run
         // fields on a cycling session) and overwrite the marker `resume` needs to restore it.
+        // Race day is untouchable too — you don't run 110% (or 85%) of a marathon; adaptations
+        // shape the training around it, never the race itself.
         let future = plan.sessions
             .filter { $0.status == .planned && $0.completedWorkout == nil
                       && calendar.startOfDay(for: $0.date) >= todayStart
+                      && $0.runType != .race
                       && !($0.rationale?.hasPrefix(InjuryResponse.marker) ?? false) }
             .sorted { $0.date < $1.date }
         guard !future.isEmpty else { return 0 }

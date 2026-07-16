@@ -51,6 +51,14 @@ struct PaywallTests {
         let offering = PaywallOffering.standard
         #expect(offering.annual.trialDays == 7)
         #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 50)   // $119.99/yr vs 12 × $19.99
+        #expect(offering.annualSavingsPercent == 40)   // 38.85% ($109.99 vs 12 × $14.99), rounded to nearest 5%
+    }
+
+    /// Monthly is priced UNDER Runna (~$17.99/mo) to win the price-comparison shopper (2026-07-14).
+    @Test func monthlyPriceUndercutsRunna() {
+        let offering = PaywallOffering.standard
+        #expect(offering.monthly.priceText == "$14.99")
+        #expect(offering.annual.priceText == "$109.99")
+        #expect(offering.monthly.period == .monthly)
     }
 }

@@ -119,10 +119,18 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         center.add(UNNotificationRequest(identifier: "momentum.streak", content: content, trigger: trigger))
     }
 
-    /// Show banners while foregrounded, so the "plan updated" nudge is actually seen.
+    /// Show banners while foregrounded, so the "plan updated" nudge is actually seen — except the
+    /// rest-timer alert, which is redundant here: this delegate only fires while the app is active,
+    /// and the in-app rest ring is already counting down (that notification is cancelled on
+    /// skip/finish, never when the ring reaches 0 naturally). Suppress it so it doesn't fire a
+    /// banner+sound over the ring every set.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if notification.request.identifier == Self.restID {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound])
     }
 

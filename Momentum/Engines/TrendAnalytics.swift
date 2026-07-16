@@ -143,7 +143,8 @@ enum TrendAnalytics {
 
     /// The six premium metrics as compact tiles. Each carries a raw SI current value, a sparkline,
     /// and a trend vs the older half of its own history. The view maps `kind` → label/unit/format.
-    static func summary(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current) -> [SummaryMetric] {
+    static func summary(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current,
+                        decoupling: [WeekValue]? = nil) -> [SummaryMetric] {
         let ff = fitnessFreshness(workouts: workouts, now: now, calendar: calendar)
         // Sample the daily curve weekly (every 7th day) so the sparklines are ~12–17 points.
         let ffWeekly = stride(from: max(0, ff.count - 84), to: ff.count, by: 7).map { ff[$0] }
@@ -152,7 +153,9 @@ enum TrendAnalytics {
         }
         let cadence = weeklyCadence(workouts: workouts, now: now, calendar: calendar)
         let climb = weeklyClimb(workouts: workouts, now: now, calendar: calendar)
-        let decoup = recentDecoupling(workouts: workouts)
+        // Decoupling faults every qualifying run's full HR+GPS series — callers that already
+        // computed it pass it in rather than paying the walk twice.
+        let decoup = decoupling ?? recentDecoupling(workouts: workouts)
 
         func metric(_ kind: SummaryMetric.Kind, _ spark: [Double], current: Double? = nil) -> SummaryMetric {
             let clean = spark.filter { $0 != 0 || kind == .form }   // form can legitimately be ~0

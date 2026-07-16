@@ -8,6 +8,10 @@ struct HeatmapHistoryCard: View {
     var distanceUnit: DistanceUnit = .auto
 
     @State private var result: HeatmapSource.Result?
+    /// Session cache: the History branch is destroyed on every segment flip, so an uncached build
+    /// re-faulted + re-binned the entire GPS history per visit and the card popped in late,
+    /// shifting the feed. `Result` is pure values (cells/count/meters) — safe to hold statically.
+    @MainActor private static var cache: (count: Int, result: HeatmapSource.Result)?
     // --heatmap-expand: auto-open the full PersonalHeatmapView on appear (website screenshot).
     @State private var expand = {
         #if DEBUG
@@ -27,7 +31,18 @@ struct HeatmapHistoryCard: View {
                     .buttonStyle(.plain)
             }
         }
-        .task { if result == nil { result = await HeatmapSource.build(from: workouts) } }
+        // Keyed on the data, not the mount: a run logged mid-session now refreshes the card
+        // (the old `if result == nil` guard froze "N activities" for the view's life), while a
+        // cache hit renders instantly on re-visits instead of re-binning the whole history.
+        .task(id: workouts.count) {
+            if let cached = Self.cache, cached.count == workouts.count {
+                if result == nil { result = cached.result }
+                return
+            }
+            let built = await HeatmapSource.build(from: workouts)
+            Self.cache = (workouts.count, built)
+            result = built
+        }
         .fullScreenCover(isPresented: $expand) {
             PersonalHeatmapView(distanceUnit: distanceUnit) { expand = false }
         }

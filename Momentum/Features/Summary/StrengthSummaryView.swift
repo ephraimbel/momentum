@@ -126,7 +126,7 @@ struct StrengthSummaryContent: View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             sectionTitle("Exercises")
             ForEach(session.exercises.sorted { $0.order < $1.order }, id: \.persistentModelID) { row in
-                let working = row.sets.filter { $0.isComplete && $0.type == .working }
+                let working = row.sets.filter { $0.isComplete && $0.type == .working }.sorted { $0.index < $1.index }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.exercise?.name ?? "Exercise")
                         .font(.rounded(Theme.FontSize.body, weight: .bold))

@@ -24,13 +24,15 @@ enum WorkoutSnapshotHealer {
     /// STAMPS that style so the workout's map identity never drifts with later app-style changes.
     static func healIfNeeded(_ workout: Workout, context: ModelContext) async {
         guard let gps = workout.gps, gps.mapSnapshotData == nil else { return }
+        let id = workout.id
+        // Cheap Set dedupe BEFORE deriving coordinates: a failed-this-session workout otherwise
+        // re-paid the full sample fault + Kalman walk on every tile appearance just to bail here.
+        guard !inFlight.contains(id), !failed.contains(id) else { return }
         let coords = gps.routeCoordinates(type: workout.type)
         guard coords.count > 1 else { return }
-        let id = workout.id
-        guard !inFlight.contains(id), !failed.contains(id) else { return }
         inFlight.insert(id)
         defer { inFlight.remove(id) }
-        while active >= maxConcurrent { try? await Task.sleep(for: .milliseconds(150)) }
+        while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1
         let style = gps.mapStyle
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
@@ -88,7 +90,7 @@ enum WorkoutSnapshotHealer {
         guard let gps = workout.gps else { return }
         let coords = gps.routeCoordinates(type: workout.type)
         guard coords.count > 1 else { return }
-        while active >= maxConcurrent { try? await Task.sleep(for: .milliseconds(150)) }
+        while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
                                                    size: RouteSnapshotter.workoutTileSize,

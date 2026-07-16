@@ -11,6 +11,7 @@ struct PlanView: View {
     @Environment(CoachPresenter.self) private var coach
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
+    @Query private var chatMessages: [ChatMessage]   // coach-button badge (threads stay small)
     @State private var weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
     @State private var showingAdd = false
     @State private var addDay = Date()
@@ -32,6 +33,18 @@ struct PlanView: View {
     // removed session, a new week, or the very first frame — `liveWeekMap` recomputes fresh from the
     // live `plan.sessions` instead of touching the stale cache, which can hold deleted objects.
     @State private var weekMapToken: Int = 0
+    // Coach's-read insights are real engine work (quality-run pace eval + hybrid sequencing, both
+    // faulting session→workout→exercise). Memoized here so `body` never recomputes them on an
+    // unrelated re-render — notably opening the coach, which flips the presenter's `lastSeenAt` and
+    // would otherwise re-run all of it mid-cover-animation (the "opening the coach felt laggy" bug).
+    @State private var coachsReadModel = CoachsReadModel()
+
+    private struct CoachsReadModel: Equatable {
+        var hasRacePrediction = false
+        var paceResult: PaceInsights.Result?
+        var hybridInsight: String?
+        var hasContent: Bool { hasRacePrediction || paceResult != nil || hybridInsight != nil }
+    }
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
@@ -91,6 +104,7 @@ struct PlanView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     header
                     weekStrip
+                    if showRenewalPrompt { renewalCard.reveal(0.04) }
                     if isCurrentWeek { tuneSection }
                     weekBoard
                         .reveal(0.06)
@@ -194,7 +208,7 @@ struct PlanView: View {
     /// lifts are spaced so hard efforts land on fresh legs. Shown only on genuinely hybrid weeks.
     @ViewBuilder
     private var hybridCard: some View {
-        if let insight = hybridWeekInsight {
+        if let insight = coachsReadModel.hybridInsight {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 Image(systemName: "figure.run.circle").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.ink)
                 VStack(alignment: .leading, spacing: 2) {
@@ -242,33 +256,23 @@ struct PlanView: View {
     /// it): race projection, quality-pace verdict, and the hybrid sequencing note.
     @ViewBuilder
     private var coachsRead: some View {
-        if hasCoachsRead {
+        if coachsReadModel.hasContent {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 Text("COACH'S READ")
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
                     .foregroundStyle(Theme.inkTertiary)
                     .padding(.top, Theme.Space.sm)
-                if let plan, let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
+                if coachsReadModel.hasRacePrediction, let plan, let raceM = profiles.first?.raceDistanceM {
                     RacePredictionCard(raceDistanceM: raceM,
                                        raceDate: profiles.first?.raceDate ?? plan.raceDate,
                                        p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit)
                 }
-                if let plan {
-                    let runs = PaceInsights.recentQualityRuns(plan)
-                    if !runs.isEmpty {
-                        PaceInsightCard(result: PaceInsights.evaluate(runs))
-                    }
+                if let result = coachsReadModel.paceResult {
+                    PaceInsightCard(result: result)
                 }
                 hybridCard
             }
         }
-    }
-
-    private var hasCoachsRead: Bool {
-        guard let plan else { return false }
-        if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 { return true }
-        if !PaceInsights.recentQualityRuns(plan).isEmpty { return true }
-        return hybridWeekInsight != nil
     }
 
     private func delete(_ session: PlannedSession) {
@@ -288,23 +292,29 @@ struct PlanView: View {
                     .font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
                     .lineLimit(1).minimumScaleFactor(0.55)
                 Spacer()
-                if plan != nil {
-                    // Two distinct intents, named plainly: tune what exists, or begin again.
-                    // Goals change — starting over is a first-class move, never buried.
-                    Menu {
-                        Button { showSettings = true } label: {
-                            Label("Adjust this plan", systemImage: "slider.horizontal.3")
+                // The trailing controls live in their own center-aligned row so the app-icon coach
+                // mark, the adjuster, and the add button sit on one line (each reports a different
+                // text baseline, so aligning them to the title's would stagger them).
+                HStack(alignment: .center, spacing: Theme.Space.xs) {
+                    coachButton
+                    if plan != nil {
+                        // Two distinct intents, named plainly: tune what exists, or begin again.
+                        // Goals change — starting over is a first-class move, never buried.
+                        Menu {
+                            Button { showSettings = true } label: {
+                                Label("Adjust this plan", systemImage: "slider.horizontal.3")
+                            }
+                            Button { showNewPlan = true } label: {
+                                Label("Start a new plan", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                        } label: {
+                            Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
+                                .frame(width: 40, height: 40).contentShape(Rectangle())
                         }
-                        Button { showNewPlan = true } label: {
-                            Label("Start a new plan", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                    } label: {
-                        Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-                            .frame(width: 40, height: 40).contentShape(Rectangle())
+                        .accessibilityLabel("Plan options")
                     }
-                    .accessibilityLabel("Plan options")
+                    addButton
                 }
-                addButton
             }
             if let context = planContextLine {
                 Text(context)
@@ -330,6 +340,11 @@ struct PlanView: View {
                              : "\(label) · \(day) · \(Int(ceil(Double(days) / 7.0))) weeks to go"
         }
         guard let idx = planWeekIndex(of: currentWeekStart), planWeekStarts.count > 1 else { return nil }
+        // Open-ended (no race): a rolling block that renews when it wraps — say so, so "Week 6 of 6"
+        // reads as a checkpoint, not a plan running out.
+        if plan?.raceDate == nil {
+            return "Rolling block \((plan?.blockIndex ?? 0) + 1) · Week \(idx + 1) of \(planWeekStarts.count)"
+        }
         let prefix = (plan?.name.isEmpty ?? true) ? "Training plan · " : ""
         return "\(prefix)Week \(idx + 1) of \(planWeekStarts.count)"
     }
@@ -342,6 +357,33 @@ struct PlanView: View {
 
     private var currentWeekStart: Date {
         Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+    }
+
+    /// Ask the coach anything, right from the plan — the bare app icon (same brand identity as Today's
+    /// entry), no container, sized to sit level with the adjuster and add button. Free to chat; plan
+    /// changes still gate on Pro at Apply time inside the thread. A quiet dot marks an unseen seed.
+    private var coachButton: some View {
+        Button { Haptics.light(); coach.open() } label: {
+            BrandMark(size: 32)
+                .frame(width: 40, height: 40)
+                .overlay(alignment: .topTrailing) {
+                    if hasUnseenCoachNews {
+                        Circle().fill(Theme.ink)
+                            .frame(width: 9, height: 9)
+                            .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                            .offset(x: 2, y: -2)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask your coach")
+        .accessibilityValue(hasUnseenCoachNews ? "New message waiting" : "")
+    }
+
+    /// A coach message landed after the chat was last on screen (proactive seeds arrive closed).
+    private var hasUnseenCoachNews: Bool {
+        chatMessages.contains { $0.role == .coach && $0.createdAt > coach.lastSeenAt }
     }
 
     private var addButton: some View {
@@ -490,10 +532,14 @@ struct PlanView: View {
     /// dozens of `todaySessions` filters the board/header used to trigger per render.
     private func rebuildDerived() {
         let cal = Calendar.current
-        guard let plan else { weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; weekMapToken = 0; return }
+        guard let plan else {
+            weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; weekMapToken = 0
+            coachsReadModel = CoachsReadModel(); return
+        }
         // Group only this week's sessions (one pass, sorted within each day) and stamp the signature.
         weekMap = computeWeekMap()
         weekMapToken = currentWeekToken
+        coachsReadModel = computeCoachsRead(plan: plan)
 
         // The Monday of every week the plan spans — the strip's data, plus the plan's first week.
         guard let first = plan.sessions.map(\.date).min(),
@@ -510,6 +556,19 @@ struct PlanView: View {
             d = next
         }
         weekStartsCache = out
+    }
+
+    /// Snapshot the coach's-read insights once (called from `rebuildDerived`, off the render path):
+    /// the race prediction gate, the quality-run pace verdict, and the hybrid sequencing note.
+    private func computeCoachsRead(plan: TrainingPlan) -> CoachsReadModel {
+        var model = CoachsReadModel()
+        if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
+            model.hasRacePrediction = true
+        }
+        let runs = PaceInsights.recentQualityRuns(plan)
+        if !runs.isEmpty { model.paceResult = PaceInsights.evaluate(runs) }
+        model.hybridInsight = hybridWeekInsight
+        return model
     }
 
     /// The Monday of every week the plan spans — the strip's data (memoized in `weekStartsCache`).
@@ -574,6 +633,69 @@ struct PlanView: View {
                 }
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: Rolling-block renewal — the "we'll see where you're at" checkpoint
+
+    /// True when an open-ended (no-race) plan's current block is on its last week or has lapsed —
+    /// the honest moment to reassess and build the next block. Only on the live current week
+    /// (browsing history never nags), and never for dated-race plans (they run to race day).
+    private var showRenewalPrompt: Bool {
+        guard let plan, plan.raceDate == nil, isCurrentWeek else { return false }
+        // Prefer the memoized week span; fall back to the live sessions so the very first frame —
+        // before `rebuildDerived` fills the cache — never flashes the card on a brand-new block.
+        let blockEnd = planWeekStarts.last ?? plan.sessions.map(\.date).max()
+        guard let end = blockEnd,
+              let lastWeek = Calendar.current.dateInterval(of: .weekOfYear, for: end)?.start else { return false }
+        return currentWeekStart >= lastWeek
+    }
+
+    /// A quiet earned-iridescent card that closes one block and opens the next. Completing a block is
+    /// an achievement (so it earns the accent), and the copy is honest — the next block is built from
+    /// what the athlete actually ran, and nothing is locked in.
+    private var renewalCard: some View {
+        let lapsed = planWeekStarts.last.map { currentWeekStart > $0 } ?? true
+        let block = (plan?.blockIndex ?? 0) + 1
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .top, spacing: Theme.Space.md) {
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 40, height: 40).background(Circle().fill(IridescentMaterial()).opacity(0.32))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(lapsed ? "Block \(block) complete" : "Last week of block \(block)")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Let’s see where you’re at and build your next block around what you’ve actually been running. Nothing’s locked in.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            Button { renewBlock() } label: {
+                Text("Build my next block")
+                    .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.background)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Capsule().fill(Theme.ink))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Build my next block")
+        }
+        .padding(Theme.Space.md)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.12)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    /// Reassess recent training and regenerate the next rolling block from today (its week 1 becomes
+    /// the current week, so the board repopulates immediately).
+    private func renewBlock() {
+        guard let profile = profiles.first else { return }
+        PlanService.renewBlock(for: profile, in: context)
+        Haptics.success()
+        withAnimation(Motion.standard) {
+            weekStart = currentWeekStart
+            rebuildDerived()
         }
     }
 
@@ -706,6 +828,7 @@ struct PlanView: View {
         if session.discipline == .strength { return "STRENGTH" }
         if let wt = session.workoutType, wt != .run, !wt.isStrengthStyle { return wt.title.uppercased() }
         if let rt = session.runType {
+            if rt == .race { return "RACE DAY" }        // the season's crown — never "RACE RUN"
             return rt == .intervals ? "INTERVALS" : "\(rt.rawValue.uppercased()) RUN"
         }
         return nil

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import CoreLocation
 
 /// The visual artifact of a workout — the "post" media for the TikTok-style profile grid and the
@@ -42,11 +43,11 @@ struct WorkoutTileMedia: View {
         // finish shows the silhouette, renders + persists the real map here, then re-resolves so the
         // snapshot swaps in. Keyed on identity so a reused lazy cell recomputes for its new workout.
         .task(id: workout.id) {
-            resolved = computeMedia()
+            resolved = await computeMedia()
             let hadSnapshot = workout.gps?.mapSnapshotData != nil
             await WorkoutSnapshotHealer.healIfNeeded(workout, context: modelContext)
             // If the heal just produced a snapshot, swap it in for the silhouette fallback.
-            if !hadSnapshot, workout.gps?.mapSnapshotData != nil { resolved = computeMedia() }
+            if !hadSnapshot, workout.gps?.mapSnapshotData != nil { resolved = await computeMedia() }
         }
     }
 
@@ -60,8 +61,13 @@ struct WorkoutTileMedia: View {
         case glyph
     }
 
-    private func computeMedia() -> Media {
-        if let data = workout.heroPhotoData, let ui = UIImage(data: data) { return .photo(ui) }
+    private func computeMedia() async -> Media {
+        if let data = workout.heroPhotoData {
+            // Tiles are ~120pt cells — decode a downsampled thumbnail off-main instead of the
+            // full photo bitmap; the full-bleed immersive page keeps full resolution.
+            let ui = style == .tile ? await ImageDownsampler.thumbnail(data, maxPixel: 480) : UIImage(data: data)
+            if let ui { return .photo(ui) }
+        }
         if workout.type.isStrengthStyle, let session = workout.strength {
             let activation = MuscleActivation.from(session: session)
             if activation.values.contains(where: { $0 > 0 }) { return .muscle(activation) }
@@ -69,20 +75,38 @@ struct WorkoutTileMedia: View {
         if workout.type.isGPS {
             // Immersive prefers the live, framed Mapbox route over the small pre-rendered PNG.
             if style == .immersive {
-                let coords = routeCoords
+                let coords = await routeCoordsOffMain()
                 if coords.count > 1 { return .route(coords) }
             }
             // Prefer the cached snapshot PNG — only fall back to Kalman-smoothing all samples when
             // there's no snapshot (the self-heal path), never wastefully before the snapshot check.
-            if let data = workout.gps?.mapSnapshotData, let ui = UIImage(data: data) { return .snapshot(ui) }
-            let coords = routeCoords
+            if let data = workout.gps?.mapSnapshotData {
+                let ui = style == .tile ? await ImageDownsampler.thumbnail(data, maxPixel: 480) : UIImage(data: data)
+                if let ui { return .snapshot(ui) }
+            }
+            let coords = await routeCoordsOffMain()
             if coords.count > 1 { return .route(coords) }
         }
         return .glyph
     }
 
-    private var routeCoords: [CLLocationCoordinate2D] {
-        workout.gps?.routeCoordinates(type: workout.type) ?? []
+    /// The route walk faults every GPS sample and Kalman-smooths it — done on the MainActor it
+    /// hitched the immersive pager mid-swipe as each page's `.task` fired. Fault + smooth on a
+    /// fresh background context instead (the HeatmapSource pattern: only the container and the
+    /// detail's persistent id cross the hop — SwiftData models aren't Sendable), handing back
+    /// plain coordinates. Transient/preview objects (no container) fall back inline.
+    private func routeCoordsOffMain() async -> [CLLocationCoordinate2D] {
+        guard let gps = workout.gps else { return [] }
+        guard let container = gps.modelContext?.container else {
+            return gps.routeCoordinates(type: workout.type)
+        }
+        let id = gps.persistentModelID
+        let type = workout.type
+        return await Task.detached(priority: .userInitiated) {
+            let context = ModelContext(container)
+            guard let detail = context.model(for: id) as? GPSDetail else { return [] }
+            return detail.routeCoordinates(type: type)
+        }.value
     }
 
     // MARK: Renderers

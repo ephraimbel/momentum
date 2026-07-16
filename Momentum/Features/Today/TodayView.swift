@@ -60,6 +60,9 @@ struct TodayView: View {
     /// The header streak, computed once per data change instead of on every body evaluation
     /// (the map re-evaluates the body constantly while panning).
     @State private var cachedStreak: Int?
+    /// Today's pending plan session, memoized for the same reason (see `pendingToday`).
+    @State private var cachedPendingToday: PlannedSession?
+    @State private var pendingTodayToken: Int = 0
     @State private var confirmResume = false
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
@@ -123,8 +126,29 @@ struct TodayView: View {
 
     private let distanceUnit: DistanceUnit = .auto
     private var plan: TrainingPlan? { profiles.first?.plan }
+    /// Today's pending plan session, memoized behind a cheap signature — the map re-evaluates the
+    /// body continuously while panning, and filtering the full session list (per-session calendar
+    /// math, ×2 reads per eval) per frame is the exact anti-pattern the Plan board fixed. The token
+    /// covers every way the answer changes: a regenerated plan (new id), sessions added/removed,
+    /// a workout landing (completion credits the session), and the local day rolling over. Never
+    /// serves a cached ref when the signature mismatches, so a cascade-deleted session is never read.
     private var pendingToday: PlannedSession? {
+        pendingTodayToken == currentPendingToken ? cachedPendingToday : computePendingToday()
+    }
+    private var currentPendingToken: Int {
+        var h = Hasher()
+        h.combine(plan?.persistentModelID)
+        h.combine(plan?.sessions.count ?? 0)
+        h.combine(workouts.count)
+        h.combine(Calendar.current.startOfDay(for: Date()))
+        return h.finalize()
+    }
+    private func computePendingToday() -> PlannedSession? {
         PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed }
+    }
+    private func refreshPendingToday() {
+        cachedPendingToday = computePendingToday()
+        pendingTodayToken = currentPendingToken
     }
     private var isCardio: Bool { activity.isGPS }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
@@ -159,6 +183,9 @@ struct TodayView: View {
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .onAppear {
             bootstrapIfNeeded()
+            // AFTER bootstrap (its reconcile pass can move sessions): snapshot today's plan row so
+            // body reads stay cheap. Every appear, so plan-tab edits show the moment you return.
+            refreshPendingToday()
             // Refresh the Home Screen widget's snapshot whenever Today surfaces — the write is
             // change-guarded, so an identical snapshot never wakes the widget.
             WidgetBridge.publish(profile: profiles.first, workouts: workouts)
@@ -187,6 +214,9 @@ struct TodayView: View {
         }
         // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
         .onChange(of: workouts.count) { cachedStreak = nil; lastBootstrap = nil; bootstrapIfNeeded() }
+        // Any signature change (new plan, session added/removed, workout landed, day rollover)
+        // re-snapshots the deck's plan row.
+        .onChange(of: currentPendingToken) { refreshPendingToday() }
         // The morning readout's number, computed off the render path (page-load-perf rule — the
         // Health reads are async and `RecoveryModel` folds a month of workouts). Recomputes when a
         // workout lands or today's check-in is answered. Banded `HealthBaselines` + the learned
@@ -200,9 +230,10 @@ struct TodayView: View {
                                                 checkin: DailyCheckin.today(in: checkins))
         }
         .onChange(of: activity) { if isCardio { mapWasShown = true } }
-        // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
+        // Follow the athlete's puck the moment a fix lands — but never while zoomed out to the globe,
+        // and never while a suggested loop owns the frame (a late fix would yank the camera off it).
         .onChange(of: locator.lastLocation?.latitude) {
-            if !worldMode, !marketingHero, locator.lastLocation != nil {
+            if !worldMode, !marketingHero, !loopMode, locator.lastLocation != nil {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
             }
         }
@@ -212,9 +243,16 @@ struct TodayView: View {
             if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
         }
         // Re-tilt the camera when switching to/from 3D Satellite (and other layers reset it flat).
+        // Never via followPuck without authorization — the puck viewport spins up Mapbox's location
+        // provider, which would prompt for permission from a style change (the ask stays contextual:
+        // Start or recenter, never a re-skin).
         .onChange(of: mapStyle) {
             if !worldMode, !marketingHero {
-                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
+                let target: Viewport = locator.isAuthorized
+                    ? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
+                    : .camera(center: lastKnownCoordinate ?? Self.defaultMapCenter,
+                              zoom: 13.5, pitch: mapStyle.explorePitch)
+                withAnimation(Motion.standard) { viewport = target }
             }
         }
         // Frame the loop as soon as the first candidate streams in (and whenever the selection changes).
@@ -289,6 +327,9 @@ struct TodayView: View {
            Date().timeIntervalSince(last.at) < 240 { return }
         lastBootstrap = (at: Date(), day: day)
 
+        // Post-race continuation first: once race day has passed, the result recalibrates paces and
+        // the plan rolls into a recovery-lead-in block — BEFORE reconcile could touch the old plan.
+        if let p = profiles.first { PlanService.completeRace(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
         // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
         // notification permission on first run.
@@ -314,6 +355,10 @@ struct TodayView: View {
         // The proactive coach: at most one seeded thought in the chat per pass (earned load bump,
         // Monday recap), badged on the coach button and mirrored to the bell. Deduped inside.
         CoachProactive.sweep(profile: profiles.first, workouts: workouts, in: context)
+        // Pre-week load recheck (§11.1.1): if next week is PLANNED well above what the athlete has
+        // ACTUALLY been absorbing (misses/pauses drift the two apart), seed one consent-gated trim.
+        _ = CoachProactive.seedPlannedLoadRecheck(plan: profiles.first?.plan,
+                                                  workouts: workouts, in: context)
         // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
         // carb-load → kit → race-day fueling), each posted once.
         if let profile = profiles.first, let raceDate = profile.raceDate,
@@ -460,11 +505,13 @@ struct TodayView: View {
     }
 
     private func planTitle(_ s: PlannedSession) -> String {
-        if s.discipline == .strength { return s.strengthTargets.count >= 5 ? "Full Body" : "Strength" }
-        // Precise sport when set (swim/yoga/hike/ride…); a plain run keeps its quality label.
+        // The precise sport wins when set — planned yoga/golf/swim roll up to a coaching DISCIPLINE
+        // (strength/running) for analytics, but the confirm sheet must say what it actually is.
+        // A plain run keeps its quality label; engine-prescribed sessions have no sportType.
         if let wt = s.workoutType {
             return wt == .run ? "\(s.runType?.rawValue.capitalized ?? "Easy") Run" : wt.title
         }
+        if s.discipline == .strength { return s.strengthTargets.count >= 5 ? "Full Body" : "Strength" }
         switch s.discipline {
         case .running: return "\(s.runType?.rawValue.capitalized ?? "Easy") Run"
         case .cycling: return "Ride"
@@ -474,11 +521,16 @@ struct TodayView: View {
     }
 
     private func planStartCTA(_ s: PlannedSession) -> String {
+        // Same rule as the title: the precise sport wins ("Start lifting" for a planned yoga
+        // session read wrong). Timed sports get the stopwatch's generic verb.
+        if let wt = s.workoutType, !wt.isStrengthStyle, wt != .run {
+            return wt.isTimed ? "Start session" : "Start \(wt.title.lowercased())"
+        }
         switch s.discipline {
-        case .strength: "Start lifting"
-        case .running: "Start run"
-        case .cycling: "Start ride"
-        case .walking: "Start walk"
+        case .strength: return "Start lifting"
+        case .running: return "Start run"
+        case .cycling: return "Start ride"
+        case .walking: return "Start walk"
         }
     }
 
@@ -862,7 +914,7 @@ struct TodayView: View {
     /// Tap-through from the morning readout → Progress → Health. One-shot mailbox: RootView
     /// consumes the tab, ProgressScreen consumes the segment (RECOVERY-HUB-PLAN §2).
     private func openHealthSegment() {
-        router.pendingProgressSegment = "Health"
+        router.pendingProgressSegment = ProgressScreen.Segment.health.rawValue
         router.pendingTab = .progress
     }
 
@@ -1367,27 +1419,37 @@ struct TodayView: View {
     private var worldHeader: some View {
         VStack(spacing: 2) {
             Text("Around the world").font(.display(24, weight: .black)).foregroundStyle(.white)
-            Text(worldSubtitle)
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
+            if let subtitle = worldSubtitle {
+                Text(subtitle)
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
+            }
         }
         .shadow(color: .black.opacity(0.5), radius: 8, y: 1)   // legible over the bright/dark globe
         .padding(.top, Theme.Space.sm)
         .allowsHitTesting(false)
     }
 
-    private var worldSubtitle: String {
-        // "live now" only appears when the realtime backend reports real presence (never fabricated).
-        let base = "\(communityAthletes.count) in the Momentum community"
-        return liveCount > 0 ? "\(base) · \(liveCount) live now" : base
+    /// Honest presence only — never a fabricated crowd, and never a sad "0 in the community" while
+    /// the community layer is back-burnered. No real numbers → no subtitle at all.
+    private var worldSubtitle: String? {
+        let count = communityAthletes.count
+        if count > 0 {
+            let base = "\(count) in the Momentum community"
+            return liveCount > 0 ? "\(base) · \(liveCount) live now" : base
+        }
+        return liveCount > 0 ? "\(liveCount) live now" : nil
     }
 
     /// Bottom chrome over the globe: legend + the "appear on the map" opt-in (off by default).
     private var worldBottomChrome: some View {
         VStack(spacing: Theme.Space.md) {
-            HStack(spacing: Theme.Space.sm) {
-                Circle().fill(Theme.route).frame(width: 8, height: 8)
-                Text("Community").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(.white.opacity(0.75))
-                Spacer(minLength: 0)
+            // The dot legend only makes sense when there are dots (community is back-burnered).
+            if !communityAthletes.isEmpty {
+                HStack(spacing: Theme.Space.sm) {
+                    Circle().fill(Theme.route).frame(width: 8, height: 8)
+                    Text("Community").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(.white.opacity(0.75))
+                    Spacer(minLength: 0)
+                }
             }
             worldOptInRow
         }

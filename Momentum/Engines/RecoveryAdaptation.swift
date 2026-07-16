@@ -15,7 +15,9 @@ enum RecoveryAdaptation {
     /// Decide whether today should be eased. Requires TWO independent warning signs — one noisy night
     /// never lurches the plan (§1 guardrail). The aggressive tier also counts a *slightly* elevated
     /// resting HR and a slightly shorter night (the tighter leash it was promised). The morning
-    /// check-in counts too: what the athlete says stands equal to what the wearable measured.
+    /// check-in counts too: what the athlete says stands equal to what the wearable measured. Illness-
+    /// watch deviations (breathing rate, wrist temperature) count the same way once their baselines
+    /// are banded — nil until then, so an unlearned norm can never raise a false alarm.
     static func decide(signals: RecoverySignals, intensity: PlanIntensity,
                        checkin: DailyCheckin? = nil) -> Decision? {
         var reasons: [String] = []
@@ -38,6 +40,12 @@ enum RecoveryAdaptation {
         if let sleep = signals.sleepHours, sleep < sleepCut {
             reasons.append("a short night (\(String(format: "%.1f", sleep))h)")
         }
+
+        // Illness-watch (RECOVERY-HUB-PLAN §11.1.3) — the hard tier of the readiness modifiers, each
+        // one ordinary warning sign here. Alone it's a quirk of the night; concordant with a second
+        // signal it's the body fighting something, and the ease legitimately fires. Never a diagnosis.
+        if let z = signals.respiratoryZ, z >= 2 { reasons.append("breathing rate above your norm") }
+        if let delta = signals.wristTempDeltaC, delta >= 1.0 { reasons.append("running warm vs your normal") }
 
         guard reasons.count >= 2 else { return nil }
         return Decision(reason: reasons.joined(separator: " and "))
@@ -84,8 +92,11 @@ enum RecoveryAdaptation {
                              in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
         guard let plan else { return nil }
         let todays = PlanCoaching.todaySessions(plan, on: today, calendar: calendar)
+        // `.moved` is still today's open work (reconcileMissed rolls slipped days forward as .moved)
+        // — a quality session must not dodge the recovery ease just because it slid here.
         guard let session = todays.first(where: {
-            $0.status == .planned && $0.completedWorkout == nil && $0.discipline == .running
+            ($0.status == .planned || $0.status == .moved)
+            && $0.completedWorkout == nil && $0.discipline == .running
             && ($0.runType?.isQuality == true || $0.runType == .long)
         }) else { return nil }
 

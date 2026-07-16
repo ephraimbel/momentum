@@ -42,10 +42,32 @@ struct ProfileScreen: View {
     // correct before the refresh task lands.
     @State private var cachedStats: ProfileStats?
     @State private var cachedHighlights: ProfileHighlights?
-    private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profile?.plan) }
+    /// Memo for the PRE-task fallback: the first body pass reads `stats`/`highlights` five times
+    /// across the header, grid, and highlights sections — each access re-walked the full history
+    /// before `refreshAggregates()` landed, all on the main actor before the first frame. A plain
+    /// reference box (fields not observed), so filling it mid-body is invisible to SwiftUI.
+    private final class FallbackMemo {
+        var count = -1
+        var stats: ProfileStats?
+        var highlights: ProfileHighlights?
+    }
+    @State private var memo = FallbackMemo()
+    private var stats: ProfileStats {
+        if let cachedStats { return cachedStats }
+        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.highlights = nil }
+        if let s = memo.stats { return s }
+        let s = ProfileStats(workouts: workouts, plan: profile?.plan)
+        memo.stats = s
+        return s
+    }
     private var highlights: ProfileHighlights {
-        cachedHighlights ?? ProfileHighlights(stats: stats, workouts: workouts,
-                                              weightUnit: weightUnit, distanceUnit: distanceUnit)
+        if let cachedHighlights { return cachedHighlights }
+        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.highlights = nil }
+        if let h = memo.highlights { return h }
+        let h = ProfileHighlights(stats: stats, workouts: workouts,
+                                  weightUnit: weightUnit, distanceUnit: distanceUnit)
+        memo.highlights = h
+        return h
     }
 
     @State private var aggregatedForCount = -1   // matches the count the caches were built for

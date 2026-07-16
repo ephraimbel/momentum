@@ -34,8 +34,9 @@ enum CardioAchievements {
                             prType: workout.type == .run ? .longestRun : nil, value: gps.distanceM))
         }
 
-        // Fastest benchmark windows — only meaningful for run/ride, and only distances actually covered.
-        if workout.type == .run || workout.type == .ride {
+        // Fastest benchmark windows — a RUNNING record only (a ride covers these distances far
+        // faster and would corrupt the run PRs), and only distances actually covered.
+        if workout.type == .run {
             let pts = samplePoints(gps)
             for (meters, name) in [(1000.0, "1K"), (5000.0, "5K"), (10000.0, "10K")] {
                 guard gps.distanceM >= meters, let cur = CardioMetrics.fastestWindow(pts, distanceM: meters) else { continue }
@@ -63,6 +64,14 @@ enum CardioAchievements {
                             prType: .longestDuration, value: workout.durationS))
         }
         return hits
+    }
+
+    /// Whether this is the athlete's first-ever GPS workout of its discipline — the case where
+    /// `detect` makes no "you got better" claim (empty prior), yet the run's own bests must still
+    /// SEED the record book (mirrors `StrengthPRs` recording the first lift off a 0 baseline).
+    static func isFirstOfType(_ workout: Workout, in context: ModelContext) -> Bool {
+        let all = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
+        return !all.contains { $0.type == workout.type && $0.startedAt < workout.startedAt && $0.gps != nil }
     }
 
     /// Reduce accepted GPS samples to `(elapsed, cumulative distance)` — matches the summary's reducer.

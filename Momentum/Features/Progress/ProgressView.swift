@@ -13,12 +13,15 @@ struct ProgressScreen: View {
     @Query private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
     @Query(sort: \CoachingEvent.date, order: .reverse) private var coachingEvents: [CoachingEvent]
+    @Query(sort: \DailyCheckin.date, order: .reverse) private var checkins: [DailyCheckin]   // Health segment pillars
+    @Environment(AppRouter.self) private var router   // consumes pendingProgressSegment (one-shot)
     @State private var animateCharts = false
     @State private var adjustedPlan = false
     @State private var segment: Segment = {
         #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
         let a = ProcessInfo.processInfo.arguments
         if a.contains("--progress-history") { return .history }
+        if a.contains("--progress-health") { return .health }
         #endif
         return .trends
     }()
@@ -29,13 +32,22 @@ struct ProgressScreen: View {
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
     @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
-    @State private var aggregatedForCount = -1               // .task(id:) re-fires on every tab visit; only re-walk when data moved
+    @State private var aggregatedForKey = ""                 // .task(id:) re-fires on every tab visit; only re-walk when data (or the day) moved
     @State private var showAllAdaptations = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Segment: String, CaseIterable, Identifiable {
-        case trends = "Trends", history = "History"
+        case trends = "Trends", health = "Health", history = "History"
         var id: Self { self }
+    }
+
+    /// One-shot mailbox from `AppRouter` (raw-value string keeps the router file decoupled):
+    /// nil it FIRST, then switch — a stale request must never re-fire on a later appearance.
+    private func consumePendingSegment() {
+        guard let raw = router.pendingProgressSegment else { return }
+        router.pendingProgressSegment = nil
+        guard let seg = Segment(rawValue: raw) else { return }   // unknown strings: consumed, ignored
+        withAnimation { segment = seg }
     }
 
     /// The trend-chart look-back window. Adding a longer range is one case here — the weekly series,
@@ -70,6 +82,60 @@ struct ProgressScreen: View {
             case .year: "Last year"
             }
         }
+        /// Calendar-day look-back for the Athlete Panel — its body activation and windowed callouts read
+        /// this many days, so the figure and its stats re-window with the picker (not a rolling weekly
+        /// count like `weeks`, which is a chart-density knob).
+        var activationDays: Int {
+            switch self {
+            case .week: 7
+            case .month: 30
+            case .threeMonths: 90
+            case .sixMonths: 180
+            case .year: 365
+            }
+        }
+        /// The window in whole weeks — for the VO₂ "vs …" delta, which reads weekly snapshots.
+        var lookbackWeeks: Int { max(1, activationDays / 7) }
+        /// The panel's eyebrow — names the window the body + callouts summarize.
+        var windowLabel: String {
+            switch self {
+            case .week: "LAST 7 DAYS"
+            case .month: "LAST MONTH"
+            case .threeMonths: "LAST 3 MONTHS"
+            case .sixMonths: "LAST 6 MONTHS"
+            case .year: "LAST YEAR"
+            }
+        }
+        /// Compact noun for a windowed distance callout's label.
+        var distanceNoun: String {
+            switch self {
+            case .week: "THIS WEEK"
+            case .month: "THIS MONTH"
+            case .threeMonths: "3 MONTHS"
+            case .sixMonths: "6 MONTHS"
+            case .year: "12 MONTHS"
+            }
+        }
+        /// Natural phrase for a windowed context line ("Most worked …").
+        var windowPhrase: String {
+            switch self {
+            case .week: "this week"
+            case .month: "this month"
+            case .threeMonths: "over 3 months"
+            case .sixMonths: "over 6 months"
+            case .year: "this year"
+            }
+        }
+        /// "…vs a month ago" phrasing for the VO₂ delta context.
+        var agoLabel: String {
+            switch self {
+            case .week: "last week"
+            case .month: "a month ago"
+            case .threeMonths: "3 months ago"
+            case .sixMonths: "6 months ago"
+            case .year: "a year ago"
+            }
+        }
     }
     @State private var trendRange: TrendRange = .week
 
@@ -93,12 +159,30 @@ struct ProgressScreen: View {
     /// uncached read re-ran them on every body evaluation — that was the tab's load stutter.
     @State private var cachedFacts: AthleteFacts?
     @State private var cachedActivation: [MuscleGroup: Double]?
+    /// Total distance + session count over the selected range — the Athlete Panel's windowed
+    /// distance/sessions callouts read these, recomputed together with activation on a range flip.
+    @State private var cachedRangeDistanceM: Double?
+    @State private var cachedRangeSessions: Int?
     @State private var cachedFormPoint: FitnessFreshness.Point?
     /// Full-history weekly distance buckets — the season chart and volume delta read the
     /// workouts themselves (snapshots only accumulate one per week of app use).
     @State private var cachedWeekVolumes: [(week: Date, meters: Double)]?
+    /// Per-render O(N) walks folded into the cache pass: the 12-week distance tile and the
+    /// 28-day intensity mix re-walked every workout on each Trends body evaluation.
+    @State private var cachedKm12wk = 0
+    @State private var cachedIntensityMix: IntensityMix.Mix?
+    /// Whether any lifting history exists — gates the MUSCLE FOCUS rail target (running lights
+    /// leg muscles too, but the strength section only mounts with actual strength workouts).
+    @State private var cachedHasStrength = false
 
     private var aggregatesReady: Bool { cachedInsights != nil }
+
+    /// Data-plus-day key for the aggregate caches. The engines bake "today" into streaks, ACWR
+    /// windows, and rolling cutoffs, so a count-only key froze yesterday's read in place when the
+    /// app stayed in memory past midnight — the day stamp re-walks on the first visit of a new day.
+    private var aggregateKey: String {
+        "\(workouts.count)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
+    }
 
     /// One quiet frame of placeholder cards while the caches compute — the tab responds
     /// instantly instead of freezing through the engine walks.
@@ -135,14 +219,39 @@ struct ProgressScreen: View {
     }
 
     private func refreshAggregates() {
+        #if DEBUG
+        let t0 = CFAbsoluteTimeGetCurrent()
+        defer { print("⏱ Progress refreshAggregates: \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms for \(workouts.count) workouts") }
+        #endif
         cachedStats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
         cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
         cachedRecovery = RecoveryModel(workouts: workouts)
-        prBadgeIDs = Set(workouts.filter { feedIsPRUncached($0) }.map(\.id))
+        // PR badges come from the persisted shelf (save-time persist + idempotent backfill keep it
+        // complete) — ONE fetch. The old per-workout detector pass re-fetched history and faulted
+        // every GPS sample per workout (O(n²)·samples on the main actor): THE Progress cold-open
+        // freeze the perf audit flagged.
+        let records = (try? context.fetch(FetchDescriptor<PersonalRecord>())) ?? []
+        prBadgeIDs = Set(records.compactMap { $0.workout?.id })
         cachedFacts = AthleteModelEngine(workouts: workouts, plan: plan).facts
-        cachedActivation = computeWeeklyMuscleActivation()
+        refreshWindowed()
         cachedFormPoint = computeFormPoint()
         cachedWeekVolumes = computeWeekVolumes()
+        let cutoff12 = Calendar.current.date(byAdding: .weekOfYear, value: -12, to: Date()) ?? Date()
+        cachedKm12wk = Int((workouts.filter { $0.startedAt >= cutoff12 }
+            .compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
+        cachedIntensityMix = computeIntensityMix()
+        cachedHasStrength = workouts.contains { $0.type.isStrengthStyle && $0.strength != nil }
+    }
+
+    /// The Athlete Panel's window-dependent facts — muscle activation, total distance, and session
+    /// count over the selected range. One pass over the in-window workouts; called on first load and
+    /// on every range flip so the figure and its callouts move with the picker.
+    private func refreshWindowed() {
+        let cutoff = Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
+        let inWindow = workouts.filter { $0.startedAt >= cutoff }
+        cachedActivation = MuscleActivation.combined(workouts: inWindow)
+        cachedRangeDistanceM = inWindow.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+        cachedRangeSessions = inWindow.count
     }
 
     var body: some View {
@@ -158,6 +267,7 @@ struct ProgressScreen: View {
             if aggregatesReady {
                 switch segment {
                 case .trends: trends
+                case .health: health
                 case .history: history
                 }
             } else {
@@ -166,6 +276,10 @@ struct ProgressScreen: View {
         }
         .background(Theme.background)
         .navigationBarHidden(true)
+        // Cross-tab segment requests (Today's readiness line, coach nav cards). Consume-then-nil,
+        // on appear AND change — the request may land before or after this screen exists.
+        .onAppear { consumePendingSegment() }
+        .onChange(of: router.pendingProgressSegment) { _, _ in consumePendingSegment() }
         .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView() }
         .sheet(isPresented: $showAllAdaptations) { adaptationSheet }
@@ -175,18 +289,24 @@ struct ProgressScreen: View {
                     .presentationDetents([.medium])
             }
         }
-        // Range flips only re-window the weekly series — the ACWR/status verdict and the other
-        // aggregates are window-independent, so nothing else needs recomputing.
+        // A range flip re-windows the weekly series AND the Athlete Panel (its body activation +
+        // distance/sessions callouts read the selected window). The ACWR/status verdict and the
+        // current-physiology rail readings are point-in-time, so those stay put.
         .onChange(of: trendRange) {
             withAnimation(.easeOut(duration: 0.35)) {
                 cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
+                refreshWindowed()
             }
         }
-        .task(id: workouts.count) {
-            if aggregatedForCount != workouts.count {
+        .task(id: aggregateKey) {
+            if aggregatedForKey != aggregateKey {
                 await Task.yield()   // let the skeleton frame paint before the heavy pass
+                // The PR shelf must be complete BEFORE the aggregate pass snapshots it into
+                // prBadgeIDs — running the one-time backfill after it left History badge-less
+                // for the whole first session. Flag-guarded: one UserDefaults read thereafter.
+                RecordsBook.backfillIfNeeded(in: context)
                 withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
-                aggregatedForCount = workouts.count
+                aggregatedForKey = aggregateKey
             }
             // Athlete-model upkeep (was the You tab's onAppear — idempotent, local-only).
             // Once per screen instance, and after first paint: ingest re-walks history.
@@ -194,7 +314,6 @@ struct ProgressScreen: View {
             didUpkeep = true
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
-            RecordsBook.backfillIfNeeded(in: context)
         }
     }
 
@@ -229,6 +348,10 @@ struct ProgressScreen: View {
                         .foregroundStyle(segment == seg ? Theme.background : Theme.ink)
                         .frame(maxWidth: .infinity).frame(height: 40)
                         .background { if segment == seg { Capsule().fill(Theme.ink) } }
+                        // Unselected segments have no background fill, so without an explicit
+                        // content shape only the text glyphs are hittable — dead tap zones
+                        // across most of the capsule (audit 2026-07-16).
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -264,6 +387,24 @@ struct ProgressScreen: View {
         .background(Capsule().fill(Theme.surface))
     }
 
+    /// The Health segment — like `trends`/`history`, the segment owns its scroll container
+    /// (the switch mounts bare views; an unscrolled overflowing VStack renders centered).
+    /// The proxy powers the DriverRow chips' scroll-to-card.
+    private var health: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                HealthSegmentView(workouts: workouts,
+                                  plan: profiles.first?.plan,
+                                  checkins: checkins,
+                                  events: coachingEvents,
+                                  profile: profiles.first,
+                                  scrollProxy: proxy)
+                    .padding(Theme.Space.md)
+                    .padding(.bottom, Theme.Space.xxl)
+            }
+        }
+    }
+
     private var trends: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -272,8 +413,9 @@ struct ProgressScreen: View {
                     // Every callout is a door into the detail card it summarizes.
                     // FREE — the athlete's own body, the hero teaser (readable summary callouts;
                     // the detail each one opens is Pro).
-                    AthletePanel(activation: weeklyMuscleActivation,
+                    AthletePanel(activation: rangeMuscleActivation,
                                  sex: BodySex(profileSex: profiles.first?.sex),
+                                 windowLabel: trendRange.windowLabel,
                                  hero: isAnalyticsPro ? panelHero : panelHeroFree,
                                  sub: isAnalyticsPro ? panelSub : panelSubFree,
                                  rail: panelRail,
@@ -300,8 +442,10 @@ struct ProgressScreen: View {
                         ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit, pro: isAnalyticsPro).id("proTrends")
                         // Strength progression — renders nothing without lifting history.
                         StrengthProgressSection(workouts: workouts, weightUnit: weightUnit, pro: isAnalyticsPro).id("strengthTrends")
-                        // "How am I right now", "what can I run", and what the coach has learned.
-                        formCard(recovery).id("formRace")
+                        // "How am I right now" is the Health segment's story — Trends keeps only
+                        // the compact hand-off strip (the retired formCard/recoveryCard/signalsRow
+                        // depth all lives there now; Form/TSB stays with FitnessFreshnessCard above).
+                        readinessStrip.id("formRace")
                         raceOutlook()
                         coachCard(insights)
                         athleteStory
@@ -329,15 +473,20 @@ struct ProgressScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-strength") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("strengthTrends", anchor: .top) }
                 }
+                // --trend-range-{1m,3m,6m,1y}: preset the window so the Athlete Panel + picker can be
+                // verified without pixel-tapping. Fires on its own (panel stays at top); pair it with
+                // --progress-scroll-charts to also land on the charts.
+                let ranges: [(String, TrendRange)] = [("--trend-range-1m", .month),
+                                                      ("--trend-range-3m", .threeMonths),
+                                                      ("--trend-range-6m", .sixMonths),
+                                                      ("--trend-range-1y", .year)]
+                if let hit = ranges.first(where: { ProcessInfo.processInfo.arguments.contains($0.0) }) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                        withAnimation(Motion.standard) { trendRange = hit.1 }
+                    }
+                }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-charts") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("charts", anchor: .top) }
-                    // Pair with --trend-range-{3m,6m,1y} to land on a wide window (picker verification).
-                    let ranges: [(String, TrendRange)] = [("--trend-range-3m", .threeMonths),
-                                                          ("--trend-range-6m", .sixMonths),
-                                                          ("--trend-range-1y", .year)]
-                    if let hit = ranges.first(where: { ProcessInfo.processInfo.arguments.contains($0.0) }) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { trendRange = hit.1 }
-                    }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
@@ -364,19 +513,30 @@ struct ProgressScreen: View {
     private var latestSnapshot: FitnessSnapshot? {
         profiles.first?.athlete?.snapshots.max(by: { $0.weekStart < $1.weekStart })
     }
-    /// Best current running-fitness proxy: the athlete-model's Riegel-normalized 5k pace, else the plan's.
+    /// True once the athlete has logged a REAL run. Until then, estimates that would otherwise fall
+    /// back to the plan's ASSUMED onboarding pace stay hidden — empty-slate honesty: no concrete
+    /// VO₂max, population percentile, or finish-time projection for someone who hasn't run yet.
+    private var hasLoggedRun: Bool {
+        workouts.contains { $0.type.discipline == .running && ($0.gps?.distanceM ?? 0) > 0 }
+    }
+    /// Best current running-fitness proxy: the athlete-model's Riegel-normalized 5k pace (measured
+    /// from real runs), else the plan's assumed pace — but only once there's ≥1 real run to anchor it,
+    /// so the fitness hero + race outlook show "not enough data" for a brand-new athlete.
     private var currentP5k: Double? {
         if let p = latestSnapshot?.p5kEquivSPerKm, p > 0 { return p }
-        if let p = plan?.p5kSPerKm, p > 0 { return p }
+        if hasLoggedRun, let p = plan?.p5kSPerKm, p > 0 { return p }
         return nil
     }
     /// VO₂max estimate from current fitness (P5k treated as a 5k effort — Daniels' VDOT).
     private var currentVO2: Double? {
         currentP5k.flatMap { VO2maxEstimator.fromRace(distanceM: 5000, timeS: $0 * 5) }
     }
-    private var vo2EightWeeksAgo: Double? {
+    private var vo2EightWeeksAgo: Double? { vo2WeeksAgo(8) }
+    /// VO₂max from the newest weekly snapshot at or before `weeks` ago — powers the panel's
+    /// range-aware "vs a month/3 months ago" delta as well as the fitness card's 8-week read.
+    private func vo2WeeksAgo(_ weeks: Int) -> Double? {
         guard let athlete = profiles.first?.athlete,
-              let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -8, to: Date()) else { return nil }
+              let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -weeks, to: Date()) else { return nil }
         let old = athlete.snapshots
             .filter { $0.weekStart <= cutoff && ($0.p5kEquivSPerKm ?? 0) > 0 }
             .max(by: { $0.weekStart < $1.weekStart })
@@ -532,8 +692,11 @@ struct ProgressScreen: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// The last 28 days of runs → the 80/20 polarized check (prescribed quality outranks the pace read).
-    private var intensityMix: IntensityMix.Mix? {
+    /// The last 28 days of runs → the 80/20 polarized check. Reads the cache — `aggregatesReady`
+    /// gates every segment behind the first `refreshAggregates()` pass, so this is always current.
+    private var intensityMix: IntensityMix.Mix? { cachedIntensityMix }
+
+    private func computeIntensityMix() -> IntensityMix.Mix? {
         guard let cutoff = Calendar.current.date(byAdding: .day, value: -28, to: Date()) else { return nil }
         let runs = workouts
             .filter { $0.type.discipline == .running && $0.startedAt >= cutoff }
@@ -668,8 +831,29 @@ struct ProgressScreen: View {
         return workouts.count >= 10 && workouts.contains { $0.startedAt <= cutoff }
     }
 
-    /// FORM & READINESS — Form (CTL−ATL) on a Buried→Peaked scale, next to the readiness ring. Falls
-    /// back to the plain recovery card until there's enough load history for a trustworthy Form read.
+    /// The Trends → Health hand-off: the compact strip that replaced formCard/recoveryCard/
+    /// signalsRow (their depth lives in the Health segment now). Same blend the segment's hero
+    /// computes — the two surfaces can never disagree on the number.
+    private var readinessStrip: some View {
+        let display = todaysReadinessDisplay()
+        return ReadinessStrip(score: display?.score, bandWord: display?.band, driverLine: display?.driver) {
+            withAnimation { segment = .health }
+        }
+    }
+
+    /// One number everywhere: prefer the Health hub's cached full-blend score (banded baselines +
+    /// sleep need/debt); the light `MorningReadiness(load:signals:)` covers only the gap before the
+    /// hub has computed today (the light blend read 83 where the hub read 75 — never show both).
+    private func todaysReadinessDisplay() -> (score: Int, band: String, driver: String)? {
+        if let cached = ReadinessTodayCache.today() { return cached }
+        let todayCheckin = checkins.first.flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
+        guard let r = MorningReadiness(load: recovery, signals: signals, checkin: todayCheckin) else { return nil }
+        return (r.score, r.band.rawValue, r.displayDriverLine)
+    }
+
+    /// RETIRED by the Health segment (2026-07-15): formCard/recoveryCard/signalsRow/readinessRing/
+    /// formBar/recoveryUpsell are no longer mounted — `readinessStrip` is the only Trends surface.
+    /// Kept in place for one cycle while parallel lanes settle; delete on the next quiet pass.
     @ViewBuilder
     private func formCard(_ r: RecoveryModel) -> some View {
         if r.hasData, hasFormHistory, let form = formPoint {
@@ -786,8 +970,7 @@ struct ProgressScreen: View {
     /// The at-a-glance trend row — free + up top, so "how I'm trending" reads before the Pro charts.
     private func trendMetrics() -> some View {
         let paceFaster = insights.paceTrendPct < -1
-        let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -12, to: Date()) ?? Date()
-        let km = Int((workouts.filter { $0.startedAt >= cutoff }.compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
+        let km = cachedKm12wk   // folded into refreshAggregates — this ran per render pass
         return HStack(spacing: Theme.Space.sm) {
             metricTile(paceFaster ? "▲ \(Int(abs(insights.paceTrendPct).rounded()))%" : "Steady",
                        paceFaster ? "Faster / 8 wk" : "Pace", iris: paceFaster)
@@ -824,7 +1007,10 @@ struct ProgressScreen: View {
                 // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a tab).
                 // Rescued from the retired standalone History screen during the lean-cleanup pass.
                 HeatmapHistoryCard(workouts: workouts, distanceUnit: distanceUnit).reveal(0.04)
-                ForEach(Array(monthGroups(visible).enumerated()), id: \.element.key) { gi, group in
+                // No `.reveal` on the month sections: the LazyVStack discards row state past its
+                // retention window, so the reveal re-fired from blank on EVERY scroll-back — content
+                // flashed in both directions. The entrance stagger stays on the summary + heatmap.
+                ForEach(monthGroups(visible), id: \.key) { group in
                     VStack(alignment: .leading, spacing: Theme.Space.sm) {
                         Text(group.key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
                             .tracking(0.8).foregroundStyle(Theme.inkSecondary).padding(.leading, 2)
@@ -837,22 +1023,26 @@ struct ProgressScreen: View {
                         .padding(.horizontal, Theme.Space.md)
                         .background(card)
                     }
-                    .reveal(min(0.28, 0.06 + Double(gi) * 0.05))
                 }
                 if lockedCount > 0 {
                     Button { paywallController.present(for: .fullHistory) } label: {
-                        HStack(spacing: Theme.Space.sm) {
-                            Image(systemName: "lock.fill").font(.system(size: 13, weight: .bold))
+                        HStack(spacing: Theme.Space.md) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.ink)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(Theme.surface))
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("\(lockedCount) earlier workout\(lockedCount == 1 ? "" : "s")")
-                                    .font(.rounded(Theme.FontSize.body, weight: .bold))
+                                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
                                 Text("Unlock your full history with Pro")
                                     .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                             }
                             Spacer()
-                            Image(systemName: "sparkles").font(.system(size: 14, weight: .bold))
+                            Text("PRO")
+                                .font(.rounded(10, weight: .heavy)).tracking(1.4).foregroundStyle(Color(hex: "0E0E12"))
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .background(Capsule().fill(Theme.route))
                         }
-                        .foregroundStyle(Theme.ink)
                         .padding(Theme.Space.md)
                         .background(card)
                         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
@@ -1552,11 +1742,18 @@ struct ProgressScreen: View {
     // MARK: Weekly muscle coverage
 
     /// Trailing-7-day working-sets-by-muscle (PRD §22) across strength sessions.
-    private var weeklyMuscleActivation: [MuscleGroup: Double] { cachedActivation ?? computeWeeklyMuscleActivation() }
-    private func computeWeeklyMuscleActivation() -> [MuscleGroup: Double] {
-        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
-        let recent = workouts.filter { $0.type.isStrengthStyle && $0.startedAt >= cutoff }
-        return MuscleActivation.from(workouts: recent)
+    /// Muscles worked over the selected range (relative emphasis — the map normalizes to the top
+    /// muscle, so a wide window reads as "what you've focused on," not a saturated silhouette).
+    private var rangeMuscleActivation: [MuscleGroup: Double] {
+        cachedActivation ?? MuscleActivation.combined(workouts: workouts.filter {
+            $0.startedAt >= Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
+        })
+    }
+    /// Total distance over the selected range — the panel's windowed distance callout.
+    private var rangeDistanceM: Double {
+        cachedRangeDistanceM ?? workouts.filter {
+            $0.startedAt >= Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
+        }.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
     }
 
     private func sectionTitle(_ text: String) -> some View {
@@ -1778,18 +1975,18 @@ struct ProgressScreen: View {
     /// Free-tier anchor: distance, not VO₂max. Everyone gets to see the miles they ran; the
     /// fitness read (and everything the body's rail carries) is the Pro upgrade.
     private var panelHeroFree: AthleteCallout {
-        let weekM = insights.weeks.last?.distanceM ?? 0
-        return AthleteCallout(label: "THIS WEEK", value: Formatters.distance(meters: weekM, unit: distanceUnit),
-                              unit: nil,
-                              context: insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered",
-                              target: "charts")
+        let context = trendRange == .week && insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered"
+        return AthleteCallout(label: trendRange.distanceNoun,
+                              value: Formatters.distance(meters: rangeDistanceM, unit: distanceUnit),
+                              unit: nil, context: context, target: "charts")
     }
 
-    /// Under the free-tier hero: total distance over the visible range — the "miles banked" number.
+    /// Under the free-tier hero: how many sessions the athlete banked over the range — a windowed
+    /// "how consistent have I been" counterweight to the distance number.
     private var panelSubFree: AthleteCallout {
-        let totalM = insights.weeks.reduce(0.0) { $0 + $1.distanceM }
-        return AthleteCallout(label: "TOTAL", value: Formatters.distance(meters: totalM, unit: distanceUnit),
-                              unit: nil, context: "Across this range", target: "charts")
+        let n = cachedRangeSessions ?? 0
+        return AthleteCallout(label: "SESSIONS", value: "\(n)", unit: nil,
+                              context: n == 1 ? "Workout logged" : "Workouts logged", target: "charts")
     }
 
     /// The Athlete Panel's anchor stat — VO₂max, the fitness index. Device measurement wins;
@@ -1797,36 +1994,39 @@ struct ProgressScreen: View {
     private var panelHero: AthleteCallout {
         if let vo2 = measuredVO2 ?? currentVO2 {
             let context: String
-            if let cur = currentVO2, let old = vo2EightWeeksAgo, abs(cur - old) >= 0.3 {
-                context = String(format: "%+.1f vs 8 wks ago", cur - old)
+            // The fitness delta over the selected window; falls back to the source when the change
+            // is negligible or there's no old snapshot to compare against.
+            if let cur = currentVO2, let old = vo2WeeksAgo(trendRange.lookbackWeeks), abs(cur - old) >= 0.3 {
+                context = String(format: "%+.1f vs \(trendRange.agoLabel)", cur - old)
             } else {
                 context = measuredVO2 != nil ? "From your device" : "Estimated from pace"
             }
             return AthleteCallout(label: "VO₂ MAX", value: String(format: "%.1f", vo2), unit: nil,
                                   context: context, target: "fitness")
         }
+        // No VO₂ yet → fitnessHero() renders nothing, so its anchor doesn't exist. Point the
+        // tap at the always-present charts block instead of a haptic-then-nothing scroll.
         return AthleteCallout(label: "VO₂ MAX", value: "—", unit: nil,
-                              context: "Needs a few runs", target: "fitness")
+                              context: "Needs a few runs", target: "charts")
     }
 
-    /// Under the hero: the week's distance — the "what you actually did" counterweight.
+    /// Under the hero: distance banked over the selected window — the "what you actually did"
+    /// counterweight to the fitness index, re-windowing with the range picker.
     private var panelSub: AthleteCallout {
-        let weekM = insights.weeks.last?.distanceM ?? 0
-        return AthleteCallout(label: "THIS WEEK", value: Formatters.distance(meters: weekM, unit: distanceUnit),
-                              unit: nil,
-                              context: insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered",
-                              target: "charts")
+        AthleteCallout(label: trendRange.distanceNoun,
+                       value: Formatters.distance(meters: rangeDistanceM, unit: distanceUnit),
+                       unit: nil, context: "Distance covered", target: "charts")
     }
 
     /// The right-hand rail: readiness, load, resting heart, muscle focus — each targeting the
     /// scroll id of the card that explains it.
     private var panelRail: [AthleteCallout] {
         var out: [AthleteCallout] = []
-        // Readiness — blended with Health signals when present, same as the form card.
-        if recovery.hasData {
-            let score = signals.blendedReadiness(base: recovery.score)
-            out.append(AthleteCallout(label: "READINESS", value: "\(score)", unit: "/100",
-                                      context: RecoveryModel.band(score).rawValue, target: "formRace"))
+        // Readiness — the same cache-first source as the strip (the legacy blendedReadiness
+        // offsets read 100 while the hub read 75; one app, one number).
+        if let r = todaysReadinessDisplay() {
+            out.append(AthleteCallout(label: "READINESS", value: "\(r.score)", unit: "/100",
+                                      context: r.band, target: "formRace"))
         } else {
             out.append(AthleteCallout(label: "READINESS", value: "—", unit: nil,
                                       context: "Learning your norm", target: "formRace"))
@@ -1845,21 +2045,31 @@ struct ProgressScreen: View {
             out.append(AthleteCallout(label: "TRAINING LOAD", value: "—", unit: nil,
                                       context: "Building baseline", target: "charts"))
         }
-        // Resting heart — from Apple Health when connected.
+        // Resting heart — from Apple Health when connected. The zones card only mounts with a
+        // known max HR, so target the always-present charts block otherwise — a rail tap must
+        // never haptic into a no-op scroll.
+        let hrTarget: String = {
+            guard let maxHR = profiles.first?.maxHR,
+                  HRZones.zones(maxHR: maxHR, restingHR: profiles.first?.restingHR) != nil else { return "charts" }
+            return "hrZones"
+        }()
         if let rhr = signals.restingHR {
             out.append(AthleteCallout(label: "RESTING HEART", value: "\(rhr)", unit: "bpm",
-                                      context: signals.restingHRNote ?? "From Apple Health", target: "hrZones"))
+                                      context: signals.restingHRNote ?? "From Apple Health", target: hrTarget))
         } else {
             out.append(AthleteCallout(label: "RESTING HEART", value: "—", unit: nil,
-                                      context: "Connect Health", target: "hrZones"))
+                                      context: "Connect Health", target: hrTarget))
         }
-        // Muscle focus — falls back to the intensity mix when the week was all cardio.
-        if let top = weeklyMuscleActivation.filter({ $0.key != .fullBody && $0.value > 0 }).max(by: { $0.value < $1.value }) {
+        // Muscle focus over the selected window — falls back to the intensity mix when it was all
+        // cardio (whose card needs 28-day run data to mount — same dead-anchor guard).
+        if let top = rangeMuscleActivation.filter({ $0.key != .fullBody && $0.value > 0 }).max(by: { $0.value < $1.value }) {
             out.append(AthleteCallout(label: "MUSCLE FOCUS", value: top.key.rawValue.capitalized, unit: nil,
-                                      context: "Most worked this week", target: "strengthTrends"))
+                                      context: "Most worked \(trendRange.windowPhrase)",
+                                      target: cachedHasStrength ? "strengthTrends" : "charts"))
         } else {
             out.append(AthleteCallout(label: "WEEK FOCUS", value: "Endurance", unit: nil,
-                                      context: "All cardio this week", target: "intensityMix"))
+                                      context: "All cardio \(trendRange.windowPhrase)",
+                                      target: intensityMix != nil ? "intensityMix" : "charts"))
         }
         return out
     }
@@ -2123,12 +2333,16 @@ private struct HistoryFeedThumb: View {
             }
         }
         .task(id: workout.id) {
-            if let data = workout.gps?.mapSnapshotData, let img = UIImage(data: data) {
+            // Snapshots persist at 1320×1760px; decode a row-sized thumbnail via ImageIO off the
+            // main actor instead of a full-res bitmap per 52pt row (156 ≈ 52pt @3x).
+            if let data = workout.gps?.mapSnapshotData,
+               let img = await ImageDownsampler.thumbnail(data, maxPixel: 156) {
                 image = img
             } else {
                 // No (or unreadable) snapshot — self-heal, then pick up the freshly-rendered one.
                 await WorkoutSnapshotHealer.healIfNeeded(workout, context: context)
-                if let data = workout.gps?.mapSnapshotData, let img = UIImage(data: data) { image = img }
+                if let data = workout.gps?.mapSnapshotData,
+                   let img = await ImageDownsampler.thumbnail(data, maxPixel: 156) { image = img }
             }
         }
     }

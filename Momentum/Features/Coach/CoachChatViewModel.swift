@@ -33,13 +33,20 @@ final class CoachChatViewModel {
         self.athleteModel = athleteModel
         self.health = health
         seedGreetingIfEmpty()
+        suggestions = computeSuggestions()
     }
 
     var canSend: Bool { !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isResponding }
 
     /// Starter chips that read the athlete's situation: a fresh workout, a race on the horizon, an
     /// active injury — then the evergreen questions fill the rest. Always exactly four.
-    var suggestions: [String] {
+    /// Stored, not computed: building them fetches the whole workout table, and a computed var re-ran
+    /// that on EVERY body evaluation while the chips were up — each keystroke, and the cover's first
+    /// paint mid-animation (a laggy open). Snapshotted once per presentation (the VM is rebuilt each
+    /// open) and again after `clear()` resets the thread.
+    private(set) var suggestions: [String] = []
+
+    private func computeSuggestions() -> [String] {
         var out: [String] = []
         let cal = Calendar.current
         let profile = fetchProfile()
@@ -192,14 +199,48 @@ final class CoachChatViewModel {
     }
 
     /// Drop any card that doesn't survive validation right now — a reply with a broken card is still
-    /// a good reply. (Injury cards missing severity are kept: the card renders a severity picker.)
+    /// a good reply. Slot-pending cards (the coach asked a question the card UI collects: injury
+    /// severity, goal, days, minutes, race day) are kept when a probe-filled version validates —
+    /// the athlete's answer completes the intent in place.
     private func validatedCard(_ card: CoachCardPayload?, context ctx: CoachResponder.Context) -> CoachCardPayload? {
         guard let card, card.kind != .none else { return nil }
-        if card.kind == .injuryReport, card.injuryArea != nil, card.injurySeverity == nil {
-            return CoachIntentBridge.validate(pickerCompleted(card, severity: .twinge), snapshot: snapshot()) != nil
-                ? card : nil
+        var probe = card
+        switch card.kind {
+        case .adjustPlan:
+            return card   // conversation steering only — rows send messages, nothing ever applies
+        case .injuryReport where card.injuryArea != nil && card.injurySeverity == nil:
+            probe.injurySeverity = InjurySeverity.twinge.rawValue
+        case .changeGoal where card.goal == nil:
+            probe.goal = Goal.generalFitness.rawValue
+        case .changeSessionLength where card.sessionMinutes == nil:
+            probe.sessionMinutes = 45
+        case .changeDays where card.daysPerWeek == nil && (card.preferredDays?.isEmpty ?? true):
+            probe.daysPerWeek = 4
+        case .changeRace where card.raceName == nil && card.raceDateISO == nil:
+            probe.raceDistanceM = probe.raceDistanceM ?? RaceDistance.marathon.meters
+            probe.raceDateISO = Self.isoDay(Calendar.current.date(
+                byAdding: .weekOfYear, value: 12, to: Date()) ?? Date())
+        default:
+            break
         }
-        return CoachIntentBridge.validate(card, snapshot: snapshot()) != nil ? card : nil
+        return CoachIntentBridge.validate(probe, snapshot: snapshot()) != nil ? card : nil
+    }
+
+    /// A slot picker on a card answered the coach's question — persist the filled payload; the card
+    /// re-renders as a full proposal (diff, honest verdict, Apply). Filling is free; Apply gates.
+    func fillCard(on message: ChatMessage, with payload: CoachCardPayload) {
+        guard message.cardState == .proposed else { return }
+        message.card = payload
+        try? context.save()
+    }
+
+    private static func isoDay(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.calendar = .current
+        fmt.timeZone = Calendar.current.timeZone
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: date)
     }
 
     // MARK: - Card actions
@@ -237,6 +278,8 @@ final class CoachChatViewModel {
             return
         case .memory:
             return   // the memory card stays live — forget buttons are its interaction
+        case .adjustPlan:
+            return   // the menu's rows send messages through the chat; there is nothing to apply
         default:
             break
         }
@@ -378,12 +421,6 @@ final class CoachChatViewModel {
         narrate("Your plan changed since I suggested that, so I let it lapse. Ask me again and I'll take a fresh look.")
     }
 
-    private func pickerCompleted(_ card: CoachCardPayload, severity: InjurySeverity) -> CoachCardPayload {
-        var filled = card
-        filled.injurySeverity = severity.rawValue
-        return filled
-    }
-
     /// The recent thread as wire turns (bounded), for the Edge Function. Includes the just-sent
     /// user message since it's already persisted.
     private func recentTurns(limit: Int = 12) -> [CoachChatService.Turn] {
@@ -399,6 +436,7 @@ final class CoachChatViewModel {
         for m in (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? [] { context.delete(m) }
         try? context.save()
         seedGreetingIfEmpty()
+        suggestions = computeSuggestions()   // the reset thread re-reads the athlete's situation
     }
 
     // MARK: - Persistence

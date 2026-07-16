@@ -97,6 +97,12 @@ enum CoachActions {
             return lines
         case .resumePlan:
             return ["Pulls your plan back to today", "Picks up where you left off"]
+        case .renewBlock:
+            if profile.plan?.raceDate == nil {
+                return ["Reassesses your last 4 weeks of real running",
+                        "Builds your next block fresh from today"]
+            }
+            return ["Rebuilds from today, still pointed at your race", rebuildLine]
         case .rememberNote(let text, _):
             return ["“\(text)”", "Kept in your coach's memory — forget it anytime"]
         case .explainPlan, .weekRecap, .racePlan, .showMemory, .racePredictor, .todayBriefing, .showZones:
@@ -264,6 +270,26 @@ enum CoachActions {
             return notify(Receipt(
                 headline: "Welcome back",
                 detail: "Your plan picks up from today. First session back stays easy; we rebuild rhythm before intensity."),
+                today: today, in: context)
+
+        case .renewBlock:
+            guard let plan = profile.plan else { return .declined(reason: noPlan) }
+            // Rolling plan → a true renewal: reassess what they actually ran, next block, counter up.
+            if plan.raceDate == nil {
+                PlanService.renewBlock(for: profile, startDate: today, in: context)
+                let block = (profile.plan?.blockIndex ?? 0) + 1
+                return notify(Receipt(
+                    headline: "Block \(block) is built",
+                    detail: "I looked at what you've actually been running these past few weeks and built your next block from there — six fresh weeks starting today. Nothing you've done is lost."),
+                    today: today, in: context)
+            }
+            // Race plan → rebuild from today, still pointed at the race (races don't run in blocks).
+            // Capture the date first: rebuild cascade-deletes the old plan out from under `plan`.
+            let raceDay = plan.raceDate ?? today
+            rebuild(profile, in: context)
+            return notify(Receipt(
+                headline: "Plan rebuilt",
+                detail: "Rebuilt from today, still pointed at your race on \(day(raceDay)). Completed work and your calibrated paces are kept."),
                 today: today, in: context)
 
         case .rememberNote(let rawText, let category):

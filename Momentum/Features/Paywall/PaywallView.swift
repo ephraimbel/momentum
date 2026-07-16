@@ -23,6 +23,9 @@ struct PaywallView: View {
     @State private var selected: PaywallProduct.Period = .annual
     @State private var working = false
     @State private var revealed = false
+    /// Set when a restore finds nothing to restore — the user gets a plain confirmation rather than
+    /// a button that silently does nothing.
+    @State private var nothingToRestore = false
 
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
@@ -78,6 +81,11 @@ struct PaywallView: View {
         // The paywall is a dark, cinematic moment regardless of the athlete's appearance setting
         // (user call 2026-07-10) — the wash reads best over true black.
         .preferredColorScheme(.dark)
+        .alert("Nothing to restore", isPresented: $nothingToRestore) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("We couldn't find a past purchase on this Apple ID.")
+        }
         .interactiveDismissDisabled(working || hard)
         .onAppear {
             services.analytics.log(.paywallView(placement: feature.placement))
@@ -210,7 +218,7 @@ struct PaywallView: View {
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     Spacer()
                     Text(p.isAnnual
-                         ? "≈ \(p.perMonthText ?? "$10.00 / mo") · save \(offering.annualSavingsPercent)%"
+                         ? "≈ \(p.perMonthText ?? PaywallOffering.standard.annual.perMonthText ?? "") · save \(offering.annualSavingsPercent)%"
                          : "No trial · cancel anytime")
                         .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
@@ -271,7 +279,7 @@ struct PaywallView: View {
 
     private var ctaTitle: String {
         if working { return "One moment…" }
-        return product.trialDays > 0 ? "Start my \(product.trialDays)-day free trial" : "Continue — \(product.priceText)/month"
+        return product.trialDays > 0 ? "Start my \(product.trialDays)-day free trial" : "Continue — \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
     }
 
     // MARK: Fine print
@@ -282,12 +290,15 @@ struct PaywallView: View {
             Text(renewalTerms)
             Text("·")
             Button("Restore") {
-                Task { working = true; _ = await paywall.restore(); working = false; if paywall.isPro { dismiss() } }
+                Task {
+                    working = true; _ = await paywall.restore(); working = false
+                    if paywall.isPro { dismiss() } else { nothingToRestore = true }
+                }
             }
             Text("·")
-            Button("Terms") { open("https://momentum.fit/terms") }
+            Button("Terms") { open("https://momentumco.app/terms") }
             Text("·")
-            Button("Privacy") { open("https://momentum.fit/privacy") }
+            Button("Privacy") { open("https://momentumco.app/privacy") }
         }
         .font(.rounded(10, weight: .medium))
         .foregroundStyle(Theme.inkTertiary)

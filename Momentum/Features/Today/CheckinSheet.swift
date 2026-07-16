@@ -46,6 +46,7 @@ struct CheckinSheet: View {
 
                     // Pain is never a rating — it's a door into the injury loop.
                     Button {
+                        Haptics.light()
                         save()
                         dismiss()
                         onPain()

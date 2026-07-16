@@ -371,6 +371,31 @@ enum MuscleActivation {
         }
         return total
     }
+
+    /// Lower-body contribution from foot sports (running/walking/hiking) — endurance work drives the
+    /// posterior chain, so the athlete figure reflects a runner's training, not only gym work. Scaled
+    /// by distance in "set-equivalents per km" tuned so a strong running week reads like a solid leg
+    /// block; walks/hikes count at half (same chain, lighter load). Weights are relative — the map
+    /// normalizes to the top muscle — so what matters is the distribution, not the absolute numbers.
+    static func fromEndurance(workouts: [Workout]) -> [MuscleGroup: Double] {
+        let perKm: [MuscleGroup: Double] = [.calves: 0.5, .quads: 0.45, .hamstrings: 0.35, .glutes: 0.35, .core: 0.15]
+        var total: [MuscleGroup: Double] = [:]
+        for w in workouts where w.type.category == .foot {
+            let km = (w.gps?.distanceM ?? 0) / 1000
+            guard km > 0 else { continue }
+            let scale = w.type.discipline == .walking ? 0.5 : 1.0   // walk/hike lighter than run
+            for (m, f) in perKm { total[m, default: 0] += f * km * scale }
+        }
+        return total
+    }
+
+    /// The Athlete Panel's activation: strength coverage plus the endurance lower-body contribution,
+    /// so both a lifter and a pure runner see a figure that reflects — and re-windows with — their work.
+    static func combined(workouts: [Workout]) -> [MuscleGroup: Double] {
+        var total = from(workouts: workouts)
+        for (m, v) in fromEndurance(workouts: workouts) { total[m, default: 0] += v }
+        return total
+    }
 }
 
 extension MuscleGroup {

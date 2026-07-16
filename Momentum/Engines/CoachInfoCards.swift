@@ -54,7 +54,8 @@ enum CoachTodayBriefing {
         ]
 
         // The guided structure, step by step (quality sessions only — easy runs need no script).
-        if let structured = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile.plan?.p5kSPerKm) {
+        if let structured = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile.plan?.p5kSPerKm,
+                                                           raceDistanceM: profile.raceDistanceM) {
             out.append(CoachSection(icon: "list.number", title: "How it runs",
                                     detail: stepSummary(structured, unit: unit)))
         }

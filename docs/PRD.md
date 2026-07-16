@@ -760,7 +760,7 @@ Freemium subscription. Free fuels adoption + reviews + (future) virality; the AI
 **Free:** track all disciplines (run/ride/walk/strength), basic post-workout summaries, manual strength logging + full exercise library, limited history, a single plan glimpse, basic share card.
 **Pro:** the adaptive **AI coach** + full multi-discipline plans + programs + adaptation; **AI reads**; **advanced analytics** (working-sets-per-muscle, e1RM trends, training load, pace/speed trends); full history; all templates; all share templates; cadence metronome / voice coach; (v1) Watch premium.
 
-**Pricing (validate):** ~**$9.99/mo**, ~**$59.99/yr**, **7-day trial on annual**. Just under multi-app bundles (Strava + Hevy + Fitbod separately cost more). A/B via Superwall. **Show renewal date plainly; one-tap cancel; reminder before renewal.**
+**Pricing (shipped 2026-07-14):** **$14.99/mo**, **$109.99/yr**, **7-day trial on annual**. Monthly set below Runna's (~$17.99/mo) to win the price-comparison shopper; annual ≈ $9/mo (real ~39% off monthly, badge rounds to a clean **save 40%**). A/B via Superwall. **Show renewal date plainly; one-tap cancel; reminder before renewal.**
 **RevenueCat:** entitlement `pro`; offering `default`; products `momentum_pro_monthly`, `momentum_pro_annual`. **Superwall placements:** `onboarding_complete` (after reveal), `ai_read`, `full_plan`, `analytics_locked`, `history_locked`. Single `Feature` enum is the source of truth for gating.
 
 ---

@@ -7,6 +7,11 @@ import Foundation
 @MainActor
 final class RestActivityController {
     private var activity: Activity<RestActivityAttributes>?
+    /// ActivityKit calls are async but unstructured `Task`s carry no ordering guarantee — two rapid
+    /// ±15s taps racing could land oldest-last and freeze the countdown on a stale end time. Every
+    /// push chains on the previous one, so content always lands in issue order and `end` runs after
+    /// any in-flight update.
+    private var pushChain: Task<Void, Never>?
 
     /// Begin (or replace) the rest Live Activity for a freshly-finished set.
     func start(exerciseName: String, startedAt: Date, endsAt: Date, setsDone: Int) {
@@ -27,14 +32,22 @@ final class RestActivityController {
     func update(startedAt: Date, endsAt: Date, setsDone: Int) {
         guard let activity else { return }
         let state = RestActivityAttributes.ContentState(startedAt: startedAt, endsAt: endsAt, setsDone: setsDone)
-        Task { await activity.update(.init(state: state, staleDate: endsAt.addingTimeInterval(60))) }
+        let content = ActivityContent(state: state, staleDate: endsAt.addingTimeInterval(60))
+        pushChain = Task { [pushChain] in
+            await pushChain?.value
+            await activity.update(content)
+        }
     }
 
-    /// End the rest Live Activity immediately (skip, next set, or workout finished).
+    /// End the rest Live Activity immediately (skip, next set, or workout finished). Chained after
+    /// any in-flight update so a straggler push can't target an already-ended activity.
     func end() {
         guard let activity else { return }
         self.activity = nil
-        Task { await activity.end(nil, dismissalPolicy: .immediate) }
+        pushChain = Task { [pushChain] in
+            await pushChain?.value
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
     }
 
     /// End rest timers left over from a previous process (force-quit mid-session) — see

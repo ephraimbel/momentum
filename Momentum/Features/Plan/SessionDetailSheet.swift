@@ -119,7 +119,8 @@ struct SessionDetailSheet: View {
             }
             // Guided quality sessions (intervals/tempo/run-walk) expand into a step breakdown so the
             // athlete sees the shape of the session before starting the guided run.
-            if let workout = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) {
+            if let workout = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
+                                                            raceDistanceM: profile?.raceDistanceM) {
                 structuredSection(workout)
             }
         }
@@ -219,7 +220,8 @@ struct SessionDetailSheet: View {
         }
         // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
         // for guided sessions; only show it as a chip when no structured breakdown will render.
-        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) == nil { out.append(iv) }
+        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
+                                                                      raceDistanceM: profile?.raceDistanceM) == nil { out.append(iv) }
         return out
     }
 

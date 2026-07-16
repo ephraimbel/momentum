@@ -23,19 +23,58 @@
 //
 // Deploy:  supabase functions deploy coach-chat
 // Secrets: supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   (server-only; NEVER in the app/git)
-//          optional: AI_MODEL=claude-opus-4-8  AI_MAX_TOKENS=500
+//          optional: AI_MODEL=claude-haiku-4-5  AI_MAX_TOKENS=400
 //          optional research: AI_WEB_SEARCH=1  AI_WEB_SEARCH_MAX_USES=3   (off by default)
 // Eval:    node scripts/coach-chat-eval.mjs   (see the harness header)
 //
-// Model note: AI_MODEL defaults to claude-opus-4-8. Opus 4.8 REMOVES `temperature`/`top_p`/`top_k`
-// (sending them 400s), so we don't set them — output shape is constrained via structured outputs.
+// Model note: AI_MODEL defaults to claude-haiku-4-5 — the cheapest current Claude model ($1/$5 per
+// 1M in/out), chosen deliberately: the coach only narrates short answers while the deterministic
+// engines own every number ("rules compute, AI narrates"), so a small model is the right fit and
+// keeps per-message cost near-nil (~3k-token context + a short reply ≈ well under a cent). The JSON
+// output is prompt-instructed (not structured-outputs), and we set no temperature/thinking, so the
+// call is model-agnostic — override with AI_MODEL to try a larger tier without touching code.
 
 import Anthropic from "npm:@anthropic-ai/sdk@^0.69";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
-const MODEL = Deno.env.get("AI_MODEL") ?? "claude-opus-4-8";
-const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "500");
+const MODEL = Deno.env.get("AI_MODEL") ?? "claude-haiku-4-5";
+const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "400");
+
+// Per-athlete DAILY cap (server-side; a client limit is trivially bypassed). Generous — far above
+// real use — so it only ever stops abuse / a leaked token from running up the bill. Overridable via
+// the AI_DAILY_LIMIT secret. Enforced by the `coach_rate_check` RPC (migration 20260714000001).
+const DAILY_LIMIT = Number(Deno.env.get("AI_DAILY_LIMIT") ?? "60");
 
 const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+// Increment the caller's daily counter and report whether they're within the cap. Runs the RPC with
+// the caller's own JWT so `auth.uid()` keys signed-in athletes (unspoofable); guests fall back to the
+// client IP. FAIL-OPEN: if the limiter itself errors (RPC not yet migrated, DB blip), we allow the
+// request rather than break the coach — the cap re-engages the moment the check works again. The real
+// abuse vector (one identity hammering) is caught whenever the RPC is live.
+async function withinRateLimit(req: Request): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return true;   // unconfigured → don't block
+  try {
+    const auth = req.headers.get("authorization") ?? "";
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim();
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: auth } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await supabase.rpc("coach_rate_check", {
+      p_limit: DAILY_LIMIT,
+      p_fallback_key: ip,
+    });
+    if (error) return true;                                // limiter broken → fail open
+    const row = Array.isArray(data) ? data[0] : data;
+    return row?.allowed !== false;                         // only an explicit false blocks
+  } catch (_e) {
+    return true;                                           // never let the limiter itself kill the coach
+  }
+}
 
 // Optional web research — OFF by default so cost stays predictable. Set AI_WEB_SEARCH=1 to let the
 // coach look up current facts (upcoming race dates, registration windows, qualifying times, course
@@ -270,6 +309,13 @@ Deno.serve(async (req) => {
     payload = await req.json();
   } catch (_e) {
     return json({ error: "bad_request" }, 400);
+  }
+
+  // Daily cap, checked BEFORE any Anthropic call so an over-limit request costs nothing. 429 →
+  // the app falls back to its offline coach (non-200 is already its fallback trigger), so the
+  // athlete still gets an answer — just the free deterministic one for the rest of the day.
+  if (!(await withinRateLimit(req))) {
+    return json({ error: "rate_limited" }, 429);
   }
 
   // One-shot JSON (the original contract) — also the fallback for older clients.

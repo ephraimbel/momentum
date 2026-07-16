@@ -1,12 +1,15 @@
 # momentum — Supabase Edge Functions
 
 Server-side AI for momentum (PRD §8.8). The deterministic plan engine (§9) runs **on-device**;
-these functions only author *narrative text*, never loads/volumes/paces.
+these functions only author *narrative text*, never loads/volumes/paces. (The `garmin-*` pair is
+the exception: not AI — the direct-wearable connect/ingest plumbing, docs/WEARABLES-DIRECT.md.)
 
 | Function | Purpose |
 |---|---|
 | `workout-analysis` | Post-workout AI read (≤55 words, strict JSON, plan-aware). |
 | `plan-narrate` | One-line rationale (≤16 words) for a deterministic plan adjustment. |
+| `garmin-oauth` | Garmin connect flow (OAuth2+PKCE `/start` + `/callback`). Deploy `--no-verify-jwt` — `/start` verifies the user JWT itself. |
+| `garmin-webhook` | Garmin activity-push receiver → `vendor_activities` staging inbox (idempotent). Deploy `--no-verify-jwt`. |
 
 ## Reliability contract (do not break)
 The iOS app **always** has a deterministic template fallback (`WorkoutReadTemplates.swift`,

@@ -1,8 +1,10 @@
 import Foundation
 
 /// Where a coach nav card can send the athlete (deep links the chat can offer).
+/// `viewHealth` lands on Progress → Health (the readiness hub) via `AppRouter` — the shell sets
+/// `pendingTab = .progress` + `pendingProgressSegment` (docs/RECOVERY-HUB-PLAN.md §2).
 enum CoachDestination: String, Codable, Sendable, Equatable {
-    case startToday, viewPlanWeek, viewProgress, raceBriefing, planSettings
+    case startToday, viewPlanWeek, viewProgress, raceBriefing, planSettings, viewHealth
 }
 
 /// A coach card as it arrives off the wire (the `coach-chat` Edge Function's structured output, or
@@ -16,6 +18,12 @@ struct CoachCardPayload: Codable, Equatable, Sendable {
         case moveSession, skipSession
         case easeWeek, bumpLoad, easePaces
         case changeEquipment, injuryReport, pausePlan, resumePlan
+        /// A fresh block from today: rolling plans renew (reassess + next block), race plans rebuild
+        /// toward their race. The chat's "start over / next block" move.
+        case renewBlock
+        /// The "what should we change?" menu — pure conversation steering, never applies anything.
+        /// Each row sends its intent back through the chat, where the specific flow takes over.
+        case adjustPlan
         // Informational cards (no plan mutation): the personalized breakdowns.
         case explainPlan, weekRecap, racePlan, memory
         case racePredictor, todayBriefing, zones
@@ -94,6 +102,7 @@ enum CoachIntent: Equatable, Sendable {
     case injuryReport(area: InjuryArea, severity: InjurySeverity)
     case pausePlan(days: Int)
     case resumePlan
+    case renewBlock
     case explainPlan
     case weekRecap
     case racePlan
@@ -201,6 +210,14 @@ enum CoachIntentBridge {
         case .resumePlan:
             guard snapshot.isPaused else { return nil }
             return .resumePlan
+
+        case .renewBlock:
+            return .renewBlock   // parameterless; apply resolves rolling-vs-race honestly
+
+        case .adjustPlan:
+            // The menu card steers conversation only — it has no executable intent. Returning nil
+            // keeps it out of the apply path; the chat UI renders its rows and keeps it alive.
+            return nil
 
         case .explainPlan:
             return .explainPlan

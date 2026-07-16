@@ -76,8 +76,11 @@ enum StructuredWorkoutBuilder {
     /// Expand a planned session into a guided workout, or `nil` when it's a plain run that needs no
     /// in-run structure. `p5kSPerKm` (the athlete's calibrated 5k pace) lets warm-up / recovery / easy
     /// steps hold the right pace even when the *work* reps run faster or slower than 5k pace (VO₂ vs
-    /// threshold reps); when omitted it's recovered from the session's own pace. Pure + deterministic.
-    static func build(from session: PlannedSession, p5kSPerKm: Double? = nil) -> StructuredWorkout? {
+    /// threshold reps); when omitted it's recovered from the session's own pace. `raceDistanceM` (the
+    /// athlete's goal race) prices the race-pace finish block on quality long runs — omitted, a long
+    /// race's marathon pace stands in. Pure + deterministic.
+    static func build(from session: PlannedSession, p5kSPerKm: Double? = nil,
+                      raceDistanceM: Double? = nil) -> StructuredWorkout? {
         guard session.discipline == .running,
               let runType = session.runType,
               let pace = session.targetPaceSPerKm, pace > 0 else { return nil }
@@ -113,6 +116,14 @@ enum StructuredWorkoutBuilder {
             return strides(reps: st.reps, strideS: st.seconds, easyPace: easyPace, totalDistanceM: session.targetDistanceM)
         case .progression:
             return progression(totalDistanceM: session.targetDistanceM ?? 0, easyPace: easyPace, p5k: p5k)
+        case .long:
+            // A quality long run ("Last 5km @ race pace") guides its finish block; a plain long run
+            // needs no structure. Race pace comes from the goal distance when known; a long-race
+            // default (marathon) stands in otherwise — this pattern only generates for ≥half plans.
+            guard let finishM = parseRaceFinish(session.intervals) else { return nil }
+            let racePace = DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 42_195, p5kSPerKm: p5k)
+            return raceFinishLong(totalDistanceM: session.targetDistanceM ?? 0, finishM: finishM,
+                                  bodyPace: pace, racePace: racePace)
         default:
             // Beginner "Run/walk 1:1" sessions are a repeating structure worth guiding.
             if let rw = parseRunWalk(session.intervals) {
@@ -202,6 +213,22 @@ enum StructuredWorkoutBuilder {
         return StructuredWorkout(title: "Easy run + \(reps) strides", steps: steps)
     }
 
+    // MARK: Race-pace finish long run — the signature half/marathon workout (Canova/Daniels):
+    // a steady long-run body, then the final kilometres at goal race pace on tired legs. Two blocks,
+    // no warm-up step (the body IS the warm-up).
+
+    static func raceFinishLong(totalDistanceM total: Double, finishM: Double,
+                               bodyPace: Double, racePace: Double) -> StructuredWorkout? {
+        guard total > 0, finishM >= 1_000, finishM < total else { return nil }
+        let km = Int((finishM / 1000).rounded())
+        return StructuredWorkout(title: "Long run · last \(km)km @ race pace", steps: [
+            WorkoutStep(kind: .work, target: .distance(total - finishM), paceSPerKm: bodyPace,
+                        toleranceSPerKm: 20, title: "Steady"),
+            WorkoutStep(kind: .work, target: .distance(finishM), paceSPerKm: racePace,
+                        toleranceSPerKm: 10, title: "Race pace")
+        ])
+    }
+
     // MARK: Progression — one continuous run split into thirds: easy → marathon → threshold effort.
     // The classic E→M→T ladder: each third steps up one Daniels zone, always in a faster-than-the-last
     // order regardless of the athlete's VDOT (E 66% < M race intensity < T ~89% VO₂max).
@@ -281,6 +308,17 @@ enum StructuredWorkoutBuilder {
         let durs = durationsIn(String(parts[1]))
         guard durs.count >= 2 else { return nil }
         return (reps, durs[0], durs[1])
+    }
+
+    /// "Last 5km @ race pace" → finish-block meters. Gated on "last" + "race pace" so a plain long
+    /// run (nil/other intervals) falls through to unguided.
+    static func parseRaceFinish(_ s: String?) -> Double? {
+        guard let s = s?.lowercased(), s.contains("last"), s.contains("race pace") else { return nil }
+        let tail = s.drop { !$0.isNumber }
+        let numStr = tail.prefix { $0.isNumber || $0 == "." }
+        guard let value = Double(numStr), value > 0 else { return nil }
+        let unit = tail.dropFirst(numStr.count).prefix { $0.isLetter }.lowercased()
+        return unit.hasPrefix("k") ? value * 1000 : value
     }
 
     /// "Run/walk 1:1" → run/walk seconds (the ratio is read as minutes). Defaults to 1:1 minutes.

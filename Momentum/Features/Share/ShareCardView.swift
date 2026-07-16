@@ -30,6 +30,10 @@ struct ShareCardView: View {
     /// The workout's own photo, decoded ONCE (a full-res JPEG) — not re-decoded on every
     /// style/format/size tap the way an inline `UIImage(data:)` in `photo` would be.
     @State private var workoutPhoto: UIImage?
+    /// The exported 3× card, rendered ONCE per style/format/photo change off the body path — the
+    /// ShareLink item and its SharePreview both read this single image, so the full-res card never
+    /// renders twice on every body pass.
+    @State private var exportImage: UIImage?
 
     enum ShareFormat: String, CaseIterable, Identifiable {
         case story = "Story", square = "Square"
@@ -66,10 +70,15 @@ struct ShareCardView: View {
         }
     }
 
-    private var rendered: Image {
-        Image(uiImage: ShareCardRenderer.render(card(size: format.size),
-                                                size: format.size,
-                                                opaque: style != .sticker))
+    /// Re-render the export only when something the card actually draws changes.
+    private struct ExportKey: Equatable {
+        let style: ShareStyle
+        let format: ShareFormat
+        let photoID: ObjectIdentifier?
+    }
+    private var exportKey: ExportKey {
+        ExportKey(style: style, format: format,
+                  photoID: style.usesPhoto ? photo.map(ObjectIdentifier.init) : nil)
     }
 
     var body: some View {
@@ -126,6 +135,12 @@ struct ShareCardView: View {
                     workoutPhoto = UIImage(data: data)
                 }
             }
+            // Render the full-res export ONCE per change, off the synchronous body/render path.
+            .task(id: exportKey) {
+                exportImage = ShareCardRenderer.render(card(size: format.size),
+                                                       size: format.size,
+                                                       opaque: style != .sticker)
+            }
         }
     }
 
@@ -153,15 +168,14 @@ struct ShareCardView: View {
             HStack(spacing: 5) {
                 if locked {
                     Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(style == s ? Theme.background : Theme.inkTertiary)
                 }
                 Text(s.rawValue)
                     .font(.rounded(Theme.FontSize.caption, weight: .bold))
             }
             .foregroundStyle(style == s ? Theme.background : Theme.ink)
             .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(Capsule().fill(style == s ? Theme.ink : Theme.surface)
-                .overlay(Capsule().stroke(style == s ? Theme.ink : Theme.hairline)))
+            .background(Capsule().fill(style == s ? Theme.ink : (locked ? Theme.route.opacity(0.16) : Theme.surface))
+                .overlay(Capsule().stroke(style == s ? Theme.ink : (locked ? Theme.route.opacity(0.45) : Theme.hairline))))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(style == s ? .isSelected : [])
@@ -172,29 +186,37 @@ struct ShareCardView: View {
         if styleLocked {
             Button { paywall.present(for: .allShareTemplates) } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: "sparkles").font(.system(size: 14, weight: .bold))
+                    Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.4)
+                        .foregroundStyle(Color(hex: "0E0E12"))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Capsule().fill(Theme.route))
                     Text("Unlock every style").font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.background)
                 }
                 .frame(maxWidth: .infinity).frame(height: 56)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.purple, lineWidth: 1.5)
-                }
-                .foregroundStyle(Theme.background)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
             }
             .buttonStyle(.plain)
-        } else {
-            ShareLink(item: rendered, preview: SharePreview("momentum", image: rendered)) {
-                Label("Share", systemImage: "square.and.arrow.up")
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                    .frame(maxWidth: .infinity).frame(height: 56)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
-                    .foregroundStyle(Theme.background)
+        } else if let exportImage {
+            let image = Image(uiImage: exportImage)
+            ShareLink(item: image, preview: SharePreview("momentum", image: image)) {
+                shareLabel
             }
             .simultaneousGesture(TapGesture().onEnded {
                 services.analytics.log(.shareCreated(style: "\(style.rawValue)-\(format.rawValue)"))
             })
+        } else {
+            // Export still rendering off the body path — hold the button until the image is ready.
+            shareLabel.opacity(0.5)
         }
+    }
+
+    private var shareLabel: some View {
+        Label("Share", systemImage: "square.and.arrow.up")
+            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+            .frame(maxWidth: .infinity).frame(height: 56)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+            .foregroundStyle(Theme.background)
     }
 }
 

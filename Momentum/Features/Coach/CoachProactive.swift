@@ -157,4 +157,123 @@ enum CoachProactive {
                              on: today, in: context, dedupeToken: "coach-proactive-recap")
         return true
     }
+
+    // MARK: - Week-level protective proposals (Recovery Hub §11.1.1 / §11.1.4)
+    //
+    // INTEGRATION: not yet wired — the orchestrator adds one line each to Today's daily coaching
+    // pass (alongside `sweep`, which keeps its own one-seed-per-sweep priority chain):
+    //     CoachProactive.seedOverreachingEase(state: balance.state, plan: profile.plan, in: context)
+    //     CoachProactive.seedPlannedLoadRecheck(plan: profile.plan, workouts: workouts, in: context)
+    // Both are SEEDS ONLY: consent-gated `.easeWeek` proposal cards (propose → preview → Apply via
+    // `CoachActions`, which re-runs the `lastAdaptedAt` throttle at tap time) — they never touch
+    // the plan themselves. They share one `.easeWeek` dedupe, so at most one week-level ease
+    // proposal exists per trailing 7 days; call order decides priority (overreaching first — the
+    // body's signal outranks the calendar's).
+
+    /// §11.1.4 — a week of poor recovery at *normal* load (`StrainRecoveryBalance.state ==
+    /// .overreaching`) trips no existing trigger: the only week-level guard is completed-load ACWR,
+    /// which normal load never moves. Seed ONE consent-gated ease proposal so the signature chart
+    /// informs a real decision. Never auto-applies; never stacks on an adaptation
+    /// (`plan.lastAdaptedAt` < 7 days blocks, mirroring `PlanCoaching.autoAdapt`'s gate).
+    @discardableResult
+    static func seedOverreachingEase(state: StrainRecoveryBalance.State, plan: TrainingPlan?,
+                                     today: Date = Date(), in context: ModelContext,
+                                     calendar: Calendar = .current) -> Bool {
+        guard state == .overreaching, let plan else { return false }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return false }
+        // Something upcoming must exist to ease, or Apply could only decline.
+        let todayStart = calendar.startOfDay(for: today)
+        guard plan.sessions.contains(where: {
+            $0.status == .planned && $0.completedWorkout == nil
+            && calendar.startOfDay(for: $0.date) >= todayStart
+        }) else { return false }
+        let messages = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
+        guard !easeProposalSeededRecently(messages, today: today, calendar: calendar) else { return false }
+
+        let card = CoachCardPayload(kind: .easeWeek, label: "Ease this week")
+        context.insert(ChatMessage(role: .coach,
+            text: CoachResponder.deDash("A week of low recovery against normal load — worth easing before it costs you."),
+            createdAt: today, card: card))
+        try? context.save()
+        AppNotification.post(kind: .coaching, title: "Worth easing this week",
+                             body: "Your coach has a proposal waiting. It's your call.",
+                             on: today, in: context, dedupeToken: "coach-proactive-overreach")
+        return true
+    }
+
+    /// §11.1.1 — the pre-week planned-vs-actual ACWR recheck. `ACWRGovernor` runs only at
+    /// generation against *planned* history, so after misses/pauses the coming week can quietly
+    /// exceed 1.3× the athlete's actual chronic. On a plan week's closing day (or the first
+    /// morning of the next), sum the coming week's `PlannedLoad` estimates against
+    /// `ProgressInsights.chronic` — chronic is already the weekly currency (the 28-day load ÷
+    /// weeks of history, ACWR's denominator), so the planned week compares to it directly —
+    /// and above 1.3 seed ONE consent-gated trim proposal. Seeds only; never auto-applies.
+    @discardableResult
+    static func seedPlannedLoadRecheck(plan: TrainingPlan?, workouts: [Workout],
+                                       today: Date = Date(), in context: ModelContext,
+                                       calendar: Calendar = .current) -> Bool {
+        guard let plan else { return false }
+        if let last = plan.lastAdaptedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return false }
+
+        // The two-day recheck window: a week's last day looks at next week; the first morning of
+        // a fresh week looks at the week just beginning (still almost entirely ahead of you).
+        let todayStart = calendar.startOfDay(for: today)
+        guard let week = calendar.dateInterval(of: .weekOfYear, for: todayStart),
+              let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart) else { return false }
+        let comingWeek: DateInterval
+        if todayStart == week.start {
+            comingWeek = week
+        } else if tomorrow >= week.end {
+            guard let next = calendar.dateInterval(of: .weekOfYear, for: week.end) else { return false }
+            comingWeek = next
+        } else {
+            return false
+        }
+
+        // The coming week's prescription, spoken in the completed-load currency (`PlannedLoad`
+        // is the planned twin of `TrainingLoad.session`, same Foster minutes × RPE).
+        let planned = plan.sessions
+            .filter { $0.completedWorkout == nil && $0.status != .completed
+                      && $0.date >= comingWeek.start && $0.date < comingWeek.end }
+            .reduce(0) { $0 + PlannedLoad.estimate($1) }
+        guard planned > 0 else { return false }
+
+        // chronic < 1 means no real history (`ProgressInsights` reads .starting) — a ratio
+        // against nothing is noise, never a proposal.
+        let chronic = ProgressInsights(workouts: workouts, now: today, calendar: calendar).chronic
+        guard chronic >= 1 else { return false }
+        let ratio = planned / chronic
+        guard ratio > 1.3 else { return false }
+
+        let messages = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
+        guard !easeProposalSeededRecently(messages, today: today, calendar: calendar) else { return false }
+
+        let weekWord = todayStart == comingWeek.start ? "This week" : "Next week"
+        let card = CoachCardPayload(kind: .easeWeek, label: "Trim ~15%")
+        context.insert(ChatMessage(role: .coach,
+            text: CoachResponder.deDash("\(weekWord) is planned at ~\(String(format: "%.1f", ratio))× what you've actually been doing — trim it to fit?"),
+            createdAt: today, card: card))
+        try? context.save()
+        AppNotification.post(kind: .coaching, title: "\(weekWord) is planned heavy",
+                             body: "Your coach has a proposal waiting. It's your call.",
+                             on: today, in: context, dedupeToken: "coach-proactive-load-recheck")
+        return true
+    }
+
+    /// Shared never-nag guard for the week-level `.easeWeek` seeds: an unanswered ease proposal,
+    /// or ANY ease proposal inside the trailing 7 days, blocks a new one. A sliding window rather
+    /// than `seedEarnedBump`'s calendar-week check, because the recheck fires exactly on the
+    /// week boundary — a calendar-week dedupe would re-nag the morning after a decline.
+    private static func easeProposalSeededRecently(_ messages: [ChatMessage], today: Date,
+                                                   calendar: Calendar) -> Bool {
+        messages.contains { m in
+            guard m.card?.kind == .easeWeek else { return false }
+            if m.cardState == .proposed { return true }
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: m.createdAt),
+                                               to: calendar.startOfDay(for: today)).day ?? .max
+            return days < 7
+        }
+    }
 }

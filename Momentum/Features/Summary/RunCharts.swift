@@ -301,11 +301,13 @@ struct RunAnalysisSection: View {
 struct WeekContextCard: View {
     /// The run being summarised — its day is the last (highlighted) bar and the window's right edge.
     let anchor: Date
+    /// The run's seven-day window, fetched by the host. It's injected (not fetched here) so the load
+    /// runs on the host's always-present `.task`: a `.task` on this card alone never fires while the
+    /// card is collapsed for want of data, and the card would then never learn it has data to show.
+    var weekWorkouts: [Workout]
     var distanceUnit: DistanceUnit = .auto
 
-    @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var days: [DayBar] = []
     @State private var animate = false
 
     private struct DayBar: Identifiable { let id = UUID(); let dayStart: Date; let distanceM: Double; let isAnchor: Bool }
@@ -313,6 +315,32 @@ struct WeekContextCard: View {
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private func disp(_ m: Double) -> Double { m / unitMeters }
+
+    /// The 7-day window (ending on the run's day) the card plots — the host fetches this and passes it
+    /// in. nil only if date math fails (never in practice).
+    static func windowDescriptor(anchor: Date, calendar: Calendar = .current) -> FetchDescriptor<Workout>? {
+        let anchorDay = calendar.startOfDay(for: anchor)
+        guard let start = calendar.date(byAdding: .day, value: -6, to: anchorDay),
+              let end = calendar.date(byAdding: .day, value: 1, to: anchorDay) else { return nil }
+        return FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt >= start && $0.startedAt < end })
+    }
+
+    /// Bucket the window into seven daily distances (oldest → newest); the last bucket is the run's own
+    /// day. Cheap (≤ a handful of workouts, 7 buckets), so it runs inline on each body pass.
+    private var days: [DayBar] {
+        let calendar = Calendar.current
+        let anchorDay = calendar.startOfDay(for: anchor)
+        var bars: [DayBar] = []
+        for i in stride(from: 6, through: 0, by: -1) {
+            guard let dayStart = calendar.date(byAdding: .day, value: -i, to: anchorDay),
+                  let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { continue }
+            let dist = weekWorkouts
+                .filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd }
+                .reduce(0.0) { $0 + ($1.gps?.distanceM ?? 0) }
+            bars.append(DayBar(dayStart: dayStart, distanceM: dist, isAnchor: i == 0))
+        }
+        return bars
+    }
 
     var body: some View {
         Group {
@@ -359,7 +387,6 @@ struct WeekContextCard: View {
                 .task { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { animate = true } }
             }
         }
-        .task(id: anchor) { await load() }
     }
 
     /// Half-a-day of padding on each edge so the first/last bars aren't clipped by the plot frame.
@@ -386,28 +413,5 @@ struct WeekContextCard: View {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
-    }
-
-    /// Fetch the 7-day window ending on the run's day and bucket distance per calendar day.
-    private func load() async {
-        let calendar = Calendar.current
-        let anchorDay = calendar.startOfDay(for: anchor)
-        guard let windowStart = calendar.date(byAdding: .day, value: -6, to: anchorDay),
-              let windowEnd = calendar.date(byAdding: .day, value: 1, to: anchorDay) else { return }
-
-        let descriptor = FetchDescriptor<Workout>(
-            predicate: #Predicate { $0.startedAt >= windowStart && $0.startedAt < windowEnd })
-        let workouts = (try? context.fetch(descriptor)) ?? []
-
-        var bars: [DayBar] = []
-        for i in stride(from: 6, through: 0, by: -1) {
-            guard let dayStart = calendar.date(byAdding: .day, value: -i, to: anchorDay),
-                  let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { continue }
-            let dist = workouts
-                .filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd }
-                .reduce(0.0) { $0 + ($1.gps?.distanceM ?? 0) }
-            bars.append(DayBar(dayStart: dayStart, distanceM: dist, isAnchor: i == 0))
-        }
-        days = bars
     }
 }

@@ -18,9 +18,18 @@ struct CoachCardView: View {
     var onApply: () -> Void = {}
     var onDecline: () -> Void = {}
     var onPickSeverity: (InjurySeverity) -> Void = { _ in }
+    /// A slot picker answered the coach's question (goal / days / minutes / race distance / race
+    /// day) — persist the filled payload; the card re-renders as a full proposal with diff + Apply.
+    var onFill: (CoachCardPayload) -> Void = { _ in }
+    /// An adjust-plan menu row was tapped — its intent goes through the chat like a typed message.
+    var onSendOption: (String) -> Void = { _ in }
     var onNavigate: () -> Void = {}
     var onUndo: () -> Void = {}
     var onForget: (UUID) -> Void = { _ in }
+
+    /// Race-day selection for the inline date picker (defaults to a sane 12-week runway).
+    @State private var raceDay: Date =
+        Calendar.current.date(byAdding: .weekOfYear, value: 12, to: Date()) ?? Date()
 
     private var state: ChatMessage.CardState { message.cardState ?? .proposed }
     private var undoable: Bool { message.undoJSON != nil }
@@ -33,12 +42,25 @@ struct CoachCardView: View {
         case .proposed:
             if payload.kind == .nav {
                 navCard
+            } else if payload.kind == .adjustPlan {
+                adjustMenu
             } else if isInfo {
                 sectionsCard
             } else if payload.kind == .memory {
                 memoryCard
             } else if payload.kind == .injuryReport, payload.injurySeverity == nil {
                 severityPicker
+            } else if payload.kind == .changeGoal, payload.goal == nil {
+                goalPicker
+            } else if payload.kind == .changeDays, payload.daysPerWeek == nil,
+                      payload.preferredDays?.isEmpty ?? true {
+                daysPicker
+            } else if payload.kind == .changeSessionLength, payload.sessionMinutes == nil {
+                minutesPicker
+            } else if payload.kind == .changeRace, payload.raceName == nil, payload.raceDistanceM == nil {
+                distancePicker
+            } else if payload.kind == .changeRace, payload.raceName == nil, payload.raceDateISO == nil {
+                raceDatePicker
             } else {
                 proposalCard
             }
@@ -178,6 +200,227 @@ struct CoachCardView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    // MARK: Slot pickers — the coach asked a question; the answer completes the card in place.
+    // Picking is free (it only fills the payload); the rebuilt proposal's Apply is the Pro moment.
+
+    private static let goalOptions: [(goal: Goal, subtitle: String)] = [
+        (.endurance, "Run stronger, farther, faster"),
+        (.getStronger, "Lift heavier, move better"),
+        (.buildMuscle, "Add size where it counts"),
+        (.loseFat, "Lean out without losing strength"),
+        (.generalFitness, "Fit for life, not one finish line"),
+        (.stayConsistent, "Make showing up the win"),
+    ]
+
+    private var goalPicker: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            ForEach(Self.goalOptions, id: \.goal) { option in
+                Button {
+                    Haptics.selection()
+                    var filled = payload
+                    filled.goal = option.goal.rawValue
+                    filled.label = CoachResponder.goalLabel(option.goal)
+                    onFill(filled)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(CoachResponder.goalLabel(option.goal))
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text(option.subtitle)
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Theme.Space.md)
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var daysPicker: some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach([3, 4, 5, 6], id: \.self) { days in
+                Button {
+                    Haptics.selection()
+                    var filled = payload
+                    filled.daysPerWeek = days
+                    filled.label = "Train \(days) days a week"
+                    onFill(filled)
+                } label: {
+                    VStack(spacing: 2) {
+                        Text("\(days)").font(.display(20, weight: .heavy)).monospacedDigit()
+                        Text("days").font(.rounded(Theme.FontSize.label, weight: .bold))
+                    }
+                    .foregroundStyle(Theme.ink)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Space.sm)
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var minutesPicker: some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach([30, 45, 60, 90], id: \.self) { minutes in
+                Button {
+                    Haptics.selection()
+                    var filled = payload
+                    filled.sessionMinutes = minutes
+                    filled.label = "\(minutes)-minute sessions"
+                    onFill(filled)
+                } label: {
+                    VStack(spacing: 2) {
+                        Text("\(minutes)").font(.display(20, weight: .heavy)).monospacedDigit()
+                        Text("min").font(.rounded(Theme.FontSize.label, weight: .bold))
+                    }
+                    .foregroundStyle(Theme.ink)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Space.sm)
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var distancePicker: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Theme.Space.sm) {
+            ForEach(RaceDistance.allCases) { dist in
+                Button {
+                    Haptics.selection()
+                    var filled = payload
+                    filled.raceDistanceM = dist.meters
+                    filled.label = "Point my plan at a \(dist.label.lowercased())"
+                    onFill(filled)
+                } label: {
+                    Text(dist.label)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Theme.Space.sm)
+                        .background {
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// Distance chosen, date missing: an inline date picker so race day is set right here in the
+    /// chat — then the card re-renders with the honest feasibility read before anything applies.
+    private var raceDatePicker: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Theme.surface))
+                    .overlay(Circle().stroke(Theme.hairline))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(RaceDistance.nearest(toMeters: payload.raceDistanceM ?? 0).label)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("When's race day?")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            DatePicker("Race day", selection: $raceDay, in: raceDayRange, displayedComponents: .date)
+                .datePickerStyle(.compact)
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .tint(Theme.ink)
+            Button {
+                Haptics.light()
+                var filled = payload
+                filled.raceDateISO = Self.isoDay(raceDay)
+                onFill(filled)
+            } label: {
+                Text("Check the runway")
+                    .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                    .foregroundStyle(Theme.background)
+                    .padding(.horizontal, Theme.Space.lg).padding(.vertical, 8)
+                    .background(Capsule().fill(Theme.ink))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(Theme.Space.md)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        }
+    }
+
+    /// Tomorrow through the intent bridge's 18-month horizon.
+    private var raceDayRange: ClosedRange<Date> {
+        let cal = Calendar.current
+        let lo = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
+        let hi = cal.date(byAdding: .month, value: 18, to: lo) ?? lo
+        return lo...hi
+    }
+
+    private static func isoDay(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.calendar = .current
+        fmt.timeZone = Calendar.current.timeZone
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: date)
+    }
+
+    // MARK: Adjust-plan menu — conversation steering; every row happens right here in the chat.
+
+    private static let adjustOptions: [(icon: String, title: String, sends: String)] = [
+        ("calendar", "Training days", "Change my training days"),
+        ("target", "My goal", "Change my goal"),
+        ("flag.checkered", "My race", "Change my race"),
+        ("clock", "Session length", "Change my session length"),
+        ("arrow.triangle.2.circlepath", "A fresh block from today", "Start a fresh block"),
+    ]
+
+    private var adjustMenu: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(Self.adjustOptions.enumerated()), id: \.offset) { index, option in
+                Button { Haptics.selection(); onSendOption(option.sends) } label: {
+                    HStack(spacing: Theme.Space.md) {
+                        Image(systemName: option.icon)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .frame(width: 22)
+                        Text(option.title)
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .padding(.horizontal, Theme.Space.md)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if index < Self.adjustOptions.count - 1 {
+                    Rectangle().fill(Theme.hairline).frame(height: 1).padding(.leading, Theme.Space.md + 22 + Theme.Space.md)
+                }
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
     }
 
@@ -357,6 +600,7 @@ struct CoachCardView: View {
             case .viewProgress: "chart.line.uptrend.xyaxis"
             case .raceBriefing: "flag.checkered"
             case .planSettings: "slider.horizontal.3"
+            case .viewHealth: "heart.fill"
             case nil: "arrow.right"
             }
         case .changeGoal: "target"
@@ -378,6 +622,8 @@ struct CoachCardView: View {
         case .racePredictor: "gauge.with.needle"
         case .todayBriefing: "sun.max"
         case .zones: "heart.text.square"
+        case .adjustPlan: "slider.horizontal.3"
+        case .renewBlock: "arrow.triangle.2.circlepath"
         case .none: "wand.and.stars"
         }
     }

@@ -67,7 +67,18 @@ struct PlanEngineInvariantTests {
             let days = week.sessions.map(\.dayOffset)
             #expect(days.allSatisfy { (0...6).contains($0) }, "\(label) w\(week.index): day offset out of week")
             #expect(Set(days).count == days.count, "\(label) w\(week.index): two sessions share a day")
-            #expect(week.sessions.count == min(7, inputs.daysPerWeek), "\(label) w\(week.index): wrong session count")
+            // Race week is the one legitimate exception to the exact day-count: race day clears
+            // itself and everything after it, then adds the race — so the week holds the race plus
+            // whatever training survived before it. Every other week fills the athlete's day budget.
+            if let raceIdx = week.sessions.firstIndex(where: { $0.runType == .race }) {
+                #expect(week.sessions.count <= min(7, inputs.daysPerWeek) + 1,
+                        "\(label) w\(week.index): race week overfilled")
+                let raceDay = week.sessions[raceIdx].dayOffset
+                #expect(!week.sessions.contains { $0.runType != .race && $0.dayOffset >= raceDay },
+                        "\(label) w\(week.index): training scheduled on/after race day")
+            } else {
+                #expect(week.sessions.count == min(7, inputs.daysPerWeek), "\(label) w\(week.index): wrong session count")
+            }
             #expect(PlanEngine.scheduleSatisfiesRecovery(week.sessions),
                     "\(label) w\(week.index): hard run the day after a heavy lower lift")
 

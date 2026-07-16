@@ -10,6 +10,11 @@ struct ShareCardContent: View {
     var distanceUnit: DistanceUnit = .auto
     let size: CGSize
 
+    /// Caches the Kalman-filtered route so re-rendering the card (format/size passes, style swipes
+    /// that land back here) doesn't re-run the causal filter — it's deterministic per `GPSDetail`.
+    /// Computed synchronously on first read, so the off-screen export renders the route exactly.
+    @State private var routeCache = RouteCache()
+
     private var pad: CGFloat { size.width * 0.08 }
 
     var body: some View {
@@ -97,7 +102,7 @@ struct ShareCardContent: View {
 
     @ViewBuilder
     private func routeSilhouette(_ gps: GPSDetail) -> some View {
-        let coords = gps.routeCoordinates(type: workout.type)
+        let coords = routeCache.coordinates(for: gps, type: workout.type)
         if coords.count > 1 {
             RouteSilhouette(coords: coords)
                 .stroke(.white, style: StrokeStyle(lineWidth: size.width * 0.012, lineCap: .round, lineJoin: .round))
@@ -126,6 +131,23 @@ struct ShareCardContent: View {
         }
         let pace = gps.distanceM > 0 ? workout.durationS / (gps.distanceM / 1000) : 0
         return "\(time) · \(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
+    }
+}
+
+/// Memoizes one `GPSDetail`'s Kalman-filtered route so repeated card renders reuse it instead of
+/// re-running the (deterministic, causal) filter on every body/size pass.
+@MainActor
+private final class RouteCache {
+    private var key: ObjectIdentifier?
+    private var coords: [CLLocationCoordinate2D] = []
+
+    func coordinates(for gps: GPSDetail, type: WorkoutType) -> [CLLocationCoordinate2D] {
+        let k = ObjectIdentifier(gps)
+        if key != k {
+            key = k
+            coords = gps.routeCoordinates(type: type)
+        }
+        return coords
     }
 }
 

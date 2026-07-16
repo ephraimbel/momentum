@@ -92,7 +92,7 @@ export default function Privacy() {
 
         <h2>Contact</h2>
         <p>
-          Questions or requests: <a href="mailto:privacy@momentum.run">privacy@momentum.run</a>.
+          Questions or requests: <a href="mailto:privacy@momentumco.app">privacy@momentumco.app</a>.
         </p>
       </main>
     </>

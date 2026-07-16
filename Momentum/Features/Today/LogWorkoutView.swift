@@ -245,9 +245,19 @@ struct LogWorkoutView: View {
                 name: draft.name,
                 sets: draft.sets.map { LogWorkoutBuilder.SetInput(reps: $0.reps, weightKg: $0.weightKg(unit: weightUnit)) })
         }
+        // Resolve each name once per save: the `library` @Query snapshot doesn't refresh mid-save,
+        // so two sections naming the same NEW exercise would otherwise create twin custom rows.
+        var resolved: [String: Exercise] = [:]
+        let cachedRef: (String) -> Exercise = { name in
+            let key = name.lowercased()
+            if let hit = resolved[key] { return hit }
+            let e = exerciseRef(named: name)
+            resolved[key] = e
+            return e
+        }
         let w = LogWorkoutBuilder.make(type: type, date: date, durationS: durationS, distanceM: distanceMeters,
                                        indoor: indoor, effort: effort, note: notes,
-                                       exercises: inputs, resolveExercise: exerciseRef)
+                                       exercises: inputs, resolveExercise: cachedRef)
         // A logged workout is a real workout: same calorie estimate and plan credit as a tracked one
         // (otherwise a treadmill run leaves today's planned session open and shows a blank calorie
         // stat forever). Deliberately no pace recalibration — hand-entered numbers are too coarse

@@ -97,7 +97,7 @@ export default function Terms() {
 
         <h2>Contact</h2>
         <p>
-          <a href="mailto:legal@momentum.run">legal@momentum.run</a>
+          <a href="mailto:legal@momentumco.app">legal@momentumco.app</a>
         </p>
       </main>
     </>

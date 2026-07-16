@@ -17,7 +17,9 @@ struct SettingsView: View {
     @State private var restoring = false
     @State private var exportFile: JSONExportFile?
     @State private var showExporter = false
+    @State private var exporting = false      // fetch+encode runs off-main; the row shows a spinner
     @State private var confirmDelete = false
+    @State private var deletingData = false   // background wipe in flight; the row shows a spinner
     @State private var healthConnected = false
     @State private var connectingHealth = false
     @State private var importingHealth = false
@@ -64,7 +66,14 @@ struct SettingsView: View {
         }
         .confirmationDialog("Delete all data?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete everything", role: .destructive) {
-                DataManager.deleteAllUserData(in: context)
+                // Background chunked wipe — the synchronous version froze the UI for seconds on
+                // real histories (every GPS fix row cascade-deleted on the main context). The
+                // profile goes last, so RootView flips to onboarding only once everything's gone.
+                deletingData = true
+                Task {
+                    await DataManager.deleteAllUserData(container: context.container)
+                    deletingData = false   // normally moot (RootView re-onboards) — never spin forever
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -88,20 +97,17 @@ struct SettingsView: View {
 
     // MARK: Identity header
 
-    /// Who this is — monogram, name, how they're signed in. Reads before any card does.
+    /// Who this is — their actual profile photo (the same identity Profile and the feed show), name,
+    /// how they're signed in. Reads before any card does. No photo → the quiet monochrome monogram
+    /// (deliberately not AvatarView's pastel chip — that's a feed device for telling many people
+    /// apart; Settings stays monochrome).
     private var identityHeader: some View {
         HStack(spacing: Theme.Space.md) {
-            ZStack {
-                Circle().fill(Theme.surface)
-                Circle().stroke(Theme.hairline)
-                if auth.isGuest {
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 19, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                } else {
-                    Text(monogram).font(.display(20, weight: .semibold)).foregroundStyle(Theme.ink)
-                }
+            if let photo = profiles.first?.avatarData {
+                AvatarView(photo: photo, name: identityTitle, size: 52)
+            } else {
+                monogramCircle
             }
-            .frame(width: 52, height: 52)
             VStack(alignment: .leading, spacing: 2) {
                 Text(identityTitle)
                     .font(.display(Theme.FontSize.headline, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -110,6 +116,20 @@ struct SettingsView: View {
             }
             Spacer(minLength: 0)
         }
+    }
+
+    private var monogramCircle: some View {
+        ZStack {
+            Circle().fill(Theme.surface)
+            Circle().stroke(Theme.hairline)
+            if auth.isGuest {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 19, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            } else {
+                Text(monogram).font(.display(20, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
+        }
+        .frame(width: 52, height: 52)
     }
 
     /// The athlete's chosen profile name — the identity shown everywhere else (Profile, feed). Settings
@@ -249,7 +269,10 @@ struct SettingsView: View {
                         .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 5)
                         .background { if on { Capsule().fill(Theme.ink) } }
-                        .contentShape(Capsule())
+                        // The visible pill is ~24pt tall — well under the 44pt minimum. Extend the
+                        // hit region vertically only (never horizontally — the segments sit 2pt
+                        // apart), keeping the control's look exactly as shipped.
+                        .contentShape(VerticalHitPad(dy: 10))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(option.label) appearance")
@@ -342,12 +365,23 @@ struct SettingsView: View {
 
     private var dataCard: some View {
         card {
-            actionRow("Export my data", icon: "square.and.arrow.up") {
-                exportFile = JSONExportFile(data: DataManager.exportJSON(in: context))
-                showExporter = true
+            // Fetch + pretty-print encode off the main thread — synchronously in the tap it was a
+            // perceptible hitch at real history sizes (every workout's gps/strength row faulted).
+            actionRow("Export my data", icon: "square.and.arrow.up", busy: exporting) {
+                guard !exporting else { return }
+                exporting = true
+                Task {
+                    let data = await DataManager.exportJSON(container: context.container)
+                    exportFile = JSONExportFile(data: data)
+                    exporting = false
+                    showExporter = true
+                }
             }
             inset
-            actionRow("Delete all data", icon: "trash", tint: .red) { confirmDelete = true }
+            actionRow("Delete all data", icon: "trash", tint: .red, busy: deletingData) {
+                guard !deletingData else { return }
+                confirmDelete = true
+            }
         }
     }
 
@@ -443,6 +477,9 @@ struct SettingsView: View {
         Button { open(url) } label: {
             Text(title).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .underline()
+                // ~13pt of text is the whole hit target otherwise — pad the region invisibly
+                // (vertical only; the links sit close together horizontally).
+                .contentShape(VerticalHitPad(dy: 16))
         }
         .buttonStyle(.plain)
     }
@@ -528,6 +565,14 @@ struct SettingsView: View {
         Task { restoring = true; _ = await paywall.restore(); restoring = false }
     }
     private func open(_ s: String) { if let url = URL(string: s) { openURL(url) } }
+}
+
+/// A hit-test region taller than the view it's attached to — for controls whose *visible* height
+/// sits under the 44pt minimum but whose look shouldn't change (colophon links, the compact
+/// appearance segments). Vertical only: expanding horizontally would overlap packed neighbors.
+private struct VerticalHitPad: Shape {
+    var dy: CGFloat
+    func path(in rect: CGRect) -> Path { Path(rect.insetBy(dx: 0, dy: -dy)) }
 }
 
 #Preview {

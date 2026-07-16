@@ -14,6 +14,7 @@ final class CardioActivityController {
     private var lastPush = Date.distantPast
     private var lastPaused = false
     private var lastGPSLost = false
+    private var lastStep: String?
     /// ActivityKit calls are async but unstructured `Task`s carry no ordering guarantee — two pushes
     /// racing could land oldest-last and freeze the card on stale numbers until the next throttle
     /// window. Every push chains on the previous one, so content always lands in issue order and
@@ -33,20 +34,22 @@ final class CardioActivityController {
                 content: .init(state: state, staleDate: Date().addingTimeInterval(180)))
             lastPush = Date()
             lastPaused = state.paused
+            lastStep = state.stepText
         } catch {
             activity = nil   // request can fail (budget, disabled) — stay silent, the live screen still works
         }
     }
 
-    /// Reflect the latest snapshot. Throttled, but a pause/resume or GPS lost/recovered transition
-    /// always pushes now — a state flip must never wait out the throttle.
+    /// Reflect the latest snapshot. Throttled, but a pause/resume, GPS lost/recovered, or structured
+    /// step transition always pushes now — a state flip must never wait out the throttle.
     func update(_ state: CardioActivityAttributes.ContentState) {
         guard let activity else { return }
-        let stateFlipped = state.paused != lastPaused || state.gpsLost != lastGPSLost
+        let stateFlipped = state.paused != lastPaused || state.gpsLost != lastGPSLost || state.stepText != lastStep
         guard stateFlipped || Date().timeIntervalSince(lastPush) >= Self.minInterval else { return }
         lastPush = Date()
         lastPaused = state.paused
         lastGPSLost = state.gpsLost
+        lastStep = state.stepText
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(180))
         pushChain = Task { [pushChain] in
             await pushChain?.value

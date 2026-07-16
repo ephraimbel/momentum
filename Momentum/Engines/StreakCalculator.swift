@@ -85,9 +85,12 @@ enum StreakCalculator {
         return perWeek.values.filter { $0 >= daysPerWeek }.count
     }
 
-    /// Map a date to an integer local-day key (days since 2001 reference, in `calendar`'s zone).
+    /// Map a date to an integer local-day key (a gap-free day ordinal, in `calendar`'s zone).
+    /// Uses the calendar's day-in-era ordinal so every local day gets one unique, monotonic key
+    /// in every timezone — flooring a UTC-anchored interval by a *local* start-of-day collides or
+    /// skips a key at DST transitions in UTC±0 zones (London/Dublin/Lisbon). All comparisons are
+    /// relative, so the constant offset is harmless.
     static func localDay(_ date: Date, calendar: Calendar = .current) -> Int {
-        let start = calendar.startOfDay(for: date)
-        return Int((start.timeIntervalSinceReferenceDate / 86_400).rounded(.down))
+        return calendar.ordinality(of: .day, in: .era, for: date) ?? 0
     }
 }

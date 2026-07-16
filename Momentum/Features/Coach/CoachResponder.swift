@@ -168,6 +168,19 @@ enum CoachResponder {
             return LocalTurn(text: "No race on your calendar yet. Point your plan at one and I'll build the pacing.", card: card)
         }
 
+        // Equipment changed ("only have dumbbells now", "joined a gym", "bodyweight only") → rebuild
+        // the strength work around what they actually have. Before the pause branch: an athlete
+        // traveling WITH equipment constraints wants to keep training, not stop.
+        if ctx.disciplines.contains(Discipline.strength.rawValue),
+           has(["only have", "just have", "i have", "joined", "no gym", "no equipment", "bodyweight",
+                "at home now", "hotel gym", "equipment", "switch to dumbbell", "got a gym"]),
+           let equipment = equipmentFromText(q), equipment.rawValue != ctx.settings.equipment {
+            var card = CoachCardPayload(kind: .changeEquipment, label: equipmentLabel(equipment))
+            card.equipment = equipment.rawValue
+            return LocalTurn(text: "Noted. I can rebuild your strength work around \(equipmentLabel(equipment).lowercased()) so every session is actually doable where you are.",
+                             card: card)
+        }
+
         // Pause / resume (check resume first — "back from vacation" contains "vacation").
         if ctx.isPaused, has(["i'm back", "im back", "resume", "unpause", "back home", "ready to train"]) {
             let card = CoachCardPayload(kind: .resumePlan, label: "Resume plan")
@@ -194,6 +207,21 @@ enum CoachResponder {
                 var card = CoachCardPayload(kind: .injuryReport, label: "Adjust my plan")
                 card.injuryArea = area.rawValue
                 return LocalTurn(text: "Thanks for telling me. How bad is your \(area.label.lowercased()) right now? Pick what fits and I'll train around it. If there's sharp pain, swelling, or numbness, see a professional first.",
+                                 card: card)
+            }
+        }
+
+        // Preferred training days named outright ("train on monday, wednesday and friday", "switch
+        // my days to tue/thu/sat") → anchor the week to those days. Runs BEFORE the move matcher:
+        // naming two weekdays would otherwise read as a session move. Needs an explicit days
+        // phrasing, at least two weekdays, and a real change.
+        if has(["train on", "run on", "my days to", "preferred days", "my training days on"]) {
+            let days = mentionedWeekdays(q, calendar: ctx.calendar)
+            if days.count >= 2, Set(days) != Set(ctx.settings.preferredDays) {
+                var card = CoachCardPayload(kind: .changeDays, label: "Anchor my week")
+                card.preferredDays = days.sorted()
+                let names = days.sorted().map { ctx.calendar.weekdaySymbols[$0 - 1] }.joined(separator: ", ")
+                return LocalTurn(text: "Done deal if you want it. I can anchor your week to \(names) and rebuild the schedule so the hard days still land on fresh legs.",
                                  card: card)
             }
         }
@@ -287,6 +315,36 @@ enum CoachResponder {
                 card: card)
         }
 
+        // A race distance without a catalog match ("I want to run a marathon", "new plan for a
+        // half") → the in-chat race flow: distance now, date on the card (inline picker), the honest
+        // feasibility read before anything applies. Parses "in N weeks/months"; real dates are
+        // picked on the card, where a date picker beats fragile parsing.
+        // Intent words are deliberately tight: questions ("how should I prep for the marathon?",
+        // "am I ready for a half?") must stay questions, never mutate into proposals. A NAMED race
+        // our catalog doesn't know ("the Comrades Marathon") is research, not a settings change —
+        // skip the card so the ask escalates to the AI, which can actually look it up.
+        if has(["train for", "sign up", "signed up", "want to run", "want to race", "want to do",
+                "race a", "doing a", "aiming for", "targeting", "point my plan", "new plan for"]),
+           !mentionsUnknownNamedRace(message),
+           let dist = raceDistanceFromText(q) {
+            var card = CoachCardPayload(kind: .changeRace, label: "Point my plan at a \(dist.label.lowercased())")
+            card.raceDistanceM = dist.meters
+            if let date = relativeFutureDate(q, calendar: ctx.calendar) {
+                card.raceDateISO = isoDay(date, calendar: ctx.calendar)
+                return LocalTurn(text: "A \(dist.label.lowercased()) it is. Here's the honest read on that runway. Say go and I'll rebuild your whole plan to point at it.",
+                                 card: card)
+            }
+            return LocalTurn(text: "A \(dist.label.lowercased()). When's race day? Set the date on the card and I'll give you the honest read on the runway before anything changes.",
+                             card: card)
+        }
+
+        // "Change my race" with nothing else → ask which distance, right on the card.
+        if has(["change my race", "different race", "switch my race", "new race", "another race"]) {
+            let card = CoachCardPayload(kind: .changeRace, label: "Change my race")
+            return LocalTurn(text: "Let's re-point the plan. Which distance are we chasing? Pick one, then give me the date. If you mean a specific event, just name it and I'll look it up.",
+                             card: card)
+        }
+
         // A specific weekly day count ("train 5 days a week", "switch to 4 days") → a direct changeDays
         // card the athlete can apply, not just a nudge to settings.
         if has(["days a week", "train", "switch", "instead", "cut to", "go to", "move to", "bump"]),
@@ -298,20 +356,222 @@ enum CoachResponder {
                 card: card)
         }
 
-        // Structural changes (goal/race/length) or a fresh plan → open plan settings, where the
-        // race catalog ("Find your race"), focus, and schedule all live and the plan rebuilds around them.
-        if has(["change my goal", "new goal", "change my race", "different race", "change my days",
-                "days per week", "train on different days", "shorter sessions", "longer sessions", "session length",
-                "create a new plan", "new plan", "start a new plan", "start over", "build me a plan",
-                "rebuild my plan", "find me a race", "find a race", "pick a race", "browse races",
-                "what races", "which race", "look up a race", "search races"]) {
-            var card = CoachCardPayload(kind: .nav, label: "Open plan settings")
+        // "Change my training days" without a count → ask how many, right on the card.
+        if has(["change my days", "change my training days", "different days", "train on different days",
+                "switch my days", "adjust my days", "my training days"]) {
+            let card = CoachCardPayload(kind: .changeDays, label: "Training days")
+            return LocalTurn(text: "How many days a week can you honestly give me? The plan's only as good as the days you'll actually show up for.",
+                             card: card)
+        }
+
+        // A named goal with change intent ("I want to get stronger", "switch my focus to endurance")
+        // → a direct proposal. Racing routes through the race flow above, never here.
+        if has(["want to", "focus on", "switch", "change my goal", "new goal", "goal to",
+                "let's work on", "lets work on", "make my goal", "instead"]),
+           let goal = goalFromText(q) {
+            if goal == ctx.goal {
+                return LocalTurn(text: "That's already what we're building for. If it doesn't feel like it, tell me what's off and I'll tune the plan.", card: nil)
+            }
+            var card = CoachCardPayload(kind: .changeGoal, label: goalLabel(goal))
+            card.goal = goal.rawValue
+            return LocalTurn(text: "Good call. I can re-point your whole plan at \(goalLabel(goal).lowercased()) and rebuild the upcoming weeks around it.",
+                             card: card)
+        }
+
+        // "Change my goal" with no goal named → ask what we're chasing, options on the card.
+        if has(["change my goal", "new goal", "different goal", "change my focus", "switch my goal"]) {
+            let card = CoachCardPayload(kind: .changeGoal, label: "Change my goal")
+            return LocalTurn(text: "Happy to re-point everything. What are we chasing? If it's a race, just name it or tell me the distance.",
+                             card: card)
+        }
+
+        // Session length: an explicit minutes ask → a direct proposal. The change verb matters —
+        // "my last workout was 45 minutes" is a report, not a request.
+        if has(["session", "workout"]),
+           has(["make", "change", "set", "cut", "want", "switch", "give me", "cap", "size", "keep them"]),
+           let minutes = minutesFromText(q),
+           minutes != ctx.settings.sessionMinutes, (20...120).contains(minutes) {
+            var card = CoachCardPayload(kind: .changeSessionLength, label: "\(minutes)-minute sessions")
+            card.sessionMinutes = minutes
+            return LocalTurn(text: "I can size every session to about \(minutes) minutes and rebuild the upcoming weeks to fit.",
+                             card: card)
+        }
+
+        // "Shorter/longer sessions" without a number → propose the next sensible step, invite a number.
+        if has(["shorter session", "shorter workout", "shorten my session", "sessions are too long",
+                "workouts are too long", "less time per session"]) {
+            let current = ctx.settings.sessionMinutes
+            if let stepped = sessionSteps.last(where: { $0 < current }) {
+                var card = CoachCardPayload(kind: .changeSessionLength, label: "\(stepped)-minute sessions")
+                card.sessionMinutes = stepped
+                return LocalTurn(text: "Let's make them fit your life. I can size sessions to about \(stepped) minutes instead of \(current). If a different number works better, just say it.",
+                                 card: card)
+            }
+            return LocalTurn(text: "You're already at \(current) minutes, my shortest honest session. If time's the squeeze, we could drop a training day instead. Want that?", card: nil)
+        }
+        if has(["longer session", "longer workout", "more time per session", "sessions are too short",
+                "extend my session"]) {
+            let current = ctx.settings.sessionMinutes
+            if let stepped = sessionSteps.first(where: { $0 > current }) {
+                var card = CoachCardPayload(kind: .changeSessionLength, label: "\(stepped)-minute sessions")
+                card.sessionMinutes = stepped
+                return LocalTurn(text: "More time, more training. I can size sessions to about \(stepped) minutes instead of \(current). Name any number if you'd rather.",
+                                 card: card)
+            }
+            return LocalTurn(text: "You're already at \(current) minutes, the longest I prescribe. Past that, an extra training day beats a marathon session. Want one?", card: nil)
+        }
+
+        // Vague "change my session length" → ask on the card.
+        if has(["session length", "workout length", "length of my sessions", "how long my sessions"]) {
+            let card = CoachCardPayload(kind: .changeSessionLength, label: "Session length")
+            return LocalTurn(text: "How much time can you give each session? Pick what actually fits your day.",
+                             card: card)
+        }
+
+        // A fresh start ("next block", "start over", "new plan") → the renewal: rolling plans
+        // reassess and build the next block; race plans rebuild from today toward the race.
+        if has(["next block", "new block", "renew my", "start fresh", "fresh block", "fresh start",
+                "start over", "new plan", "rebuild my plan", "create a new plan", "reset my plan"]) {
+            let rolling = ctx.race == nil
+            let card = CoachCardPayload(kind: .renewBlock, label: rolling ? "Build my next block" : "Rebuild my plan")
+            let text = rolling
+                ? "Fresh start, smart start. I'll look at what you've actually been running, then build your next block from today. If you want different days, a new goal, or a race in the picture, tell me that first and I'll fold it in."
+                : "I can rebuild your plan from today, still pointed at your race. If you'd rather change the race or the goal too, tell me that first."
+            return LocalTurn(text: text, card: card)
+        }
+
+        // Vague "change/adjust my plan" → the menu. Every row happens right here in the chat.
+        if has(["change my plan", "adjust my plan", "adjust the plan", "change the plan", "modify my plan",
+                "tweak my plan", "update my plan", "edit my plan", "customize my plan", "customise my plan",
+                "make changes to my plan", "change up my plan", "switch up my plan", "change something"]) {
+            let card = CoachCardPayload(kind: .adjustPlan, label: "What should we change?")
+            return LocalTurn(text: "Happy to. Everything here happens right in the chat, and you'll see the exact change before it lands. What should we adjust?",
+                             card: card)
+        }
+
+        // Browsing for a race is genuinely better in settings — the catalog search lives there.
+        if has(["find me a race", "find a race", "pick a race", "browse races", "what races",
+                "look up a race", "search races"]) {
+            var card = CoachCardPayload(kind: .nav, label: "Find your race")
             card.nav = CoachDestination.planSettings.rawValue
-            return LocalTurn(text: "Let's set that up properly. Open plan settings — tap \u{201C}Find your race\u{201D} to search the majors and hundreds more, pick your focus and days, and your plan rebuilds around it. Completed work and your calibrated paces are kept.",
+            return LocalTurn(text: "Let's find it properly. Open plan settings and tap \u{201C}Find your race\u{201D} to search the majors and hundreds more. Pick one and your plan re-points at it.",
                              card: card)
         }
 
         return nil
+    }
+
+    /// A non-race goal named in the text, else nil. Racing is NOT detected here — race asks route
+    /// through the race flow (distance + date + feasibility), never a bare goal swap.
+    private static func goalFromText(_ q: String) -> Goal? {
+        if q.contains("stronger") || q.contains("strength goal") { return .getStronger }
+        if q.contains("build muscle") || q.contains("muscle") || q.contains("hypertrophy") { return .buildMuscle }
+        if q.contains("endurance") || q.contains("get faster") || q.contains("getting faster")
+            || q.contains("run longer") || q.contains("aerobic") { return .endurance }
+        if q.contains("lose fat") || q.contains("lose weight") || q.contains("lean out") || q.contains("fat loss") { return .loseFat }
+        if q.contains("general fitness") || q.contains("get fit") || q.contains("overall fitness") || q.contains("stay fit") { return .generalFitness }
+        if q.contains("consisten") || q.contains("build the habit") { return .stayConsistent }
+        return nil
+    }
+
+    /// Display names for goals (mirrors the plan-settings labels).
+    static func goalLabel(_ goal: Goal) -> String {
+        switch goal {
+        case .loseFat: "Lose fat / get fit"
+        case .buildMuscle: "Build muscle"
+        case .getStronger: "Get stronger"
+        case .raceDistance: "Run a race"
+        case .endurance: "Improve endurance"
+        case .generalFitness: "General fitness"
+        case .stayConsistent: "Stay consistent"
+        }
+    }
+
+    /// A capitalized word right before a distance token ("the Comrades Marathon") names a specific
+    /// race we didn't resolve from the catalog — that's research for the AI, not a distance swap.
+    /// Sentence-common words stay exempt so "a Marathon" or "The half" never read as names.
+    private static func mentionsUnknownNamedRace(_ message: String) -> Bool {
+        let words = message.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        let distances: Set<String> = ["marathon", "half", "10k", "5k", "50k", "ultra"]
+        let common: Set<String> = ["a", "an", "the", "my", "that", "this", "i", "another", "first", "next"]
+        for (i, word) in words.enumerated() where distances.contains(word.lowercased()) && i > 0 {
+            let prev = words[i - 1]
+            let prevLower = prev.lowercased()
+            // Another distance token ("Half Marathon" in title case) is never a name.
+            if prev.first?.isUppercase == true, !common.contains(prevLower), !distances.contains(prevLower) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// A race distance named in the text. Order matters: "50k ultramarathon" contains "marathon",
+    /// and "half marathon" does too — check the more specific shapes first.
+    private static func raceDistanceFromText(_ q: String) -> RaceDistance? {
+        if q.contains("ultra") || q.contains("50k") || q.contains("fifty k") { return .fiftyK }
+        if q.contains("half marathon") || q.contains("half-marathon") || q.contains(" half") || q.hasPrefix("half") { return .half }
+        if q.contains("marathon") { return .marathon }
+        if q.contains("10k") || q.contains("ten k") { return .tenK }
+        if q.contains("5k") || q.contains("five k") { return .fiveK }
+        return nil
+    }
+
+    /// "in N weeks" / "in N months" → a concrete future day. The only date shapes parsed offline;
+    /// anything else is set on the card, where a real date picker beats fragile parsing.
+    private static func relativeFutureDate(_ q: String, calendar: Calendar) -> Date? {
+        let shapes: [(word: String, component: Calendar.Component, max: Int)] =
+            [("week", .weekOfYear, 78), ("month", .month, 18)]
+        for shape in shapes {
+            guard let r = q.range(of: "in ([0-9]+) \(shape.word)", options: .regularExpression) else { continue }
+            let digits = q[r].components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+            guard let n = Int(digits), (1...shape.max).contains(n) else { continue }
+            return calendar.date(byAdding: shape.component, value: n, to: calendar.startOfDay(for: Date()))
+        }
+        return nil
+    }
+
+    /// A day as the strict "yyyy-MM-dd" the intent bridge expects.
+    private static func isoDay(_ date: Date, calendar: Calendar) -> String {
+        let fmt = DateFormatter()
+        fmt.calendar = calendar
+        fmt.timeZone = calendar.timeZone
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: date)
+    }
+
+    /// A session length named in minutes ("45 minute sessions", "an hour"), else nil.
+    private static func minutesFromText(_ q: String) -> Int? {
+        if q.contains("hour and a half") { return 90 }
+        if q.contains("half an hour") || q.contains("half hour") { return 30 }
+        if q.contains("an hour") || q.contains("one hour") || q.contains("1 hour") { return 60 }
+        guard let r = q.range(of: "([0-9]{2,3})[- ]?min", options: .regularExpression) else { return nil }
+        let digits = q[r].components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        return Int(digits)
+    }
+
+    /// The honest session lengths the coach offers (bridge clamps 20…120 regardless).
+    static let sessionSteps = [20, 30, 45, 60, 75, 90]
+
+    /// The equipment situation named in the text, else nil.
+    private static func equipmentFromText(_ q: String) -> Equipment? {
+        if q.contains("bodyweight") || q.contains("no equipment") { return .bodyweight }
+        if q.contains("dumbbell") { return .dumbbellsOnly }
+        if q.contains("full gym") || q.contains("joined a gym") || q.contains("gym membership")
+            || q.contains("back at the gym") || q.contains("got a gym") { return .fullGym }
+        if q.contains("home gym") || q.contains("train at home") || q.contains("training at home")
+            || q.contains("work out at home") || q.contains("working out at home") { return .homeMinimal }
+        return nil
+    }
+
+    /// Display names for equipment (mirrors the plan-settings labels).
+    static func equipmentLabel(_ equipment: Equipment) -> String {
+        switch equipment {
+        case .fullGym: "Full gym"
+        case .dumbbellsOnly: "Dumbbells only"
+        case .homeMinimal: "Home minimal"
+        case .bodyweight: "Bodyweight"
+        }
     }
 
     /// A weekly day count named in the message ("5 days a week", "train four days", "3-day week"),

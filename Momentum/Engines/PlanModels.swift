@@ -69,9 +69,11 @@ struct GeneratedWeek: Sendable, Equatable {
     var phase: PlanPhase = .build
     var sessions: [GeneratedSession]
 
-    /// Total prescribed running distance for the week (meters) — for the ≤10%/wk invariant.
+    /// Total prescribed running TRAINING distance for the week (meters) — for the ≤10%/wk and ACWR
+    /// invariants. The race session is deliberately excluded: the race is the objective the ramp
+    /// delivers you to, not ramp load to govern (nothing trains after it — race week is cleared).
     var runVolumeM: Double {
-        sessions.filter { $0.discipline == .running || $0.discipline == .walking }
+        sessions.filter { ($0.discipline == .running || $0.discipline == .walking) && $0.runType != .race }
             .reduce(0) { $0 + ($1.targetDistanceM ?? 0) }
     }
 }

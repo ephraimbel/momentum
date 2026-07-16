@@ -40,6 +40,11 @@ struct StrengthProgressSection: View {
         }
     }
 
+    /// Session cache — same rationale as ProTrendsSection: segment flips destroy `@State` and
+    /// `.task(id:)` re-fires per tab visit, so an unguarded build re-walked every set per visit.
+    /// Deterministic from the workout array; pure value types only (never cache SwiftData refs).
+    @MainActor private static var modelCache: (count: Int, model: Model)?
+
     var body: some View {
         if hasStrength {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -54,8 +59,14 @@ struct StrengthProgressSection: View {
             }
             .task(id: pro ? workouts.count : -1) {
                 guard pro else { return }
+                if let cached = Self.modelCache, cached.count == workouts.count {
+                    if model == nil { model = cached.model }   // instant remount after a segment flip
+                    if selectedLift == nil { selectedLift = cached.model.lifts.first }
+                    return
+                }
                 if model == nil { await Task.yield() }   // paint the skeleton first
                 let built = Model.build(workouts)
+                Self.modelCache = (workouts.count, built)
                 if selectedLift == nil { selectedLift = built.lifts.first }
                 model = built
             }

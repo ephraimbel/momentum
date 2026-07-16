@@ -233,6 +233,42 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .mapStyles: "all map styles"
         }
     }
+
+    /// A capitalized headline for the Pro lock card (the WHAT).
+    var lockTitle: String {
+        switch self {
+        case .aiCoach: "The AI coach"
+        case .fullPlan: "Your full plan"
+        case .programs: "Programs"
+        case .aiRead: "AI reads"
+        case .advancedAnalytics: "Advanced trends"
+        case .fullHistory: "Your full history"
+        case .allTemplates: "All templates"
+        case .allShareTemplates: "Every share style"
+        case .cadenceMetronome: "Cadence metronome"
+        case .voiceCoach: "Voice coach"
+        case .watchPremium: "Watch premium"
+        case .mapStyles: "All map styles"
+        }
+    }
+
+    /// A one-line value prop for the Pro lock card (the WHY).
+    var lockBlurb: String {
+        switch self {
+        case .aiCoach: "A real coach, on demand"
+        case .fullPlan: "Every week, adapting as you train"
+        case .programs: "Structured programs for any goal"
+        case .aiRead: "AI reads every workout for you"
+        case .advancedAnalytics: "Fitness, fatigue and form over time"
+        case .fullHistory: "Your whole training history"
+        case .allTemplates: "Every workout template"
+        case .allShareTemplates: "Every way to share"
+        case .cadenceMetronome: "Lock your cadence, every run"
+        case .voiceCoach: "Live cues while you run"
+        case .watchPremium: "The full experience on your wrist"
+        case .mapStyles: "Every map style"
+        }
+    }
 }
 
 // MARK: - Phase 0 stubs

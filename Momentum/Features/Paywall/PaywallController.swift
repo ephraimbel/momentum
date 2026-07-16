@@ -12,8 +12,8 @@ struct PaywallProduct: Identifiable, Sendable, Equatable {
     enum Period: Sendable, Equatable { case monthly, annual }
     let id: String              // RevenueCat / StoreKit product identifier
     let period: Period
-    let priceText: String       // localized total, e.g. "$59.99"
-    let perMonthText: String?   // annual only, e.g. "$5.00 / mo"
+    let priceText: String       // localized total, e.g. "$14.99"
+    let perMonthText: String?   // annual only, e.g. "$10.00 / mo"
     let trialDays: Int          // 0 = none
 
     var isAnnual: Bool { period == .annual }
@@ -23,21 +23,40 @@ struct PaywallProduct: Identifiable, Sendable, Equatable {
 struct PaywallOffering: Sendable, Equatable {
     let monthly: PaywallProduct
     let annual: PaywallProduct
+    /// Numeric prices behind the display strings — planned by default, replaced with the store's
+    /// real values by `loadOffering()` so the savings badge always reflects what's actually charged.
+    var monthlyPriceValue: Double = monthlyPrice
+    var annualPriceValue: Double = annualPrice
 
-    /// Planned pricing (decision 2026-07-09, matches the website): $119.99/yr with a 7-day trial,
-    /// $19.99/mo with no trial. Used until the live store supplies localized prices.
+    /// Shipped pricing (decision 2026-07-14, matches the website): $14.99/mo with no trial —
+    /// deliberately below Runna's (~$17.99/mo) to win the price-comparison shopper — and $109.99/yr
+    /// with a 7-day trial. These two numbers are the **single source**: the monthly/annual
+    /// `priceText`, the annual per-month, and `annualSavingsPercent` all derive from them, so the
+    /// savings label can never fall out of step with a price change. Live store prices (loadOffering)
+    /// replace the display strings once RevenueCat is wired.
+    static let monthlyPrice = 14.99
+    static let annualPrice = 109.99
+
     static let standard = PaywallOffering(
         monthly: .init(id: "momentum_pro_monthly", period: .monthly,
-                       priceText: "$19.99", perMonthText: nil, trialDays: 0),
+                       priceText: money(monthlyPrice), perMonthText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
-                      priceText: "$119.99", perMonthText: "$10.00 / mo", trialDays: 7))
+                      priceText: money(annualPrice),
+                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 7))
 
-    /// "Save 50%" vs paying monthly for a year — shown on the annual plan.
+    /// Percent saved by paying yearly instead of 12× monthly, **rounded to the nearest 5%** for a
+    /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
+    /// (live once the store loads), never a hand-written label. Currently **40%**: $109.99 vs
+    /// 12 × $14.99 = $179.88 is 38.85%, which rounds up to 40%.
     var annualSavingsPercent: Int {
-        let monthlyYear = 12 * 19.99, annualYear = 119.99
+        let monthlyYear = 12 * monthlyPriceValue
         guard monthlyYear > 0 else { return 0 }
-        return Int(((monthlyYear - annualYear) / monthlyYear * 100).rounded())
+        let raw = (monthlyYear - annualPriceValue) / monthlyYear * 100
+        return Int((raw / 5).rounded()) * 5   // nearest 5% → a round badge, not "38.85%"
     }
+
+    /// Plain "$14.99" formatting for the offline seam (the live store supplies localized strings).
+    static func money(_ v: Double) -> String { "$" + String(format: "%.2f", v) }
 }
 
 /// API keys for the billing SDKs (PRD §10). Read from Info.plist so they're not in source; empty
@@ -90,6 +109,13 @@ final class PaywallController: PaywallServing {
 
     /// Configure the billing SDKs at launch. A no-op (local seam) until the SDKs + keys are added.
     func configure() {
+        #if DEBUG
+        // Demo/UI-test runs are hermetic: with RevenueCat live, `customerInfoStream` would apply the
+        // real (un-entitled) sandbox state and STOMP the --seed-demo Pro grant — and StoreKit can pop
+        // a sandbox sign-in dialog over screenshots. Demo means no billing network, period.
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--seed-demo") || args.contains("--ui-test-route") { return }
+        #endif
         #if canImport(RevenueCat)
         Purchases.logLevel = .warn
         Purchases.configure(withAPIKey: BillingKeys.revenueCat)
@@ -127,6 +153,14 @@ final class PaywallController: PaywallServing {
 
     /// Buy a product. Returns whether the user ended up entitled.
     func purchase(_ product: PaywallProduct) async -> Bool {
+        #if DEBUG
+        // Unit tests pin the ENTITLEMENT FLIP, not StoreKit: with RevenueCat linked, the live
+        // purchase path tries to present a confirmation sheet inside the headless test host and
+        // hangs the suite (no UI anchor + TestTimeoutsEnabled=false). The seam is the contract
+        // under test. XCTest classes load only in the unit-test host, never in the shipping app
+        // or the XCUITest-driven app process.
+        if Self.isRunningUnitTests { grantLocally(); return true }
+        #endif
         #if canImport(RevenueCat)
         do {
             guard let package = try await package(for: product) else { return false }
@@ -142,6 +176,9 @@ final class PaywallController: PaywallServing {
 
     /// Restore prior purchases. Returns whether the user is entitled afterward.
     func restore() async -> Bool {
+        #if DEBUG
+        if Self.isRunningUnitTests { return isPro }   // no network in the unit-test host
+        #endif
         #if canImport(RevenueCat)
         if let info = try? await Purchases.shared.restorePurchases() { apply(info) }
         #endif
@@ -158,13 +195,32 @@ final class PaywallController: PaywallServing {
     private func loadOffering() async {
         guard let current = try? await Purchases.shared.offerings().current,
               let m = current.monthly?.storeProduct, let a = current.annual?.storeProduct else { return }
-        let trial = (a.introductoryDiscount?.paymentMode == .freeTrial)
-            ? (a.introductoryDiscount?.subscriptionPeriod.value ?? 7) : 0
+        // StoreKit expresses a 7-day trial as (value: 1, unit: .week) — convert to DAYS, or the
+        // badge/CTA read "1-day free trial" (shipped-bug class: .value read without .unit).
+        let trial: Int = {
+            guard let intro = a.introductoryDiscount, intro.paymentMode == .freeTrial else { return 0 }
+            let p = intro.subscriptionPeriod
+            switch p.unit {
+            case .day: return p.value
+            case .week: return p.value * 7
+            case .month: return p.value * 30
+            case .year: return p.value * 365
+            @unknown default: return p.value
+            }
+        }()
+        // Annual per-month in the product's own locale/currency (falls back to the plain formatter).
+        let perMonth: String = {
+            let monthly = a.price / 12
+            if let s = a.priceFormatter?.string(from: monthly as NSDecimalNumber) { return "\(s) / mo" }
+            return "\(PaywallOffering.money(NSDecimalNumber(decimal: monthly).doubleValue)) / mo"
+        }()
         offering = PaywallOffering(
             monthly: .init(id: m.productIdentifier, period: .monthly,
                            priceText: m.localizedPriceString, perMonthText: nil, trialDays: 0),
             annual: .init(id: a.productIdentifier, period: .annual,
-                          priceText: a.localizedPriceString, perMonthText: nil, trialDays: trial))
+                          priceText: a.localizedPriceString, perMonthText: perMonth, trialDays: trial),
+            monthlyPriceValue: NSDecimalNumber(decimal: m.price).doubleValue,
+            annualPriceValue: NSDecimalNumber(decimal: a.price).doubleValue)
     }
 
     private func package(for product: PaywallProduct) async -> Package? {
@@ -192,6 +248,12 @@ final class PaywallController: PaywallServing {
     private func grantLocally() { setPro(true); Haptics.celebration() }
 
     #if DEBUG
+    /// True only inside the unit-test host — XCTest loads into that process (Swift Testing runs
+    /// hosted in xctest), never into the shipping app or the app under XCUITest.
+    private static let isRunningUnitTests =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || NSClassFromString("XCTestCase") != nil
+
     func resetForTesting() {
         isPro = false
         UserDefaults.standard.removeObject(forKey: Self.entitlementKey)

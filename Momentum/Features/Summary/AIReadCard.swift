@@ -48,13 +48,16 @@ struct AIReadCard: View {
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "lock.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.4)
+                    .foregroundStyle(Color(hex: "0E0E12"))
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(Capsule().fill(Theme.route))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(IridescentMaterial(), lineWidth: 1)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
             }
         }
         .buttonStyle(.plain)

@@ -65,13 +65,15 @@ enum RecordsBook {
     }
 
     /// The record candidates one workout offers (same definitions as `CardioAchievements`).
-    private static func cardioCandidates(_ workout: Workout) -> [(type: PRType, value: Double)] {
+    static func cardioCandidates(_ workout: Workout) -> [(type: PRType, value: Double)] {
         var out: [(PRType, Double)] = []
         // Longest session (any discipline, by moving time).
         if workout.durationS > 0 { out.append((.longestDuration, workout.durationS)) }
         guard let gps = workout.gps, gps.distanceM > 0 else { return out }
         if workout.type == .run { out.append((.longestRun, gps.distanceM)) }
-        if workout.type == .run || workout.type == .ride {
+        // Fastest benchmark windows are a RUNNING record only — a ride covers these distances far
+        // faster and would corrupt the run 1K/5K/10K, so cycling never seeds them.
+        if workout.type == .run {
             let sorted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
             guard let first = sorted.first else { return out }
             var cumulative = 0.0

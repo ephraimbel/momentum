@@ -126,6 +126,9 @@ struct CoachChatView: View {
                 ("--coach-predict", "What could I race right now?"),
                 ("--coach-zones", "What are my zones?"),
                 ("--coach-today", "Brief me on today"),
+                ("--coach-adjust", "Change my plan"),                 // the adjust menu card
+                ("--coach-race", "I want to run a marathon"),         // race flow: inline date picker
+                ("--coach-goal", "Change my goal"),                   // goal picker card
             ]
             for send in autoSends where ProcessInfo.processInfo.arguments.contains(send.flag) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { vm?.send(send.text) }
@@ -173,7 +176,7 @@ struct CoachChatView: View {
             .padding(.horizontal, Theme.Space.lg)
             VStack(spacing: Theme.Space.sm) {
                 ForEach(vm.suggestions, id: \.self) { s in
-                    Button { vm.send(s) } label: {
+                    Button { attemptSend(vm, s) } label: {
                         Text(s)
                             .font(.rounded(Theme.FontSize.caption, weight: .bold))
                             .foregroundStyle(Theme.ink)
@@ -274,7 +277,7 @@ struct CoachChatView: View {
     private func followUpChips(_ vm: CoachChatViewModel) -> some View {
         HStack(spacing: Theme.Space.sm) {
             ForEach(vm.followUps, id: \.self) { text in
-                Button { vm.send(text) } label: {
+                Button { attemptSend(vm, text) } label: {
                     Text(text)
                         .font(.rounded(Theme.FontSize.label, weight: .bold))
                         .foregroundStyle(Theme.inkSecondary)
@@ -332,6 +335,10 @@ struct CoachChatView: View {
                             onApply: { vm.applyCard(on: msg, paywall: paywall, presenter: presenter) },
                             onDecline: { vm.declineCard(on: msg) },
                             onPickSeverity: { vm.completeInjuryCard(on: msg, severity: $0, paywall: paywall, presenter: presenter) },
+                            // Slot pickers fill the card in place (free); Apply stays the Pro gate.
+                            onFill: { vm.fillCard(on: msg, with: $0) },
+                            // Menu rows send like typed messages — the same Pro-gated send path.
+                            onSendOption: { attemptSend(vm, $0) },
                             onNavigate: { vm.applyCard(on: msg, paywall: paywall, presenter: presenter) },
                             onUndo: { vm.undoCard(on: msg) },
                             onForget: { vm.forgetNote(id: $0) })
@@ -372,7 +379,7 @@ struct CoachChatView: View {
     private func suggestionChips(_ vm: CoachChatViewModel) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             ForEach(vm.suggestions, id: \.self) { s in
-                Button { vm.send(s) } label: {
+                Button { attemptSend(vm, s) } label: {
                     Text(s)
                         .font(.rounded(Theme.FontSize.caption, weight: .bold))
                         .foregroundStyle(Theme.ink)
@@ -418,7 +425,7 @@ struct CoachChatView: View {
                             radius: glowActive ? 9 : 0, y: 2)
                     .animation(Motion.reversible, value: glowActive)
                     .animation(Motion.reversible, value: vm.input.isEmpty)
-                    .onSubmit { vm.send() }
+                    .onSubmit { attemptSend(vm) }
                 sendButton(vm)
             }
         }
@@ -447,8 +454,16 @@ struct CoachChatView: View {
 
     private var glowActive: Bool { inputFocused || !(vm?.input.isEmpty ?? true) }
 
+    /// The coach is a Pro feature. Free athletes can OPEN it and read (greeting, capabilities, starter
+    /// chips), but SENDING is the gate ("see it, paywall on send") — a free send opens the paywall
+    /// instead of hitting the network or the offline responder. Every user-initiated send routes here.
+    private func attemptSend(_ vm: CoachChatViewModel, _ text: String? = nil) {
+        guard paywall.isEntitled(to: .aiCoach) else { paywall.present(for: .aiCoach); return }
+        vm.send(text)
+    }
+
     private func sendButton(_ vm: CoachChatViewModel) -> some View {
-        Button { vm.send() } label: {
+        Button { attemptSend(vm) } label: {
             Image(systemName: "arrow.up")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(Theme.background)

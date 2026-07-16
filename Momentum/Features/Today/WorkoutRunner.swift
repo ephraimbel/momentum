@@ -37,7 +37,8 @@ struct WorkoutRunner: ViewModifier {
         case let .cardio(type, goal, planned, guide):
             // Expand a prescribed quality session (intervals/tempo/run-walk) into a guided structured
             // run; a plain free/easy run passes nil and shows just the hero metrics.
-            let structured = planned.flatMap { StructuredWorkoutBuilder.build(from: $0, p5kSPerKm: plan?.p5kSPerKm) }
+            let structured = planned.flatMap { StructuredWorkoutBuilder.build(from: $0, p5kSPerKm: plan?.p5kSPerKm,
+                                                                              raceDistanceM: profiles.first?.raceDistanceM) }
             CardioTrackingView(type: type, goalMeters: goal, container: context.container,
                                guideRoute: guide, structured: structured) { id in
                 finish(id, type: type, planned: planned)
@@ -95,7 +96,11 @@ struct WorkoutRunner: ViewModifier {
     }
 
     private func fetchWorkout(_ id: UUID) -> Workout? {
-        ((try? context.fetch(FetchDescriptor<Workout>())) ?? []).first { $0.id == id }
+        // One row by id — fetching the whole table to find it faulted every workout right at the
+        // moment the finish/summary screen is trying to present.
+        var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return (try? context.fetch(descriptor))?.first
     }
 }
 

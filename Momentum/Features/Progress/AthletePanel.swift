@@ -20,6 +20,8 @@ struct AthleteCallout: Identifiable {
 struct AthletePanel: View {
     let activation: [MuscleGroup: Double]
     var sex: BodySex = .neutral
+    /// Eyebrow that names the window the figure + callouts summarize (re-windows with the range picker).
+    var windowLabel: String = "LAST 7 DAYS"
     let hero: AthleteCallout
     var sub: AthleteCallout?
     let rail: [AthleteCallout]
@@ -41,8 +43,10 @@ struct AthletePanel: View {
                 Text("ATHLETE PANEL").font(.rounded(Theme.FontSize.label, weight: .bold))
                     .tracking(1.4).foregroundStyle(Theme.inkTertiary)
                 Spacer()
-                Text("LAST 7 DAYS").font(.rounded(10, weight: .bold))
+                Text(windowLabel).font(.rounded(10, weight: .bold))
                     .tracking(1.2).foregroundStyle(Theme.inkTertiary.opacity(0.7))
+                    .contentTransition(.numericText())
+                    .animation(.easeOut(duration: 0.25), value: windowLabel)
             }
             stage.frame(height: 400)
         }
@@ -139,18 +143,13 @@ struct AthletePanel: View {
 
     /// The lock resting over the blurred rail — a small tappable badge that opens the paywall.
     private var railLock: some View {
-        VStack(spacing: 5) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Theme.ink.opacity(0.55))
-            Text("PRO").font(.rounded(9, weight: .heavy)).tracking(1.2)
-                .foregroundStyle(Theme.inkSecondary)
+        HStack(spacing: 4) {
+            Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold))
+            Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.2)
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(
-            Capsule().fill(.ultraThinMaterial)
-                .overlay(Capsule().stroke(Theme.ink.opacity(0.08), lineWidth: 0.5))
-        )
+        .foregroundStyle(Color(hex: "0E0E12"))     // fixed dark: the route badge is always light
+        .padding(.horizontal, 11).padding(.vertical, 7)
+        .background(Capsule().fill(Theme.route))
         .contentShape(Rectangle())
         .onTapGesture { Haptics.light(); onLockedTap() }
         .accessibilityElement()
