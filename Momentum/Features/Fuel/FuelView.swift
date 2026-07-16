@@ -371,18 +371,17 @@ struct FuelView: View {
                 }
             }
             .frame(maxWidth: .infinity)
+            // Macros up top; the endurance row beneath (sweat · blood · bone). Potassium and
+            // magnesium stay in the data but off the page — trimmed to what athletes act on.
             HStack(alignment: .top, spacing: 0) {
                 FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
                 FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
                 FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2, tint: Theme.Fuel.fat)
-                FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, tint: Theme.Fuel.sodium)
             }
-            // The endurance micros — the quiet second row (smaller, same earned iridescence).
             HStack(alignment: .top, spacing: 0) {
-                FuelRing(value: m.potassiumMg, floor: m.potassiumFloorMg, label: "potassium", index: 4, small: true, tint: Theme.Fuel.potassium)
-                FuelRing(value: m.magnesiumMg, floor: m.magnesiumFloorMg, label: "magnesium", index: 5, small: true, tint: Theme.Fuel.magnesium)
-                FuelRing(value: Int(m.ironMg.rounded()), floor: Int(m.ironFloorMg.rounded()), label: "iron", index: 6, small: true, tint: Theme.Fuel.iron)
-                FuelRing(value: m.calciumMg, floor: m.calciumFloorMg, label: "calcium", index: 7, small: true, tint: Theme.Fuel.calcium)
+                FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, small: true, tint: Theme.Fuel.sodium)
+                FuelRing(value: Int(m.ironMg.rounded()), floor: Int(m.ironFloorMg.rounded()), label: "iron", index: 4, small: true, tint: Theme.Fuel.iron)
+                FuelRing(value: m.calciumMg, floor: m.calciumFloorMg, label: "calcium", index: 5, small: true, tint: Theme.Fuel.calcium)
             }
         }
         .padding(.vertical, Theme.Space.xs)
@@ -535,8 +534,6 @@ private struct FuelReadoutSheet: View {
                         floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
                         floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
-                        floorCell("≈\(r.micros.potassiumMg.formatted())", "of \(r.micros.potassiumFloorMg.formatted())+ mg potassium")
-                        floorCell("≈\(r.micros.magnesiumMg)", "of \(r.micros.magnesiumFloorMg)+ mg magnesium")
                         floorCell("≈\(String(format: "%.1f", r.micros.ironMg))", "of \(String(format: "%.0f", r.micros.ironFloorMg))+ mg iron")
                         floorCell("≈\(r.micros.calciumMg.formatted())", "of \(r.micros.calciumFloorMg.formatted())+ mg calcium")
                     }
@@ -605,6 +602,9 @@ private struct FuelRing: View {
                     .rotation(.degrees(-90))
                     .stroke(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(tint),
                             style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+                    // The premium halo: each arc glows its own color, softly (static, never pulsing).
+                    .shadow(color: (fueled ? Theme.iridescent.first ?? tint : tint).opacity(0.45),
+                            radius: small ? 3.5 : 5)
                     .animation(Motion.lively, value: fraction)
                     .animation(Motion.standard, value: fueled)
                 Text(compact(value))

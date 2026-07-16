@@ -7,11 +7,58 @@ import CoreLocation
 /// and the store has no profile yet. Never ships behavior in release builds.
 @MainActor
 enum DemoSeed {
+    /// ~4 months of journal days (roughly 5 of every 7), 1–3 meals each, from a small table of
+    /// plausible athlete foods with full macro + micro numbers. Deterministic (seeded RNG) so
+    /// History screenshots and manual browsing are repeatable. Skips if history already exists.
+    private static func seedFuelHistory(_ context: ModelContext) {
+        let existing = (try? context.fetchCount(FetchDescriptor<Meal>())) ?? 0
+        guard existing < 10 else { return }
+        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca)
+        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int)] = [
+            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80),
+            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90),
+            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60),
+            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90),
+            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260),
+            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120),
+            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120),
+            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20),
+            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240),
+            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220),
+            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90),
+            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180),
+        ]
+        var rng = SeededRNG(20260716)
+        let cal = Calendar.current
+        for back in 1...120 {
+            guard rng.int(0...6) < 5 else { continue }   // ~5 of 7 days logged
+            guard let day = cal.date(byAdding: .day, value: -back, to: cal.startOfDay(for: Date())) else { continue }
+            for slot in 0..<(1 + rng.int(0...2)) {
+                let f = foods[rng.int(0...(foods.count - 1))]
+                let meal = Meal()
+                meal.text = f.0
+                meal.eatenAt = day.addingTimeInterval(Double(8 + slot * 5) * 3600 + Double(rng.int(0...50)) * 60)
+                meal.kcal = f.1; meal.carbsG = f.2; meal.proteinG = f.3; meal.fatG = f.4
+                meal.sodiumMg = f.5; meal.potassiumMg = f.6; meal.magnesiumMg = f.7
+                meal.ironMg = f.8; meal.calciumMg = f.9
+                meal.source = "ai"
+                meal.confidence = 0.8
+                context.insert(meal)
+            }
+        }
+        try? context.save()
+    }
+
     static func seedIfRequested(_ context: ModelContext) {
         // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
         if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
             for meal in (try? context.fetch(FetchDescriptor<Meal>())) ?? [] { context.delete(meal) }
             try? context.save()
+        }
+        // --seed-fuel-history: months of plausible journal days (deterministic) so the History
+        // page's month grouping + search can be exercised and screenshotted at real scale.
+        if ProcessInfo.processInfo.arguments.contains("--seed-fuel-history") {
+            seedFuelHistory(context)
         }
         seedInterruptedWorkoutIfRequested(context)
         // --seed-empty: a genuine JUST-ONBOARDED user — a profile + a generated plan and NOTHING else

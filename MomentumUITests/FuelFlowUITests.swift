@@ -77,11 +77,43 @@ final class FuelFlowUITests: XCTestCase {
             .firstMatch.waitForExistence(timeout: 5), "Meal row numbers line didn't update.")
         shot(app, "4-readout-updated")
 
-        // History: the top-right calendar opens the day-by-day journal with today's meal in it.
+        // History: the top-right calendar opens the day-by-day journal with today's meal in it,
+        // organized under month headers with an always-visible search field.
         app.buttons["Meal history"].tap()
         XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 6), "History page didn't open.")
         XCTAssertTrue(app.staticTexts["TODAY"].waitForExistence(timeout: 4), "Today's section missing in history.")
         shot(app, "5-history")
+
+        // Search narrows to matching meals; a nonsense query lands the honest empty state.
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 4), "History search field missing.")
+        search.tap()
+        search.typeText("pasta")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "big pasta dinner"))
+            .firstMatch.waitForExistence(timeout: 4), "Search didn't surface the pasta meal.")
+        shot(app, "5a-history-search")
+    }
+
+    /// History at real scale: months of seeded journal days organize under sticky month headers
+    /// with per-month counts, and search narrows across all of it.
+    func testHistoryAtScale() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--reset-fuel", "--seed-fuel-history", "--fuel"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
+        app.buttons["Meal history"].tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 6), "History didn't open.")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "days logged"))
+            .firstMatch.waitForExistence(timeout: 6), "Month headers missing at scale.")
+        shot(app, "7-history-months")
+
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 4), "Search field missing.")
+        search.tap()
+        search.typeText("salmon")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "salmon"))
+            .firstMatch.waitForExistence(timeout: 4), "Search didn't find seeded salmon meals.")
+        shot(app, "7a-history-months-search")
     }
 
     /// The fueling adjuster: open from the top-left, choose Leaner, save — the energy headline

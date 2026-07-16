@@ -15,15 +15,19 @@ unless custom overrides — that's the moat.** Body inputs (weight/height/age/se
 the one profile; the preview is the same engine the page runs. Goal energy reads "kcal today"; the
 classic floor keeps its "+".
 
-**0 · Arrive** — the **fuel rings** sit on top (energy as a display headline; carbs · protein · fat
-· sodium as rings), each
+**0 · Arrive** — the **fuel rings** sit on top (energy as a centered display headline; then two
+rows of three: carbs · protein · fat over sodium · iron · calcium — sweat, blood, bone). Each ring
+wears its metric's ink with a soft color-matched glow (Theme.Fuel: honey gold, ice, peach, lilac,
+garnet rose, luminous teal; potassium/magnesium stay in the data but off the page), and each
 drawing toward its FLOOR with a staggered trim-in and earning iridescence exactly when a floor is
 met; a landing estimate rolls ring and numeral together. Then the page opens on the **composer**
 (Amy: entry first — the journal is the point, the dashboard is not): one clean 26-pt
 continuous-corner pill (the ChatGPT read) holding field + mic + send, waking with the coach
 composer's iridescent ring + glow the moment you type or dictate. No disclaimer chrome. The
-**calendar button (top right) opens History** — the day-by-day journal (Σ line + meals per day,
-iridescent dot on days that met the easy carb floor, same portion editor on tap, 60-day window).
+**calendar button (top right) opens History** — the day-by-day journal built for months of data:
+always-visible search (words, item names, notes), sticky month headers with a logged-days count,
+day sections with Σ trailers, iridescent dot on days that met the easy carb floor, same portion
+editor on tap, one-year window (`--seed-fuel-history` exercises it at scale).
 One glance below the composer sits the **readout strip**, deliberately quiet: a
 no-shame status word ("Building" / "On track" / "Fueled" — never "behind"), the carb numbers in
 caption type, a 5-pt band bar (iridescent exactly when the floor is met — earned), a one-line
