@@ -34,12 +34,21 @@ struct FuelEstimator {
     private let session: URLSession
     private let timeoutS: TimeInterval = 10   // vision runs a beat slower than text-only reads
 
+    /// The server capped today's estimates (429 — generous daily limit, abuse guard only). Remember
+    /// until local midnight and skip the network: retries would be futile, and every meal still
+    /// logs fine with manual numbers. Resets itself the moment the day turns.
+    private static var estimateLimitedUntil: Date?
+
     init(session: URLSession = .shared) { self.session = session }
 
     /// nil = couldn't estimate (unconfigured, offline, slow, or the function declined) — the meal
     /// stays pending. `context` gives the model the training frame ("tomorrow's long session, 1h45m").
     func estimate(text: String, photoJPEG: Data?, sessionLabel: String?, durationS: Double?) async -> Estimate? {
         guard let endpoint, let bearer else { return nil }
+        if let until = Self.estimateLimitedUntil {
+            if Date() < until { return nil }
+            Self.estimateLimitedUntil = nil
+        }
         struct Context: Encodable { let session: String?; let durationS: Double? }
         struct Body: Encodable { let text: String; let photoBase64: String?; let context: Context }
         let body = Body(text: text,
@@ -53,7 +62,14 @@ struct FuelEstimator {
         do {
             req.httpBody = try JSONEncoder().encode(body)
             let (data, resp) = try await session.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            guard let http = resp as? HTTPURLResponse else { return nil }
+            if http.statusCode == 429 {
+                let cal = Calendar.current
+                Self.estimateLimitedUntil = cal.date(byAdding: .day, value: 1,
+                                                     to: cal.startOfDay(for: Date()))
+                return nil
+            }
+            guard http.statusCode == 200 else { return nil }
             return try JSONDecoder().decode(Estimate.self, from: data)
         } catch {
             return nil

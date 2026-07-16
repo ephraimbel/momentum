@@ -18,11 +18,44 @@
 //          MEAL_MODEL (default gemini-2.5-flash), MEAL_FALLBACK_MODEL (default claude-haiku-4-5-20251001)
 
 import Anthropic from "npm:@anthropic-ai/sdk@^0.69";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const GEMINI_MODEL = Deno.env.get("MEAL_MODEL") ?? "gemini-flash-latest";   // rolling alias — 2.5-flash is sunset for new keys
 const FALLBACK_MODEL = Deno.env.get("MEAL_FALLBACK_MODEL") ?? "claude-haiku-4-5-20251001";
-const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "1600");   // itemized output + low-thinking overhead
+const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "1600");
+
+// Per-athlete DAILY estimate cap (server-side — a client limit is trivially bypassed). Generous:
+// the heaviest honest day (race-day gels + drinks + meals) sits near 20 estimates; 60 only ever
+// stops abuse or a leaked token. LOGGING is never limited — an over-limit meal stays pending with
+// manual numbers always available. Enforced by `fuel_rate_check` (migration 20260716000001).
+const DAILY_LIMIT = Number(Deno.env.get("MEAL_DAILY_LIMIT") ?? "60");
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+// FAIL-OPEN like the coach's limiter: if the RPC is missing or the DB blips, allow the request —
+// the cap re-engages the moment the check works again. Keyed on auth.uid() (unspoofable) for
+// signed-in athletes; guests fall back to the client IP.
+async function withinRateLimit(req: Request): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return true;
+  try {
+    const auth = req.headers.get("authorization") ?? "";
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim();
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: auth } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await supabase.rpc("fuel_rate_check", {
+      p_limit: DAILY_LIMIT,
+      p_fallback_key: ip,
+    });
+    if (error) return true;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row?.allowed !== false;
+  } catch (_e) {
+    return true;
+  }
+}   // itemized output + low-thinking overhead
 
 const SYSTEM = `You estimate the nutrition of ONE meal for an endurance athlete's fueling readout. \
 You get the athlete's own description ("chicken rice bowl", "2 gels + banana") and light context \
@@ -167,6 +200,9 @@ Deno.serve(async (req) => {
     const payload = await req.json(); // { text, context?: { session?, durationS? } }
     const text = String(payload.text ?? "").slice(0, 500);
     if (!text) return json({ error: "empty" }, 400);
+    if (!(await withinRateLimit(req))) {
+      return json({ error: "rate_limited" }, 429);
+    }
     const userJSON = JSON.stringify({ meal: text, context: payload.context ?? {} });
 
     // `provider` rides along for observability (the app's decoder ignores unknown fields).
