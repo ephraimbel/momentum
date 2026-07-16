@@ -23,6 +23,9 @@ struct CardioSummaryContent: View {
     /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
     /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
     @State private var healthHR: [(date: Date, bpm: Double)] = []
+    /// The run's seven-day window, fetched here (on this always-present task) and handed to the
+    /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
+    @State private var weekWorkouts: [Workout] = []
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -42,18 +45,24 @@ struct CardioSummaryContent: View {
                 WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.20)
                 routeMap(gps).reveal(0.22)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
+                if workout.durationS >= FuelingGuide.carbsFromS { refuelNote.reveal(0.32) }
                 PlanProposalCard().reveal(0.34)
                 repsSection(gps).reveal(0.35).id("paceReview")   // a structured run's headline: how each rep landed
                 SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(0.36)
                 RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
                                    healthHRSeries: healthHR).reveal(0.38)
-                WeekContextCard(anchor: workout.startedAt, distanceUnit: distanceUnit).reveal(0.385)
+                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(0.385)
                 TimeInZonesCard(workout: workout).reveal(0.39)
                 splitsSection(gps).reveal(0.40)
             }
             .task {
                 samplePts = samplePoints(gps)
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
+                // The "This week" card's seven-day window — fetched here so the load runs even while
+                // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
+                if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
+                    weekWorkouts = (try? context.fetch(desc)) ?? []
+                }
                 // Backfill the HR series from Health when we didn't record one live (Watch / imported
                 // runs). Same window + threshold as the time-in-zones card, so the two agree.
                 if (gps.hrSamples.filter { $0.bpm > 0 }).count < 4 {
@@ -64,6 +73,30 @@ struct CardioSummaryContent: View {
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
         }
+    }
+
+    /// Post-long-run refuel nudge — the recovery window is the one fueling moment the summary can
+    /// still influence, so it appears only after runs long enough to have burned real glycogen
+    /// (the engine's ≥1h carb threshold). General and quiet: fueling, not dieting.
+    private var refuelNote: some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.purple)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Theme.purple.opacity(0.1)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("REFUEL").font(.rounded(Theme.FontSize.label, weight: .black)).tracking(1.2)
+                    .foregroundStyle(Theme.inkTertiary)
+                Text(FuelingGuide.guidance(durationS: workout.durationS).after)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        .accessibilityElement(children: .combine)
     }
 
     /// One self-relative line that frames the run as progress — the top achievement, if any.

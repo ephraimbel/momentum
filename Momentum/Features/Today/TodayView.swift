@@ -11,11 +11,15 @@ struct TodayView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(Services.self) private var services
     @Environment(CoachPresenter.self) private var coach
+    @Environment(AppRouter.self) private var router   // morning readout → Progress · Health
     @Query private var profiles: [UserProfile]
     @Query private var chatMessages: [ChatMessage]   // coach-button badge (threads stay small)
     @Query private var workouts: [Workout]
     @Query private var appNotifications: [AppNotification]
     @Query private var checkins: [DailyCheckin]
+    // Reactive read of today's adaptation receipt (ease/cutback) — the morning readout's footer
+    // appears the moment the bootstrap's recovery pass records one (RECOVERY-HUB-PLAN §2 entry 2).
+    @Query(sort: \CoachingEvent.date, order: .reverse) private var coachingEvents: [CoachingEvent]
 
     // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
@@ -46,6 +50,8 @@ struct TodayView: View {
     @State private var showLogWorkout = false
     @State private var showInjuryReport = false
     @State private var showCheckin = false
+    /// The morning readout for the deck's utility line — one honest 0–100, computed off-render.
+    @State private var morningReadiness: MorningReadiness?
     /// Throttles the appear-time orchestration — `onAppear` re-fires on every tab switch.
     @State private var lastBootstrap: (at: Date, day: Date)?
     /// True once the map backdrop has been mounted — it then stays warm for the session (a
@@ -182,6 +188,18 @@ struct TodayView: View {
         }
         // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
         .onChange(of: workouts.count) { cachedStreak = nil; lastBootstrap = nil; bootstrapIfNeeded() }
+        // The morning readout's number, computed off the render path (page-load-perf rule — the
+        // Health reads are async and `RecoveryModel` folds a month of workouts). Recomputes when a
+        // workout lands or today's check-in is answered. Banded `HealthBaselines` + the learned
+        // sleep need/debt thread in with the Health-segment integration; until then the engine's
+        // ratio fallbacks and defaults carry the score honestly (same banding either way).
+        .task(id: "\(workouts.count)-\(checkins.count)") {
+            await Task.yield()   // let the first frame paint before any engine work
+            let signals = await services.health.recoverySignals()
+            morningReadiness = MorningReadiness(load: RecoveryModel(workouts: workouts),
+                                                signals: signals,
+                                                checkin: DailyCheckin.today(in: checkins))
+        }
         .onChange(of: activity) { if isCardio { mapWasShown = true } }
         // Follow the athlete's puck the moment a fix lands (but never while zoomed out to the globe).
         .onChange(of: locator.lastLocation?.latitude) {
@@ -297,6 +315,10 @@ struct TodayView: View {
         // The proactive coach: at most one seeded thought in the chat per pass (earned load bump,
         // Monday recap), badged on the coach button and mirrored to the bell. Deduped inside.
         CoachProactive.sweep(profile: profiles.first, workouts: workouts, in: context)
+        // Pre-week load recheck (§11.1.1): if next week is PLANNED well above what the athlete has
+        // ACTUALLY been absorbing (misses/pauses drift the two apart), seed one consent-gated trim.
+        _ = CoachProactive.seedPlannedLoadRecheck(plan: profiles.first?.plan,
+                                                  workouts: workouts, in: context)
         // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
         // carb-load → kit → race-day fueling), each posted once.
         if let profile = profiles.first, let raceDate = profile.raceDate,
@@ -822,16 +844,34 @@ struct TodayView: View {
     }
 
     /// One utility line under Start — whichever matters right now: an active injury (with the way
-    /// back), the unanswered morning check-in, else the quiet actions. Never more than one.
+    /// back), the unanswered morning check-in, else the morning readout (readiness + its biggest
+    /// driver, RECOVERY-HUB-PLAN §2 entry 2). Never more than one; the quiet actions remain only
+    /// as the beat while the readout computes.
     @ViewBuilder
     private var utilityLine: some View {
         if profiles.first?.activeInjuryArea != nil {
             injuryBanner
         } else if DailyCheckin.today(in: checkins) == nil {
             checkinChip
+        } else if let readout = morningReadiness {
+            MorningReadinessLine(readiness: readout, adjustedToday: adaptedToday, onTap: openHealthSegment)
         } else {
             quietActionsRow
         }
+    }
+
+    /// A recovery adaptation (eased day / cutback week) recorded today — the readout wears the receipt.
+    private var adaptedToday: Bool {
+        coachingEvents.contains {
+            ($0.kind == .ease || $0.kind == .recover) && Calendar.current.isDateInToday($0.date)
+        }
+    }
+
+    /// Tap-through from the morning readout → Progress → Health. One-shot mailbox: RootView
+    /// consumes the tab, ProgressScreen consumes the segment (RECOVERY-HUB-PLAN §2).
+    private func openHealthSegment() {
+        router.pendingProgressSegment = ProgressScreen.Segment.health.rawValue
+        router.pendingTab = .progress
     }
 
     /// Quiet secondary actions beneath Start — log a forgotten workout, or tell the coach something
@@ -1162,6 +1202,18 @@ struct TodayView: View {
                         .lineLimit(1)
                     Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .foregroundStyle(Theme.ink).lineLimit(1)
+                    // Fuel at a glance, only when today's session is long enough to need it (≥1h) —
+                    // the row grows a third line exactly on the mornings fueling matters. Tap-through
+                    // lands on the session sheet, which carries the full before/during/after guidance.
+                    if let fuel = planFuelLine(session) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.purple)
+                            Text(fuel).font(.rounded(Theme.FontSize.label, weight: .semibold))
+                                .foregroundStyle(Theme.inkSecondary).lineLimit(1)
+                        }
+                        .padding(.top, 1)
+                    }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
@@ -1170,6 +1222,19 @@ struct TodayView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// "30–60 g carbs/hr · drink to thirst" — today's fuel line, from the same deterministic
+    /// `FuelingGuide` gate as the session sheet (running, ≥1h estimated). nil on shorter days so
+    /// the plan row stays slim except when fueling actually matters. Fueling, not dieting.
+    private func planFuelLine(_ session: PlannedSession) -> String? {
+        guard session.discipline == .running,
+              let dur = FuelingGuide.estimatedDurationS(distanceM: session.targetDistanceM,
+                                                        paceSPerKm: session.targetPaceSPerKm,
+                                                        durationS: session.targetDurationS) else { return nil }
+        let g = FuelingGuide.guidance(durationS: dur, isRace: session.runType == .race)
+        guard let carbs = g.carbsPerHour else { return nil }
+        return "\(carbs.lowerBound)–\(carbs.upperBound) g carbs/hr · drink to thirst"
     }
 
     private var goalControl: some View {
@@ -1423,6 +1488,112 @@ struct StreakChip: View {
         .momentumGlass()
         .accessibilityLabel("Streak")
         .accessibilityValue("\(days) days")
+    }
+}
+
+/// Today's morning readout (RECOVERY-HUB-PLAN §2 entry 2, §5) — the deck's utility line once the
+/// check-in is answered: a 44pt mini readiness ring, the score, the band word, and the single
+/// biggest driver in plain words. When the plan adapted this morning, a hairline footer carries the
+/// receipt. Mint is the readiness ink (§6, `Theme.Health`); iridescence stays EARNED — the ring fill
+/// renders iridescent only at `.primed` (≥ 80, the engine's cut). The ring draws itself via `trim`
+/// (transform-only); Reduce Motion renders it complete and the iridescence static.
+struct MorningReadinessLine: View {
+    let readiness: MorningReadiness
+    var adjustedToday = false
+    var onTap: () -> Void = {}
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drawn = false
+
+    private var progress: Double { drawn ? Double(readiness.score) / 100 : 0 }
+
+    var body: some View {
+        Button { Haptics.light(); onTap() } label: {
+            VStack(spacing: Theme.Space.sm) {
+                HStack(spacing: Theme.Space.sm + 2) {
+                    miniRing
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(readiness.score)")
+                                .font(.display(20, weight: .black)).monospacedDigit()
+                                .foregroundStyle(Theme.ink)
+                            Text(readiness.band.rawValue)
+                                .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                                .foregroundStyle(Theme.inkSecondary)
+                        }
+                        Text(driver)
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                }
+                if adjustedToday {
+                    VStack(spacing: 6) {
+                        Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                        Text("Today adjusted — tap to see why.")
+                            .font(.rounded(Theme.FontSize.label, weight: .semibold))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            if reduceMotion { drawn = true }
+            else { withAnimation(Motion.pen(0.9)) { drawn = true } }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(a11yLabel)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// Track = the readiness pastel at ring-track level (§6: tracks 20–25%); fill = mint ink,
+    /// going iridescent only when the band is earned-`primed`.
+    private var miniRing: some View {
+        ZStack {
+            Circle().stroke(Theme.Health.recoveryWash.opacity(0.22), lineWidth: 4.5)
+            if readiness.band == .primed {
+                IridescentView(intensity: 0.95).mask { ringArc }
+            } else {
+                ringArc.foregroundStyle(Theme.Health.recoveryInk)
+            }
+        }
+        .frame(width: 44, height: 44)
+    }
+
+    private var ringArc: some View {
+        Circle()
+            .trim(from: 0, to: max(0.0001, min(1, progress)))
+            .stroke(style: StrokeStyle(lineWidth: 4.5, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+    }
+
+    /// The single biggest driver in plain words — the pillar with the largest |points| (the pillar
+    /// points sum to `blend − 50`, so the max is honestly "what moved the score most"). No-shame
+    /// voice: states the signal, never scolds.
+    private var driver: String {
+        guard let top = readiness.pillars.max(by: { abs($0.points) < abs($1.points) }),
+              abs(top.points) >= 1 else {
+            return "Signals steady — an ordinary day"
+        }
+        let up = top.points >= 0
+        return switch top.kind {
+        case .load:      up ? "Training load well absorbed" : "The last few days are still in your legs"
+        case .hrv:       up ? "HRV above your norm" : "HRV below your norm"
+        case .sleep:     up ? "A solid night's sleep" : "A short night"
+        case .restingHR: up ? "Resting HR right at its norm" : "Resting HR above your norm"
+        case .checkin:   up ? "You're feeling good today" : "You said today feels heavy"
+        }
+    }
+
+    private var a11yLabel: String {
+        var label = "Readiness \(readiness.score), \(readiness.band.rawValue). \(driver)."
+        if adjustedToday { label += " Today's plan was adjusted — tap to see why." }
+        return label
     }
 }
 
