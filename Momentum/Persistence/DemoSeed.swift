@@ -49,6 +49,41 @@ enum DemoSeed {
         try? context.save()
     }
 
+    /// The screenshot-hero fueling day: staggered real-feel meals whose totals clear every floor
+    /// (carbs ≈390 g, protein ≈138 g, fat ≈88 g, sodium ≈2,590 mg, ≈3,050 kcal) so the whole ring
+    /// row earns its iridescence. DEBUG-only, like everything here.
+    private static func seedFuelToday(_ context: ModelContext) {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        let existingToday = ((try? context.fetch(FetchDescriptor<Meal>())) ?? [])
+            .filter { cal.isDateInToday($0.eatenAt) }
+        guard existingToday.count < 2 else { return }
+        // (hour, minute, text, kcal, carbs, protein, fat, sodium, note?)
+        let day: [(Double, Double, String, Int, Int, Int, Int, Int, String?)] = [
+            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190,
+             "Strong carb start — this is the fuel today's session runs on."),
+            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, nil),
+            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150,
+             "Great mixed plate — carbs restocked, protein covered."),
+            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, nil),
+            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480,
+             "Recovery-forward dinner — protein and healthy fats where they count."),
+            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, nil),
+        ]
+        for m in day where m.0 <= Double(cal.component(.hour, from: Date())) || true {
+            let meal = Meal()
+            meal.text = m.2
+            meal.eatenAt = start.addingTimeInterval(m.0 * 3600 + m.1 * 60)
+            meal.kcal = m.3; meal.carbsG = m.4; meal.proteinG = m.5
+            meal.fatG = m.6; meal.sodiumMg = m.7
+            meal.note = m.8
+            meal.source = "ai"
+            meal.confidence = 0.85
+            context.insert(meal)
+        }
+        try? context.save()
+    }
+
     static func seedIfRequested(_ context: ModelContext) {
         // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
         if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
@@ -59,6 +94,11 @@ enum DemoSeed {
         // page's month grouping + search can be exercised and screenshotted at real scale.
         if ProcessInfo.processInfo.arguments.contains("--seed-fuel-history") {
             seedFuelHistory(context)
+        }
+        // --seed-fuel-today: a curated FULL day (every floor met → every ring iridescent) for
+        // the hero Fuel screenshot. Idempotent: skips if today already has meals.
+        if ProcessInfo.processInfo.arguments.contains("--seed-fuel-today") {
+            seedFuelToday(context)
         }
         // --seed-plan-name on an ALREADY-seeded container: name the existing plan too, so UI
         // tests get the named-plan experience regardless of which test seeded the store first.
