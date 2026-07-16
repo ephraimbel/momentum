@@ -195,7 +195,7 @@ protocol VoiceCoachServing: AnyObject {
 enum Feature: String, CaseIterable, Sendable, Identifiable {
     case aiCoach, fullPlan, programs, aiRead, advancedAnalytics, fullHistory
     case allTemplates, allShareTemplates, cadenceMetronome, voiceCoach, watchPremium
-    case mapStyles
+    case mapStyles, fuel
 
     var id: String { rawValue }
 
@@ -211,6 +211,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .advancedAnalytics: "analytics_locked"
         case .fullHistory: "history_locked"
         case .mapStyles: "map_styles"
+        case .fuel: "fuel_locked"
         case .aiCoach, .fullPlan, .programs, .allTemplates,
              .allShareTemplates, .cadenceMetronome, .voiceCoach, .watchPremium: "full_plan"
         }
@@ -231,6 +232,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .voiceCoach: "the voice coach"
         case .watchPremium: "Watch premium"
         case .mapStyles: "all map styles"
+        case .fuel: "the fuel journal"
         }
     }
 
@@ -249,6 +251,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .voiceCoach: "Voice coach"
         case .watchPremium: "Watch premium"
         case .mapStyles: "All map styles"
+        case .fuel: "Fuel your training"
         }
     }
 
@@ -267,6 +270,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .voiceCoach: "Live cues while you run"
         case .watchPremium: "The full experience on your wrist"
         case .mapStyles: "Every map style"
+        case .fuel: "AI meal logging, keyed to your plan"
         }
     }
 }

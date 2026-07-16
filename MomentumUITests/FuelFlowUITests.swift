@@ -149,6 +149,20 @@ final class FuelFlowUITests: XCTestCase {
         shot(app, "6b-goal-live")
     }
 
+    /// FUEL is Pro: the free tier lands on the frosted page with the unified unlock card, and
+    /// the history/adjuster toolbar entries stay hidden.
+    func testFuelIsProGated() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--debug-free", "--fuel"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Unlock with Pro"))
+            .firstMatch.waitForExistence(timeout: 6), "Pro lock card missing on the free tier.")
+        XCTAssertFalse(app.buttons["Meal history"].exists, "History should hide while locked.")
+        XCTAssertFalse(app.buttons["Fueling goals"].exists, "Adjuster should hide while locked.")
+        shot(app, "8-fuel-pro-locked")
+    }
+
     private func shot(_ app: XCUIApplication, _ name: String) {
         let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         a.name = name

@@ -100,6 +100,7 @@ final class PaywallController: PaywallServing {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--debug-free") { isPro = false; return }   // QA the free tier with seeded data
+        if args.contains("--debug-pro") { isPro = true; return }     // durable dev unlock (sim daily-driving)
         let demo = args.contains("--seed-demo")
         #else
         let demo = false
@@ -114,7 +115,8 @@ final class PaywallController: PaywallServing {
         // real (un-entitled) sandbox state and STOMP the --seed-demo Pro grant — and StoreKit can pop
         // a sandbox sign-in dialog over screenshots. Demo means no billing network, period.
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("--seed-demo") || args.contains("--ui-test-route") { return }
+        if args.contains("--seed-demo") || args.contains("--debug-pro")
+            || args.contains("--ui-test-route") { return }   // no billing network → no sandbox stomp
         #endif
         #if canImport(RevenueCat)
         Purchases.logLevel = .warn

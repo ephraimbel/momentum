@@ -38,6 +38,7 @@ struct FuelView: View {
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
     @FocusState private var composing: Bool
+    @Environment(PaywallController.self) private var paywall
     @Environment(\.colorScheme) private var colorScheme
     private let estimator = FuelEstimator()
 
@@ -63,18 +64,23 @@ struct FuelView: View {
                 .padding(.bottom, Theme.Space.xxl)
                 .animation(Motion.standard, value: readout.refuelDue)
             }
+            // FUEL is a Pro pillar (user decision 2026-07-16): the whole page frosts behind the
+            // unified lock card for free athletes — see it whole, unlock it whole.
+            .proLocked(.fuel)
             .background(Theme.background)
             .navigationTitle("Fuel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // The fueling adjuster — the plan adjuster's sibling (goals, body inputs, custom).
                 ToolbarItem(placement: .topBarLeading) {
+                    if paywall.isEntitled(to: .fuel) {
                     Button { showingGoals = true } label: {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                     }
                     .accessibilityLabel("Fueling goals")
+                    }
                 }
                 // The masthead is the "momentum" wordmark itself (user call 2026-07-16) —
                 // black on the light canvas, white on the dark one, at the quiet 17pt scale
@@ -87,12 +93,14 @@ struct FuelView: View {
                         .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    if paywall.isEntitled(to: .fuel) {
                     NavigationLink { FuelHistoryView() } label: {
                         Image(systemName: "calendar")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                     }
                     .accessibilityLabel("Meal history")
+                    }
                 }
                 if showsDone {
                     ToolbarItem(placement: .confirmationAction) {
