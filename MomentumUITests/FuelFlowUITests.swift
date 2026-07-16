@@ -30,6 +30,7 @@ final class FuelFlowUITests: XCTestCase {
             _ = app.keyboards.firstMatch.waitForExistence(timeout: 2)
         }
         field.typeText("big pasta dinner with chicken")
+        shot(app, "1a-composer-glow")   // the iridescent ring while writing (coach-composer match)
         app.buttons["Log meal"].tap()
 
         // The row lands instantly (offline-first), then the estimate resolves — to REAL numbers when

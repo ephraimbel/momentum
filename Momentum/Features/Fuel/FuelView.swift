@@ -47,18 +47,12 @@ struct FuelView: View {
                         refuelBanner
                             .transition(bannerTransition)
                     }
-                    // The composer IS the page (Amy: entry first, everything else quiet) —
-                    // the readout lives one glance below as a strip; tap it for the full story.
-                    composer.reveal(0)
-                    readoutStrip.reveal(0.08)
-                    todaysMeals.reveal(0.16)
-                    weekStrip.reveal(0.22)
-                    Text(FuelingGuide.Guidance.disclaimer)
-                        .font(.rounded(Theme.FontSize.label, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, Theme.Space.sm)
-                        .reveal(0.28)
+                    // Week dots first (the quiet seven-day pulse), then the composer — the page's
+                    // real hero (Amy: entry first) — then the readout strip; tap it for the story.
+                    weekStrip.reveal(0)
+                    composer.reveal(0.06)
+                    readoutStrip.reveal(0.12)
+                    todaysMeals.reveal(0.18)
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
@@ -211,21 +205,27 @@ struct FuelView: View {
 
     // MARK: Composer — jot it like a note, or speak it (Amy-style); logging never blocks
 
+    /// The ChatGPT read: one clean continuous-corner pill holding the field, mic, and send — and
+    /// the SAME wake-up as the coach's composer: hairline at rest, a soft iridescent ring + glow
+    /// while you're writing. Static ring (no pulsing) — Reduce Motion safe by design.
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: Theme.Space.sm) {
+        let fieldShape = RoundedRectangle(cornerRadius: 26, style: .continuous)
+        return HStack(alignment: .bottom, spacing: Theme.Space.sm) {
             TextField("What did you eat? \u{201C}2 eggs, toast, coffee\u{201D}", text: $draft, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                 .lineLimit(1...4)
                 .focused($composing)
                 .submitLabel(.send)
                 .onSubmit(log)
+                .padding(.leading, 4)
+                .padding(.vertical, 8)
             if voice.isSupported {
                 micButton
             }
             Button(action: log) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.background)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 34, height: 34)
                     .background(Circle().fill(canLog ? Theme.ink : Theme.inkTertiary))
                     .scaleEffect(canLog ? 1 : 0.92)
                     .animation(Motion.lively, value: canLog)
@@ -234,28 +234,44 @@ struct FuelView: View {
             .disabled(!canLog)
             .accessibilityLabel("Log meal")
         }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        // A whisper of focus: the hairline warms while writing (opacity only — house motion rules).
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card)
-            .stroke(Theme.inkTertiary.opacity(composing ? 0.45 : 0)))
-        .animation(Motion.standard, value: composing)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, 6)
+        .background(fieldShape.fill(Theme.surface))
+        .overlay {
+            if composerGlow {
+                fieldShape
+                    .stroke(LinearGradient(colors: Theme.iridescent,
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            lineWidth: 1.5)
+                    .opacity(draft.isEmpty ? 0.65 : 1)
+            } else {
+                fieldShape.stroke(Theme.hairline)
+            }
+        }
+        .shadow(color: (Theme.iridescent.first ?? .clear).opacity(composerGlow ? 0.35 : 0),
+                radius: composerGlow ? 9 : 0, y: 2)
+        .animation(Motion.reversible, value: composerGlow)
+        .animation(Motion.reversible, value: draft.isEmpty)
     }
 
+    /// Awake while writing or dictating — focused, holding text, or the mic running.
+    private var composerGlow: Bool { composing || !draft.isEmpty || voice.isRecording }
+
     /// Tap to talk, tap to stop — words stream into the field live; review, then send.
+    /// Bare glyph at rest (the ChatGPT read); a filled ink circle with a live waveform while hot.
     private var micButton: some View {
         Button {
             if !voice.isRecording { voiceBase = draft.trimmingCharacters(in: .whitespacesAndNewlines) }
             voice.toggle()
             Haptics.light()
         } label: {
-            Image(systemName: voice.isRecording ? "waveform" : "mic.fill")
-                .font(.system(size: 14, weight: .semibold))
+            Image(systemName: voice.isRecording ? "waveform" : "mic")
+                .font(.system(size: 15, weight: .semibold))
                 .symbolEffect(.variableColor.iterative, options: .repeating,
                               isActive: voice.isRecording && !reduceMotion)
                 .foregroundStyle(voice.isRecording ? Theme.background : Theme.inkSecondary)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background.opacity(0.7))))
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear)))
                 .animation(Motion.standard, value: voice.isRecording)
         }
         .buttonStyle(.plain)

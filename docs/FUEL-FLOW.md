@@ -6,8 +6,11 @@
 
 ## The loop, end to end
 
-**0 · Arrive** — the page opens on the **composer** (Amy: entry first — the journal is the point,
-the dashboard is not). One glance below it sits the **readout strip**, deliberately quiet: a
+**0 · Arrive** — the week dots sit quietly on top, then the page opens on the **composer** (Amy:
+entry first — the journal is the point, the dashboard is not): one clean 26-pt continuous-corner
+pill (the ChatGPT read) holding field + mic + send, waking with the coach composer's iridescent
+ring + glow the moment you type or dictate. No disclaimer chrome. One glance below it sits the
+**readout strip**, deliberately quiet: a
 no-shame status word ("Building" / "On track" / "Fueled" — never "behind"), the carb numbers in
 caption type, a 5-pt band bar (iridescent exactly when the floor is met — earned), a one-line
 floors readout, and the optional TIP line (`FuelTips` — deterministic, one sentence, never
