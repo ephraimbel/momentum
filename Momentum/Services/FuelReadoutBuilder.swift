@@ -10,6 +10,7 @@ enum FuelReadoutBuilder {
                         plan: TrainingPlan?,
                         workouts: [Workout],
                         profile: UserProfile?,
+                        water: [WaterEntry] = [],
                         goalOverride: FuelReadiness.GoalInput? = nil,
                         massOverride: Double? = nil,
                         now: Date = Date()) -> FuelReadiness.DayReadout {
@@ -18,7 +19,7 @@ enum FuelReadoutBuilder {
             FuelReadiness.MealInput(eatenAt: $0.eatenAt, kcal: $0.kcal, carbsG: $0.carbsG,
                                     proteinG: $0.proteinG, fatG: $0.fatG, sodiumMg: $0.sodiumMg,
                                     potassiumMg: $0.potassiumMg, magnesiumMg: $0.magnesiumMg,
-                                    ironMg: $0.ironMg, calciumMg: $0.calciumMg)
+                                    ironMg: $0.ironMg, calciumMg: $0.calciumMg, fluidsMl: $0.fluidsMl)
         }
         // Open running sessions today/tomorrow — the carb target's driver.
         let sessions: [FuelReadiness.SessionInput] = (plan?.sessions ?? [])
@@ -33,9 +34,12 @@ enum FuelReadoutBuilder {
             .filter { cal.isDate($0.startedAt, inSameDayAs: now) }
             .map { FuelReadiness.WorkoutInput(endedAt: $0.startedAt.addingTimeInterval($0.durationS),
                                               durationS: $0.durationS, kcal: $0.calories.map(Int.init)) }
+        let waterMl = water.filter { cal.isDate($0.loggedAt, inSameDayAs: now) }
+            .map(\.ml).reduce(0, +)
         return FuelReadiness.readout(meals: Array(mealInputs), sessions: sessions,
                                      workoutsToday: today,
                                      bodyMassKg: massOverride ?? profile?.bodyMassKg,
+                                     waterMl: waterMl,
                                      goal: goalOverride ?? goalInput(profile), now: now)
     }
 
@@ -59,7 +63,7 @@ enum FuelReadoutBuilder {
         guard r.mealCount > 0 else { return nil }
         var line = "today ≈\(r.carbsG)g carbs vs \(r.carbsFloorG)g floor (\(r.status.rawValue))"
         line += " · protein \(r.proteinG)/\(r.proteinFloorG)g · fat \(r.fatG)/\(r.fatFloorG)g · sodium \(r.sodiumMg)/\(r.sodiumFloorMg)mg"
-        line += " · energy \(r.kcal)/\(r.kcalFloor) kcal"
+        line += " · energy \(r.kcal)/\(r.kcalFloor) kcal · fluids \(r.fluidsMl)/\(r.fluidsFloorMl)ml"
         if let d = r.drivingSession { line += " · carb target keyed to \(d)" }
         if r.pendingCount > 0 { line += " · \(r.pendingCount) meal(s) still estimating" }
         return line

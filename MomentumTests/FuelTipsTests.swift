@@ -21,6 +21,7 @@ struct FuelTipsTests {
             mealCount: meals, pendingCount: pending,
             kcalFloor: kcalFloor, carbsFloorG: carbsFloor, carbsHighG: carbsHigh,
             proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
+            fluidsMl: 800, fluidsFloorMl: 2310,
             status: status, drivingSession: driving,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
             kcalIsGoal: false, goalNote: nil,

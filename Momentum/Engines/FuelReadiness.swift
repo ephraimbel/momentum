@@ -28,6 +28,7 @@ enum FuelReadiness {
         var magnesiumMg: Int? = nil
         var ironMg: Double? = nil
         var calciumMg: Int? = nil
+        var fluidsMl: Int? = nil
         /// false while an estimate is pending — pending meals are excluded from totals but counted,
         /// so the readout can say "2 meals still estimating" instead of quietly under-reporting.
         var hasNumbers: Bool { carbsG != nil || kcal != nil }
@@ -97,6 +98,10 @@ enum FuelReadiness {
         let proteinFloorG: Int
         let fatFloorG: Int
         let sodiumFloorMg: Int
+        /// Hydration: water quick-adds + drinks inside meals, vs a gentle daily floor
+        /// (baseline per kg + a training add-on). Drink to thirst remains the in-session rule.
+        let fluidsMl: Int
+        let fluidsFloorMl: Int
         /// Carb readiness vs the driving session — the headline judgment.
         let status: Status
         /// "Tomorrow's long run (1h 45m)" / "today's race" — what the carb target is keyed to. nil = easy horizon.
@@ -127,6 +132,10 @@ enum FuelReadiness {
     static let fatPerKgFloor = 1.0
     static let sodiumBaselineMg = 1500
     static let sodiumPerLongHourMg = 700
+    /// Hydration floor: ~33 ml/kg baseline (≈2.3 L at 70 kg) + ~500 ml per training hour —
+    /// deliberately gentle; in-session the rule stays "drink to thirst" (FuelingGuide).
+    static let fluidsBaselinePerKgMl = 33.0
+    static let fluidsPerTrainingHourMl = 500
     static let fallbackMassKg = 70.0
     // Goal math (Mifflin-St Jeor BMR × a daily-life base; the day's REAL training burn adds on top,
     // so no survey "activity level" ever double-counts a workout).
@@ -161,6 +170,7 @@ enum FuelReadiness {
                         sessions: [SessionInput],
                         workoutsToday: [WorkoutInput],
                         bodyMassKg: Double?,
+                        waterMl: Int = 0,
                         goal: GoalInput = GoalInput(),
                         now: Date,
                         calendar: Calendar = .current) -> DayReadout {
@@ -259,6 +269,9 @@ enum FuelReadiness {
         let sodiumFloor = goal.kind == .custom
             ? (goal.customSodiumMg ?? sodiumBaselineMg + Int(sweatMg.rounded()))
             : sodiumBaselineMg + Int(sweatMg.rounded())
+        // Hydration: quick-added water + drinks inside meals, against the gentle daily floor.
+        let fluids = waterMl + numbered.compactMap(\.fluidsMl).reduce(0, +)
+        let fluidsFloor = Int((fluidsBaselinePerKgMl * kg).rounded()) + Int(Double(fluidsPerTrainingHourMl) * longHours)
 
         // Status paces the carb floor across the waking day, so 09:00 isn't judged against dinner.
         let status: Status
@@ -286,6 +299,7 @@ enum FuelReadiness {
             mealCount: today.count, pendingCount: today.count - numbered.count,
             kcalFloor: kcalFloor, carbsFloorG: carbsFloor, carbsHighG: carbsHigh,
             proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
+            fluidsMl: fluids, fluidsFloorMl: fluidsFloor,
             status: status, drivingSession: drivingLabel,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
             kcalIsGoal: kcalIsGoal, goalNote: goalNote,

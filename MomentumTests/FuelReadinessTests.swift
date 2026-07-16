@@ -147,6 +147,20 @@ struct FuelReadinessTests {
         #expect(r.kcalFloor == 2167 + 300 + 500)  // maintenance + surplus + the day's real burn
     }
 
+    @Test func hydrationSumsWaterPlusMealDrinksAgainstTheGentleFloor() {
+        var coffee = meal(3, kcal: 5)
+        coffee.fluidsMl = 240
+        let r = FuelReadiness.readout(meals: [coffee], sessions: [], workoutsToday: [],
+                                      bodyMassKg: 70, waterMl: 750, now: now)
+        #expect(r.fluidsFloorMl == 2310)          // 33 ml/kg baseline, no training
+        #expect(r.fluidsMl == 990)                // quick-added water + the meal's drink
+        let trained = FuelReadiness.WorkoutInput(endedAt: now.addingTimeInterval(-3600),
+                                                 durationS: 2 * 3600, kcal: 1200)
+        let sweaty = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [trained],
+                                           bodyMassKg: 70, now: now)
+        #expect(sweaty.fluidsFloorMl == 2310 + 1000)   // +500 ml per training hour
+    }
+
     @Test func microFloorsAreSexAwareAndSum() {
         var lunch = meal(2, kcal: 600)
         lunch.potassiumMg = 800; lunch.magnesiumMg = 120; lunch.ironMg = 3.2; lunch.calciumMg = 250

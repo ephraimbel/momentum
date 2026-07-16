@@ -51,6 +51,20 @@ final class Meal {
     init() {}
 }
 
+/// One quick-added water pour (FUEL hydration line, 2026-07-16) — deliberately NOT a `Meal`:
+/// water isn't journal content, so it never clutters the day's rows. Drinks logged through meals
+/// (coffee, sports drink) still count via `Meal.fluidsMl`; the day's hydration = both together.
+@Model
+final class WaterEntry {
+    var id: UUID = UUID()
+    var loggedAt: Date = Date()
+    var ml: Int = 0
+
+    init(ml: Int = 0) {
+        self.ml = ml
+    }
+}
+
 /// One food inside a meal ("Eggs ×2", "Toast, 1 slice") — the Amy-style breakdown. Codable blob on
 /// `Meal.itemsData` (never a @Model: display + portion-editing only; the engine reads meal totals).
 /// The nutrition numbers are for the CURRENT `qty`, so per-unit = value / qty and portion changes
