@@ -289,9 +289,6 @@ struct TodayView: View {
            Date().timeIntervalSince(last.at) < 240 { return }
         lastBootstrap = (at: Date(), day: day)
 
-        // Post-race continuation first: once race day has passed, the result recalibrates paces and
-        // the plan rolls into a recovery-lead-in block — BEFORE reconcile could touch the old plan.
-        if let p = profiles.first { PlanService.completeRace(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
         // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
         // notification permission on first run.
@@ -865,7 +862,7 @@ struct TodayView: View {
     /// Tap-through from the morning readout → Progress → Health. One-shot mailbox: RootView
     /// consumes the tab, ProgressScreen consumes the segment (RECOVERY-HUB-PLAN §2).
     private func openHealthSegment() {
-        router.pendingProgressSegment = ProgressScreen.Segment.health.rawValue
+        router.pendingProgressSegment = "Health"
         router.pendingTab = .progress
     }
 
