@@ -19,13 +19,19 @@ enum RouteSnapshotter {
     static func snapshot(coordinates: [CLLocationCoordinate2D],
                          size: CGSize = CGSize(width: 640, height: 360),
                          styleURI: StyleURI = .light,
-                         insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26)) async -> Data? {
+                         insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
+                         routeWidth: CGFloat = 6) async -> Data? {
         guard coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
-        // (Strava's default), then smooth. Frame to the clipped path so the hidden ends aren't
-        // re-revealed by the map's centering.
-        let drawn = RouteSmoothing.smooth(clippingEnds(coordinates))
+        // (Strava's default). Frame to the clipped path so the hidden ends aren't re-revealed by
+        // the map's centering. Smooth only DENSE real-GPS captures (fixes land 2–5m apart — the
+        // spline + denoise removes capture wobble): sparse street-following geometry (the community
+        // loops from the Directions API carry a vertex per turn) is already EXACT, and smoothing
+        // averaged its corners tens of meters into the buildings — the single loudest "fake route"
+        // tell. An exact polyline with round joins reads Strava-crisp.
+        let clipped = clippingEnds(coordinates)
+        let drawn = meanSpanMeters(clipped) < 15 ? RouteSmoothing.smooth(clipped) : clipped
         guard drawn.count > 1 else { return nil }
 
         // No Mapbox logo/attribution baked into the image — these are in-feed workout cards, not
@@ -48,18 +54,25 @@ enum RouteSnapshotter {
                 tokens.removeAll()
                 cont.resume(returning: data)
             }
+            // Casing follows the basemap: a white halo on a DARK map bloomed into a fat glow that
+            // swallowed streets (user report 2026-07-15); dark maps get a near-black hairline instead.
+            let darkBase = styleURI.rawValue.lowercased().contains("dark")
+            let casingColor = darkBase ? UIColor(white: 0.07, alpha: 0.8)
+                                       : UIColor.white.withAlphaComponent(0.95)
             snapshotter.onStyleLoaded.observeNext { _ in
                 snapshotter.start(overlayHandler: { overlay in
                     let ctx = overlay.context
                     let pts = drawn.map(overlay.pointForCoordinate)
                     guard pts.count > 1 else { return }
                     ctx.setLineJoin(.round); ctx.setLineCap(.round)
-                    // White casing under the route so it pops on the muted map.
-                    ctx.setLineWidth(8.5); ctx.setStrokeColor(UIColor.white.cgColor)
+                    // Hairline casing under the route so it pops without haloing.
+                    ctx.setLineWidth(routeWidth * 1.45); ctx.setStrokeColor(casingColor.cgColor)
                     ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
                     ctx.strokePath()
                     // Periwinkle→lilac gradient, drawn per segment so the colour follows the path.
-                    ctx.setLineWidth(6)
+                    // `routeWidth` is per-surface: Strava-thin — the route is a precise trace of the
+                    // streets, never a marker swipe that covers whole blocks at city zoom.
+                    ctx.setLineWidth(routeWidth)
                     for i in 0..<(pts.count - 1) {
                         let frac = Double(i) / Double(pts.count - 1)
                         ctx.setStrokeColor(lerp(gradientStart, gradientEnd, frac).cgColor)
@@ -101,6 +114,19 @@ enum RouteSnapshotter {
         let lo = meters, hi = total - meters
         let trimmed = zip(coords, cum).filter { $0.1 >= lo && $0.1 <= hi }.map(\.0)
         return trimmed.count >= 2 ? trimmed : coords
+    }
+
+    /// Mean gap between consecutive points, in meters — separates dense real-GPS captures (2–5m per
+    /// fix) from sparse street-following route geometry (tens of meters per vertex), which must be
+    /// drawn exactly, never smoothed.
+    private static func meanSpanMeters(_ coords: [CLLocationCoordinate2D]) -> Double {
+        guard coords.count > 1 else { return 0 }
+        var total = 0.0
+        for i in 1..<coords.count {
+            total += CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude)
+                .distance(from: CLLocation(latitude: coords[i - 1].latitude, longitude: coords[i - 1].longitude))
+        }
+        return total / Double(coords.count - 1)
     }
 
     /// Linear interpolation between two colours (for the route gradient).
