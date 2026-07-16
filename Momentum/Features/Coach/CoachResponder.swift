@@ -91,6 +91,9 @@ enum CoachResponder {
         var prevWeekDistanceM: Double = 0
         /// The last coach card in the thread — lets short follow-ups ("Thursday instead") resolve.
         var lastCard: CoachCardPayload? = nil
+        /// Today's fueling digest (`FuelReadoutBuilder.coachLine`) — nil until a meal is logged,
+        /// so "should I eat more before tomorrow?" gets a personal answer, never a nag.
+        var fueling: String? = nil
     }
 
     /// A local reply: text plus at most one typed card (same shape the Edge Function returns).

@@ -22,16 +22,18 @@ import Anthropic from "npm:@anthropic-ai/sdk@^0.69";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const GEMINI_MODEL = Deno.env.get("MEAL_MODEL") ?? "gemini-flash-latest";   // rolling alias — 2.5-flash is sunset for new keys
 const FALLBACK_MODEL = Deno.env.get("MEAL_FALLBACK_MODEL") ?? "claude-haiku-4-5-20251001";
-const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "600");
+const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "1200");   // itemized output + low-thinking overhead
 
 const SYSTEM = `You estimate the nutrition of ONE meal for an endurance athlete's fueling readout. \
 You get the athlete's own description ("chicken rice bowl", "2 gels + banana") and light context \
 about their next training session.
 
-Return your best single estimate of the WHOLE described meal (not per serving): kcal, carbohydrate \
-grams, protein grams, fat grams, sodium milligrams, and fluid milliliters (0 if no drink is part of \
-it). Typical restaurant/home portions unless quantities are given. confidence is 0-1 (branded sports \
-nutrition rates higher; vague descriptions lower).
+Break the meal into ITEMS (the athlete's words may pack several foods: "2 eggs, toast, coffee" is \
+three items). For each item return: name (short, title-case), qty (a number), unit (a natural short \
+unit for that food: "egg", "slice", "cup", "bowl", "gel", "serving"), and that item's kcal, \
+carbohydrate grams, protein grams, fat grams, sodium milligrams, and fluid milliliters (0 unless \
+it's a drink). Typical home/restaurant portions unless quantities are given. confidence is 0-1 \
+(branded sports nutrition rates higher; vague descriptions lower).
 
 tags: up to 3 from exactly this set: "carb-dense", "protein", "electrolytes", "light", "pre-session", \
 "recovery". note: ONE short second-person line about how this serves their training (use the context; \
@@ -46,17 +48,30 @@ const ANTHROPIC_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    kcal: { type: "integer" },
-    carbs_g: { type: "integer" },
-    protein_g: { type: "integer" },
-    fat_g: { type: "integer" },
-    sodium_mg: { type: "integer" },
-    fluids_ml: { type: "integer" },
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          qty: { type: "number" },
+          unit: { type: "string" },
+          kcal: { type: "integer" },
+          carbs_g: { type: "integer" },
+          protein_g: { type: "integer" },
+          fat_g: { type: "integer" },
+          sodium_mg: { type: "integer" },
+          fluids_ml: { type: "integer" },
+        },
+        required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml"],
+      },
+    },
     confidence: { type: "number" },
     tags: { type: "array", items: { type: "string" } },
     note: { type: "string" },
   },
-  required: ["kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml", "confidence", "tags", "note"],
+  required: ["items", "confidence", "tags", "note"],
 };
 
 async function estimateWithGemini(userJSON: string): Promise<unknown> {
@@ -79,17 +94,29 @@ async function estimateWithGemini(userJSON: string): Promise<unknown> {
         responseJsonSchema: {
           type: "object",
           properties: {
-            kcal: { type: "integer" },
-            carbs_g: { type: "integer" },
-            protein_g: { type: "integer" },
-            fat_g: { type: "integer" },
-            sodium_mg: { type: "integer" },
-            fluids_ml: { type: "integer" },
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  qty: { type: "number" },
+                  unit: { type: "string" },
+                  kcal: { type: "integer" },
+                  carbs_g: { type: "integer" },
+                  protein_g: { type: "integer" },
+                  fat_g: { type: "integer" },
+                  sodium_mg: { type: "integer" },
+                  fluids_ml: { type: "integer" },
+                },
+                required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml"],
+              },
+            },
             confidence: { type: "number" },
             tags: { type: "array", items: { type: "string" } },
             note: { type: "string" },
           },
-          required: ["kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml", "confidence", "tags", "note"],
+          required: ["items", "confidence", "tags", "note"],
         },
       },
     }),

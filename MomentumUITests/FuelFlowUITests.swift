@@ -23,6 +23,12 @@ final class FuelFlowUITests: XCTestCase {
         let field = app.descendants(matching: .any).matching(byPlaceholder).firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 8), "Composer field not found.")
         field.tap()
+        // The entry reveal-cascade can swallow the first tap's focus — retap until the keyboard
+        // confirms it (typeText without focus hard-fails the run).
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            field.tap()
+            _ = app.keyboards.firstMatch.waitForExistence(timeout: 2)
+        }
         field.typeText("big pasta dinner with chicken")
         app.buttons["Log meal"].tap()
 
@@ -31,16 +37,27 @@ final class FuelFlowUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "big pasta dinner")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 8), "Logged meal row didn't appear.")
         let fallback = app.staticTexts["Couldn't estimate — tap to set the numbers"]
-        let numbers = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "g carbs")).firstMatch
+        // The ROW's numbers line ("≈54 g carbs · 620 kcal · …") — must not match the header's
+        // "of 350–490 g carbs" caption, or this wait resolves instantly and the row gets tapped
+        // while still estimating (estimating rows deliberately don't open the sheet).
+        let numbers = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "≈", "g carbs")).firstMatch
         let resolved = NSPredicate { _, _ in fallback.exists || numbers.exists }
         let wait = XCTNSPredicateExpectation(predicate: resolved, object: nil)
         XCTAssertEqual(XCTWaiter().wait(for: [wait], timeout: 25), .completed,
                        "Pending estimate never resolved (neither numbers nor fallback).")
         shot(app, "2-meal-logged-resolved")
 
-        // Set the numbers by hand — carbs first field in the edit sheet.
+        // Set the numbers by hand — carbs first field in the edit sheet. A live estimate opens the
+        // sheet in ITEMS mode (portion steppers); "Set totals by hand" swaps to the direct fields.
+        // An offline/fallback meal has no items and opens on the fields directly — handle both.
         row.tap()
         XCTAssertTrue(app.navigationBars["Edit meal"].waitForExistence(timeout: 8), "Edit sheet didn't open.")
+        let switchToTotals = app.buttons["Set totals by hand"]
+        if switchToTotals.waitForExistence(timeout: 3) {
+            shot(app, "3a-items-portions")   // per-item rows + qty steppers (the Amy beat)
+            switchToTotals.tap()
+        }
         let carbsField = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "—")).element(boundBy: 0)
         XCTAssertTrue(carbsField.waitForExistence(timeout: 5), "Carbs field not found.")
         // A live estimate may have pre-filled the field; double-tap selects the existing number so

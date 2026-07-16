@@ -9,12 +9,18 @@ import SwiftData
 @MainActor
 struct FuelEstimator {
     struct Estimate: Decodable, Sendable {
-        let kcal: Int
-        let carbs_g: Int
-        let protein_g: Int
-        let fat_g: Int
-        let sodium_mg: Int
-        let fluids_ml: Int
+        struct Item: Decodable, Sendable {
+            let name: String
+            let qty: Double
+            let unit: String
+            let kcal: Int
+            let carbs_g: Int
+            let protein_g: Int
+            let fat_g: Int
+            let sodium_mg: Int
+            let fluids_ml: Int
+        }
+        let items: [Item]
         let confidence: Double
         let tags: [String]
         let note: String
@@ -50,14 +56,14 @@ struct FuelEstimator {
     }
 
     /// Apply an estimate onto a meal — unless the athlete already set numbers by hand (manual wins).
+    /// Items land as the breakdown; the meal's totals are Σ items (one source of truth).
     static func apply(_ e: Estimate, to meal: Meal) {
         guard meal.source != "manual" else { return }
-        meal.kcal = e.kcal
-        meal.carbsG = e.carbs_g
-        meal.proteinG = e.protein_g
-        meal.fatG = e.fat_g
-        meal.sodiumMg = e.sodium_mg
-        meal.fluidsMl = e.fluids_ml
+        meal.items = e.items.map {
+            MealItem(name: $0.name, qty: max(0.25, $0.qty), unit: $0.unit, kcal: $0.kcal,
+                     carbsG: $0.carbs_g, proteinG: $0.protein_g, fatG: $0.fat_g,
+                     sodiumMg: $0.sodium_mg, fluidsMl: $0.fluids_ml)
+        }
         meal.confidence = e.confidence
         meal.note = e.note.isEmpty ? nil : e.note
         meal.source = "ai"

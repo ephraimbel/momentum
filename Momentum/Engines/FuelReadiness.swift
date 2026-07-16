@@ -63,6 +63,10 @@ enum FuelReadiness {
         let status: Status
         /// "Tomorrow's long run (1h 45m)" / "today's race" — what the carb target is keyed to. nil = easy horizon.
         let drivingSession: String?
+        /// The driving session is tomorrow's race (the classic all-day carb load) / is later today
+        /// (front-loading matters). Both false on an easy horizon — `FuelTips` keys off these.
+        let raceEve: Bool
+        let drivingIsToday: Bool
         /// Plain-words one-liner for the page header.
         let headline: String
         /// A completed ≥1h session ended inside the refuel window with no meal since.
@@ -113,10 +117,13 @@ enum FuelReadiness {
 
         let carbsPerKg: Double
         var drivingLabel: String?
+        var raceEve = false, drivingIsToday = false
         if let driver, driver.durationS >= FuelingGuide.carbsFromS {
             let tomorrow = !calendar.isDate(driver.date, inSameDayAs: now)
             let long = driver.durationS >= FuelingGuide.highCarbFromS
             carbsPerKg = driver.isRace && tomorrow ? carbsPerKgRaceEve : (long ? carbsPerKgLong : carbsPerKgModerate)
+            raceEve = driver.isRace && tomorrow
+            drivingIsToday = !tomorrow
             let when = tomorrow ? "tomorrow's" : "today's"
             let what = driver.isRace ? "race" : (long ? "long session" : "session")
             drivingLabel = "\(when) \(what) (\(durationLabel(driver.durationS)))"
@@ -164,6 +171,7 @@ enum FuelReadiness {
             kcalFloor: kcalFloor, carbsFloorG: carbsFloor, carbsHighG: carbsHigh,
             proteinFloorG: proteinFloor, sodiumFloorMg: sodiumFloor,
             status: status, drivingSession: drivingLabel,
+            raceEve: raceEve, drivingIsToday: drivingIsToday,
             headline: headline(status: status, carbs: carbs, floor: carbsFloor,
                                driving: drivingLabel, refuelDue: refuelDue),
             refuelDue: refuelDue)

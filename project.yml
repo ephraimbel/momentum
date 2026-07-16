@@ -69,6 +69,8 @@ targets:
         NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
         NSBluetoothAlwaysUsageDescription: "momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run."
         NSCameraUsageDescription: "momentum uses the camera so you can attach photos to a workout right after you finish it."
+        NSMicrophoneUsageDescription: "momentum uses the microphone so you can speak a meal into your fuel journal instead of typing it."
+        NSSpeechRecognitionUsageDescription: "momentum uses speech recognition to turn a spoken meal into text in your fuel journal."
         NSHealthShareUsageDescription: "momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)

@@ -172,6 +172,7 @@ final class CoachChatService {
         let injuryAreas: [String]        // valid InjuryArea raw values (echo for injuryReport)
         let lastWorkout: LastWorkoutDTO?
         let memoryCategories: [String]   // valid MemoryCategory raw values (echo for rememberNote)
+        let fueling: String?             // today's fueling digest — nil until a meal is logged
 
         struct SessionDTO: Encodable {
             let id: String
@@ -275,6 +276,7 @@ final class CoachChatService {
                                splitNote: $0.splitNote, repsNote: $0.repsNote)
             }
             memoryCategories = MemoryCategory.allCases.map(\.rawValue)
+            fueling = c.fueling
         }
     }
 

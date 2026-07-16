@@ -485,6 +485,16 @@ final class CoachChatViewModel {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)])))?
             .first { $0.role == .coach }
             .flatMap { $0.cardState == .proposed ? $0.card : nil }
+        // Today's fueling, judged by the same builder as the Fuel page — so "should I eat more
+        // before tomorrow?" gets answered from the athlete's actual journal.
+        let mealRows = (try? context.fetch(FetchDescriptor<Meal>(
+            sortBy: [SortDescriptor(\.eatenAt, order: .reverse)]))) ?? []
+        let fuelingLine = FuelReadoutBuilder.coachLine(
+            FuelReadoutBuilder.readout(meals: mealRows,
+                                       plan: plan,
+                                       workouts: workouts.sorted { $0.startedAt > $1.startedAt },
+                                       bodyMassKg: profile?.bodyMassKg,
+                                       now: now))
         let race: CoachResponder.RaceInfo? = profile?.raceDate.map {
             CoachResponder.RaceInfo(
                 date: $0, distanceM: profile?.raceDistanceM,
@@ -521,7 +531,8 @@ final class CoachChatViewModel {
             p5kSPerKm: plan?.p5kSPerKm,
             weekDistanceM: weekM,
             prevWeekDistanceM: prevWeekM,
-            lastCard: lastCard)
+            lastCard: lastCard,
+            fueling: fuelingLine)
     }
 
     /// The workout to debrief, digested (splits read, structured-rep verdicts). A contextual entry
