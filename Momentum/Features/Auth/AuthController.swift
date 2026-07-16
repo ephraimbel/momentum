@@ -20,6 +20,10 @@ final class AuthController {
     private static let nameKey = "com.momentum.auth.name"
     private static let emailKey = "com.momentum.auth.email"
     private static let cloudSessionKey = "com.momentum.auth.hadCloudSession"
+    /// The last REAL account (Apple/Google/email) whose local data lives on this device. Survives a
+    /// plain sign-out (unlike `userIDKey`) so a DIFFERENT account signing in on a shared/hand-me-down
+    /// device is detected and the prior owner's SwiftData wiped — see `noteRealSignIn`.
+    private static let lastRealUserIDKey = "com.momentum.auth.lastRealUserID"
 
     /// The raw nonce for the in-flight Apple request. Apple gets its SHA-256 hash; Supabase gets
     /// the raw value — the pair is how the identity token is bound to this one request.
@@ -28,6 +32,22 @@ final class AuthController {
     /// Fired once, on the very first Supabase session this install ever gets — the hook that
     /// claims guest-era local data (re-marks workouts dirty so they upload under the new uid).
     var onFirstCloudSession: (() -> Void)?
+
+    /// Fired when a DIFFERENT real account signs in on a device that still holds a prior real
+    /// account's local data (shared/hand-me-down device). The host wipes local SwiftData so the new
+    /// person starts on a clean slate + re-onboards; guest→real upgrade and first sign-in never fire it.
+    var onAccountSwitch: (() -> Void)?
+
+    /// Record a real-account sign-in and, if it differs from the account whose data is on this device,
+    /// fire `onAccountSwitch` (wipe + re-onboard). First-ever sign-in (`prior == nil`) and a guest
+    /// upgrade (guests never write `lastRealUserIDKey`) both carry local data over, as intended.
+    private func noteRealSignIn(_ incoming: String) {
+        let prior = UserDefaults.standard.string(forKey: Self.lastRealUserIDKey)
+        UserDefaults.standard.set(incoming, forKey: Self.lastRealUserIDKey)
+        guard let prior, prior != incoming else { return }
+        UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)   // new account = a fresh cloud claim
+        onAccountSwitch?()
+    }
 
     /// Sentinel userID for a guest (account-less, local-only) session.
     static let guestID = "guest"
@@ -52,6 +72,7 @@ final class AuthController {
             UserDefaults.standard.removeObject(forKey: Self.nameKey)
             UserDefaults.standard.removeObject(forKey: Self.emailKey)
             UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
+            UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
             if let client = SupabaseClientProvider.client { Task { try? await client.auth.signOut() } }
             return
         }
@@ -59,8 +80,9 @@ final class AuthController {
         // `--onboarding` also signs in (without seeding a profile) so the onboarding flow can be
         // presented over a clean no-profile state — no tabs render behind it, no map location prompt.
         if ProcessInfo.processInfo.arguments.contains("--seed-demo")
+            || ProcessInfo.processInfo.arguments.contains("--seed-empty")
             || ProcessInfo.processInfo.arguments.contains("--onboarding") {
-            userID = "demo-user"; displayName = "Demo Athlete"; return
+            userID = "demo-user"; displayName = "Alex Rivera"; return   // matches the seeded demo profile
         }
         #endif
         userID = UserDefaults.standard.string(forKey: Self.userIDKey)
@@ -72,6 +94,7 @@ final class AuthController {
     /// Note: when upgrading from a guest, the local SwiftData (profile, workouts, plan) is keyed to
     /// the device container — it carries over untouched, so no re-onboarding.
     func signIn(userID: String, fullName: PersonNameComponents?, email: String?) {
+        noteRealSignIn(userID)   // wipe + re-onboard if a DIFFERENT account owned this device's data
         self.userID = userID
         UserDefaults.standard.set(userID, forKey: Self.userIDKey)
         if let fullName, let formatted = Self.format(fullName) {
@@ -174,7 +197,9 @@ final class AuthController {
                 ?? session.user.userMetadata["name"]?.stringValue
             // No Apple id to key on — the Supabase user id (prefixed so `refresh()` knows not to
             // run the Apple credential check against it) becomes the local identity.
-            userID = "google:\(session.user.id.uuidString)"
+            let gid = "google:\(session.user.id.uuidString)"
+            noteRealSignIn(gid)
+            userID = gid
             UserDefaults.standard.set(userID, forKey: Self.userIDKey)
             if let name, !name.isEmpty {
                 displayName = name
@@ -351,15 +376,20 @@ final class AuthController {
         authLog.info("account deleted server-side")
         signOut()   // the server session is already void; this clears the local identity
         // A future account on this device is a genuine first cloud session again — the
-        // re-mark/re-claim hook must refire for it.
+        // re-mark/re-claim hook must refire for it. Clearing the last-real-account marker keeps the
+        // documented "local data stays, like a guest" behavior: the next sign-in carries it over
+        // rather than wiping (account switch only wipes when a DIFFERENT account signs in mid-life).
         UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
+        UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
         return true
     }
 
     /// Persist local identity off a Supabase email session (mirrors the Google path: prefixed id
     /// so `refresh()` skips the Apple credential check).
     private func adoptEmailSession(_ session: Session) {
-        userID = "email:\(session.user.id.uuidString)"
+        let eid = "email:\(session.user.id.uuidString)"
+        noteRealSignIn(eid)
+        userID = eid
         UserDefaults.standard.set(userID, forKey: Self.userIDKey)
         if let mail = session.user.email, !mail.isEmpty {
             self.email = mail

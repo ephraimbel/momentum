@@ -14,6 +14,13 @@ struct RecoverySignals: Sendable, Equatable {
     var restingHRBaseline: Double? = nil// ~30-day average resting HR
     var sleepHours: Double? = nil       // last night's asleep duration, hours
 
+    // Illness-watch deviations (RECOVERY-HUB-PLAN §11.1.3) — sparse, Apple-only signals that read
+    // exclusively against a learned personal baseline. `nil` until that baseline is banded (≥7 days
+    // of history): a deviation penalty against an unlearned norm is exactly the false alarm this
+    // guards against. Consumed by `MorningReadiness` modifiers and `RecoveryAdaptation.decide`.
+    var respiratoryZ: Double? = nil     // overnight respiratory rate, z-score vs personal baseline
+    var wristTempDeltaC: Double? = nil  // overnight wrist temperature, °C above personal baseline
+
     static let empty = RecoverySignals()
 
     /// True once at least one physiological signal is available — gates the device-backed card layout.
@@ -119,8 +126,19 @@ struct RecoverySignals: Sendable, Equatable {
     #if DEBUG
     /// Canned signals for sim verification (no physical wearable needed) — launched via
     /// `--health-recovery-demo`. A well-rested morning: HRV a touch above norm, resting HR steady,
-    /// a solid night.
-    static let demo = RecoverySignals(hrvMs: 68, hrvBaselineMs: 63, restingHR: 48,
-                                      restingHRBaseline: 49, sleepHours: 7.33)
+    /// a solid night, breathing and wrist temp comfortably in band. Each value is this morning's
+    /// point in `HealthService.demoDailyHistory`/`demoSleepNights`, so the hero, the vitals tiles,
+    /// and the history charts tell one story on the sim.
+    static let demo = RecoverySignals(hrvMs: 68, hrvBaselineMs: 63, restingHR: 52,
+                                      restingHRBaseline: 51.6, sleepHours: 7.33,
+                                      respiratoryZ: 0.5, wristTempDeltaC: 0.05)
+
+    /// A plausible strained morning — launched via `--health-recovery-strained`. HRV well below
+    /// norm, resting HR elevated, a short night, breathing and wrist temp both above baseline:
+    /// the concordant picture that should ease today's session. As with `demo`, each value is the
+    /// endpoint of the matching `HealthService` demo history, so the strained trend charts land here.
+    static let demoStrained = RecoverySignals(hrvMs: 46, hrvBaselineMs: 62, restingHR: 55,
+                                              restingHRBaseline: 49, sleepHours: 5.4,
+                                              respiratoryZ: 2.1, wristTempDeltaC: 0.6)
     #endif
 }
