@@ -90,6 +90,24 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
 }
 
 extension Meal {
+    /// The journal row's display title: the AI's clean item list once itemized
+    /// ("Eggs ×2 · Toast with Butter · Coffee"), else the athlete's own words.
+    var journalTitle: String {
+        let items = self.items
+        guard !items.isEmpty else { return text }
+        return items.map { $0.qty == 1 ? $0.name : "\($0.name) ×\($0.qtyText)" }.joined(separator: " · ")
+    }
+
+    /// "≈54 g carbs · 620 kcal · 31 g protein · 480 mg sodium" — nil until numbers exist.
+    var journalNumbersLine: String? {
+        guard let carbs = carbsG else { return nil }
+        var parts = ["≈\(carbs) g carbs"]
+        if let kcal { parts.append("\(kcal) kcal") }
+        if let p = proteinG { parts.append("\(p) g protein") }
+        if let s = sodiumMg { parts.append("\(s) mg sodium") }
+        return parts.joined(separator: " · ")
+    }
+
     var items: [MealItem] {
         get { itemsData.flatMap { try? JSONDecoder().decode([MealItem].self, from: $0) } ?? [] }
         set {

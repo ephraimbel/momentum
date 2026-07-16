@@ -11,9 +11,17 @@ struct FuelReadinessTests {
     var now: Date { cal.date(bySettingHour: 15, minute: 0, second: 0, of: Date(timeIntervalSince1970: 1_760_000_000))! }
 
     func meal(_ hoursAgo: Double, kcal: Int? = nil, carbs: Int? = nil,
-              protein: Int? = nil, sodium: Int? = nil) -> FuelReadiness.MealInput {
+              protein: Int? = nil, fat: Int? = nil, sodium: Int? = nil) -> FuelReadiness.MealInput {
         .init(eatenAt: now.addingTimeInterval(-hoursAgo * 3600), kcal: kcal, carbsG: carbs,
-              proteinG: protein, sodiumMg: sodium)
+              proteinG: protein, fatG: fat, sodiumMg: sodium)
+    }
+
+    @Test func fatFloorIsOneGramPerKgAndSums() {
+        // kcal present so the meals count as numbered (hasNumbers keys off carbs/kcal).
+        let r = FuelReadiness.readout(meals: [meal(3, kcal: 300, fat: 22), meal(1, kcal: 250, fat: 18)],
+                                      sessions: [], workoutsToday: [], bodyMassKg: 70, now: now)
+        #expect(r.fatFloorG == 70)               // 1 g/kg — the hormonal-health minimum
+        #expect(r.fatG == 40)
     }
 
     @Test func easyDayUsesBaseCarbBand() {

@@ -14,7 +14,7 @@ enum FuelReadoutBuilder {
         let cal = Calendar.current
         let mealInputs = meals.prefix(80).map {
             FuelReadiness.MealInput(eatenAt: $0.eatenAt, kcal: $0.kcal, carbsG: $0.carbsG,
-                                    proteinG: $0.proteinG, sodiumMg: $0.sodiumMg)
+                                    proteinG: $0.proteinG, fatG: $0.fatG, sodiumMg: $0.sodiumMg)
         }
         // Open running sessions today/tomorrow — the carb target's driver.
         let sessions: [FuelReadiness.SessionInput] = (plan?.sessions ?? [])
@@ -38,7 +38,7 @@ enum FuelReadoutBuilder {
     static func coachLine(_ r: FuelReadiness.DayReadout) -> String? {
         guard r.mealCount > 0 else { return nil }
         var line = "today ≈\(r.carbsG)g carbs vs \(r.carbsFloorG)g floor (\(r.status.rawValue))"
-        line += " · protein \(r.proteinG)/\(r.proteinFloorG)g · sodium \(r.sodiumMg)/\(r.sodiumFloorMg)mg"
+        line += " · protein \(r.proteinG)/\(r.proteinFloorG)g · fat \(r.fatG)/\(r.fatFloorG)g · sodium \(r.sodiumMg)/\(r.sodiumFloorMg)mg"
         line += " · energy \(r.kcal)/\(r.kcalFloor) kcal"
         if let d = r.drivingSession { line += " · carb target keyed to \(d)" }
         if r.pendingCount > 0 { line += " · \(r.pendingCount) meal(s) still estimating" }

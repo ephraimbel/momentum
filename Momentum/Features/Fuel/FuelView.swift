@@ -47,9 +47,10 @@ struct FuelView: View {
                         refuelBanner
                             .transition(bannerTransition)
                     }
-                    // Week dots first (the quiet seven-day pulse), then the composer — the page's
-                    // real hero (Amy: entry first) — then the readout strip; tap it for the story.
-                    weekStrip.reveal(0)
+                    // The fuel gauges first (five rings drawing toward their floors), then the
+                    // composer — the page's real hero (Amy: entry first) — then the readout strip;
+                    // tap it for the story. The look-back journal lives behind the calendar button.
+                    ringsRow.reveal(0)
                     composer.reveal(0.06)
                     readoutStrip.reveal(0.12)
                     todaysMeals.reveal(0.18)
@@ -62,6 +63,14 @@ struct FuelView: View {
             .navigationTitle("Fuel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink { FuelHistoryView() } label: {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                    }
+                    .accessibilityLabel("Meal history")
+                }
                 if showsDone {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }.fontWeight(.semibold)
@@ -138,11 +147,6 @@ struct FuelView: View {
                     .clipShape(Capsule())
                     .animation(Motion.lively, value: fraction)
                     .animation(Motion.standard, value: r.status)
-                Text("≈\(r.kcal) of \(r.kcalFloor)+ kcal · ≈\(r.proteinG) of \(r.proteinFloorG)+ g protein · ≈\(r.sodiumMg) of \(r.sodiumFloorMg)+ mg sodium")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .lineLimit(1).minimumScaleFactor(0.85)
                 if let tip {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("TIP")
@@ -324,6 +328,24 @@ struct FuelView: View {
         }
     }
 
+    // MARK: The fuel gauges — five rings, each filling toward its FLOOR
+
+    /// Carbs · kcal · protein · fat · sodium, drawing toward their floors and earning iridescence
+    /// exactly when a floor is met. Draw-in staggers left-to-right on appear (`trim`, transform-only,
+    /// Reduce Motion renders complete); a landing estimate rolls ring and numeral together.
+    private var ringsRow: some View {
+        let r = readout
+        return HStack(alignment: .top, spacing: 0) {
+            FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0)
+            FuelRing(value: r.kcal, floor: r.kcalFloor, label: "kcal", index: 1)
+            FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 2)
+            FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 3)
+            FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 4)
+        }
+        .padding(.vertical, Theme.Space.xs)
+        .animation(Motion.standard, value: r)
+    }
+
     // MARK: Today's meals
 
     private var todayMeals: [Meal] {
@@ -365,7 +387,7 @@ struct FuelView: View {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Theme.Space.sm) {
-                        Text(rowTitle(meal))
+                        Text(meal.journalTitle)
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .lineLimit(2).multilineTextAlignment(.leading)
                             .contentTransition(.opacity)
@@ -382,8 +404,8 @@ struct FuelView: View {
                         if isEstimating {
                             EstimatingShimmer()
                                 .transition(.opacity)
-                        } else if let carbs = meal.carbsG {
-                            Text(numbersLine(meal, carbs: carbs))
+                        } else if let numbers = meal.journalNumbersLine {
+                            Text(numbers)
                                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
                                 .foregroundStyle(Theme.inkSecondary)
                                 .transition(.opacity)
@@ -417,49 +439,6 @@ struct FuelView: View {
         .accessibilityLabel("Meal: \(meal.text)")
     }
 
-    private func rowTitle(_ meal: Meal) -> String {
-        let items = meal.items
-        guard !items.isEmpty else { return meal.text }
-        return items.map { $0.qty == 1 ? $0.name : "\($0.name) ×\($0.qtyText)" }.joined(separator: " · ")
-    }
-
-    private func numbersLine(_ meal: Meal, carbs: Int) -> String {
-        var parts = ["≈\(carbs) g carbs"]
-        if let kcal = meal.kcal { parts.append("\(kcal) kcal") }
-        if let p = meal.proteinG { parts.append("\(p) g protein") }
-        if let s = meal.sodiumMg { parts.append("\(s) mg sodium") }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: The week, at a glance — filled dot = that day met the easy floor
-
-    private var weekStrip: some View {
-        let cal = Calendar.current
-        let kg = profiles.first?.bodyMassKg ?? FuelReadiness.fallbackMassKg
-        let easyFloor = Int(FuelReadiness.carbsPerKgEasy * kg)
-        let days: [(String, Bool, Bool)] = (0..<7).reversed().map { back in
-            let day = cal.date(byAdding: .day, value: -back, to: Date())!
-            let dayMeals = meals.filter { cal.isDate($0.eatenAt, inSameDayAs: day) }
-            let carbs = dayMeals.compactMap(\.carbsG).reduce(0, +)
-            let letter = day.formatted(.dateTime.weekday(.narrow))
-            return (letter, !dayMeals.isEmpty, carbs >= easyFloor)
-        }
-        return HStack(spacing: 0) {
-            ForEach(Array(days.enumerated()), id: \.offset) { _, day in
-                VStack(spacing: 5) {
-                    Circle()
-                        .fill(day.2 ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(day.1 ? Theme.inkTertiary : Theme.surface))
-                        .frame(width: 10, height: 10)
-                        .overlay(Circle().stroke(Theme.hairline, lineWidth: day.1 ? 0 : 1))
-                    Text(day.0).font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(.vertical, Theme.Space.sm)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Last seven days of fueling")
-    }
 }
 
 // MARK: - The full readout (tap-through from the strip)
@@ -502,9 +481,11 @@ private struct FuelReadoutSheet: View {
                             .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams")
                     }
                     .reveal(0.08)
-                    HStack(spacing: 0) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
+                              alignment: .leading, spacing: Theme.Space.md) {
                         floorCell("≈\(r.kcal)", "of \(r.kcalFloor)+ kcal")
-                        floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ protein")
+                        floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
+                        floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
                     }
                     .reveal(0.14)
@@ -539,6 +520,63 @@ private struct FuelReadoutSheet: View {
             Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - One fuel ring
+
+/// A single gauge: value drawn as a ring toward its floor, the numeral in the middle, the metric
+/// word beneath. Monochrome ink until the floor is met — then the fill is iridescent (earned).
+private struct FuelRing: View {
+    let value: Int
+    let floor: Int
+    let label: String
+    var index: Int = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drawn = false
+
+    private var fraction: CGFloat { min(1, CGFloat(value) / CGFloat(max(1, floor))) }
+    private var fueled: Bool { floor > 0 && value >= floor }
+
+    var body: some View {
+        VStack(spacing: 5) {
+            ZStack {
+                Circle().stroke(Theme.hairline, lineWidth: 4)
+                Circle()
+                    .trim(from: 0, to: drawn ? fraction : 0)
+                    .rotation(.degrees(-90))
+                    .stroke(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .animation(Motion.lively, value: fraction)
+                    .animation(Motion.standard, value: fueled)
+                Text(compact(value))
+                    .font(.rounded(11, weight: .bold)).monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+                    .contentTransition(.numericText())
+                    .animation(Motion.standard, value: value)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .frame(width: 34)
+            }
+            .frame(width: 48, height: 48)
+            Text(label)
+                .font(.rounded(Theme.FontSize.label, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .onAppear {
+            if reduceMotion { drawn = true }
+            else { withAnimation(Motion.pen(0.8).delay(Double(index) * 0.07)) { drawn = true } }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue("about \(value) of \(floor)")
+    }
+
+    /// "645" as is; sodium-scale numbers compact to "1.9k" so they stay readable in a 48pt ring.
+    private func compact(_ n: Int) -> String {
+        guard n >= 1000 else { return "\(n)" }
+        return String(format: "%.1fk", Double(n) / 1000).replacingOccurrences(of: ".0k", with: "k")
     }
 }
 
@@ -593,7 +631,7 @@ private struct EstimatingShimmer: View {
 /// and "Set totals by hand" converts an itemized meal for athletes who'd rather own the numbers.
 /// Any numbers change marks the meal `manual`, which a later AI estimate never overwrites.
 /// Eaten-at is editable (a forgotten lunch lands right); Delete lives here too.
-private struct MealDetailSheet: View {
+struct MealDetailSheet: View {
     @Bindable var meal: Meal
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context

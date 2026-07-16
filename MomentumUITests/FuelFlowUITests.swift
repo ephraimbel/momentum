@@ -76,6 +76,12 @@ final class FuelFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "≈150 g carbs"))
             .firstMatch.waitForExistence(timeout: 5), "Meal row numbers line didn't update.")
         shot(app, "4-readout-updated")
+
+        // History: the top-right calendar opens the day-by-day journal with today's meal in it.
+        app.buttons["Meal history"].tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 6), "History page didn't open.")
+        XCTAssertTrue(app.staticTexts["TODAY"].waitForExistence(timeout: 4), "Today's section missing in history.")
+        shot(app, "5-history")
     }
 
     private func shot(_ app: XCUIApplication, _ name: String) {

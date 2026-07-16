@@ -22,6 +22,7 @@ enum FuelReadiness {
         let kcal: Int?
         let carbsG: Int?
         let proteinG: Int?
+        var fatG: Int? = nil
         let sodiumMg: Int?
         /// false while an estimate is pending — pending meals are excluded from totals but counted,
         /// so the readout can say "2 meals still estimating" instead of quietly under-reporting.
@@ -50,6 +51,7 @@ enum FuelReadiness {
         let kcal: Int
         let carbsG: Int
         let proteinG: Int
+        let fatG: Int
         let sodiumMg: Int
         let mealCount: Int
         let pendingCount: Int
@@ -58,6 +60,7 @@ enum FuelReadiness {
         let carbsFloorG: Int
         let carbsHighG: Int
         let proteinFloorG: Int
+        let fatFloorG: Int
         let sodiumFloorMg: Int
         /// Carb readiness vs the driving session — the headline judgment.
         let status: Status
@@ -77,6 +80,9 @@ enum FuelReadiness {
 
     static let baselineKcalPerKg = 30.0
     static let proteinPerKgFloor = 1.4
+    /// Fat floor (~1 g/kg) — hormonal health and vitamin absorption need a minimum; endurance
+    /// athletes chronically cutting fat is the same under-fueling story. Never a ceiling.
+    static let fatPerKgFloor = 1.0
     static let sodiumBaselineMg = 1500
     static let sodiumPerLongHourMg = 700
     static let fallbackMassKg = 70.0
@@ -106,6 +112,7 @@ enum FuelReadiness {
         let kcal = numbered.compactMap(\.kcal).reduce(0, +)
         let carbs = numbered.compactMap(\.carbsG).reduce(0, +)
         let protein = numbered.compactMap(\.proteinG).reduce(0, +)
+        let fat = numbered.compactMap(\.fatG).reduce(0, +)
         let sodium = numbered.compactMap(\.sodiumMg).reduce(0, +)
 
         // The driving session: the longest run today or tomorrow (glycogen is filled the day before).
@@ -136,6 +143,7 @@ enum FuelReadiness {
         let carbsFloor = Int((carbsPerKg * kg).rounded())
         let carbsHigh = Int(((carbsPerKg + carbsBandWidthPerKg) * kg).rounded())
         let proteinFloor = Int((proteinPerKgFloor * kg).rounded())
+        let fatFloor = Int((fatPerKgFloor * kg).rounded())
         let doneS: Double = workoutsToday.map(\.durationS).reduce(0, +)
         let plannedTodayS: Double = horizon
             .filter { calendar.isDate($0.date, inSameDayAs: now) }
@@ -166,10 +174,10 @@ enum FuelReadiness {
         }
 
         return DayReadout(
-            kcal: kcal, carbsG: carbs, proteinG: protein, sodiumMg: sodium,
+            kcal: kcal, carbsG: carbs, proteinG: protein, fatG: fat, sodiumMg: sodium,
             mealCount: today.count, pendingCount: today.count - numbered.count,
             kcalFloor: kcalFloor, carbsFloorG: carbsFloor, carbsHighG: carbsHigh,
-            proteinFloorG: proteinFloor, sodiumFloorMg: sodiumFloor,
+            proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
             status: status, drivingSession: drivingLabel,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
             headline: headline(status: status, carbs: carbs, floor: carbsFloor,

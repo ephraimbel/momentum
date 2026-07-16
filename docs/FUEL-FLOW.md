@@ -6,11 +6,15 @@
 
 ## The loop, end to end
 
-**0 · Arrive** — the week dots sit quietly on top, then the page opens on the **composer** (Amy:
-entry first — the journal is the point, the dashboard is not): one clean 26-pt continuous-corner
-pill (the ChatGPT read) holding field + mic + send, waking with the coach composer's iridescent
-ring + glow the moment you type or dictate. No disclaimer chrome. One glance below it sits the
-**readout strip**, deliberately quiet: a
+**0 · Arrive** — the **five fuel rings** sit on top (carbs · kcal · protein · fat · sodium), each
+drawing toward its FLOOR with a staggered trim-in and earning iridescence exactly when a floor is
+met; a landing estimate rolls ring and numeral together. Then the page opens on the **composer**
+(Amy: entry first — the journal is the point, the dashboard is not): one clean 26-pt
+continuous-corner pill (the ChatGPT read) holding field + mic + send, waking with the coach
+composer's iridescent ring + glow the moment you type or dictate. No disclaimer chrome. The
+**calendar button (top right) opens History** — the day-by-day journal (Σ line + meals per day,
+iridescent dot on days that met the easy carb floor, same portion editor on tap, 60-day window).
+One glance below the composer sits the **readout strip**, deliberately quiet: a
 no-shame status word ("Building" / "On track" / "Fueled" — never "behind"), the carb numbers in
 caption type, a 5-pt band bar (iridescent exactly when the floor is met — earned), a one-line
 floors readout, and the optional TIP line (`FuelTips` — deterministic, one sentence, never
@@ -69,5 +73,5 @@ baseline + the day's real burn, protein 1.4 g/kg, sodium baseline + sweat add-on
 - No calories-left, no deficits, no diet or weight language, ever.
 
 ## Later (explicitly deferred)
-Day-history browsing (flip back through past days) · quick-repeat ("your usual breakfast") ·
-add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness.
+Quick-repeat ("your usual breakfast") · add-an-item inside an existing meal · widgets/streak
+flair · fueling in MorningReadiness. *(Day-history browsing shipped 2026-07-16 — `FuelHistoryView`.)*

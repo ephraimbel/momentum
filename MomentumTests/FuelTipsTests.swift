@@ -9,18 +9,18 @@ struct FuelTipsTests {
 
     // MARK: Readout factory (engine-shaped, with quiet defaults)
 
-    private func readout(kcal: Int = 1200, carbs: Int = 120, protein: Int = 80, sodium: Int = 1400,
-                         meals: Int = 2, pending: Int = 0,
+    private func readout(kcal: Int = 1200, carbs: Int = 120, protein: Int = 80, fat: Int = 45,
+                         sodium: Int = 1400, meals: Int = 2, pending: Int = 0,
                          kcalFloor: Int = 2100, carbsFloor: Int = 350, carbsHigh: Int = 490,
-                         proteinFloor: Int = 98, sodiumFloor: Int = 1500,
+                         proteinFloor: Int = 98, fatFloor: Int = 70, sodiumFloor: Int = 1500,
                          status: FuelReadiness.Status = .onTrack,
                          driving: String? = nil, raceEve: Bool = false, drivingIsToday: Bool = false,
                          refuelDue: Bool = false) -> FuelReadiness.DayReadout {
         FuelReadiness.DayReadout(
-            kcal: kcal, carbsG: carbs, proteinG: protein, sodiumMg: sodium,
+            kcal: kcal, carbsG: carbs, proteinG: protein, fatG: fat, sodiumMg: sodium,
             mealCount: meals, pendingCount: pending,
             kcalFloor: kcalFloor, carbsFloorG: carbsFloor, carbsHighG: carbsHigh,
-            proteinFloorG: proteinFloor, sodiumFloorMg: sodiumFloor,
+            proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
             status: status, drivingSession: driving,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
             headline: "", refuelDue: refuelDue)
