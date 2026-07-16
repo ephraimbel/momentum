@@ -381,20 +381,14 @@ struct FuelView: View {
     /// Motion renders complete); a landing estimate rolls rings and numerals together.
     private var ringsRow: some View {
         let r = readout
-        let m = r.micros
-        return VStack(spacing: Theme.Space.sm) {
-            // Macros up top; the endurance row beneath (sweat · blood · bone). Potassium and
-            // magnesium stay in the data but off the page — trimmed to what athletes act on.
-            HStack(alignment: .top, spacing: 0) {
-                FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
-                FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
-                FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2, tint: Theme.Fuel.fat)
-            }
-            HStack(alignment: .top, spacing: 0) {
-                FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, small: true, tint: Theme.Fuel.sodium)
-                FuelRing(value: Int(m.ironMg.rounded()), floor: Int(m.ironFloorMg.rounded()), label: "iron", index: 4, small: true, tint: Theme.Fuel.iron)
-                FuelRing(value: m.calciumMg, floor: m.calciumFloorMg, label: "calcium", index: 5, small: true, tint: Theme.Fuel.calcium)
-            }
+        // The four numbers an athlete acts on TODAY. Iron/calcium (and K/Mg) keep flowing into
+        // the data for a future monthly coach insight — daily rings were the wrong surface for
+        // slow-moving health markers built on the AI's roughest estimates.
+        return HStack(alignment: .top, spacing: 0) {
+            FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
+            FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
+            FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2, tint: Theme.Fuel.fat)
+            FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, tint: Theme.Fuel.sodium)
         }
         .padding(.vertical, Theme.Space.xs)
         .animation(Motion.standard, value: r)
@@ -540,15 +534,9 @@ struct FuelView: View {
                             EstimatingShimmer()
                                 .transition(.opacity)
                         } else if let numbers = meal.journalNumbersText {
-                            VStack(alignment: .leading, spacing: 2) {
-                                numbers
-                                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                                if let micros = meal.journalMicrosText {
-                                    micros
-                                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-                                }
-                            }
-                            .transition(.opacity)
+                            numbers
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                                .transition(.opacity)
                         } else {
                             Text("Couldn't estimate — tap to set the numbers")
                                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.purple)
@@ -627,8 +615,6 @@ private struct FuelReadoutSheet: View {
                         floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
                         floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
-                        floorCell("≈\(String(format: "%.1f", r.micros.ironMg))", "of \(String(format: "%.0f", r.micros.ironFloorMg))+ mg iron")
-                        floorCell("≈\(r.micros.calciumMg.formatted())", "of \(r.micros.calciumFloorMg.formatted())+ mg calcium")
                     }
                     .reveal(0.14)
                     if let driving = r.drivingSession {

@@ -12,11 +12,11 @@ extension Theme {
         static let protein = Color(hex: "2E8CE8")    // bright azure
         static let fat = Color(hex: "C96F3B")        // peach
         static let sodium = Color(hex: "9A5BD6")     // lilac
-        static let iron = Color(hex: "C4586B")       // garnet rose — blood, never alarm-red
-        static let calcium = Color(hex: "2FA96C")    // spring mint — bone-builder green
-        // Collected but not displayed (trimmed 2026-07-16 — least actionable for endurance):
-        static let potassium = Color(hex: "5B6BD6")  // periwinkle
-        static let magnesium = Color(hex: "2E9E6B")  // mint
+        // Micros are collected but NOT displayed (user call 2026-07-16): iron/calcium/K/Mg are
+        // slow-moving health markers — the future surface is a monthly coach insight, not daily
+        // rings built on the AI's roughest estimates. Inks reserved for that day:
+        static let iron = Color(hex: "C4586B")       // garnet rose
+        static let calcium = Color(hex: "2FA96C")    // spring mint
     }
 }
 
@@ -38,17 +38,4 @@ extension Meal {
         return t
     }
 
-    /// "Fe 3.2 · Ca 52" — the endurance micros as element symbols (the rings above teach the
-    /// color → metric binding). Potassium/magnesium are still captured in the data, just not
-    /// displayed. nil until an estimate carried any.
-    var journalMicrosText: Text? {
-        var parts: [Text] = []
-        if let fe = ironMg, fe > 0 {
-            parts.append(Text("Fe \(fe.formatted(.number.precision(.fractionLength(0...1))))")
-                .foregroundColor(Theme.Fuel.iron))
-        }
-        if let ca = calciumMg, ca > 0 { parts.append(Text("Ca \(ca)").foregroundColor(Theme.Fuel.calcium)) }
-        guard let first = parts.first else { return nil }
-        return parts.dropFirst().reduce(first) { $0 + sep() + $1 }
-    }
 }
