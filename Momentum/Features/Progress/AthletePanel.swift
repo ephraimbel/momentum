@@ -111,14 +111,17 @@ struct AthletePanel: View {
 
     @ViewBuilder
     private func backdrop(body: CGRect, h: CGFloat) -> some View {
-        if isDark {
-            // Luminous variant: a static aura behind the figure so it reads lit, not pasted.
-            // This does the glow work a live `.shadow` used to do — blurring the animated
-            // figure every mesh tick cost a full offscreen pass 30×/sec and stuttered the tab.
-            RadialGradient(colors: [.white.opacity(0.10), .clear], center: .center,
-                           startRadius: 0, endRadius: h * 0.52)
-                .position(x: body.midX, y: body.minY + body.height * 0.32)
-        }
+        // The figure stands in the brand's light: a soft iridescent aura, the same family as the
+        // fuel/readiness rings' glow (user call 2026-07-16). STATIC by design — a live `.shadow`
+        // on the 30fps-animating mesh cost a full offscreen pass per tick and stuttered the tab
+        // (see `figure()`), so the glow lives here, rendered once and cached.
+        AngularGradient(colors: Theme.iridescent + [Theme.iridescent.first ?? .clear], center: .center)
+            .frame(width: body.width * 1.15, height: body.width * 1.15)
+            .clipShape(Circle())
+            .blur(radius: 42)
+            .opacity(isDark ? 0.34 : 0.22)
+            .position(x: body.midX, y: body.minY + body.height * 0.32)
+            .allowsHitTesting(false)
         platform(body: body)
     }
 
