@@ -157,7 +157,7 @@ struct FuelView: View {
                 Capsule().fill(Theme.surface)
                     .overlay(alignment: .leading) {
                         Capsule()
-                            .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                            .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.Fuel.carbs))
                             .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
                             .opacity(r.carbsG > 0 ? 1 : 0)
                     }
@@ -372,17 +372,17 @@ struct FuelView: View {
             }
             .frame(maxWidth: .infinity)
             HStack(alignment: .top, spacing: 0) {
-                FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0)
-                FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1)
-                FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2)
-                FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3)
+                FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
+                FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
+                FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2, tint: Theme.Fuel.fat)
+                FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, tint: Theme.Fuel.sodium)
             }
             // The endurance micros — the quiet second row (smaller, same earned iridescence).
             HStack(alignment: .top, spacing: 0) {
-                FuelRing(value: m.potassiumMg, floor: m.potassiumFloorMg, label: "potassium", index: 4, small: true)
-                FuelRing(value: m.magnesiumMg, floor: m.magnesiumFloorMg, label: "magnesium", index: 5, small: true)
-                FuelRing(value: Int(m.ironMg.rounded()), floor: Int(m.ironFloorMg.rounded()), label: "iron", index: 6, small: true)
-                FuelRing(value: m.calciumMg, floor: m.calciumFloorMg, label: "calcium", index: 7, small: true)
+                FuelRing(value: m.potassiumMg, floor: m.potassiumFloorMg, label: "potassium", index: 4, small: true, tint: Theme.Fuel.potassium)
+                FuelRing(value: m.magnesiumMg, floor: m.magnesiumFloorMg, label: "magnesium", index: 5, small: true, tint: Theme.Fuel.magnesium)
+                FuelRing(value: Int(m.ironMg.rounded()), floor: Int(m.ironFloorMg.rounded()), label: "iron", index: 6, small: true, tint: Theme.Fuel.iron)
+                FuelRing(value: m.calciumMg, floor: m.calciumFloorMg, label: "calcium", index: 7, small: true, tint: Theme.Fuel.calcium)
             }
         }
         .padding(.vertical, Theme.Space.xs)
@@ -447,11 +447,16 @@ struct FuelView: View {
                         if isEstimating {
                             EstimatingShimmer()
                                 .transition(.opacity)
-                        } else if let numbers = meal.journalNumbersLine {
-                            Text(numbers)
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                                .foregroundStyle(Theme.inkSecondary)
-                                .transition(.opacity)
+                        } else if let numbers = meal.journalNumbersText {
+                            VStack(alignment: .leading, spacing: 2) {
+                                numbers
+                                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                                if let micros = meal.journalMicrosText {
+                                    micros
+                                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                                }
+                            }
+                            .transition(.opacity)
                         } else {
                             Text("Couldn't estimate — tap to set the numbers")
                                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.purple)
@@ -513,7 +518,7 @@ private struct FuelReadoutSheet: View {
                         Capsule().fill(Theme.surface)
                             .overlay(alignment: .leading) {
                                 Capsule()
-                                    .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                                    .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.Fuel.carbs))
                                     .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
                                     .opacity(r.carbsG > 0 ? 1 : 0)
                             }
@@ -581,6 +586,8 @@ private struct FuelRing: View {
     var index: Int = 0
     /// The micros row renders smaller and a touch quieter — same gauge, second voice.
     var small = false
+    /// The metric's ink while filling (Theme.Fuel); iridescence still owns the arrival.
+    var tint: Color = Theme.ink
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawn = false
 
@@ -596,7 +603,7 @@ private struct FuelRing: View {
                 Circle()
                     .trim(from: 0, to: drawn ? fraction : 0)
                     .rotation(.degrees(-90))
-                    .stroke(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink),
+                    .stroke(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(tint),
                             style: StrokeStyle(lineWidth: stroke, lineCap: .round))
                     .animation(Motion.lively, value: fraction)
                     .animation(Motion.standard, value: fueled)
@@ -780,9 +787,12 @@ struct MealDetailSheet: View {
                 Text(item.name)
                     .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                     .lineLimit(1)
-                Text("\(item.kcal) kcal · \(item.carbsG) g carbs · \(item.proteinG) g protein")
+                (Text("\(item.kcal) kcal").foregroundColor(Theme.inkTertiary)
+                    + Text(" · ").foregroundColor(Theme.inkTertiary)
+                    + Text("\(item.carbsG) g carbs").foregroundColor(Theme.Fuel.carbs)
+                    + Text(" · ").foregroundColor(Theme.inkTertiary)
+                    + Text("\(item.proteinG) g protein").foregroundColor(Theme.Fuel.protein))
                     .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
-                    .foregroundStyle(Theme.inkTertiary)
                     .contentTransition(.numericText())
             }
             Spacer(minLength: Theme.Space.sm)
@@ -854,11 +864,15 @@ struct MealDetailSheet: View {
 
     private var totalsFooter: some View {
         let t = totals
-        var line = "≈\(t.kcal) kcal · \(t.carbs) g carbs · \(t.protein) g protein · \(t.fat) g fat · \(t.sodium) mg sodium"
-        if t.fluids > 0 { line += " · \(t.fluids) ml" }
-        return Text(line)
+        let dot = Text(" · ").foregroundColor(Theme.inkTertiary)
+        var line = Text("≈\(t.kcal) kcal").foregroundColor(Theme.inkSecondary)
+            + dot + Text("\(t.carbs) g carbs").foregroundColor(Theme.Fuel.carbs)
+            + dot + Text("\(t.protein) g protein").foregroundColor(Theme.Fuel.protein)
+            + dot + Text("\(t.fat) g fat").foregroundColor(Theme.Fuel.fat)
+            + dot + Text("\(t.sodium) mg sodium").foregroundColor(Theme.Fuel.sodium)
+        if t.fluids > 0 { line = line + dot + Text("\(t.fluids) ml").foregroundColor(Theme.inkSecondary) }
+        return line
             .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-            .foregroundStyle(Theme.inkSecondary)
             .contentTransition(.numericText())
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md)

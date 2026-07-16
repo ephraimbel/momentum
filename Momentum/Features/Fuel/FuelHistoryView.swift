@@ -119,10 +119,15 @@ struct FuelHistoryView: View {
                     Image(systemName: "chevron.forward")
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                if let numbers = meal.journalNumbersLine {
-                    Text(numbers)
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(Theme.inkSecondary)
+                if let numbers = meal.journalNumbersText {
+                    VStack(alignment: .leading, spacing: 2) {
+                        numbers
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                        if let micros = meal.journalMicrosText {
+                            micros
+                                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                        }
+                    }
                 } else {
                     Text("No numbers — tap to set them")
                         .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.purple)
