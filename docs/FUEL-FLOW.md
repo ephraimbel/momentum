@@ -15,12 +15,15 @@ unless custom overrides — that's the moat.** Body inputs (weight/height/age/se
 the one profile; the preview is the same engine the page runs. Goal energy reads "kcal today"; the
 classic floor keeps its "+".
 
-**0 · Arrive** — the **fuel rings** sit on top (energy as a centered display headline; then two
-rows of three: carbs · protein · fat over sodium · iron · calcium — sweat, blood, bone). Each ring
-wears its metric's ink with a soft color-matched glow (Theme.Fuel: honey gold, ice, peach, lilac,
-garnet rose, luminous teal; potassium/magnesium stay in the data but off the page), and each
-drawing toward its FLOOR with a staggered trim-in and earning iridescence exactly when a floor is
-met; a landing estimate rolls ring and numeral together. Then the page opens on the **composer**
+**0 · Arrive** — the dashboard reads top-down: the day's **energy** as a perfectly centered
+display numeral (caption "kcal" / "kcal goal" beneath — no clause beside it), then the **On-track
+strip** (it judges the whole day, so it caps the dashboard), then **one row of four rings**:
+carbs · protein · fat · sodium — the numbers an athlete acts on TODAY. Each ring wears its
+metric's ink with a soft color-matched glow (Theme.Fuel: honey gold, bright azure, peach, lilac)
+and draws toward its FLOOR with a staggered trim-in, earning iridescence exactly when the floor
+is met; a landing estimate rolls rings and numerals together. Iron/calcium/potassium/magnesium
+are estimated and stored but NOT displayed (slow-moving health markers on the AI's roughest
+numbers — the future surface is a monthly coach insight, never near-empty daily gauges). Then the page opens on the **composer**
 (Amy: entry first — the journal is the point, the dashboard is not): one clean 26-pt
 continuous-corner pill (the ChatGPT read) holding field + mic + send, waking with the coach
 composer's iridescent ring + glow the moment you type or dictate. No disclaimer chrome. The
@@ -52,8 +55,8 @@ be — a soft gradient sweep (transform-only, Reduce Motion → static "Estimati
   carries qty, unit, and its own kcal/carbs/protein/fat/sodium/fluids.
 - Meal totals = Σ items (computed client-side so they always agree).
 - One coach-toned **note**, session-aware ("Solid carb load before your 71-minute effort today").
-- The day readout rolls live: numerals roll (`numericText`), the bar grows by transform, the
-  status flips, the week dot fills.
+- The day readout rolls live: numerals roll (`numericText`), the rings and bar grow by
+  transform, the status flips.
 
 **4 · Refine (portions)** — tap the meal → the detail sheet:
 - Each item is a row with **qty steppers** (±½ serving, floor ½): numbers scale linearly from the
