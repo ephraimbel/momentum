@@ -37,11 +37,12 @@ final class FuelFlowUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "big pasta dinner")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 8), "Logged meal row didn't appear.")
         let fallback = app.staticTexts["Couldn't estimate — tap to set the numbers"]
-        // The ROW's numbers line ("≈54 g carbs · 620 kcal · …") — must not match the header's
-        // "of 350–490 g carbs" caption, or this wait resolves instantly and the row gets tapped
-        // while still estimating (estimating rows deliberately don't open the sheet).
+        // The ROW's numbers line ("≈54 g carbs · 620 kcal · …") — the "g carbs ·" separator is what
+        // distinguishes it from the readout strip's "≈0 of 350 g carbs" line. Matching anything
+        // looser resolves this wait instantly and taps the row while it's still estimating
+        // (estimating rows deliberately don't open the sheet).
         let numbers = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "≈", "g carbs")).firstMatch
+            NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "≈", "g carbs ·")).firstMatch
         let resolved = NSPredicate { _, _ in fallback.exists || numbers.exists }
         let wait = XCTNSPredicateExpectation(predicate: resolved, object: nil)
         XCTAssertEqual(XCTWaiter().wait(for: [wait], timeout: 25), .completed,
@@ -67,9 +68,10 @@ final class FuelFlowUITests: XCTestCase {
         shot(app, "3-edit-sheet")
         app.buttons["Save"].tap()
 
-        // The readout rolls to the manual total.
-        XCTAssertTrue(app.staticTexts["≈150 g"].waitForExistence(timeout: 8),
-                      "Header carb total didn't update to the manual entry.")
+        // The readout strip rolls to the manual total ("Building · ≈150 of 350 g carbs").
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "≈150 of"))
+            .firstMatch.waitForExistence(timeout: 8),
+                      "Readout strip didn't update to the manual entry.")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "≈150 g carbs"))
             .firstMatch.waitForExistence(timeout: 5), "Meal row numbers line didn't update.")
         shot(app, "4-readout-updated")

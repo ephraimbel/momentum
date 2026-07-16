@@ -6,11 +6,14 @@
 
 ## The loop, end to end
 
-**0 · Arrive** — the page opens on the answer, not a form: the readout header says in plain words
-whether you're fueled for the work ("On track — ≈145 g of 350 g ready for today's session (1h 11m)"),
-with the carb band bar (iridescent exactly when the floor is met — earned), and the three quiet
-floors (kcal · protein · sodium). One optional TIP line sits beneath — deterministic, one sentence,
-never nagging (`FuelTips`).
+**0 · Arrive** — the page opens on the **composer** (Amy: entry first — the journal is the point,
+the dashboard is not). One glance below it sits the **readout strip**, deliberately quiet: a
+no-shame status word ("Building" / "On track" / "Fueled" — never "behind"), the carb numbers in
+caption type, a 5-pt band bar (iridescent exactly when the floor is met — earned), a one-line
+floors readout, and the optional TIP line (`FuelTips` — deterministic, one sentence, never
+nagging). **Tap the strip → the full story** (`FuelReadoutSheet`, medium detent): the engine's
+plain-words headline, display-size carb number, full bar, floor cells, and what session the
+target is keyed to. One engine, two zoom levels.
 
 **1 · Capture** — one composer, two ways in, zero friction:
 - **Type** it like a note: "2 eggs, toast with butter, coffee".

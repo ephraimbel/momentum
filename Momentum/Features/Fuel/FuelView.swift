@@ -33,6 +33,7 @@ struct FuelView: View {
     @State private var draft = ""
     @State private var estimating: Set<UUID> = []
     @State private var editing: Meal?
+    @State private var showingReadout = false
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
     @FocusState private var composing: Bool
@@ -42,12 +43,14 @@ struct FuelView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                    readoutHeader.reveal(0)
                     if readout.refuelDue {
                         refuelBanner
                             .transition(bannerTransition)
                     }
-                    composer.reveal(0.10)
+                    // The composer IS the page (Amy: entry first, everything else quiet) —
+                    // the readout lives one glance below as a strip; tap it for the full story.
+                    composer.reveal(0)
+                    readoutStrip.reveal(0.08)
                     todaysMeals.reveal(0.16)
                     weekStrip.reveal(0.22)
                     Text(FuelingGuide.Guidance.disclaimer)
@@ -101,34 +104,34 @@ struct FuelView: View {
                                    workouts: Array(workouts), bodyMassKg: profiles.first?.bodyMassKg)
     }
 
-    // MARK: Header — the judgment, then the numbers, then one quiet tip
+    // MARK: Readout strip — the judgment at a glance, deliberately quiet; tap for the full story
 
-    private var readoutHeader: some View {
+    /// "Building · ≈90 of 350 g carbs" — status word, the carb numbers, a 5-point bar, and the one
+    /// tip. Small type, no display numerals (those live in the tap-through sheet). The bar still
+    /// grows by transform and still earns iridescence exactly at the floor — subtle ≠ unearned.
+    private var readoutStrip: some View {
         let r = readout
         let tip = FuelTips.line(readout: r, now: Date())
         let fraction = min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG)))
-        return VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text(r.headline)
-                .font(.display(22, weight: .bold)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .contentTransition(.opacity)
-                .animation(Motion.standard, value: r.headline)
-            // Carbs — the readiness bar. Grows by TRANSFORM (scale from the leading edge, never a
-            // layout change) and earns iridescence exactly when the floor is met.
+        return Button { showingReadout = true } label: {
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("≈\(r.carbsG) g")
-                        .font(.display(28, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                        .contentTransition(.numericText())
-                        .animation(Motion.standard, value: r.carbsG)
-                    Text("of \(r.carbsFloorG)–\(r.carbsHighG) g carbs")
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(statusWord(r.status))
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        .contentTransition(.opacity)
+                    Text(r.status == .empty ? "aiming ≈\(r.carbsFloorG)–\(r.carbsHighG) g carbs"
+                                            : "≈\(r.carbsG) of \(r.carbsFloorG) g carbs")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
                     Spacer(minLength: 0)
                     if r.pendingCount > 0 {
                         Text("\(r.pendingCount) estimating…")
                             .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                             .transition(.opacity)
                     }
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
                 Capsule().fill(Theme.surface)
                     .overlay(alignment: .leading) {
@@ -137,48 +140,53 @@ struct FuelView: View {
                             .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
                             .opacity(r.carbsG > 0 ? 1 : 0)
                     }
-                    .frame(height: 10)
+                    .frame(height: 5)
                     .clipShape(Capsule())
                     .animation(Motion.lively, value: fraction)
                     .animation(Motion.standard, value: r.status)
-                    .accessibilityElement()
-                    .accessibilityLabel("Carbohydrates")
-                    .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams")
-            }
-            // The floors — quiet, ≈, never a ceiling.
-            HStack(spacing: 0) {
-                floorCell("≈\(r.kcal)", "of \(r.kcalFloor)+ kcal")
-                floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ protein")
-                floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
-            }
-            .animation(Motion.standard, value: r)
-            // One deterministic tip, often absent — silence is a feature (FuelTips).
-            if let tip {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("TIP")
-                        .font(.rounded(10, weight: .bold)).tracking(1.2)
-                        .foregroundStyle(Theme.inkTertiary)
-                    Text(tip)
-                        .font(.rounded(Theme.FontSize.label, weight: .medium))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                Text("≈\(r.kcal) of \(r.kcalFloor)+ kcal · ≈\(r.proteinG) of \(r.proteinFloorG)+ g protein · ≈\(r.sodiumMg) of \(r.sodiumFloorMg)+ mg sodium")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .lineLimit(1).minimumScaleFactor(0.85)
+                if let tip {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("TIP")
+                            .font(.rounded(10, weight: .bold)).tracking(1.2)
+                            .foregroundStyle(Theme.inkTertiary)
+                        Text(tip)
+                            .font(.rounded(Theme.FontSize.label, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .padding(.top, 2)
+                    .transition(.opacity)
                 }
-                .transition(.opacity)
             }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.vertical, Theme.Space.sm + 2)
+            .contentShape(Rectangle())
         }
-        .animation(Motion.standard, value: tip)
-        .padding(Theme.Space.md)
+        .buttonStyle(.plain)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .animation(Motion.standard, value: r)
+        .animation(Motion.standard, value: tip)
+        .accessibilityLabel("Fueling readout")
+        .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams of carbohydrates")
+        .accessibilityHint("Shows the full fueling detail")
+        .sheet(isPresented: $showingReadout) { FuelReadoutSheet(readout: readout) }
     }
 
-    private func floorCell(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
-                .contentTransition(.numericText())
-            Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+    /// No-shame status words — "behind" never appears; a slow morning is just "building".
+    private func statusWord(_ s: FuelReadiness.Status) -> String {
+        switch s {
+        case .empty: return "Today"
+        case .behind: return "Building"
+        case .onTrack: return "On track"
+        case .fueled: return "Fueled"
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var bannerTransition: AnyTransition {
@@ -228,6 +236,10 @@ struct FuelView: View {
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        // A whisper of focus: the hairline warms while writing (opacity only — house motion rules).
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card)
+            .stroke(Theme.inkTertiary.opacity(composing ? 0.45 : 0)))
+        .animation(Motion.standard, value: composing)
     }
 
     /// Tap to talk, tap to stop — words stream into the field live; review, then send.
@@ -344,6 +356,11 @@ struct FuelView: View {
                         Spacer(minLength: 0)
                         Text(meal.eatenAt.formatted(date: .omitted, time: .shortened))
                             .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        // Editability is a promise, not a mystery — the quiet chevron says "tap
+                        // to fix portions" without shouting it.
+                        Image(systemName: "chevron.forward")
+                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                            .opacity(isEstimating ? 0 : 1)
                     }
                     Group {
                         if isEstimating {
@@ -426,6 +443,86 @@ struct FuelView: View {
         .padding(.vertical, Theme.Space.sm)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Last seven days of fueling")
+    }
+}
+
+// MARK: - The full readout (tap-through from the strip)
+
+/// The depth behind the strip: the engine's plain-words headline, the display-size carb number
+/// and full band bar, the three floor cells, and what session the target is keyed to. Everything
+/// here is the same `DayReadout` the strip judged — one engine, two zoom levels.
+private struct FuelReadoutSheet: View {
+    let readout: FuelReadiness.DayReadout
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let r = readout
+        let fraction = min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG)))
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    Text(r.headline)
+                        .font(.display(22, weight: .bold)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .reveal(0)
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("≈\(r.carbsG) g")
+                                .font(.display(34, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                            Text("of \(r.carbsFloorG)–\(r.carbsHighG) g carbs")
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        Capsule().fill(Theme.surface)
+                            .overlay(alignment: .leading) {
+                                Capsule()
+                                    .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                                    .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
+                                    .opacity(r.carbsG > 0 ? 1 : 0)
+                            }
+                            .frame(height: 10)
+                            .clipShape(Capsule())
+                            .accessibilityElement()
+                            .accessibilityLabel("Carbohydrates")
+                            .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams")
+                    }
+                    .reveal(0.08)
+                    HStack(spacing: 0) {
+                        floorCell("≈\(r.kcal)", "of \(r.kcalFloor)+ kcal")
+                        floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ protein")
+                        floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
+                    }
+                    .reveal(0.14)
+                    if let driving = r.drivingSession {
+                        Text("Carb target keyed to \(driving) — glycogen banks overnight, so the eve matters as much as the morning.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .reveal(0.20)
+                    }
+                    Text("Floors, never ceilings — enough to fund the work. Every number is an estimate.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .reveal(0.24)
+                }
+                .padding(Theme.Space.lg)
+            }
+            .background(Theme.background)
+            .navigationTitle("Today's fueling")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func floorCell(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value).font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
