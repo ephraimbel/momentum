@@ -317,10 +317,6 @@ struct TodayView: View {
         // The proactive coach: at most one seeded thought in the chat per pass (earned load bump,
         // Monday recap), badged on the coach button and mirrored to the bell. Deduped inside.
         CoachProactive.sweep(profile: profiles.first, workouts: workouts, in: context)
-        // Pre-week load recheck (§11.1.1): if next week is PLANNED well above what the athlete has
-        // ACTUALLY been absorbing (misses/pauses drift the two apart), seed one consent-gated trim.
-        _ = CoachProactive.seedPlannedLoadRecheck(plan: profiles.first?.plan,
-                                                  workouts: workouts, in: context)
         // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
         // carb-load → kit → race-day fueling), each posted once.
         if let profile = profiles.first, let raceDate = profile.raceDate,
