@@ -74,12 +74,12 @@ final class AuthFlowsUITests: XCTestCase {
         app.buttons["Save password"].tap()
 
         // Sheet falls; the recovery session is live → the app proper (profile exists → tabs).
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30),
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30),
                       "after saving the password the athlete should be in the app")
         attach(app, "recovery-signed-in")
 
         // Sign out from Settings.
-        app.tabBars.buttons["Profile"].tap()
+        openProfileSheet(app)
         app.buttons["Settings"].firstMatch.tap()
         let signOut = app.buttons["Sign out"]
         XCTAssertTrue(signOut.waitForExistence(timeout: 10))
@@ -91,7 +91,7 @@ final class AuthFlowsUITests: XCTestCase {
         app.buttons["Get started"].tap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
         signIn(app, email: email, password: newPass)
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30),
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30),
                       "the new password should sign in")
         attach(app, "signed-in-new-password")
     }
@@ -102,9 +102,9 @@ final class AuthFlowsUITests: XCTestCase {
         let app = launchAtGate()
 
         app.buttons["Continue without an account"].tap()
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 15), "guest should enter the app")
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 15), "guest should enter the app")
 
-        app.tabBars.buttons["Profile"].tap()
+        openProfileSheet(app)
         app.buttons["Settings"].firstMatch.tap()
         let more = app.buttons["More ways to sign in — Google or email"]
         XCTAssertTrue(more.waitForExistence(timeout: 10), "guest card should offer more sign-in options")
@@ -130,9 +130,9 @@ final class AuthFlowsUITests: XCTestCase {
     func test4_deleteAccount() throws {
         let app = launchAtGate()
         signIn(app, email: email, password: pass)
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30), "sign-in should enter the app")
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30), "sign-in should enter the app")
 
-        app.tabBars.buttons["Profile"].tap()
+        openProfileSheet(app)
         app.buttons["Settings"].firstMatch.tap()
         let deleteRow = app.buttons["Delete account"]
         XCTAssertTrue(deleteRow.waitForExistence(timeout: 10))
@@ -182,5 +182,13 @@ final class AuthFlowsUITests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
+    }
+
+    /// Profile lost its tab to Fuel (2026-07-16): its front door is the avatar on Today's header.
+    private func openProfileSheet(_ app: XCUIApplication) {
+        app.tabBars.buttons["Today"].tap()
+        let avatar = app.buttons["Your profile"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 10), "Today's avatar (profile front door) not found")
+        avatar.tap()
     }
 }

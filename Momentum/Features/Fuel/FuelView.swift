@@ -12,6 +12,9 @@ import UIKit
 /// Framing rules carried from the engine: floors, never ceilings; no diet/weight language;
 /// every number reads ≈. A meal logs instantly offline and estimates when it can.
 struct FuelView: View {
+    /// false when tab-hosted (RootView) — the tab bar is the way out, so no Done button. true when
+    /// presented as a sheet (previews/one-off entry points).
+    var showsDone = true
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query(sort: \Meal.eatenAt, order: .reverse) private var meals: [Meal]
@@ -48,8 +51,10 @@ struct FuelView: View {
             .navigationTitle("Fuel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }.fontWeight(.semibold)
+                if showsDone {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }.fontWeight(.semibold)
+                    }
                 }
             }
             .scrollDismissesKeyboard(.interactively)

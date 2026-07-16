@@ -9,6 +9,7 @@ struct RootView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(AuthController.self) private var auth
     @Environment(CoachPresenter.self) private var coach
+    @Environment(AppRouter.self) private var router           // cross-tab mailbox — RootView owns pendingTab
     @Environment(\.requestReview) private var requestReview   // native App Store rating prompt
     @Environment(\.modelContext) private var context
     // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
@@ -22,7 +23,9 @@ struct RootView: View {
         #if DEBUG
         // Deterministic deep-links for sim verification (tab-bar taps are unreliable in the sim).
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("--profile-tab") { return .profile }
+        if args.contains("--fuel") || args.contains("--fuel-tab") { return .fuel }
+        // --profile-tab: the Profile lost its tab to Fuel (2026-07-16) — land on Today, whose
+        // avatar opens the profile sheet (TodayView handles `--today-profile` for direct opens).
         if args.contains("--plan-tab") { return .plan }
         if args.contains("--progress-tab") { return .progress }
         if args.contains("--community-tab") { return .community }
@@ -74,12 +77,13 @@ struct RootView: View {
                 .fullScreenCover(item: $paywall.presentedFeature) { feature in
                     PaywallView(feature: feature)
                 }
-                // The onboarding hard gate survives force-quit: if the athlete killed the app at
-                // the paywall instead of subscribing, it greets them again on launch — until entitled.
+                // Freemium (2026-07-14): the onboarding paywall is now SOFT, so new athletes never set
+                // this flag. It only fires for legacy users who force-quit the OLD hard gate — and even
+                // then it's dismissible and self-clears, so nobody stays walled out of the free tier.
                 .fullScreenCover(isPresented: Binding(
                     get: { paywall.onboardingGatePending && !paywall.isPro && !showOnboarding && !profiles.isEmpty },
-                    set: { _ in })) {
-                    PaywallView(feature: .fullPlan, hard: true)
+                    set: { if !$0 { paywall.onboardingGatePending = false } })) {
+                    PaywallView(feature: .fullPlan, hard: false)
                 }
                 // The ONE coach chat surface — every entry point (Today's floating button, Settings)
                 // opens the same thread through `CoachPresenter`. Free to talk; Apply is the Pro gate.
@@ -95,8 +99,18 @@ struct RootView: View {
                     case .viewPlanWeek, .raceBriefing: selection = .plan
                     case .planSettings: selection = .plan   // PlanView opens its settings sheet (coachWantsSettings)
                     case .viewProgress: selection = .progress
+                    case .viewHealth:                       // Progress → Health segment (RECOVERY-HUB-PLAN §2)
+                        selection = .progress
+                        router.pendingProgressSegment = "Health"
                     }
                     if nav == .planSettings { coach.wantsPlanSettings = true }
+                }
+                // Cross-tab requests (Today's morning readout → Progress · Health). Consume-then-nil:
+                // the same destination can be asked for again later, and a stale one never re-fires.
+                .onChange(of: router.pendingTab) { _, tab in
+                    guard let tab else { return }
+                    router.pendingTab = nil
+                    selection = tab
                 }
                 #if DEBUG
                 .fullScreenCover(isPresented: $showRunDetail) {
@@ -261,7 +275,7 @@ struct RootView: View {
         case .plan: PlanView()
         case .progress: ProgressScreen()
         case .community: CommunityView()
-        case .profile: ProfileScreen()
+        case .fuel: FuelView(showsDone: false)   // tab-hosted: the tab bar is the way out, no Done
         }
     }
 }

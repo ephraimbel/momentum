@@ -165,16 +165,28 @@ final class CoreRunFlowUITests: XCTestCase {
         if app.buttons["Done"].waitForExistence(timeout: 4) { app.buttons["Done"].tap() }
         sleep(1)
 
-        // ── 9. Profile — the run is the newest tile in the grid ───────────────────────
-        if app.tabBars.buttons["Profile"].waitForExistence(timeout: 8) {
-            app.tabBars.buttons["Profile"].tap()
-        } else {
-            app.tabBars.buttons.element(boundBy: 4).tap()   // Profile is the last tab
+        // ── 9. Profile — the run is the newest tile in the grid. Profile lost its tab to Fuel
+        // (2026-07-16): its front door is the avatar on Today's header, which opens the sheet.
+        if app.tabBars.buttons["Today"].waitForExistence(timeout: 8) {
+            app.tabBars.buttons["Today"].tap()
         }
+        sleep(1)
+        let avatar = app.buttons["Your profile"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 8), "Today's avatar (profile front door) not found.")
+        avatar.tap()
         sleep(2)
         attach("11-profile")
         let runTile = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Run,")).firstMatch
         XCTAssertTrue(runTile.waitForExistence(timeout: 12), "The run tile did not appear on the Profile grid.")
+
+        // ── 10. Fuel — the new tab is present and renders its readout ─────────────────
+        if app.buttons["Back"].exists { app.buttons["Back"].tap() }   // close the profile sheet
+        sleep(1)
+        if app.tabBars.buttons["Fuel"].waitForExistence(timeout: 6) {
+            app.tabBars.buttons["Fuel"].tap()
+            sleep(2)
+            attach("12-fuel-tab")
+        }
     }
 
     // MARK: Helpers
