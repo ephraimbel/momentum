@@ -6,7 +6,17 @@
 
 ## The loop, end to end
 
-**0 · Arrive** — the **five fuel rings** sit on top (carbs · kcal · protein · fat · sodium), each
+**0 · Aim (optional)** — the **fueling adjuster** (top-left sliders, `FuelGoalsSheet`) sets how the
+daily energy target works: *Fuel for training* (classic floors, default) · *Leaner* (Mifflin-St Jeor
+maintenance − 400 with the RED-S guard: never below 1.1 × basal, the day's real burn always funds,
+deficit pauses on race-eve/long days with a note) · *Build* (+300) · *Custom* (own numbers, prefilled
+from the computed targets). Protein rises in a deficit (1.9 g/kg); **carbs stay keyed to training
+unless custom overrides — that's the moat.** Body inputs (weight/height/age/sex, unit-aware) save to
+the one profile; the preview is the same engine the page runs. Goal energy reads "kcal today"; the
+classic floor keeps its "+".
+
+**0 · Arrive** — the **fuel rings** sit on top (energy as a display headline; carbs · protein · fat
+· sodium as rings), each
 drawing toward its FLOOR with a staggered trim-in and earning iridescence exactly when a floor is
 met; a landing estimate rolls ring and numeral together. Then the page opens on the **composer**
 (Amy: entry first — the journal is the point, the dashboard is not): one clean 26-pt
