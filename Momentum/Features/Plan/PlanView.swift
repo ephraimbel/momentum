@@ -286,42 +286,52 @@ struct PlanView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(planDisplayName)
-                    .font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
-                    .lineLimit(1).minimumScaleFactor(0.55)
-                Spacer()
-                // The trailing controls live in their own center-aligned row so the app-icon coach
-                // mark, the adjuster, and the add button sit on one line (each reports a different
-                // text baseline, so aligning them to the title's would stagger them).
-                HStack(alignment: .center, spacing: Theme.Space.xs) {
-                    coachButton
-                    if plan != nil {
-                        // Two distinct intents, named plainly: tune what exists, or begin again.
-                        // Goals change — starting over is a first-class move, never buried.
-                        Menu {
-                            Button { showSettings = true } label: {
-                                Label("Adjust this plan", systemImage: "slider.horizontal.3")
-                            }
-                            Button { showNewPlan = true } label: {
-                                Label("Start a new plan", systemImage: "arrow.triangle.2.circlepath")
-                            }
-                        } label: {
-                            Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-                                .frame(width: 40, height: 40).contentShape(Rectangle())
-                        }
-                        .accessibilityLabel("Plan options")
-                    }
-                    addButton
+        // The shared masthead language (fuel / plan / progress): a small centered title in the
+        // display face — the athlete's own plan name when they gave it one — with the coach on
+        // the left and the plan actions on the right. The context line sits centered beneath.
+        ZStack {
+            VStack(spacing: 1) {
+                Text(planTitleText)
+                    .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .accessibilityAddTraits(.isHeader)
+                if let context = planContextLine {
+                    Text(context)
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
             }
-            if let context = planContextLine {
-                Text(context)
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            .padding(.horizontal, 92)   // stay clear of the flanking clusters
+            HStack(alignment: .center, spacing: Theme.Space.xs) {
+                coachButton
+                Spacer()
+                if plan != nil {
+                    // Two distinct intents, named plainly: tune what exists, or begin again.
+                    // Goals change — starting over is a first-class move, never buried.
+                    Menu {
+                        Button { showSettings = true } label: {
+                            Label("Adjust this plan", systemImage: "slider.horizontal.3")
+                        }
+                        Button { showNewPlan = true } label: {
+                            Label("Start a new plan", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    } label: {
+                        Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
+                            .frame(width: 40, height: 40).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Plan options")
+                }
+                addButton
             }
         }
         .padding(.top, Theme.Space.sm)
+    }
+
+    /// The masthead title: the athlete's plan name as typed; the unnamed default joins the
+    /// lowercase page-word family ("plan", like "fuel" and "progress").
+    private var planTitleText: String {
+        let name = planDisplayName
+        return name == "Plan" ? "plan" : name
     }
 
     /// One quiet line of what this plan is FOR — the race and its countdown when one is set, else

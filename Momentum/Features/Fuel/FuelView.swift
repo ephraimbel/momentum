@@ -39,7 +39,6 @@ struct FuelView: View {
     @State private var voiceBase = ""
     @FocusState private var composing: Bool
     @Environment(PaywallController.self) private var paywall
-    @Environment(\.colorScheme) private var colorScheme
     private let estimator = FuelEstimator()
 
     var body: some View {
@@ -82,14 +81,13 @@ struct FuelView: View {
                     .accessibilityLabel("Fueling goals")
                     }
                 }
-                // The masthead is the "momentum" wordmark itself (user call 2026-07-16) —
-                // black on the light canvas, white on the dark one, at the quiet 17pt scale
-                // the community masthead settled on. The tab bar still says where you are.
+                // The page title wears the brand voice: lowercase Space Grotesk, small and
+                // centered — the shared masthead language across fuel / plan / progress
+                // (user call 2026-07-16; the wordmark image experiment was walked back).
                 ToolbarItem(placement: .principal) {
-                    Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
-                        .resizable().scaledToFit()
-                        .frame(height: 17)
-                        .accessibilityLabel("Momentum")
+                    Text("fuel")
+                        .font(.display(20, weight: .bold))
+                        .foregroundStyle(Theme.ink)
                         .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {

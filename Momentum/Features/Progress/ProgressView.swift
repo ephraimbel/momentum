@@ -318,35 +318,43 @@ struct ProgressScreen: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
-            Text("Progress").font(.display(34, weight: .black)).foregroundStyle(Theme.ink)
-            Spacer()
-            if let cachedStats { StreakChip(days: cachedStats.currentStreak) }
-            if segment == .history {
-                Button { Haptics.light(); showLogWorkout = true } label: {
-                    Image(systemName: "plus").font(.system(size: 19, weight: .bold)).foregroundStyle(Theme.ink)
+        // The shared masthead language (fuel / plan / progress): a small centered lowercase title
+        // in the display face, accessories flanking — the big left-aligned billboard is retired.
+        ZStack {
+            Text("progress")
+                .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: Theme.Space.xs) {
+                if let cachedStats { StreakChip(days: cachedStats.currentStreak) }
+                Spacer()
+                if segment == .history {
+                    Button { Haptics.light(); showLogWorkout = true } label: {
+                        Image(systemName: "plus").font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel("Add a past workout")
+                }
+                NavigationLink { SettingsView() } label: {
+                    Image(systemName: "gearshape.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                         .frame(width: 32, height: 32)
                 }
-                .accessibilityLabel("Add a past workout")
+                .accessibilityLabel("Settings")
             }
-            NavigationLink { SettingsView() } label: {
-                Image(systemName: "gearshape.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 32, height: 32)
-            }
-            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
     }
 
     private var segmentControl: some View {
-        HStack(spacing: 4) {
+        // Slimmed to match the masthead's quiet scale (caption type, 32pt) — the selected pill
+        // stays ink, the track gains the house hairline.
+        HStack(spacing: 3) {
             ForEach(Segment.allCases) { seg in
                 Button { Haptics.selection(); withAnimation(.easeOut(duration: 0.2)) { segment = seg } } label: {
                     Text(seg.rawValue)
-                        .font(.rounded(Theme.FontSize.body, weight: .bold))
-                        .foregroundStyle(segment == seg ? Theme.background : Theme.ink)
-                        .frame(maxWidth: .infinity).frame(height: 40)
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                        .foregroundStyle(segment == seg ? Theme.background : Theme.inkSecondary)
+                        .frame(maxWidth: .infinity).frame(height: 32)
                         .background { if segment == seg { Capsule().fill(Theme.ink) } }
                         // Unselected segments have no background fill, so without an explicit
                         // content shape only the text glyphs are hittable — dead tap zones
@@ -356,8 +364,9 @@ struct ProgressScreen: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(4)
+        .padding(3)
         .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().stroke(Theme.hairline))
     }
 
     /// Compact 1M · 3M · 6M window switcher for the trend charts — one tap re-windows the weekly
