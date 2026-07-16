@@ -62,6 +62,11 @@ final class CoreRunFlowUITests: XCTestCase {
         if pause.waitForExistence(timeout: 6) {
             pause.tap()
             let resume = app.buttons["Resume"]
+            if !resume.waitForExistence(timeout: 5), pause.exists {
+                // On a pristine simulator a first-run permission alert can appear right here; the
+                // interruption monitor dismisses it but CONSUMES the tap. One re-tap covers it.
+                pause.tap()
+            }
             XCTAssertTrue(resume.waitForExistence(timeout: 5), "Tapping Pause did not flip the control to Resume.")
             attach("3-paused")
             resume.tap()

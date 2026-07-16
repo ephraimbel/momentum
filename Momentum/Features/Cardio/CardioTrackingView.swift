@@ -56,6 +56,9 @@ struct CardioTrackingView: View {
     /// (wall-clock arrival, route-point count) samples, so we can look up how many points existed
     /// ≈`puckLagS` ago and draw the trace only that far — pruned to a small trailing window.
     @State private var traceReleaseLog: [(t: Date, count: Int)] = []
+    /// Rearmed on every fix; fires only when route points stop, releasing the held-back tail so the
+    /// line ends exactly under the parked dot (see the trailing flush in `onChange`).
+    @State private var traceFlushTask: Task<Void, Never>?
     /// Drives the puck (and its follow camera) from our Kalman-filtered position instead of raw
     /// CoreLocation — the dot, the camera, and the trace all track the same clean track, so a
     /// rejected GPS spike can't teleport the dot into a building while the line stays put.
@@ -213,9 +216,23 @@ struct CardioTrackingView: View {
                 // ago), so the trace tip tracks the dot instead of racing ahead of it. Fewer, calmer
                 // tail updates also keep the line from flickering into gaps under a fast fix stream.
                 let visibleCount = traceReleaseLog.last { $0.t <= now.addingTimeInterval(-Self.puckLagS) }?.count ?? 0
-                guard visibleCount > 0 else { return }
-                let delta = smoother.ingest(Array(coords.prefix(visibleCount)))
-                syncRouteLayers(proxy.map, delta: delta)
+                if visibleCount > 0 {
+                    let delta = smoother.ingest(Array(coords.prefix(visibleCount)))
+                    syncRouteLayers(proxy.map, delta: delta)
+                }
+                // Trailing flush: when route points STOP arriving (pause, standing still past the
+                // movement gate, GPS loss, the final fix before Finish), no further onChange fires —
+                // without this, the held-back newest point never releases and the line permanently
+                // ends one fix short of the parked dot. 1.2 s ≈ the dot's 1.1 s glide: the tip snaps
+                // in right as the dot settles. Cancelled and rearmed by every new fix, so it's a
+                // no-op while fixes flow.
+                traceFlushTask?.cancel()
+                traceFlushTask = Task {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    guard !Task.isCancelled else { return }
+                    let delta = smoother.ingest(coords)
+                    syncRouteLayers(proxy.map, delta: delta)
+                }
             }
             // Feed the puck the engine's filtered position per fix (raw while acquiring so "you"
             // shows instantly; Kalman tip once recording). Mapbox's LocationManager interpolates the

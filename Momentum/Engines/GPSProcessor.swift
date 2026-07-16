@@ -107,7 +107,13 @@ struct GPSProcessor {
 
     /// Process a raw fix. Distance is measured from a stable anchor and only accrues once movement
     /// clears `minMovementGate`, so positional jitter doesn't inflate distance.
-    mutating func ingest(_ fix: Fix) -> Result {
+    ///
+    /// `paused: true` (the athlete's manual Pause) keeps the gate and Kalman filter warm — the map
+    /// dot still follows them and the first post-resume fix can't spike-reject against a stale
+    /// reference — but accrues NOTHING: no distance, no elevation, no pace. The anchors rebase to
+    /// the paused position so, on resume, movement measures only itself (the coffee-run detour
+    /// contributes zero, exactly like Strava's pause).
+    mutating func ingest(_ fix: Fix, paused: Bool = false) -> Result {
         guard Self.acceptable(fix, previous: lastAccepted ?? anchor, config: config) else { return .rejected }
         lastAccepted = fix
 
@@ -117,6 +123,13 @@ struct GPSProcessor {
         let f = kalman.process(t: fix.t, lat: fix.lat, lon: fix.lon, accuracyM: fix.accuracyM)
         filteredLat = f.lat
         filteredLon = f.lon
+
+        if paused {
+            anchor = fix
+            distAnchorLat = f.lat
+            distAnchorLon = f.lon
+            return .accepted(distanceAddedM: 0)
+        }
 
         guard let prev = anchor else {
             anchor = fix

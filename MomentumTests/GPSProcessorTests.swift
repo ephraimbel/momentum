@@ -165,4 +165,35 @@ struct GPSProcessorTests {
         #expect(spike == .rejected)
         #expect(p.distanceM == before)   // no phantom spur, no phantom distance
     }
+
+    /// Manual pause (Strava semantics): the paused walk keeps the filter warm — the map dot follows —
+    /// but accrues NOTHING (no distance/elevation/pace, `distanceAddedM == 0` so the engine appends no
+    /// route point), and the anchors rebase so post-resume movement measures only itself.
+    @Test func manualPauseAccruesNothingButKeepsTheDotWarm() {
+        var p = GPSProcessor(config: runConfig)
+        var lat = 30.0
+        _ = p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: 0))
+        for t in stride(from: 1.0, through: 5.0, by: 1.0) {          // running north, ~4.4m per fix
+            lat += 0.00004
+            #expect(p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: t)) != .rejected)
+        }
+        let runningDistance = p.distanceM
+        #expect(runningDistance > 12)                                 // ~22m accrued while running
+
+        // Paused: walk another ~44m north over 10 fixes. Dot must follow; nothing may accrue.
+        for t in stride(from: 6.0, through: 15.0, by: 1.0) {
+            lat += 0.00004
+            let r = p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: t), paused: true)
+            #expect(r == .accepted(distanceAddedM: 0))                // never a route-worthy move
+        }
+        #expect(p.distanceM == runningDistance)                       // the paused walk contributed zero
+        #expect(abs(p.filteredLat - lat) < 0.0001)                    // filter tracked the walk (dot follows)
+
+        // Resume: measured from the PAUSED position — never spike-rejected, and only the ~4.4m of
+        // real post-resume movement counts (never the 44m walked while paused).
+        lat += 0.00004
+        let resumed = p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: 16))
+        #expect(resumed != .rejected)
+        #expect(p.distanceM - runningDistance < 8)
+    }
 }

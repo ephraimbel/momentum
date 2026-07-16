@@ -111,14 +111,20 @@ actor GPSTrackingEngine {
 
         if state == .acquiring { state = .tracking }
 
-        let result = processor.ingest(fix)
+        // Manual pause: the processor stays warm (dot follows, resume can't spike-reject) but accrues
+        // no distance, and neither the live route nor the saved one records the paused walk — the
+        // sample persists as not-accepted so `RouteReplay` (saved route = accepted samples) skips it
+        // too. Resume ≤100m away draws a clean chord; farther splits the trace (LiveSmoother's gap
+        // split) — both exactly Strava's pause behavior.
+        let manuallyPaused = state == .paused
+        let result = processor.ingest(fix, paused: manuallyPaused)
         let accepted = result != .rejected
         // Build the route from the Kalman-corrected position (not the raw fix): the first accepted
         // fix (anchor) plus every real move.
-        if case .accepted(let added) = result, added > 0 || route.isEmpty {
+        if !manuallyPaused, case .accepted(let added) = result, added > 0 || route.isEmpty {
             route.append(Coordinate(lat: processor.filteredLat, lon: processor.filteredLon))
         }
-        await sink.persistSample(fix, accepted: accepted)
+        await sink.persistSample(fix, accepted: accepted && !manuallyPaused)
 
         // Moving-time accounting only while actively tracking.
         if state == .tracking, let mark = lastMovingMark {
@@ -141,6 +147,12 @@ actor GPSTrackingEngine {
             }
             // else: stationary but the athlete manually resumed → stay tracking (Resume always wins).
         }
+
+        // Re-assert the state invariant after the awaits above: an `await` here is a suspension point,
+        // so `finish()` can run (writing the authoritative durationS and moving to .saving/.summary)
+        // while this ingest is parked. If it did, bail — otherwise the checkpoint below would clobber
+        // that finalized duration with `movingTimeS`.
+        guard state == .tracking || state == .autoPaused || state == .gpsLost else { return }
 
         if let last = lastCheckpoint, now.timeIntervalSince(last) >= Const.checkpointIntervalS {
             await sink.checkpoint(distanceM: processor.distanceM,
