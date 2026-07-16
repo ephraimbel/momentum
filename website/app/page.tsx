@@ -262,7 +262,7 @@ function DeepDives() {
 
         <div className="duo flip">
           <div className="duo-media">
-            <PhoneFrame small src="/shots/progress.png" alt="Progress trends: estimated VO2 max gauge and personalized heart-rate zones" />
+            <PhoneFrame small src="/shots/progress.png" alt="Your vitals: HRV, resting heart rate, respiratory rate, and wrist temperature, each within your personal normal range" />
           </div>
           <div>
             <p className="eyebrow">Your body, measured</p>
@@ -314,6 +314,35 @@ function DeepDives() {
           </div>
           <div className="duo-media">
             <PhoneFrame small src="/shots/heatmap-dark.png" alt="Personal heatmap tracing running routes across a dark city map" />
+          </div>
+        </div>
+
+        <div className="duo flip">
+          <div className="duo-media">
+            <PhoneFrame small src="/shots/fuel.png" alt="Fuel dashboard: daily calories with carbs, protein, fat, and sodium rings and a plain-language meal log" />
+          </div>
+          <div>
+            <p className="eyebrow">Fuel, not a diet</p>
+            <h3>Eat to train — floors to hit, never numbers to fear.</h3>
+            <p>
+              Tell momentum what you ate in a sentence and it reads the carbs, protein, fat, and
+              sodium — then shows what today&apos;s training actually asks for. More carbs on a
+              long-run day, always fueling, never dieting.
+            </p>
+            <ul>
+              <li>
+                <span className="tick" aria-hidden />
+                Log a meal in plain words — no barcodes, no weighing
+              </li>
+              <li>
+                <span className="tick" aria-hidden />
+                Targets that move with your plan, not a one-size calorie cap
+              </li>
+              <li>
+                <span className="tick" aria-hidden />
+                Floors to hit, never ceilings to fear — with a RED-S-aware guard
+              </li>
+            </ul>
           </div>
         </div>
       </div>
