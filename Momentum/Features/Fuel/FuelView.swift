@@ -48,13 +48,14 @@ struct FuelView: View {
                         refuelBanner
                             .transition(bannerTransition)
                     }
-                    // The fuel gauges first (five rings drawing toward their floors), then the
-                    // composer — the page's real hero (Amy: entry first) — then the readout strip;
-                    // tap it for the story. The look-back journal lives behind the calendar button.
-                    ringsRow.reveal(0)
-                    composer.reveal(0.06)
-                    readoutStrip.reveal(0.12)
-                    todaysMeals.reveal(0.18)
+                    // The dashboard reads top-down: the day's energy, its verdict (the strip
+                    // judges the WHOLE day, so it lives up here), the gauges — then the composer
+                    // (Amy: entry next) and the journal. History lives behind the calendar button.
+                    kcalHeadline.reveal(0)
+                    readoutStrip.reveal(0.05)
+                    ringsRow.reveal(0.10)
+                    composer.reveal(0.16)
+                    todaysMeals.reveal(0.22)
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
@@ -346,6 +347,31 @@ struct FuelView: View {
         }
     }
 
+    // MARK: The day's energy — one perfectly centered number (floors live in the strip + sheet)
+
+    private var kcalHeadline: some View {
+        let r = readout
+        return VStack(spacing: 2) {
+            Text(r.kcal.formatted())
+                .font(.display(30, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                .contentTransition(.numericText())
+            Text(r.kcalIsGoal ? "kcal goal" : "kcal")
+                .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                .contentTransition(.opacity)
+            if let note = r.goalNote {
+                Text(note)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(Motion.standard, value: r.kcal)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Energy")
+        .accessibilityValue("about \(r.kcal) of \(r.kcalFloor) kilocalories")
+    }
+
     // MARK: The fuel gauges — energy as the headline number, four rings beneath
 
     /// Calories lead as a plain display numeral (the day's energy, Amy's big number); beneath it
@@ -356,21 +382,6 @@ struct FuelView: View {
         let r = readout
         let m = r.micros
         return VStack(spacing: Theme.Space.sm) {
-            VStack(spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(r.kcal.formatted())
-                        .font(.display(26, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                        .contentTransition(.numericText())
-                    Text(r.kcalIsGoal ? "of \(r.kcalFloor.formatted()) kcal today" : "of \(r.kcalFloor.formatted())+ kcal")
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                if let note = r.goalNote {
-                    Text(note)
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                        .transition(.opacity)
-                }
-            }
-            .frame(maxWidth: .infinity)
             // Macros up top; the endurance row beneath (sweat · blood · bone). Potassium and
             // magnesium stay in the data but off the page — trimmed to what athletes act on.
             HStack(alignment: .top, spacing: 0) {

@@ -9,11 +9,11 @@ import SwiftUI
 extension Theme {
     enum Fuel {
         static let carbs = Color(hex: "D5A017")     // honey gold
-        static let protein = Color(hex: "1E90C0")    // ice
+        static let protein = Color(hex: "2E8CE8")    // bright azure
         static let fat = Color(hex: "C96F3B")        // peach
         static let sodium = Color(hex: "9A5BD6")     // lilac
         static let iron = Color(hex: "C4586B")       // garnet rose — blood, never alarm-red
-        static let calcium = Color(hex: "18A0A8")    // luminous teal
+        static let calcium = Color(hex: "2FA96C")    // spring mint — bone-builder green
         // Collected but not displayed (trimmed 2026-07-16 — least actionable for endurance):
         static let potassium = Color(hex: "5B6BD6")  // periwinkle
         static let magnesium = Color(hex: "2E9E6B")  // mint

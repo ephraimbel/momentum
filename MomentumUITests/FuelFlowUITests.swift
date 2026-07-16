@@ -131,8 +131,8 @@ final class FuelFlowUITests: XCTestCase {
         shot(app, "6a-goals-leaner")
         app.buttons["Save"].tap()
 
-        // The headline now reads a goal, not a floor.
-        let goalLine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "kcal today")).firstMatch
+        // The headline's caption now reads a goal, not the classic floor.
+        let goalLine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "kcal goal")).firstMatch
         XCTAssertTrue(goalLine.waitForExistence(timeout: 6), "Energy headline didn't switch to the goal.")
         shot(app, "6b-goal-live")
     }
