@@ -116,18 +116,21 @@ struct ReadinessStrip: View {
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
-    /// 44pt mini ring — mint ink; the earned iridescent fill appears only at Primed (§6).
+    /// 44pt mini ring — the bright band color with its soft glow (matching the hero ring);
+    /// the earned iridescent fill still appears only at Primed (§6).
     private var miniRing: some View {
         let score = self.score ?? 0
+        let color = Theme.Health.readinessColor(RecoveryModel.band(score))
         return ZStack {
-            Circle().stroke(Theme.Health.recoveryWash.opacity(
-                colorScheme == .dark ? 0.34 : 0.5), lineWidth: 5)
+            Circle().stroke(color.opacity(
+                colorScheme == .dark ? 0.18 : 0.14), lineWidth: 5)
             if score > 0 {
                 Circle()
                     .trim(from: 0, to: CGFloat(score) / 100)
                     .stroke(style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                    .foregroundStyle(Theme.Health.recoveryInk)
+                    .foregroundStyle(color)
                     .rotationEffect(.degrees(-90))
+                    .shadow(color: color.opacity(0.5), radius: 6)
                     .overlay {
                         if primed {
                             IridescentView(intensity: 0.9, isStatic: reduceMotion)

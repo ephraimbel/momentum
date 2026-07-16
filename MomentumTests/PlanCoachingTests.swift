@@ -573,13 +573,19 @@ struct PlanCoachingTests {
         #expect(next.name.isEmpty)
         // The race result set the paces (3:00 marathon ⇒ Riegel 5k ≈ 225 s/km, was 330).
         #expect(abs(next.p5kSPerKm - 225) < 3, "race result should recalibrate, got \(next.p5kSPerKm)")
-        // Marathon ⇒ the new block opens with a 2-week recovery lead-in, all easy.
+        // Marathon ⇒ the new block opens with a 2-week recovery lead-in, all easy. The finished
+        // race itself carries over as COMPLETED history (this week's story survives the rebuild) —
+        // the invariant is about what's PRESCRIBED, so completed sessions are excluded.
         #expect(next.weekPhases.prefix(2).allSatisfy { $0 == PlanPhase.recovery.rawValue })
         let cal = Calendar.current
         let fortnight = cal.date(byAdding: .day, value: 14, to: cal.startOfDay(for: Date()))!
-        let leadIn = next.sessions.filter { $0.date < fortnight && $0.discipline == .running }
+        let leadIn = next.sessions.filter {
+            $0.date < fortnight && $0.discipline == .running && $0.status != .completed
+        }
         #expect(!leadIn.isEmpty)
         #expect(leadIn.allSatisfy { !($0.runType?.isQuality ?? false) })
+        // And the race the athlete just ran is still on the board, completed — never erased.
+        #expect(next.sessions.contains { $0.runType == .race && $0.status == .completed })
         // Idempotent: the race is behind them — a second pass changes nothing.
         #expect(PlanService.completeRace(for: profile, today: Date(), in: ctx) == nil)
     }
@@ -607,5 +613,47 @@ struct PlanCoachingTests {
         #expect(PlanService.completeRace(for: profile, today: Date(), in: ctx) == nil)
         #expect(profile.raceDate != nil)                      // the goal stands until the day passes
         #expect(profile.plan?.blockIndex == 0)
+    }
+
+    // MARK: Rebuild keeps this week's finished work (Plan Settings' "Rebuild plan")
+
+    @Test func rebuildCarriesThisWeeksCompletedSessions() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let profile = UserProfile()
+        profile.distanceUnit = "metric"
+        profile.disciplines = ["running"]
+        profile.goal = .endurance
+        profile.daysPerWeek = 4
+        ctx.insert(profile)
+        PlanService.regenerate(for: profile, in: ctx)
+        let plan = try #require(profile.plan)
+
+        // Complete a session earlier THIS week (backdate it to the week's start so the rebuild
+        // happens "later in the week"), and one from BEFORE this week (older history).
+        let weekStart = try #require(cal.dateInterval(of: .weekOfYear, for: Date())?.start)
+        let doneThisWeek = try #require(plan.sessions.min { $0.date < $1.date })
+        doneThisWeek.date = weekStart
+        doneThisWeek.status = .completed
+        let doneID = doneThisWeek.id
+        let oldDone = PlannedSession()
+        oldDone.date = cal.date(byAdding: .day, value: -10, to: Date())!
+        oldDone.discipline = .running
+        oldDone.status = .completed
+        ctx.insert(oldDone)
+        plan.sessions.append(oldDone)
+        try ctx.save()
+
+        // The Plan Settings sheet's structural save path.
+        PlanService.rebuild(for: profile, in: ctx)
+
+        let next = try #require(profile.plan)
+        // Monday's finished run is still on the new plan — never a retroactive "Rest day".
+        #expect(next.sessions.contains { $0.id == doneID && $0.status == .completed })
+        // Older history stays with the replaced block (the strip anchors on the new block).
+        #expect(!next.sessions.contains { $0.id == oldDone.id })
+        // And the new block still generated real upcoming work.
+        #expect(next.sessions.contains { $0.status == .planned })
     }
 }

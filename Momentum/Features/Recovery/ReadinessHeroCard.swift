@@ -94,7 +94,7 @@ struct ReadinessHeroCard: View {
         VStack(spacing: Theme.Space.md) {
             ZStack {
                 ring(progress: sweep * target,
-                     primed: readiness.band == .primed,
+                     band: readiness.band,
                      dashedFill: checkinOnly)
                 VStack(spacing: Theme.Space.xxs) {
                     AnimatedCounter(value: sweep * Double(readiness.score)) { "\(Int($0.rounded()))" }
@@ -161,29 +161,34 @@ struct ReadinessHeroCard: View {
 
     // MARK: The ring
 
-    /// Mint-ink fill on a mint-wash track (`trackOpacity`), hairline ticks at the band cuts. At `.primed` the
-    /// fill is the earned iridescent mesh (its 8s ambient loop and Reduce Motion freeze are
-    /// IridescentView's own); everywhere below, mint ink — today's always-iridescent readiness
-    /// ring is retired by §6's earned-only rule.
+    /// Band-colored fill on a band-tinted track, hairline ticks at the band cuts. The ring wears
+    /// the BRIGHT readiness ramp (`Theme.Health.readinessColor` — Bevel-class, user call
+    /// 2026-07-16) with a soft same-color glow, so the stage reads before the number does. At
+    /// `.primed` the fill is still the earned iridescent mesh (its 8s ambient loop and Reduce
+    /// Motion freeze are IridescentView's own), riding the same electric-green glow.
     @ViewBuilder
-    private func ring(progress: Double, primed: Bool, dashedFill: Bool) -> some View {
+    private func ring(progress: Double, band: RecoveryModel.Readiness, dashedFill: Bool) -> some View {
         let style = StrokeStyle(lineWidth: Self.ringWidth,
                                 lineCap: dashedFill ? .butt : .round,
                                 dash: dashedFill ? [4, 7] : [])
+        let color = Theme.Health.readinessColor(band)
         ZStack {
             Circle()
-                .stroke(Theme.Health.recoveryWash.opacity(trackOpacity), lineWidth: Self.ringWidth)
+                .stroke(color.opacity(trackOpacity * 0.55), lineWidth: Self.ringWidth)
                 .frame(width: Self.ringDiameter, height: Self.ringDiameter)
                 .opacity(trackShown ? 1 : 0)
 
-            if primed {
+            if band == .primed {
                 IridescentView(intensity: 0.95)
                     .mask { fillArc(progress, style: style) }
+                    .shadow(color: color.opacity(0.45), radius: 12)
                 sweepGlint
                     .mask { fillArc(progress, style: style) }
             } else {
                 fillArc(progress, style: style)
-                    .foregroundStyle(Theme.Health.recoveryInk)
+                    .foregroundStyle(color)
+                    // The glow — a static same-color soft shadow, not motion (Reduce Motion safe).
+                    .shadow(color: color.opacity(0.55), radius: 10)
             }
 
             ticks.opacity(trackShown ? 1 : 0)
@@ -238,8 +243,10 @@ struct ReadinessHeroCard: View {
             ForEach(Array(days.enumerated()), id: \.offset) { i, score in
                 ZStack {
                     if let score {
+                        // Each day wears its own band color (the bright ramp) — the week's
+                        // shape reads as color, not just intensity.
                         Circle()
-                            .fill(Theme.Health.recoveryInk.opacity(0.25 + 0.75 * Double(score) / 100))
+                            .fill(Theme.Health.readinessColor(RecoveryModel.band(score)))
                             .frame(width: 8, height: 8)
                     } else {
                         Circle()

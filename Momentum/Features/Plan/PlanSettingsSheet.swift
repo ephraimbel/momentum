@@ -66,11 +66,14 @@ struct PlanSettingsSheet: View {
     }
 
     /// Anything the generator reads changed → save rebuilds the upcoming weeks.
+    /// The race-date comparison is DAY-granular: `newRaceDate` is normalized to startOfDay, but a
+    /// stored `profile.raceDate` can carry a time component (onboarding's date math) — comparing
+    /// raw dates made an untouched sheet read "Rebuild plan" and rebuild on a rename.
     private var structural: Bool {
         goal != profile.goal || days != profile.daysPerWeek
             || minutes != profile.sessionMinutes || equipment != profile.equipment
             || newRaceDistanceM != profile.raceDistanceM
-            || newRaceDate != profile.raceDate
+            || newRaceDate != profile.raceDate.map { Calendar.current.startOfDay(for: $0) }
             || newGoalFinishTimeS != profile.goalFinishTimeS
             || intensity.rawValue != (profile.planIntensity ?? PlanIntensity.balanced.rawValue)
             || (hybrid && hybridPriority.rawValue != (profile.hybridPriority ?? HybridPriority.balanced.rawValue))

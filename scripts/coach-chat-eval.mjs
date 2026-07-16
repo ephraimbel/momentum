@@ -11,7 +11,7 @@
 //   EVAL_URL="https://<ref>.supabase.co/functions/v1/coach-chat" \
 //   EVAL_BEARER="<anon or service key>" node scripts/coach-chat-eval.mjs
 //
-// Or against a LOCAL serve (needs Docker + ANTHROPIC_API_KEY):
+// Or against a LOCAL serve (needs Docker + GEMINI_API_KEY):
 //   supabase functions serve coach-chat --env-file supabase/.env.local
 //   EVAL_URL="http://127.0.0.1:54321/functions/v1/coach-chat" EVAL_BEARER="dev" node scripts/coach-chat-eval.mjs
 //

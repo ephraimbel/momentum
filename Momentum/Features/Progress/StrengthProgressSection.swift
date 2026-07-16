@@ -15,6 +15,7 @@ struct StrengthProgressSection: View {
     @State private var selectedLift: String?
     @State private var appeared = false
     @State private var model: Model?
+    @State private var scrubE1RM = ChartScrubState()   // tap-to-inspect (shared Trends mechanic)
 
     private var hasStrength: Bool { workouts.contains { $0.type.isStrengthStyle && $0.strength != nil } }
 
@@ -171,7 +172,7 @@ struct StrengthProgressSection: View {
                             .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                             .interpolationMethod(.monotone)
                     }
-                    if let p = series.last, appeared {
+                    if let p = series.last, appeared, scrubE1RM.pinned == nil {
                         PointMark(x: .value("Date", p.date), y: .value("e1RM", disp(p.e1RM)))
                             .foregroundStyle(IridescentMaterial()).symbolSize(90)
                             .annotation(position: .top, spacing: 6) {
@@ -181,7 +182,13 @@ struct StrengthProgressSection: View {
                                     .background(Capsule().fill(Theme.surface).overlay(Capsule().stroke(Theme.hairline)))
                             }
                     }
+                    if let sel = scrubE1RM.pinned, let p = series.first(where: { $0.date == sel }) {
+                        TrendScrub.mark(at: sel,
+                                        value: Formatters.weight(kg: p.e1RM, unit: weightUnit),
+                                        label: sel.formatted(.dateTime.month(.abbreviated).day()))
+                    }
                 }
+                .chartXSelection(value: $scrubE1RM.selection(dates: series.map(\.date)))
                 .chartYScale(domain: (lo - pad)...(hi + pad))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in

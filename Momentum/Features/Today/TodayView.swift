@@ -426,6 +426,16 @@ struct TodayView: View {
         if ProcessInfo.processInfo.arguments.contains("--loop") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { enterLoopMode(start: nil) }
         }
+        // --plan-confirm: open the confirm sheet for the next strength session (else today's
+        // pending) — verifies the full-workout preview without tapping the plan row.
+        if ProcessInfo.processInfo.arguments.contains("--plan-confirm") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                let strength = plan?.sessions
+                    .filter { $0.discipline == .strength && $0.status != .completed && !$0.strengthTargets.isEmpty }
+                    .min(by: { $0.date < $1.date })
+                if let target = strength ?? pendingToday { confirmingPlan = target }
+            }
+        }
         // --ui-test-structured-run: launch straight into a guided 6×400 m interval session so the
         // structured-workout flow (step banner + Skip advancement + cues) is drivable deterministically.
         if ProcessInfo.processInfo.arguments.contains("--ui-test-structured-run") {
@@ -458,9 +468,13 @@ struct TodayView: View {
     // MARK: Plan confirmation
 
     /// A calm confirmation before a planned session begins — review the prescription, then Start.
+    /// Strength sessions list the ENTIRE workout (every exercise, sets × reps, suggested start
+    /// weight) so the athlete sees exactly what's ahead before "Start lifting"; the sheet grows to
+    /// fit and long sessions scroll inside it.
     private func planConfirmSheet(_ session: PlannedSession) -> some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer(minLength: 0)
+        let exercises = session.strengthTargets.sorted { $0.order < $1.order }
+        return VStack(spacing: Theme.Space.lg) {
+            if exercises.isEmpty { Spacer(minLength: 0) }
             ZStack {
                 Circle().fill(IridescentMaterial()).opacity(0.3).frame(width: 72, height: 72)
                 Image(systemName: PlanCoaching.icon(for: session))
@@ -480,7 +494,18 @@ struct TodayView: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
+            if exercises.isEmpty {
+                Spacer(minLength: 0)
+            } else {
+                // The whole prescription, in the Plan detail sheet's row grammar — what you'll
+                // lift, how many sets and reps, and the suggested opening weight.
+                ScrollView {
+                    VStack(spacing: Theme.Space.sm) {
+                        ForEach(exercises, id: \.persistentModelID) { confirmExerciseRow($0) }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
             VStack(spacing: Theme.Space.sm) {
                 OversizedButton(title: planStartCTA(session)) {
                     pendingPlanStart = session
@@ -492,9 +517,43 @@ struct TodayView: View {
         }
         .padding(Theme.Space.lg)
         .frame(maxWidth: .infinity)
-        .presentationDetents([.height(380)])
+        .presentationDetents([.height(confirmSheetHeight(exerciseCount: exercises.count))])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+    }
+
+    /// 380pt for the calm cardio confirm; strength grows ~66pt per exercise row (name + suggested
+    /// start weight runs taller than a bare row), capped so a big full-body day scrolls inside the
+    /// sheet instead of swallowing the screen.
+    private func confirmSheetHeight(exerciseCount: Int) -> CGFloat {
+        guard exerciseCount > 0 else { return 380 }
+        return min(700, 380 + CGFloat(exerciseCount) * 66)
+    }
+
+    /// One prescribed exercise: name + suggested start weight on the left, sets × reps on the right
+    /// (mirrors SessionDetailSheet's row so the prescription reads identically everywhere).
+    private func confirmExerciseRow(_ ex: PlannedExercise) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ex.exercise?.name ?? "Exercise")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                if let w = StrengthSuggest.label(for: ex, profile: profiles.first) {
+                    Text("Start \(w)")
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+            }
+            Spacer(minLength: Theme.Space.sm)
+            Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.inkSecondary)
+        }
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+        }
     }
 
     /// What marks a session as PLAN work wherever it surfaces — the plan's own name when the
@@ -847,7 +906,10 @@ struct TodayView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: Theme.Space.sm) {
-                        MapLayersButton(style: $mapStyle, onWorld: { enterWorld() },
+                        // No World/globe entry — the social layer is gone (2026-07-16); the picker
+                        // is purely map styles. The globe machinery below stays back-burnered
+                        // (reachable only via the DEBUG --world deep link).
+                        MapLayersButton(style: $mapStyle,
                                         previewCenter: locator.lastCoordinate)
                         recenterButton
                     }

@@ -233,8 +233,6 @@ enum MapStylePreviews {
 /// by every map screen so the affordance is identical everywhere.
 struct MapLayersButton: View {
     @Binding var style: MapStyleOption
-    /// When set, the picker offers "World" — fly out to the globe of everyone on momentum (Today only).
-    var onWorld: (() -> Void)? = nil
     /// Center for the style preview thumbnails — pass the map's focus so previews show *your* area.
     var previewCenter: CLLocationCoordinate2D? = nil
 
@@ -246,13 +244,13 @@ struct MapLayersButton: View {
     #endif
 
     var body: some View {
-        Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+        // A map glyph, not the 3D-layers stack — this button picks the MAP's look (user call 2026-07-16).
+        Image(systemName: "map").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
             .frame(width: 44, height: 44)
             .momentumGlass(in: Circle())
             .mapSafeTap("Map style") { showPicker = true }
         .sheet(isPresented: $showPicker) {
-            MapStylePickerSheet(style: $style, previewCenter: previewCenter,
-                                onWorld: onWorld.map { world in { showPicker = false; world() } })
+            MapStylePickerSheet(style: $style, previewCenter: previewCenter)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -265,7 +263,6 @@ struct MapLayersButton: View {
 struct MapStylePickerSheet: View {
     @Binding var style: MapStyleOption
     var previewCenter: CLLocationCoordinate2D? = nil
-    var onWorld: (() -> Void)? = nil
     @Environment(PaywallController.self) private var paywall
 
     /// Previews frame the athlete's area when the host map knows it; a scenic downtown otherwise.
@@ -281,7 +278,8 @@ struct MapStylePickerSheet: View {
                     .padding(.top, Theme.Space.lg)
                 group("REALISTIC", MapStyleOption.realisticSet)
                 group("CLASSIC", MapStyleOption.classicSet)
-                if let onWorld { worldRow(onWorld) }
+                // The "World" globe row is gone with the social layer (2026-07-16) — the picker is
+                // purely map styles now.
             }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.bottom, Theme.Space.xl)
@@ -319,30 +317,6 @@ struct MapStylePickerSheet: View {
         }
     }
 
-    private func worldRow(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: "globe.americas.fill")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Theme.surface))
-                    .overlay(Circle().stroke(Theme.hairline))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("World").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text("Everyone on momentum, on the globe")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-            }
-            .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("World — see everyone on momentum")
-    }
 }
 
 /// One style card: the static snapshot preview with the name beneath; the selected card wears an

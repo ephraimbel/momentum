@@ -39,6 +39,7 @@ struct HealthSegmentView: View {
     @State private var model: Model?
     @State private var connecting = false
     @State private var showCheckin = false
+    @State private var showInjuryReport = false
     @State private var refresh = 0
     /// Session cache: Progress's `switch segment` destroys this view — and its `@State model` —
     /// on every segment flip, so each re-entry re-paid the skeleton + the full HealthKit + per-day
@@ -127,9 +128,16 @@ struct HealthSegmentView: View {
         }
         .sheet(isPresented: $showCheckin) {
             // The check-in saves through its own model context; the host's @Query then feeds a
-            // fresh `checkins` array back in and the task recomputes. Pain routing into the
-            // injury loop stays Today's surface — here the sheet simply completes.
-            CheckinSheet(profile: profile, onPain: {})
+            // fresh `checkins` array back in and the task recomputes. "Something hurts" keeps
+            // its promise here exactly like Today: the 0.35s beat lets the check-in sheet
+            // finish dismissing before the injury sheet presents (a bare onPain: {} shipped a
+            // haptic-then-nothing on an injury-reporting door — audit 2026-07-16).
+            CheckinSheet(profile: profile, onPain: {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showInjuryReport = true }
+            })
+        }
+        .sheet(isPresented: $showInjuryReport) {
+            InjuryReportSheet(profile: profile)
         }
     }
 

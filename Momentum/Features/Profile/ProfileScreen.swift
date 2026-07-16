@@ -20,13 +20,14 @@ struct ProfileScreen: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
-    #if DEBUG
-    // --profile-highlights: open on the Highlights face for sim verification.
-    @State private var gridTab: ProfileGridTab =
-        ProcessInfo.processInfo.arguments.contains("--profile-highlights") ? .highlights : .grid
-    #else
-    @State private var gridTab: ProfileGridTab = .grid
-    #endif
+    // Shared across BOTH live ProfileScreen instances (the Profile tab root and the Today-avatar
+    // push) so the Grid/Highlights face never diverges between entry points — per-instance
+    // @State meant picking Highlights on the tab, then opening via Today, showed Grid again.
+    @AppStorage("com.momentum.profile.gridTab") private var gridTabRaw = ProfileGridTab.grid.rawValue
+    private var gridTab: Binding<ProfileGridTab> {
+        Binding(get: { ProfileGridTab(rawValue: gridTabRaw) ?? .grid },
+                set: { gridTabRaw = $0.rawValue })
+    }
     @State private var immersive: ImmersiveStart?
     #if DEBUG
     // --share-card: open the share composer on the latest workout for sim verification.
@@ -87,7 +88,9 @@ struct ProfileScreen: View {
     var body: some View {
         ScrollViewReader { scroll in
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
+            // pinnedViews is what actually pins the Grid/Highlights tab bar (the Section header
+            // below) — without it the "pinned segmented control" scrolled away with the tiles.
+            LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
                 Group {
                     identity
                     if let profile, !profile.bio.isEmpty {
@@ -106,12 +109,12 @@ struct ProfileScreen: View {
                     // discipline mix, and consistency now live one tap away under "Highlights".
                     Section {
                         ProfileGrid(workouts: workouts, stats: stats, highlights: highlights,
-                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab,
+                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
                                     prWorkoutIds: Set(records.compactMap { $0.workout?.id })) { id in
                             immersive = ImmersiveStart(id: id)
                         }
                     } header: {
-                        ProfileGridTabBar(tab: $gridTab)
+                        ProfileGridTabBar(tab: gridTab)
                     }
                 }
             }
@@ -124,6 +127,11 @@ struct ProfileScreen: View {
         #if DEBUG
         // --profile-scroll-badges: bring the trophy case on screen for sim verification.
         .onAppear {
+            // --profile-highlights: open on the Highlights face for sim verification (the tab
+            // choice is @AppStorage-shared now, so the arg forces it rather than seeding init).
+            if ProcessInfo.processInfo.arguments.contains("--profile-highlights") {
+                gridTabRaw = ProfileGridTab.highlights.rawValue
+            }
             if ProcessInfo.processInfo.arguments.contains("--profile-scroll-badges") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                     withAnimation { scroll.scrollTo("profile-badges", anchor: .top) }

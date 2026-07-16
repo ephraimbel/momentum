@@ -12,12 +12,15 @@ enum ProfileGridTab: String, CaseIterable {
 struct ProfileGridTabBar: View {
     @Binding var tab: ProfileGridTab
     @Namespace private var underline
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(ProfileGridTab.allCases, id: \.self) { t in
                 Button {
-                    withAnimation(.easeOut(duration: 0.2)) { tab = t }
+                    // Reduce Motion: no underline slide / height animation — plain swap.
+                    if reduceMotion { tab = t }
+                    else { withAnimation(.easeOut(duration: 0.2)) { tab = t } }
                 } label: {
                     VStack(spacing: Theme.Space.sm) {
                         Image(systemName: t.icon).font(.system(size: 16, weight: .semibold))

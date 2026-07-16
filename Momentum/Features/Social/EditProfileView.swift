@@ -6,13 +6,34 @@ import PhotosUI
 /// that tune the engines (sex → anatomy figure; height/weight → fueling floors + calorie burn).
 /// The social matrix that used to live here (@handle, default visibility, sharing toggles,
 /// location granularity) left with the community back-burner; it returns with the feed.
-/// Writes straight to the SwiftData `UserProfile` and saves on Done.
+///
+/// Edits are STAGED in local state and written to the SwiftData `UserProfile` only on Done —
+/// editing the live model directly meant Cancel (and swipe-down) silently kept every change,
+/// including sex/height/weight that feed the anatomy figure and fueling engines.
 struct EditProfileView: View {
-    @Bindable var profile: UserProfile
+    let profile: UserProfile
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
 
     @State private var pickedAvatar: PhotosPickerItem?
+    // The staged copies — seeded from the profile once per presentation (the sheet view is
+    // created fresh each time it's shown, so State(initialValue:) is the right seed point).
+    @State private var name: String
+    @State private var bio: String
+    @State private var sex: String?
+    @State private var heightCm: Double?
+    @State private var bodyMassKg: Double?
+    @State private var avatarData: Data?
+
+    init(profile: UserProfile) {
+        self.profile = profile
+        _name = State(initialValue: profile.displayName)
+        _bio = State(initialValue: profile.bio)
+        _sex = State(initialValue: profile.sex)
+        _heightCm = State(initialValue: profile.heightCm)
+        _bodyMassKg = State(initialValue: profile.bodyMassKg)
+        _avatarData = State(initialValue: profile.avatarData)
+    }
 
     var body: some View {
         NavigationStack {
@@ -42,17 +63,17 @@ struct EditProfileView: View {
         VStack(spacing: Theme.Space.sm) {
             PhotosPicker(selection: $pickedAvatar, matching: .images) {
                 ZStack(alignment: .bottomTrailing) {
-                    AvatarView(photo: profile.avatarData, name: profile.displayName.isEmpty ? "You" : profile.displayName, size: 96)
+                    AvatarView(photo: avatarData, name: name.isEmpty ? "You" : name, size: 96)
                     Image(systemName: "camera.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.background)
                         .frame(width: 30, height: 30).background(Circle().fill(Theme.ink))
                         .overlay(Circle().stroke(Theme.background, lineWidth: 2))
                 }
             }
-            Text(profile.avatarData == nil ? "Add a profile photo" : "Change photo")
+            Text(avatarData == nil ? "Add a profile photo" : "Change photo")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-            if profile.avatarData != nil {
+            if avatarData != nil {
                 Button("Remove photo", role: .destructive) {
-                    profile.avatarData = nil; try? context.save(); Haptics.medium()
+                    avatarData = nil; Haptics.medium()
                 }
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
             }
@@ -62,8 +83,7 @@ struct EditProfileView: View {
 
     private func loadAvatar(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
-        profile.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
-        try? context.save()
+        avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
         Haptics.success()
     }
 
@@ -71,9 +91,9 @@ struct EditProfileView: View {
 
     private var identityCard: some View {
         VStack(spacing: 0) {
-            field("Name", text: $profile.displayName, placeholder: "Your name")
+            field("Name", text: $name, placeholder: "Your name")
             divider
-            field("Bio", text: $profile.bio, placeholder: "A line about you", axis: .vertical)
+            field("Bio", text: $bio, placeholder: "A line about you", axis: .vertical)
         }
         .padding(.horizontal, Theme.Space.lg)
         .background(card)
@@ -86,8 +106,8 @@ struct EditProfileView: View {
             Text("SEX").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
             HStack(spacing: Theme.Space.sm) {
                 ForEach(BiologicalSex.allCases) { s in
-                    let on = profile.sex == s.rawValue
-                    Button { Haptics.selection(); profile.sex = on ? nil : s.rawValue } label: {
+                    let on = sex == s.rawValue
+                    Button { Haptics.selection(); sex = on ? nil : s.rawValue } label: {
                         Text(s.label)
                             .font(.rounded(Theme.FontSize.body, weight: .bold))
                             .frame(maxWidth: .infinity).frame(height: 44)
@@ -130,25 +150,25 @@ struct EditProfileView: View {
             .frame(width: 40, height: 40).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
     }
 
-    private var heightInches: Double { (profile.heightCm ?? 172.72) / 2.54 }
+    private var heightInches: Double { (heightCm ?? 172.72) / 2.54 }
     private var heightLabel: String { let t = Int(heightInches.rounded()); return "\(t / 12)'\(t % 12)\"" }
     private func bumpHeight(_ up: Bool) {
         let inch = min(84, max(48, heightInches.rounded() + (up ? 1 : -1)))
-        profile.heightCm = inch * 2.54
+        heightCm = inch * 2.54
     }
 
     private var isLb: Bool { profile.weightUnit == WeightUnit.lb.rawValue }
     private var weightLabel: String {
-        let kg = profile.bodyMassKg ?? 72.5748
+        let kg = bodyMassKg ?? 72.5748
         return isLb ? "\(Int((kg * Formatters.lbPerKg).rounded())) lb" : "\(Int(kg.rounded())) kg"
     }
     private func bumpWeight(_ up: Bool) {
-        let kg = profile.bodyMassKg ?? 72.5748
+        let kg = bodyMassKg ?? 72.5748
         if isLb {
             let lb = (kg * Formatters.lbPerKg).rounded() + (up ? 5 : -5)
-            profile.bodyMassKg = min(400, max(80, lb)) * Formatters.kgPerLb
+            bodyMassKg = min(400, max(80, lb)) * Formatters.kgPerLb
         } else {
-            profile.bodyMassKg = min(180, max(35, kg.rounded() + (up ? 1 : -1)))
+            bodyMassKg = min(180, max(35, kg.rounded() + (up ? 1 : -1)))
         }
     }
 
@@ -178,9 +198,14 @@ struct EditProfileView: View {
         }
     }
 
+    /// The ONLY place staged edits touch the model — Cancel and interactive dismiss never reach it.
     private func save() {
-        profile.displayName = profile.displayName.trimmingCharacters(in: .whitespaces)
-        profile.bio = profile.bio.trimmingCharacters(in: .whitespaces)
+        profile.displayName = name.trimmingCharacters(in: .whitespaces)
+        profile.bio = bio.trimmingCharacters(in: .whitespaces)
+        profile.sex = sex
+        profile.heightCm = heightCm
+        profile.bodyMassKg = bodyMassKg
+        profile.avatarData = avatarData
         try? context.save()
         dismiss()
     }

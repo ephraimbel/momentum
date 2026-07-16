@@ -11,6 +11,14 @@ final class HealthService: HealthServing {
     private static let savedKey = "com.momentum.health.savedWorkoutIDs"
     private static let importedKey = "com.momentum.health.importedWorkoutIDs"
 
+    /// Forget the save/import dedupe ledgers — called by the data wipes. Without this, a
+    /// "Delete all data" reset left the sets in UserDefaults and a later "Import workouts"
+    /// silently skipped every previously imported workout ("No new workouts to import.").
+    static func resetDedupe(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: savedKey)
+        defaults.removeObject(forKey: importedKey)
+    }
+
     /// Types we write. Reads (HR, resting HR, body mass, steps) are requested so a later slice can
     /// personalize from them; the write set is what gates `isAuthorized`.
     private static let shareTypes: Set<HKSampleType> = [
@@ -241,6 +249,10 @@ final class HealthService: HealthServing {
             // A Garmin/Watch long run fulfills the plan exactly like a tracked one — credit it, so
             // the athlete who recorded on their watch doesn't find today's session still "open".
             PlanCoaching.creditWorkout(workout, to: plan, in: context)
+            // …and it can set records like a tracked one: imports bypass the save flows (the
+            // shelf's live writer) and the history backfill is one-shot, so without this every
+            // imported best after the first Progress visit was silently dropped.
+            RecordsBook.record(workout, in: context)
             count += 1
         }
 

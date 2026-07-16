@@ -45,21 +45,33 @@ struct PaywallView: View {
     ]
 
     var body: some View {
+        GeometryReader { geo in
+            // One scale drives the whole scrollable stack so the paywall reads *identically* on every
+            // iPhone — full-size on a 6.9" Pro Max, gently condensed on a 4.7" SE — instead of the
+            // plans getting shoved under the pinned CTA (and feature copy truncating) on short screens.
+            // 760 ≈ the safe-area height of a 6.1" (iPhone 16/17), so every modern phone stays at full
+            // scale and only the SE condenses; clamped so it never shrinks past legibility.
+            let s = min(1, max(0.8, geo.size.height / 760))
+            content(s)
+        }
+    }
+
+    private func content(_ s: CGFloat) -> some View {
         ScrollView {
             VStack(spacing: 0) {
-                lockup
-                    .padding(.top, Theme.Space.lg)
-                hero
-                    .padding(.top, Theme.Space.md + 2)
+                lockup(s)
+                    .padding(.top, Theme.Space.lg * s)
+                hero(s)
+                    .padding(.top, (Theme.Space.md + 2) * s)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
-                featureList
-                    .padding(.top, Theme.Space.md + 2)
+                featureList(s)
+                    .padding(.top, (Theme.Space.md + 2) * s)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
-                plans
-                    .padding(.top, Theme.Space.md + 2)
+                plans(s)
+                    .padding(.top, (Theme.Space.md + 2) * s)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
-            .padding(.horizontal, Theme.Space.xl)
+            .padding(.horizontal, max(Theme.Space.lg, Theme.Space.xl * s))
             .padding(.bottom, Theme.Space.sm)
         }
         .scrollIndicators(.hidden)
@@ -71,9 +83,17 @@ struct PaywallView: View {
                 fineprint
             }
             .padding(.horizontal, Theme.Space.xl)
-            .padding(.top, Theme.Space.md)
-            // No bar, no chrome — the CTA sits directly on the flowing canvas (content fits one
-            // screen, so nothing ever scrolls beneath it).
+            .padding(.top, Theme.Space.lg)
+            // A soft scrim fades the canvas up under the CTA so that on a short screen — where the
+            // content can still scroll a hair behind the (chromeless) button — anything passing under
+            // it dissolves cleanly instead of peeking through. Invisible on tall phones (nothing
+            // scrolls there); ignores the home-indicator inset so the fade reaches the very bottom.
+            .background {
+                LinearGradient(colors: [.clear, Theme.background.opacity(0.9), Theme.background],
+                               startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
             .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
         }
         .background { flowingBackground }
@@ -117,11 +137,11 @@ struct PaywallView: View {
 
     // MARK: Brand lockup — the wordmark, centered
 
-    private var lockup: some View {
-        VStack(spacing: Theme.Space.sm) {
+    private func lockup(_ s: CGFloat) -> some View {
+        VStack(spacing: Theme.Space.sm * s) {
             // Always the white wordmark — this surface is permanently dark.
             Image("WordmarkWhite")
-                .resizable().interpolation(.high).scaledToFit().frame(height: 22)
+                .resizable().interpolation(.high).scaledToFit().frame(height: 22 * s)
             Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(Color(hex: "0E0E12"))
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
                 .background(Capsule().fill(Theme.route))
@@ -134,16 +154,16 @@ struct PaywallView: View {
 
     // MARK: Hero
 
-    private var hero: some View {
-        VStack(spacing: Theme.Space.sm) {
+    private func hero(_ s: CGFloat) -> some View {
+        VStack(spacing: Theme.Space.sm * s) {
             // Serif to match the wordmark above it (user call 2026-07-10) — the hero reads as one
             // brand voice from lockup through subheader.
             Text("Run smarter.\nRace faster.")
-                .font(.serif(31, weight: .semibold)).foregroundStyle(Theme.ink)
+                .font(.serif(31 * s, weight: .semibold)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center).lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)
             Text("The full adaptive engine, built around\nyour body, your goal, your life.")
-                .font(.serif(Theme.FontSize.caption + 2, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .font(.serif((Theme.FontSize.caption + 2) * s, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -152,26 +172,28 @@ struct PaywallView: View {
 
     // MARK: The full feature list — everything free is missing
 
-    private var featureList: some View {
+    private func featureList(_ s: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(Self.features.enumerated()), id: \.offset) { i, item in
                 if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-                HStack(spacing: Theme.Space.md) {
+                // Tighter internal chrome than the design width so the full copy fits even on a
+                // 4.7" SE without truncating; `minimumScaleFactor` is the last-ditch safety net.
+                HStack(spacing: Theme.Space.sm + 2) {
                     Image(systemName: item.0)
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
                         .frame(width: 22)
                     Text(item.1)
                         .font(.rounded(14, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.82)
-                    Spacer(minLength: Theme.Space.sm)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Spacer(minLength: Theme.Space.xs)
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.route)
                 }
-                .padding(.vertical, Theme.Space.sm + 1)
+                .padding(.vertical, (Theme.Space.sm + 1) * s)
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(.horizontal, Theme.Space.lg)
+        .padding(.horizontal, Theme.Space.md)
         .background {
             // A barely-there glass card lifts the list off the wash without deadening it.
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
@@ -183,14 +205,14 @@ struct PaywallView: View {
 
     // MARK: Plans
 
-    private var plans: some View {
-        VStack(spacing: Theme.Space.sm) {
-            planCard(offering.annual, period: .annual)
-            planCard(offering.monthly, period: .monthly)
+    private func plans(_ s: CGFloat) -> some View {
+        VStack(spacing: Theme.Space.sm * s) {
+            planCard(offering.annual, period: .annual, s: s)
+            planCard(offering.monthly, period: .monthly, s: s)
         }
     }
 
-    private func planCard(_ p: PaywallProduct, period: PaywallProduct.Period) -> some View {
+    private func planCard(_ p: PaywallProduct, period: PaywallProduct.Period, s: CGFloat) -> some View {
         let isSelected = selected == period
         return Button {
             guard selected != period else { return }
@@ -224,7 +246,7 @@ struct PaywallView: View {
                 }
             }
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.vertical, Theme.Space.sm + 3)
+            .padding(.vertical, (Theme.Space.sm + 3) * s)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 shape.fill(.ultraThinMaterial)

@@ -118,6 +118,27 @@ extension Theme {
         /// warm, never neon. Inks are unchanged between modes.
         static let darkWashOpacity = 0.16
 
+        // MARK: Readiness band ramp (hero ring, week dots, Trends strip) — deliberately
+        // BRIGHTER than `recoveryInk` (user call 2026-07-16: Bevel-class, "almost glowing";
+        // rings glow via a soft same-color shadow). Ring/dot MARKS only — numerals and band
+        // words stay monochrome ink (the bright hues fail text contrast on white) — and red
+        // never appears (no-shame): the low bands wear amber → orange → coral.
+        static let readinessReady    = Color(hex: "00E676")   // electric spring green
+        static let readinessModerate = Color(hex: "FFC53D")   // bright amber
+        static let readinessStrained = Color(hex: "FF9142")   // bright orange
+        static let readinessDepleted = Color(hex: "FF7A66")   // deep coral — orange family, never alarm red
+
+        /// The bright mark color for a readiness band. Primed maps to the electric green too —
+        /// its ring fill stays the earned iridescent mesh (§6); this colors its glow and dots.
+        static func readinessColor(_ band: RecoveryModel.Readiness) -> Color {
+            switch band {
+            case .primed, .ready: readinessReady
+            case .moderate:       readinessModerate
+            case .strained:       readinessStrained
+            case .depleted:       readinessDepleted
+            }
+        }
+
         // MARK: Sleep-stage depth ramp — single-hue periwinkle, deepest stage darkest
         // (SleepCard stage bar; Awake renders as `Theme.hairline`, not a ramp step).
         static let sleepDeep = Color(hex: "5B6BD6")  // deep — the body shift

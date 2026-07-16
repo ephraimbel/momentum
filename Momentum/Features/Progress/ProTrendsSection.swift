@@ -282,6 +282,8 @@ struct FitnessFreshnessCard: View {
     let points: [TrendAnalytics.DayPoint]
     var animate: Bool = true
 
+    @State private var scrub = ChartScrubState()   // tap-to-inspect any day (shared Trends mechanic)
+
     private var current: TrendAnalytics.DayPoint? { points.last }
 
     /// Start the plot where fitness first accrues — for an athlete with only a few weeks of
@@ -364,7 +366,13 @@ struct FitnessFreshnessCard: View {
                 PointMark(x: .value("Day", c.date), y: .value("Fitness", c.ctl))
                     .foregroundStyle(IridescentMaterial()).symbolSize(90)
             }
+            if let sel = scrub.pinned, let p = pts.first(where: { $0.date == sel }) {
+                TrendScrub.mark(at: sel,
+                                value: "Fitness \(Int(p.ctl.rounded())) · Fatigue \(Int(p.atl.rounded()))",
+                                label: sel.formatted(.dateTime.month(.abbreviated).day()))
+            }
         }
+        .chartXSelection(value: $scrub.selection(dates: pts.map(\.date)))
         .chartYScale(domain: 0...max(1, maxY * 1.12))
         .chartXAxis {
             AxisMarks(values: .stride(by: .month)) { _ in
@@ -425,6 +433,8 @@ struct TrendChartCard: View {
     var tint: Color = Theme.ink
     let format: (Double) -> String
 
+    @State private var scrub = ChartScrubState()   // tap-to-inspect any week (shared Trends mechanic)
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             HStack(alignment: .firstTextBaseline) {
@@ -484,12 +494,16 @@ struct TrendChartCard: View {
                     .foregroundStyle(tint).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
-            if let wk = series.last, animate {
+            if let wk = series.last, animate, scrub.pinned == nil {
                 PointMark(x: .value("Week", wk.weekStart), y: .value("v", wk.value))
                     .foregroundStyle(IridescentMaterial()).symbolSize(90)
                     .annotation(position: .top, spacing: 6) { valuePill(format(wk.value)) }
             }
+            if let sel = scrub.pinned, let wk = series.first(where: { $0.weekStart == sel }) {
+                TrendScrub.mark(at: sel, value: format(wk.value), label: TrendScrub.weekLabel(sel))
+            }
         }
+        .chartXSelection(value: $scrub.selection(dates: series.map(\.weekStart)))
         .chartYScale(domain: (lo - pad)...(hi + pad))
         .chartXAxis {
             AxisMarks(values: .stride(by: .weekOfYear, count: max(2, series.count / 5))) { _ in

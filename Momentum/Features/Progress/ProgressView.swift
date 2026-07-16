@@ -17,6 +17,11 @@ struct ProgressScreen: View {
     @Environment(AppRouter.self) private var router   // consumes pendingProgressSegment (one-shot)
     @State private var animateCharts = false
     @State private var adjustedPlan = false
+    // Tap-to-inspect cursors, one per Trends chart (shared mechanic in ChartScrub.swift).
+    @State private var scrubDistance = ChartScrubState()
+    @State private var scrubLoad = ChartScrubState()
+    @State private var scrubPace = ChartScrubState()
+    @State private var scrubSeason = ChartScrubState()
     @State private var segment: Segment = {
         #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
         let a = ProcessInfo.processInfo.arguments
@@ -297,6 +302,8 @@ struct ProgressScreen: View {
                 cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
                 refreshWindowed()
             }
+            // A pinned day/week from the old window means nothing in the new one.
+            scrubDistance = .init(); scrubLoad = .init(); scrubPace = .init()
         }
         .task(id: aggregateKey) {
             if aggregatedForKey != aggregateKey {
@@ -437,7 +444,7 @@ struct ProgressScreen: View {
                     // FREE — distance is the one chart everyone gets: total + miles per week.
                     HStack { Spacer(); trendRangePicker }
                         .reveal(0.02)
-                    distanceChart(insights).reveal(0.03)
+                    distanceChart(insights).reveal(0.03).id("distanceChart")
                     // PRO — the fitness read (VO₂max), heart-rate zones, load/pace/intensity, the
                     // deep-dive analytics, and the coaching. One unlock opens the whole premium page.
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -470,6 +477,17 @@ struct ProgressScreen: View {
                 if reduceMotion { animateCharts = true }                               // no chart build-in
                 else { withAnimation(.easeOut(duration: 0.9)) { animateCharts = true } }
                 #if DEBUG   // deterministic scroll to Form/Race for sim verification
+                // --scrub-demo: pin the middle point on the trend charts (simctl can't tap a chart).
+                if ProcessInfo.processInfo.arguments.contains("--scrub-demo") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        guard let insights = cachedInsights else { return }
+                        let pts = trendPoints(insights)
+                        if pts.count > 2 { scrubDistance.pinned = pts[pts.count / 2].date }
+                        let paced = pts.filter { $0.avgPaceSPerKm > 0 }
+                        if paced.count > 1 { scrubPace.pinned = paced[paced.count / 2].date }
+                        if pts.count > 2 { scrubLoad.pinned = pts[pts.count / 2].date }
+                    }
+                }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-zones") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("hrZones", anchor: .top) }
                 }
@@ -496,6 +514,9 @@ struct ProgressScreen: View {
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-charts") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("charts", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-distance") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { proxy.scrollTo("distanceChart", anchor: .center) }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-race") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
@@ -1463,19 +1484,26 @@ struct ProgressScreen: View {
         return chartSection(trendIsDaily ? "Daily pace" : "Weekly pace", subtitle: subtitle,
                             explainer: MetricExplainers.weeklyPace) {
             if paced.count < 2 { notEnoughData } else {
-                Chart(paced) { p in
-                    LineMark(x: .value("Date", p.date, unit: trendUnit),
-                             y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                        .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                        .interpolationMethod(.monotone)
-                    PointMark(x: .value("Date", p.date, unit: trendUnit),
-                              y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                        .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
-                        .symbolSize(p.date == last ? 90 : 22)
-                        .annotation(position: .top, spacing: 6) {
-                            if animateCharts, p.date == last { valuePill(paceMMSS(p.avgPaceSPerKm)) }
-                        }
+                Chart {
+                    ForEach(paced) { p in
+                        LineMark(x: .value("Date", p.date, unit: trendUnit),
+                                 y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                            .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            .interpolationMethod(.monotone)
+                        PointMark(x: .value("Date", p.date, unit: trendUnit),
+                                  y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
+                            .symbolSize(p.date == last ? 90 : 22)
+                            .annotation(position: .top, spacing: 6) {
+                                if animateCharts, scrubPace.pinned == nil, p.date == last { valuePill(paceMMSS(p.avgPaceSPerKm)) }
+                            }
+                    }
+                    if let sel = scrubPace.pinned, let p = paced.first(where: { $0.date == sel }) {
+                        TrendScrub.mark(at: sel, unit: trendUnit,
+                                        value: "\(paceMMSS(p.avgPaceSPerKm)) /\(unit)", label: scrubDateLabel(sel))
+                    }
                 }
+                .chartXSelection(value: $scrubPace.selection(dates: paced.map(\.date)))
                 .chartXScale(domain: paddedDomain(paced.map(\.date)))
                 .chartYScale(domain: (fastest * 0.93)...(slowest * 1.07))
                 .chartXAxis { trendAxis(insights.weeks.count) }
@@ -1498,19 +1526,21 @@ struct ProgressScreen: View {
                             explainer: MetricExplainers.trainingLoad) {
             if maxLoad <= 0 { notEnoughData } else {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    Chart(pts) { p in
-                        // Bars slim down as the window widens so 13 or 26 weeks never collide.
-                        BarMark(x: .value("Date", p.date, unit: trendUnit),
-                                y: .value("Load", animateCharts ? p.load : 0),
-                                width: .fixed(barW))
-                            // Earned-iridescent only on the current bar; prior ones are clean ink.
-                            .foregroundStyle(p.date == last
-                                             ? AnyShapeStyle(IridescentMaterial())
-                                             : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
-                            .cornerRadius(3)
-                            .annotation(position: .top, spacing: 5) {
-                                if animateCharts, p.date == last, p.load > 0 { valuePill(Formatters.compact(p.load)) }
-                            }
+                    Chart {
+                        ForEach(pts) { p in
+                            // Bars slim down as the window widens so 13 or 26 weeks never collide.
+                            BarMark(x: .value("Date", p.date, unit: trendUnit),
+                                    y: .value("Load", animateCharts ? p.load : 0),
+                                    width: .fixed(barW))
+                                // Earned-iridescent only on the current bar; prior ones are clean ink.
+                                .foregroundStyle(p.date == last
+                                                 ? AnyShapeStyle(IridescentMaterial())
+                                                 : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
+                                .cornerRadius(3)
+                                .annotation(position: .top, spacing: 5) {
+                                    if animateCharts, scrubLoad.pinned == nil, p.date == last, p.load > 0 { valuePill(Formatters.compact(p.load)) }
+                                }
+                        }
                         // Your recent norm — each bar reads as above/below "usual" rather than a bare number.
                         if usual > 0, animateCharts {
                             RuleMark(y: .value("Usual", usual))
@@ -1520,7 +1550,12 @@ struct ProgressScreen: View {
                                     Text("usual").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                                 }
                         }
+                        if let sel = scrubLoad.pinned, let p = pts.first(where: { $0.date == sel }) {
+                            TrendScrub.mark(at: sel, unit: trendUnit,
+                                            value: Formatters.compact(p.load), label: scrubDateLabel(sel))
+                        }
                     }
+                    .chartXSelection(value: $scrubLoad.selection(dates: pts.map(\.date)))
                     .chartXScale(domain: paddedDomain(pts.map(\.date)))
                     .chartYScale(domain: 0...max(1, maxLoad * 1.18))
                     .chartXAxis { trendAxis(insights.weeks.count) }
@@ -1548,46 +1583,55 @@ struct ProgressScreen: View {
                                     : "\(miles) per week\(trendSuffix(insights.distanceTrendPct))"
         return chartSection(title, subtitle: subtitle, explainer: MetricExplainers.weeklyDistance) {
             if maxDist <= 0 { notEnoughData } else {
-                Chart(pts) { p in
-                    if trendIsDaily {
-                        // Daily bars read cleanly across a rest-day-punctuated week (a line would dip
-                        // to zero and zigzag); the current day glints iridescent.
-                        BarMark(x: .value("Day", p.date, unit: .day),
-                                y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
-                                width: .fixed(24))
-                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
-                                                            : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
-                            .cornerRadius(3)
-                            .annotation(position: .top, spacing: 5) {
-                                if animateCharts, p.date == last, disp(p.distanceM) > 0 {
-                                    let v = disp(p.distanceM)
-                                    valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
-                                }
-                            }
-                    } else {
-                        AreaMark(x: .value("Week", p.date, unit: .weekOfYear),
-                                 y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
-                            .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear],
-                                                            startPoint: .top, endPoint: .bottom))
-                            .interpolationMethod(.monotone)
-                        LineMark(x: .value("Week", p.date, unit: .weekOfYear),
-                                 y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
-                            .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                            .interpolationMethod(.monotone)
-                        if disp(p.distanceM) > 0 {
-                            PointMark(x: .value("Week", p.date, unit: .weekOfYear),
-                                      y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
-                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
-                                .symbolSize(p.date == last ? 90 : 22)
-                                .annotation(position: .top, spacing: 6) {
-                                    if animateCharts, p.date == last {
+                Chart {
+                    ForEach(pts) { p in
+                        if trendIsDaily {
+                            // Daily bars read cleanly across a rest-day-punctuated week (a line would dip
+                            // to zero and zigzag); the current day glints iridescent.
+                            BarMark(x: .value("Day", p.date, unit: .day),
+                                    y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
+                                    width: .fixed(24))
+                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
+                                                                : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
+                                .cornerRadius(3)
+                                .annotation(position: .top, spacing: 5) {
+                                    if animateCharts, scrubDistance.pinned == nil, p.date == last, disp(p.distanceM) > 0 {
                                         let v = disp(p.distanceM)
                                         valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
                                     }
                                 }
+                        } else {
+                            AreaMark(x: .value("Week", p.date, unit: .weekOfYear),
+                                     y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
+                                .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear],
+                                                                startPoint: .top, endPoint: .bottom))
+                                .interpolationMethod(.monotone)
+                            LineMark(x: .value("Week", p.date, unit: .weekOfYear),
+                                     y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
+                                .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                                .interpolationMethod(.monotone)
+                            if disp(p.distanceM) > 0 {
+                                PointMark(x: .value("Week", p.date, unit: .weekOfYear),
+                                          y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
+                                    .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
+                                    .symbolSize(p.date == last ? 90 : 22)
+                                    .annotation(position: .top, spacing: 6) {
+                                        if animateCharts, scrubDistance.pinned == nil, p.date == last {
+                                            let v = disp(p.distanceM)
+                                            valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
+                                        }
+                                    }
+                            }
                         }
                     }
+                    if let sel = scrubDistance.pinned, let p = pts.first(where: { $0.date == sel }) {
+                        let v = disp(p.distanceM)
+                        TrendScrub.mark(at: sel, unit: trendUnit,
+                                        value: "\(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v)) \(unit)",
+                                        label: scrubDateLabel(sel))
+                    }
                 }
+                .chartXSelection(value: $scrubDistance.selection(dates: pts.map(\.date)))
                 .chartXScale(domain: paddedDomain(pts.map(\.date)))
                 .chartYScale(domain: 0...max(1, maxDist * 1.18))
                 .chartXAxis { trendAxis(pts.count) }
@@ -1697,6 +1741,11 @@ struct ProgressScreen: View {
         return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
+
+    /// The scrub pill's date caption for the current granularity — "Wed, Jul 15" by day, else the week.
+    private func scrubDateLabel(_ d: Date) -> String {
+        trendIsDaily ? TrendScrub.dayLabel(d) : TrendScrub.weekLabel(d)
+    }
 
     /// A small monospaced value callout pinned to the current week's mark — the "where you are now"
     /// number, so the latest point reads precisely without labelling every week.
@@ -1935,7 +1984,13 @@ struct ProgressScreen: View {
                             .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
                             .symbolSize(70)
                     }
+                    if let sel = scrubSeason.pinned, let entry = weeks.first(where: { $0.week == sel }) {
+                        TrendScrub.mark(at: sel, unit: .weekOfYear,
+                                        value: Formatters.distance(meters: entry.meters, unit: distanceUnit),
+                                        label: TrendScrub.weekLabel(sel))
+                    }
                 }
+                .chartXSelection(value: $scrubSeason.selection(dates: weeks.map(\.week)))
                 .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
                 .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
                 .frame(height: 150)

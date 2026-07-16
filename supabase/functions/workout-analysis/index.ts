@@ -6,17 +6,20 @@
 // so the post-workout moment never blocks.
 //
 // Deploy:  supabase functions deploy workout-analysis
-// Secrets: supabase secrets set ANTHROPIC_API_KEY=... AI_MODEL=claude-opus-4-8 AI_MAX_TOKENS=400
+// Secrets: supabase secrets set GEMINI_API_KEY=AIza...   (shared with coach-chat / meal-estimate)
+//          optional: AI_MODEL=gemini-flash-latest  AI_MAX_TOKENS=800
 //
-// Model note: AI_MODEL defaults to claude-opus-4-8. Opus 4.8 REMOVES `temperature`/`top_p`/`top_k`
-// (sending them 400s), so we do not set them — output shape is constrained via structured outputs.
+// Model note (2026-07-16, user call): Gemini Flash via the `gemini-flash-latest` rolling alias
+// (2.5-flash is sunset for new keys). Current Flash THINKS by default with thought tokens billed
+// against maxOutputTokens — thinking is pinned to its "low" floor and the cap carries headroom, and
+// thought parts (`thought: true`) are filtered out of the reply. Structured output rides
+// `responseJsonSchema` (standard JSON Schema dialect — JSON mode alone lets Flash drop keys).
 
-import Anthropic from "npm:@anthropic-ai/sdk@^0.69";
-
-const MODEL = Deno.env.get("AI_MODEL") ?? "claude-opus-4-8";
-const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "400");
-
-const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
+const MODEL = Deno.env.get("AI_MODEL") ?? "gemini-flash-latest";
+// Narrative + insights + memoryUpdates JSON ≈ 250 tokens; the rest is thinking headroom (billed
+// against this cap — too tight and the payload comes back empty).
+const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "800");
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? Deno.env.get("GOOGLE_API_KEY") ?? "";
 
 const SYSTEM = `You are momentum's coach, and you keep a long-term memory of this athlete. \
 You're given one completed workout, its plan target, and an \`athlete\` object holding what you've \
@@ -41,23 +44,23 @@ instead. (Hyphens in compound words like "3-day" are fine.)
 
 Output STRICT JSON matching the schema; the narrative must be <= 55 words.`;
 
+// Standard JSON Schema for Gemini's `responseJsonSchema` (the 3-era field; the OpenAPI-dialect
+// `responseSchema` is 2.5-only). No `additionalProperties` — following the proven meal-estimate
+// shape; the app tolerates extra keys and validates what it uses.
 const SCHEMA = {
   type: "object",
-  additionalProperties: false,
   properties: {
     narrative: { type: "string" },
     insights: {
       type: "array",
       items: {
         type: "object",
-        additionalProperties: false,
         properties: { label: { type: "string" }, value: { type: "string" }, note: { type: "string" } },
         required: ["label", "value", "note"],
       },
     },
     planAdjustment: {
       type: "object",
-      additionalProperties: false,
       properties: { changed: { type: "boolean" }, summary: { type: "string" } },
       required: ["changed", "summary"],
     },
@@ -65,7 +68,6 @@ const SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        additionalProperties: false,
         properties: {
           op: { type: "string", enum: ["add", "revise", "retire"] },
           id: { type: "string" },
@@ -81,6 +83,24 @@ const SCHEMA = {
   required: ["narrative", "insights", "planAdjustment", "memoryUpdates"],
 };
 
+/// Non-thought text parts of a GenerateContentResponse, concatenated (current Flash models emit
+/// `thought: true` parts first — the JSON rides in the reply parts).
+// deno-lint-ignore no-explicit-any
+function replyText(data: any): string {
+  const parts = data?.candidates?.[0]?.content?.parts ?? [];
+  // deno-lint-ignore no-explicit-any
+  return parts.filter((p: any) => typeof p?.text === "string" && !p.thought)
+    // deno-lint-ignore no-explicit-any
+    .map((p: any) => p.text).join("") || "{}";
+}
+
+/// Prose-tolerant JSON: take the outermost {...} block, whatever the model wrapped it in.
+function parseJSON(text: string): unknown {
+  const first = text.indexOf("{"), last = text.lastIndexOf("}");
+  if (first < 0 || last <= first) throw new Error("no_json");
+  return JSON.parse(text.slice(first, last + 1));
+}
+
 Deno.serve(async (req) => {
   // The app sends the Supabase user JWT; Supabase verifies it before invoking when the function
   // is deployed with --no-verify-jwt omitted. We additionally require the header to be present.
@@ -89,16 +109,25 @@ Deno.serve(async (req) => {
   }
   try {
     const payload = await req.json(); // discipline-tagged body, see §8.8
-    const message = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: SYSTEM,
-      output_config: { format: { type: "json_schema", schema: SCHEMA } },
-      messages: [{ role: "user", content: JSON.stringify(payload) }],
-    });
-    const text = message.content.find((b) => b.type === "text")?.text ?? "{}";
-    // Strict-JSON guaranteed by structured outputs; parse and return.
-    return json(JSON.parse(text), 200);
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM }] },
+          contents: [{ role: "user", parts: [{ text: JSON.stringify(payload) }] }],
+          generationConfig: {
+            maxOutputTokens: MAX_TOKENS,
+            thinkingConfig: { thinkingLevel: "low" },
+            responseMimeType: "application/json",
+            responseJsonSchema: SCHEMA,
+          },
+        }),
+      },
+    );
+    if (!res.ok) throw new Error(`gemini_${res.status}`);
+    return json(parseJSON(replyText(await res.json())), 200);
   } catch (_e) {
     // The client renders its deterministic template on any non-200 — never block the moment.
     return json({ error: "analysis_unavailable" }, 503);

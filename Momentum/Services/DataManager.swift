@@ -101,6 +101,7 @@ enum DataManager {
         wipe(DailyCheckin.self)
         wipe(Meal.self)               // food log — standalone since the Fuel tab landed
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
+        HealthService.resetDedupe()   // else a post-wipe import silently skips everything
         try? context.save()
     }
 
@@ -138,6 +139,7 @@ enum DataManager {
             wipe(UserProfile.self)
         }.value
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
+        HealthService.resetDedupe()   // else a post-wipe import silently skips everything
     }
 }
 

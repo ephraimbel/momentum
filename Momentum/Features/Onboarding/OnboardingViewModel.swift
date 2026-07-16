@@ -327,7 +327,9 @@ final class OnboardingViewModel {
         profile.daysPerWeek = daysPerWeek
         profile.equipment = equipment
         profile.sessionMinutes = sessionMinutes
-        profile.raceDate = hasRace ? raceDate : nil
+        // Day-granular (races have a DAY, not a time) — a time component here made Plan Settings'
+        // structural comparison read an untouched sheet as changed.
+        profile.raceDate = hasRace ? Calendar.current.startOfDay(for: raceDate) : nil
         profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
         // Only carried when the runVolume step applies (running, non-beginner); otherwise nil → the
         // engine's experience-tier defaults. Guarded so flipping back to "new" can't leak a seeded value.

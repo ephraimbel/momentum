@@ -231,7 +231,23 @@ enum PlanService {
                         calendar: Calendar = .current) -> TrainingPlan {
         // Replace any existing plan — but the athlete's name for it survives the rebuild.
         let carriedName = profile.plan?.name ?? ""
+        // This week's story survives too: completed sessions from the CURRENT calendar week detach
+        // from the old plan before its cascade delete and re-attach to the new block — rebuilding on
+        // a Thursday must not turn Monday's finished run into a "Rest day". Scoped to this week so
+        // the week strip/phase indexing (anchored on the earliest session) never drifts into history;
+        // the workouts themselves are never touched either way.
+        var carriedDone: [PlannedSession] = []
         if let existing = profile.plan {
+            if let weekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start {
+                carriedDone = existing.sessions.filter {
+                    $0.status == .completed && $0.date >= weekStart && $0.date <= startDate
+                }
+                let carriedIDs = Set(carriedDone.map(\.id))
+                existing.sessions.removeAll { carriedIDs.contains($0.id) }   // detach from the cascade
+                // Materialize the detach BEFORE the delete: cascade walks the last-SAVED relationship
+                // snapshot, so deleting in the same transaction would still take the carried sessions.
+                if !carriedDone.isEmpty { try? context.save() }
+            }
             context.delete(existing)
             profile.plan = nil
         }
@@ -279,7 +295,7 @@ enum PlanService {
                 sessions.append(ps)
             }
         }
-        trainingPlan.sessions = sessions
+        trainingPlan.sessions = sessions + carriedDone   // the new block + this week's finished work
         context.insert(trainingPlan)
         profile.plan = trainingPlan
         try? context.save()

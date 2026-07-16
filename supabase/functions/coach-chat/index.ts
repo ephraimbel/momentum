@@ -22,30 +22,37 @@
 // CoachResponder.swift whenever this is slow/down/unconfigured — so the chat never blocks.
 //
 // Deploy:  supabase functions deploy coach-chat
-// Secrets: supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   (server-only; NEVER in the app/git)
-//          optional: AI_MODEL=claude-haiku-4-5  AI_MAX_TOKENS=400
-//          optional research: AI_WEB_SEARCH=1  AI_WEB_SEARCH_MAX_USES=3   (off by default)
+// Secrets: supabase secrets set GEMINI_API_KEY=AIza...   (server-only; NEVER in the app/git)
+//          optional: AI_MODEL=gemini-flash-latest  AI_MAX_TOKENS=800
+//          optional research: AI_WEB_SEARCH=1   (Google Search grounding; off by default)
 // Eval:    node scripts/coach-chat-eval.mjs   (see the harness header)
 //
-// Model note: AI_MODEL defaults to claude-haiku-4-5 — the cheapest current Claude model ($1/$5 per
-// 1M in/out), chosen deliberately: the coach only narrates short answers while the deterministic
-// engines own every number ("rules compute, AI narrates"), so a small model is the right fit and
-// keeps per-message cost near-nil (~3k-token context + a short reply ≈ well under a cent). The JSON
-// output is prompt-instructed (not structured-outputs), and we set no temperature/thinking, so the
-// call is model-agnostic — override with AI_MODEL to try a larger tier without touching code.
+// Model note (2026-07-16, user call): the coach runs on Gemini Flash — dramatically cheaper than
+// any frontier tier, and the right fit because the coach only NARRATES short answers while the
+// deterministic engines own every number ("rules compute, AI narrates"). The JSON output stays
+// prompt-instructed (plus Gemini's JSON response mode), so the call remains model-agnostic —
+// override with AI_MODEL to try another Gemini tier without touching code. Gemini specifics
+// (conventions proven in meal-estimate): the default is the `gemini-flash-latest` rolling alias
+// (2.5-flash is sunset for new keys); roles are "user"/"model" (not "assistant"); current Flash
+// models THINK by default with thought tokens billed against maxOutputTokens — we pin thinking to
+// its "low" floor ("none" isn't a valid ThinkingLevel) and budget headroom for it, and thought
+// parts (`thought: true`) are filtered out of the reply text. Each turn stays fractions of a cent.
 
-import Anthropic from "npm:@anthropic-ai/sdk@^0.69";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const MODEL = Deno.env.get("AI_MODEL") ?? "claude-haiku-4-5";
-const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "400");
+const MODEL = Deno.env.get("AI_MODEL") ?? "gemini-flash-latest";
+// Reply ≈ 150 tokens + card JSON; the rest is headroom for thinking, which bills against this cap.
+// Deliberately roomy: pinning thinking to its "low" floor broke instruction-following on this
+// 22-rule contract (wrong/missing cards, 300-word replies), so thinking runs at the model default
+// and the budget must fit thought + reply. Still fractions of a cent on Flash.
+const MAX_TOKENS = Number(Deno.env.get("AI_MAX_TOKENS") ?? "2048");
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? Deno.env.get("GOOGLE_API_KEY") ?? "";
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // Per-athlete DAILY cap (server-side; a client limit is trivially bypassed). Generous — far above
 // real use — so it only ever stops abuse / a leaked token from running up the bill. Overridable via
 // the AI_DAILY_LIMIT secret. Enforced by the `coach_rate_check` RPC (migration 20260714000001).
 const DAILY_LIMIT = Number(Deno.env.get("AI_DAILY_LIMIT") ?? "60");
-
-const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -78,14 +85,11 @@ async function withinRateLimit(req: Request): Promise<boolean> {
 
 // Optional web research — OFF by default so cost stays predictable. Set AI_WEB_SEARCH=1 to let the
 // coach look up current facts (upcoming race dates, registration windows, qualifying times, course
-// details) via Anthropic's server-side web search, capped at AI_WEB_SEARCH_MAX_USES lookups/reply.
-// The app only ever escalates to this function for questions its offline coach can't answer, so a
-// search runs only on the rare research turn — never on the everyday plan/training questions.
+// details) via Gemini's Google Search grounding. The app only ever escalates to this function for
+// questions its offline coach can't answer, so a search runs only on the rare research turn.
+// NOTE: grounding and JSON response mode don't combine — when search is on we rely on the
+// prompt-instructed JSON + the tolerant parser below (same guarantee either way).
 const WEB_SEARCH = (Deno.env.get("AI_WEB_SEARCH") ?? "") === "1";
-const WEB_SEARCH_MAX_USES = Number(Deno.env.get("AI_WEB_SEARCH_MAX_USES") ?? "3");
-const TOOLS = WEB_SEARCH
-  ? [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: WEB_SEARCH_MAX_USES }]
-  : undefined;
 
 const SYSTEM = `You are momentum's coach, in a chat with this athlete. You're given the recent \
 conversation and a \`context\` object: their training status (acute:chronic load ratio and what it \
@@ -165,6 +169,26 @@ Write like a person, not a chatbot: never use em dashes or en dashes (— –) �
 commas. (Hyphens in compound words like "3-day" are fine.) PLAIN TEXT ONLY: the app renders your \
 reply literally, so no markdown, no asterisks, no bullet points, no headings, no emoji.
 
+CARD SELECTION — decide the kind FIRST from the athlete's ask, then write the reply:
+- "too hard / too much / ease it off / easier week" → easeWeek (unless adaptLock.canAdaptLoad is \
+false: then kind "none" and explain the weekly change budget in words).
+- ANY body part hurting / pain / sore / aching → injuryReport with injuryArea matched from \
+context.injuryAreas. Pain is never kind "none".
+- "what do you know about me / what do you remember" → memory.
+- "how was my week / week recap / weekly review" → weekRecap.
+- "how am I doing (overall)" is a STATUS question → kind "none", answer in words from context. It \
+is NOT weekRecap; weekRecap only reviews the week when they ask about their week.
+- These kinds are RENDERED BY THE APP from its own engine — you must attach the card and keep your \
+reply to ONE short introducing sentence (~12 words), never answer these in prose: \
+"why is my plan built this way" → explainPlan; "what could I race/run right now / equivalent \
+times" → racePredictor; "zones / training paces" → zones; "brief me on today" → todayBriefing \
+(only if context.todayPlan exists); race pacing/strategy/how should I run my race, when \
+context.race exists → racePlan. Answering these fully in prose without the card is a BROKEN reply.
+- "I can only train N days" / "switch to N days a week" → changeDays with daysPerWeek: N.
+- "remember that I …" → rememberNote. Travel / vacation / away next week → pausePlan with pauseDays.
+- Otherwise, when no change is being asked for → kind "none". When in doubt between "none" and a \
+card the athlete clearly asked for, attach the card.
+
 Output STRICT JSON matching the schema, with "reply" FIRST.`;
 
 const SCHEMA = {
@@ -219,15 +243,24 @@ const SCHEMA = {
 };
 
 // The card kinds, from the schema above (single source of truth) — named in the prompt so the model
-// emits a valid kind without the API-level json_schema (which rejects this card shape as too complex).
+// emits a valid kind without a provider-level response schema (our card shape is too rich for the
+// strict schema modes; prompt-instructed JSON + the tolerant parser has proven reliable).
 const CARD_KINDS = (SCHEMA.properties.card.properties.kind.enum as string[]).join(", ");
 
-/// Model output → object. Structured outputs are OFF (our card schema exceeds the API's json_schema
-/// complexity limit — "Schema is too complex"), so we instruct strict JSON in the prompt and parse
-/// TOLERANTLY here: strip any stray ``` fence, take the outermost {...}, and if that isn't valid JSON
-/// with a reply (the model sometimes just answers in prose) use the whole text verbatim as the reply.
-/// This NEVER throws — the answer always lands. Escalation turns are almost always plain Q&A, so the
-/// only thing a prose reply loses is a card, which those turns rarely carry.
+// Gemini's `responseJsonSchema` takes STANDARD JSON Schema but not `additionalProperties` —
+// same dialect the proven meal-estimate call uses. Constraining the output structurally is what
+// makes card selection reliable on Flash: `kind` becomes an enum the decoder enforces, instead of
+// a convention the model may drift from.
+// deno-lint-ignore no-explicit-any
+const GEMINI_SCHEMA = JSON.parse(JSON.stringify(SCHEMA, (k: string, v: any) =>
+  k === "additionalProperties" ? undefined : v));
+
+/// Model output → object. We instruct strict JSON in the prompt (plus Gemini's JSON response mode
+/// when search is off) and parse TOLERANTLY here: strip any stray ``` fence, take the outermost
+/// {...}, and if that isn't valid JSON with a reply (the model sometimes just answers in prose) use
+/// the whole text verbatim as the reply. This NEVER throws — the answer always lands. Escalation
+/// turns are almost always plain Q&A, so the only thing a prose reply loses is a card, which those
+/// turns rarely carry.
 function parseModelJSON(text: string): { reply: string; card: unknown } {
   let t = text.trim();
   if (t.startsWith("```")) t = t.replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim();
@@ -275,29 +308,66 @@ function replySlice(buf: string): { text: string; done: boolean } | null {
   return { text: out, done: false };
 }
 
-function requestParams(payload: { messages?: { role: string; text: string }[]; context?: unknown }) {
+/// The Gemini request body. Roles map user→"user", assistant→"model"; the system prompt (with the
+/// output contract + the athlete's context) rides in systemInstruction. Thinking is pinned to its
+/// "low" floor — narration needs no chain of thought (the engines compute), and thought tokens
+/// bill against maxOutputTokens ("none" is not a valid ThinkingLevel on this generation).
+function requestBody(payload: { messages?: { role: string; text: string }[]; context?: unknown }) {
   const history = (payload.messages ?? []).map((m) => ({
-    role: m.role === "assistant" ? "assistant" as const : "user" as const,
-    content: m.text,
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.text }],
   }));
-  // The Anthropic API requires the FIRST message to be a user turn. A real chat thread usually opens
-  // with the coach's welcome (an assistant message) and can carry proactive assistant seeds, so drop
-  // any leading assistant turns — otherwise every call 400s and the app silently falls back offline.
+  // Gemini expects the FIRST content to be a user turn. A real chat thread usually opens with the
+  // coach's welcome (a model message) and can carry proactive seeds, so drop any leading model turns.
   while (history.length && history[0].role !== "user") history.shift();
+  const system = SYSTEM +
+    "\n\nOUTPUT: reply with ONLY a JSON object (no code fences, no text around it), \"reply\" first:\n" +
+    "{\"reply\": \"<your message>\", \"card\": {\"kind\": \"none\", \"label\": \"\"}}\n" +
+    "card.kind must be exactly one of: " + CARD_KINDS + ". Include ONLY the extra fields that kind needs.\n\n" +
+    "CONTEXT:\n" + JSON.stringify(payload.context ?? {});
   return {
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system: SYSTEM +
-      "\n\nOUTPUT: reply with ONLY a JSON object (no code fences, no text around it), \"reply\" first:\n" +
-      "{\"reply\": \"<your message>\", \"card\": {\"kind\": \"none\", \"label\": \"\"}}\n" +
-      "card.kind must be exactly one of: " + CARD_KINDS + ". Include ONLY the extra fields that kind needs.\n\n" +
-      "CONTEXT:\n" + JSON.stringify(payload.context ?? {}),
-    // Server-side web search, only when enabled (see TOOLS). The model decides whether a turn needs
-    // it; most don't. Results feed the reply, which the model still returns as the JSON above.
-    ...(TOOLS ? { tools: TOOLS } : {}),
-    messages: history.length ? history : [{ role: "user" as const, content: "Hello" }],
+    systemInstruction: { parts: [{ text: system }] },
+    contents: history.length ? history : [{ role: "user", parts: [{ text: "Hello" }] }],
+    generationConfig: {
+      maxOutputTokens: MAX_TOKENS,
+      // Deterministic card selection: Gemini's default temperature (1.0) made the SAME ask flip
+      // between kind "none" and the right card across runs. The prompt supplies all the warmth the
+      // short reply needs; the contract needs repeatability. (No thinkingConfig: the default level
+      // is required for this contract — see the MAX_TOKENS note.)
+      temperature: 0,
+      // Structured output pins the shape (kind enum + required card) — but it can't combine with
+      // search grounding, so research mode falls back to prompt-instructed JSON + tolerant parsing.
+      ...(WEB_SEARCH ? {} : {
+        responseMimeType: "application/json",
+        responseJsonSchema: GEMINI_SCHEMA,
+      }),
+    },
+    ...(WEB_SEARCH ? { tools: [{ google_search: {} }] } : {}),
   };
 }
+
+/// All REPLY text parts of a (possibly partial) GenerateContentResponse chunk, concatenated.
+/// Thought parts (`thought: true` — the current Flash generation streams them first) are filtered
+/// out, or they'd pollute the incremental reply extraction with chain-of-thought text.
+// deno-lint-ignore no-explicit-any
+function chunkText(chunk: any): string {
+  const parts = chunk?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return "";
+  // deno-lint-ignore no-explicit-any
+  return parts.filter((p: any) => typeof p?.text === "string" && !p.thought)
+    // deno-lint-ignore no-explicit-any
+    .map((p: any) => p.text).join("");
+}
+
+function geminiURL(mode: "generateContent" | "streamGenerateContent"): string {
+  const stream = mode === "streamGenerateContent" ? "?alt=sse" : "";
+  return `${GEMINI_BASE}/${MODEL}:${mode}${stream}`;
+}
+
+const GEMINI_HEADERS = {
+  "content-type": "application/json",
+  "x-goog-api-key": GEMINI_API_KEY,   // header, not query param — keeps the key out of URLs/logs
+};
 
 Deno.serve(async (req) => {
   if (!req.headers.get("authorization")) {
@@ -311,7 +381,7 @@ Deno.serve(async (req) => {
     return json({ error: "bad_request" }, 400);
   }
 
-  // Daily cap, checked BEFORE any Anthropic call so an over-limit request costs nothing. 429 →
+  // Daily cap, checked BEFORE any Gemini call so an over-limit request costs nothing. 429 →
   // the app falls back to its offline coach (non-200 is already its fallback trigger), so the
   // athlete still gets an answer — just the free deterministic one for the rest of the day.
   if (!(await withinRateLimit(req))) {
@@ -321,16 +391,22 @@ Deno.serve(async (req) => {
   // One-shot JSON (the original contract) — also the fallback for older clients.
   if (!wantsStream) {
     try {
-      const message = await client.messages.create(requestParams(payload));
-      const text = message.content.find((b) => b.type === "text")?.text ?? "{}";
-      return json(parseModelJSON(text), 200);
+      const res = await fetch(geminiURL("generateContent"), {
+        method: "POST",
+        headers: GEMINI_HEADERS,
+        body: JSON.stringify(requestBody(payload)),
+      });
+      if (!res.ok) throw new Error(`gemini_${res.status}`);
+      const text = chunkText(await res.json());
+      return json(parseModelJSON(text || "{}"), 200);
     } catch (_e) {
       // The client renders its deterministic CoachResponder on any non-200 — never block.
       return json({ error: "coach_unavailable" }, 503);
     }
   }
 
-  // SSE — stream the reply as it's written, then the card.
+  // SSE — stream the reply as it's written, then the card. Gemini's alt=sse emits `data: {...}`
+  // chunks (one JSON GenerateContentResponse per line); we re-emit the app's own event contract.
   const encoder = new TextEncoder();
   const body = new ReadableStream({
     async start(controller) {
@@ -339,10 +415,29 @@ Deno.serve(async (req) => {
       let buf = "";
       let emitted = 0;
       try {
-        const stream = client.messages.stream(requestParams(payload));
-        for await (const event of stream) {
-          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-            buf += event.delta.text;
+        const res = await fetch(geminiURL("streamGenerateContent"), {
+          method: "POST",
+          headers: GEMINI_HEADERS,
+          body: JSON.stringify(requestBody(payload)),
+        });
+        if (!res.ok || !res.body) throw new Error(`gemini_${res.status}`);
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let sse = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sse += value;
+          // Complete lines only — each `data:` line is one self-contained JSON chunk.
+          let nl: number;
+          while ((nl = sse.indexOf("\n")) >= 0) {
+            const line = sse.slice(0, nl).trim();
+            sse = sse.slice(nl + 1);
+            if (!line.startsWith("data:")) continue;
+            const raw = line.slice(5).trim();
+            if (!raw || raw === "[DONE]") continue;
+            try {
+              buf += chunkText(JSON.parse(raw));
+            } catch (_e) { /* partial/keepalive line — skip */ }
             const slice = replySlice(buf);
             if (slice && slice.text.length > emitted) {
               send("delta", { text: slice.text.slice(emitted) });

@@ -15,13 +15,16 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
     @State private var restoring = false
+    @State private var restoreMessage: String?   // only failure/no-op paths — success flips the card itself
     @State private var exportFile: JSONExportFile?
     @State private var showExporter = false
     @State private var exporting = false      // fetch+encode runs off-main; the row shows a spinner
+    @State private var exportMessage: String?
     @State private var confirmDelete = false
     @State private var deletingData = false   // background wipe in flight; the row shows a spinner
     @State private var healthConnected = false
     @State private var connectingHealth = false
+    @State private var healthDenied = false   // the permission sheet was declined — say so, don't dead-end
     @State private var importingHealth = false
     @State private var importMessage: String?
     @State private var showingSignInOptions = false   // guest upgrade via Google/email (the gate's page)
@@ -60,7 +63,9 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.large)
         .onAppear { healthConnected = services.health.isAuthorized }
         .fileExporter(isPresented: $showExporter, document: exportFile,
-                      contentType: .json, defaultFilename: "momentum-data") { _ in }
+                      contentType: .json, defaultFilename: "momentum-data") { result in
+            if case .failure = result { exportMessage = "Couldn't save the export — try again." }
+        }
         .fullScreenCover(isPresented: $showingSignInOptions) {
             SignInView(startOnSignInPage: true)
         }
@@ -187,6 +192,18 @@ struct SettingsView: View {
             actionRow("Manage subscription", icon: "creditcard") { openURL(manageURL) }
             inset
             actionRow("Restore purchases", icon: "arrow.clockwise", busy: restoring) { restore() }
+            restoreOutcome
+        }
+    }
+
+    /// Failure/no-op feedback under the restore row — a successful restore speaks for itself
+    /// (the card flips to "Active"), but silence on the other paths read as a broken button.
+    @ViewBuilder
+    private var restoreOutcome: some View {
+        if let restoreMessage {
+            Text(restoreMessage)
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .padding(.leading, 40).padding(.bottom, 10)
         }
     }
 
@@ -215,6 +232,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             inset
             actionRow("Restore purchases", icon: "arrow.clockwise", busy: restoring) { restore() }
+            restoreOutcome
         }
     }
 
@@ -322,6 +340,7 @@ struct SettingsView: View {
                     Haptics.light()
                     Task {
                         connectingHealth = true
+                        healthDenied = false
                         _ = await services.health.requestAuthorization()
                         healthConnected = services.health.isAuthorized
                         if healthConnected, let profile = profiles.first {
@@ -329,6 +348,11 @@ struct SettingsView: View {
                             if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
                             if let rhr = metrics.restingHR { profile.restingHR = rhr }
                             try? context.save()
+                        } else if !healthConnected {
+                            // HealthKit only shows its sheet while permission is undetermined —
+                            // after one decline every later tap is a spinner then nothing, so
+                            // the athlete must be told where to flip it back on.
+                            healthDenied = true
                         }
                         connectingHealth = false
                     }
@@ -351,6 +375,16 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(connectingHealth)
+                if healthDenied {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Health access is off for momentum. Turn it on in the Health app — Profile → Apps → momentum — then tap Connect again.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Open Health") { open("x-apple-health://") }
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                    }
+                    .padding(.leading, 40).padding(.bottom, 10)
+                }
             }
         }
     }
@@ -370,12 +404,24 @@ struct SettingsView: View {
             actionRow("Export my data", icon: "square.and.arrow.up", busy: exporting) {
                 guard !exporting else { return }
                 exporting = true
+                exportMessage = nil
                 Task {
                     let data = await DataManager.exportJSON(container: context.container)
-                    exportFile = JSONExportFile(data: data)
                     exporting = false
+                    // Empty Data is the encoder's swallowed-failure sentinel — refuse to hand
+                    // the athlete a 0-byte "export" as if it worked.
+                    guard !data.isEmpty else {
+                        exportMessage = "Couldn't prepare your export — try again."
+                        return
+                    }
+                    exportFile = JSONExportFile(data: data)
                     showExporter = true
                 }
+            }
+            if let exportMessage {
+                Text(exportMessage)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .padding(.leading, 40).padding(.bottom, 10)
             }
             inset
             actionRow("Delete all data", icon: "trash", tint: .red, busy: deletingData) {
@@ -438,7 +484,10 @@ struct SettingsView: View {
             actionRow("Delete account", icon: "person.crop.circle.badge.xmark", tint: .red,
                       busy: deletingAccount) { confirmDeleteAccount = true }
             if deleteAccountFailed {
-                Text("Couldn't delete the account — check your connection and try again.")
+                // Covers both failure shapes honestly: a network error, AND the stale-session
+                // case (signed in offline, the Supabase bridge never re-ran) where retrying
+                // with connectivity can never succeed until a fresh sign-in.
+                Text("Couldn't delete the account — check your connection, or sign out and back in, then try again.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .padding(.leading, 40).padding(.bottom, 10)
             }
@@ -562,7 +611,18 @@ struct SettingsView: View {
     }
 
     private func restore() {
-        Task { restoring = true; _ = await paywall.restore(); restoring = false }
+        Task {
+            restoring = true
+            restoreMessage = nil
+            let ok = await paywall.restore()
+            restoring = false
+            // Success flips the membership card to "Active" on its own — words only for the
+            // paths that would otherwise be silent (mirrors PaywallView's post-restore check).
+            if !paywall.isPro {
+                restoreMessage = ok ? "Nothing to restore on this Apple ID."
+                                    : "Couldn't reach the App Store — try again."
+            }
+        }
     }
     private func open(_ s: String) { if let url = URL(string: s) { openURL(url) } }
 }

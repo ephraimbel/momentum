@@ -64,6 +64,23 @@ enum RecordsBook {
         }
     }
 
+    /// Persist any records ONE workout sets against the current shelf — the live path for
+    /// workouts that bypass the in-app save flows (HealthKit imports; the backfill is one-shot,
+    /// so without this every imported best after the first Progress visit was silently dropped).
+    /// Same `beats` filter + `PersonalRecord.persist` dedupe as the backfill, so the book stays
+    /// a true progression and a re-imported workout can't double-log.
+    static func record(_ workout: Workout, in context: ModelContext) {
+        let prs = (try? context.fetch(FetchDescriptor<PersonalRecord>())) ?? []
+        var bests: [PRType: Double] = [:]
+        for best in currentBests(prs) { bests[best.type] = best.value }
+        for candidate in cardioCandidates(workout) {
+            if let incumbent = bests[candidate.type],
+               !beats(candidate.value, incumbent: incumbent, type: candidate.type) { continue }
+            PersonalRecord.persist([(type: candidate.type, value: candidate.value, exercise: nil)],
+                                   workout: workout, in: context)
+        }
+    }
+
     /// The record candidates one workout offers (same definitions as `CardioAchievements`).
     static func cardioCandidates(_ workout: Workout) -> [(type: PRType, value: Double)] {
         var out: [(PRType, Double)] = []
