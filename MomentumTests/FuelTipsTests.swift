@@ -24,7 +24,10 @@ struct FuelTipsTests {
             status: status, drivingSession: driving,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
             kcalIsGoal: false, goalNote: nil,
-            headline: "", refuelDue: refuelDue)
+            headline: "", refuelDue: refuelDue,
+            micros: .init(potassiumMg: 0, magnesiumMg: 0, ironMg: 0, calciumMg: 0,
+                          potassiumFloorMg: 3000, magnesiumFloorMg: 370, ironFloorMg: 13,
+                          calciumFloorMg: 1000))
     }
 
     private func date(hour: Int, minute: Int = 0) -> Date {

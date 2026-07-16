@@ -29,6 +29,12 @@ final class Meal {
     var fatG: Int?
     var sodiumMg: Int?
     var fluidsMl: Int?
+    // Endurance micros (2026-07-16): potassium pairs sodium, iron carries oxygen (the runner's
+    // micro), calcium guards bone (the RED-S story), magnesium works the muscle. All ≈, all floors.
+    var potassiumMg: Int?
+    var magnesiumMg: Int?
+    var ironMg: Double?
+    var calciumMg: Int?
 
     /// The itemized breakdown ("2 eggs · toast · coffee"), JSON-encoded `[MealItem]` — the same
     /// blob pattern as `structuredRepsData`. Totals on the meal are ALWAYS Σ items when items
@@ -60,6 +66,11 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
     var fatG: Int
     var sodiumMg: Int
     var fluidsMl: Int
+    // Optional so blobs itemized before the micros existed still decode.
+    var potassiumMg: Int?
+    var magnesiumMg: Int?
+    var ironMg: Double?
+    var calciumMg: Int?
 
     /// This item rescaled to a new quantity — linear from per-unit values, rounded (everything ≈).
     func scaled(to newQty: Double) -> MealItem {
@@ -73,6 +84,10 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
         c.fatG = Int((Double(fatG) * f).rounded())
         c.sodiumMg = Int((Double(sodiumMg) * f).rounded())
         c.fluidsMl = Int((Double(fluidsMl) * f).rounded())
+        c.potassiumMg = potassiumMg.map { Int((Double($0) * f).rounded()) }
+        c.magnesiumMg = magnesiumMg.map { Int((Double($0) * f).rounded()) }
+        c.ironMg = ironMg.map { ($0 * f * 10).rounded() / 10 }
+        c.calciumMg = calciumMg.map { Int((Double($0) * f).rounded()) }
         return c
     }
 
@@ -125,5 +140,9 @@ extension Meal {
         fatG = items.map(\.fatG).reduce(0, +)
         sodiumMg = items.map(\.sodiumMg).reduce(0, +)
         fluidsMl = items.map(\.fluidsMl).reduce(0, +)
+        potassiumMg = items.compactMap(\.potassiumMg).reduce(0, +)
+        magnesiumMg = items.compactMap(\.magnesiumMg).reduce(0, +)
+        ironMg = items.compactMap(\.ironMg).reduce(0, +)
+        calciumMg = items.compactMap(\.calciumMg).reduce(0, +)
     }
 }

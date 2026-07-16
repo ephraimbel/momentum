@@ -24,6 +24,10 @@ enum FuelReadiness {
         let proteinG: Int?
         var fatG: Int? = nil
         let sodiumMg: Int?
+        var potassiumMg: Int? = nil
+        var magnesiumMg: Int? = nil
+        var ironMg: Double? = nil
+        var calciumMg: Int? = nil
         /// false while an estimate is pending — pending meals are excluded from totals but counted,
         /// so the readout can say "2 meals still estimating" instead of quietly under-reporting.
         var hasNumbers: Bool { carbsG != nil || kcal != nil }
@@ -64,6 +68,19 @@ enum FuelReadiness {
 
     enum Status: String, Sendable { case fueled, onTrack, behind, empty }
 
+    /// The endurance micros — eaten so far + sex-aware daily floors (RDA/AI anchors). Grouped so
+    /// the readout grows without another dozen loose fields.
+    struct Micros: Sendable, Equatable {
+        let potassiumMg: Int
+        let magnesiumMg: Int
+        let ironMg: Double
+        let calciumMg: Int
+        let potassiumFloorMg: Int
+        let magnesiumFloorMg: Int
+        let ironFloorMg: Double
+        let calciumFloorMg: Int
+    }
+
     struct DayReadout: Sendable, Equatable {
         // Eaten so far today (numbered meals only).
         let kcal: Int
@@ -97,6 +114,8 @@ enum FuelReadiness {
         let headline: String
         /// A completed ≥1h session ended inside the refuel window with no meal since.
         let refuelDue: Bool
+        /// Potassium · magnesium · iron · calcium — the quiet second row.
+        let micros: Micros
     }
 
     // MARK: Constants (authoritative — change here, tests pin them)
@@ -117,6 +136,11 @@ enum FuelReadiness {
     static let leanerBMRGuard = 1.1          // a deficit never dips below 1.1 × basal (+ burn)
     static let proteinPerKgLeaner = 1.9      // protect muscle inside a deficit
     static let proteinPerKgBuild = 1.6
+    // Micro floors (RDA / adequate-intake anchors; sex-aware where the science is).
+    static let potassiumFloorMg = (male: 3400, female: 2600, neutral: 3000)
+    static let magnesiumFloorMg = (male: 420, female: 320, neutral: 370)
+    static let ironFloorMg = (male: 8.0, female: 18.0, neutral: 13.0)
+    static let calciumFloorMg = 1000
     static let fallbackHeightCm = 172.0
     static let fallbackAge = 35
     /// Carb g/kg floors by the driving session's demand tier.
@@ -148,6 +172,15 @@ enum FuelReadiness {
         let protein = numbered.compactMap(\.proteinG).reduce(0, +)
         let fat = numbered.compactMap(\.fatG).reduce(0, +)
         let sodium = numbered.compactMap(\.sodiumMg).reduce(0, +)
+        let micros = Micros(
+            potassiumMg: numbered.compactMap(\.potassiumMg).reduce(0, +),
+            magnesiumMg: numbered.compactMap(\.magnesiumMg).reduce(0, +),
+            ironMg: numbered.compactMap(\.ironMg).reduce(0, +),
+            calciumMg: numbered.compactMap(\.calciumMg).reduce(0, +),
+            potassiumFloorMg: goal.isMale == true ? potassiumFloorMg.male : (goal.isMale == false ? potassiumFloorMg.female : potassiumFloorMg.neutral),
+            magnesiumFloorMg: goal.isMale == true ? magnesiumFloorMg.male : (goal.isMale == false ? magnesiumFloorMg.female : magnesiumFloorMg.neutral),
+            ironFloorMg: goal.isMale == true ? ironFloorMg.male : (goal.isMale == false ? ironFloorMg.female : ironFloorMg.neutral),
+            calciumFloorMg: calciumFloorMg)
 
         // The driving session: the longest run today or tomorrow (glycogen is filled the day before).
         let horizon = sessions.filter {
@@ -258,7 +291,8 @@ enum FuelReadiness {
             kcalIsGoal: kcalIsGoal, goalNote: goalNote,
             headline: headline(status: status, carbs: carbs, floor: carbsFloor,
                                driving: drivingLabel, refuelDue: refuelDue),
-            refuelDue: refuelDue)
+            refuelDue: refuelDue,
+            micros: micros)
     }
 
     /// Plain words, no shame: what's true and the one next step.

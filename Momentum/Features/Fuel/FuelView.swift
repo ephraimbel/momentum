@@ -354,24 +354,35 @@ struct FuelView: View {
     /// Motion renders complete); a landing estimate rolls rings and numerals together.
     private var ringsRow: some View {
         let r = readout
-        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("≈\(r.kcal.formatted())")
-                    .font(.display(26, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                    .contentTransition(.numericText())
-                Text(r.kcalIsGoal ? "of \(r.kcalFloor.formatted()) kcal today" : "of \(r.kcalFloor.formatted())+ kcal")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+        let m = r.micros
+        return VStack(spacing: Theme.Space.sm) {
+            VStack(spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(r.kcal.formatted())
+                        .font(.display(26, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .contentTransition(.numericText())
+                    Text(r.kcalIsGoal ? "of \(r.kcalFloor.formatted()) kcal today" : "of \(r.kcalFloor.formatted())+ kcal")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                if let note = r.goalNote {
+                    Text(note)
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .transition(.opacity)
+                }
             }
-            if let note = r.goalNote {
-                Text(note)
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .transition(.opacity)
-            }
+            .frame(maxWidth: .infinity)
             HStack(alignment: .top, spacing: 0) {
                 FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0)
                 FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1)
                 FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2)
                 FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3)
+            }
+            // The endurance micros — the quiet second row (smaller, same earned iridescence).
+            HStack(alignment: .top, spacing: 0) {
+                FuelRing(value: m.potassiumMg, floor: m.potassiumFloorMg, label: "potassium", index: 4, small: true)
+                FuelRing(value: m.magnesiumMg, floor: m.magnesiumFloorMg, label: "magnesium", index: 5, small: true)
+                FuelRing(value: Int(m.ironMg.rounded()), floor: Int(m.ironFloorMg.rounded()), label: "iron", index: 6, small: true)
+                FuelRing(value: m.calciumMg, floor: m.calciumFloorMg, label: "calcium", index: 7, small: true)
             }
         }
         .padding(.vertical, Theme.Space.xs)
@@ -519,6 +530,10 @@ private struct FuelReadoutSheet: View {
                         floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
                         floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
+                        floorCell("≈\(r.micros.potassiumMg.formatted())", "of \(r.micros.potassiumFloorMg.formatted())+ mg potassium")
+                        floorCell("≈\(r.micros.magnesiumMg)", "of \(r.micros.magnesiumFloorMg)+ mg magnesium")
+                        floorCell("≈\(String(format: "%.1f", r.micros.ironMg))", "of \(String(format: "%.0f", r.micros.ironFloorMg))+ mg iron")
+                        floorCell("≈\(r.micros.calciumMg.formatted())", "of \(r.micros.calciumFloorMg.formatted())+ mg calcium")
                     }
                     .reveal(0.14)
                     if let driving = r.drivingSession {
@@ -564,33 +579,37 @@ private struct FuelRing: View {
     let floor: Int
     let label: String
     var index: Int = 0
+    /// The micros row renders smaller and a touch quieter — same gauge, second voice.
+    var small = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawn = false
 
     private var fraction: CGFloat { min(1, CGFloat(value) / CGFloat(max(1, floor))) }
     private var fueled: Bool { floor > 0 && value >= floor }
+    private var diameter: CGFloat { small ? 40 : 48 }
+    private var stroke: CGFloat { small ? 3.5 : 4 }
 
     var body: some View {
         VStack(spacing: 5) {
             ZStack {
-                Circle().stroke(Theme.hairline, lineWidth: 4)
+                Circle().stroke(Theme.hairline, lineWidth: stroke)
                 Circle()
                     .trim(from: 0, to: drawn ? fraction : 0)
                     .rotation(.degrees(-90))
                     .stroke(fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            style: StrokeStyle(lineWidth: stroke, lineCap: .round))
                     .animation(Motion.lively, value: fraction)
                     .animation(Motion.standard, value: fueled)
                 Text(compact(value))
-                    .font(.rounded(11, weight: .bold)).monospacedDigit()
+                    .font(.rounded(small ? 10 : 11, weight: .bold)).monospacedDigit()
                     .foregroundStyle(Theme.ink)
                     .contentTransition(.numericText())
                     .animation(Motion.standard, value: value)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
-                    .frame(width: 34)
+                    .frame(width: small ? 28 : 34)
             }
-            .frame(width: 48, height: 48)
+            .frame(width: diameter, height: diameter)
             Text(label)
                 .font(.rounded(Theme.FontSize.label, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)

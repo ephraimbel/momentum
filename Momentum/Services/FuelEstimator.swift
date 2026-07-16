@@ -19,6 +19,11 @@ struct FuelEstimator {
             let fat_g: Int
             let sodium_mg: Int
             let fluids_ml: Int
+            // Optional decode: resilient if a provider omits the endurance micros.
+            let potassium_mg: Int?
+            let magnesium_mg: Int?
+            let iron_mg: Double?
+            let calcium_mg: Int?
         }
         let items: [Item]
         let confidence: Double
@@ -62,7 +67,9 @@ struct FuelEstimator {
         meal.items = e.items.map {
             MealItem(name: $0.name, qty: max(0.25, $0.qty), unit: $0.unit, kcal: $0.kcal,
                      carbsG: $0.carbs_g, proteinG: $0.protein_g, fatG: $0.fat_g,
-                     sodiumMg: $0.sodium_mg, fluidsMl: $0.fluids_ml)
+                     sodiumMg: $0.sodium_mg, fluidsMl: $0.fluids_ml,
+                     potassiumMg: $0.potassium_mg, magnesiumMg: $0.magnesium_mg,
+                     ironMg: $0.iron_mg, calciumMg: $0.calcium_mg)
         }
         meal.confidence = e.confidence
         meal.note = e.note.isEmpty ? nil : e.note

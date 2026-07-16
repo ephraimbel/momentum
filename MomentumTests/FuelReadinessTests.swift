@@ -147,6 +147,22 @@ struct FuelReadinessTests {
         #expect(r.kcalFloor == 2167 + 300 + 500)  // maintenance + surplus + the day's real burn
     }
 
+    @Test func microFloorsAreSexAwareAndSum() {
+        var lunch = meal(2, kcal: 600)
+        lunch.potassiumMg = 800; lunch.magnesiumMg = 120; lunch.ironMg = 3.2; lunch.calciumMg = 250
+        let female = FuelReadiness.readout(meals: [lunch], sessions: [], workoutsToday: [],
+                                           bodyMassKg: 60,
+                                           goal: .init(isMale: false), now: now)
+        #expect(female.micros.ironFloorMg == 18)          // the runner's micro — female RDA
+        #expect(female.micros.potassiumFloorMg == 2600)
+        #expect(female.micros.ironMg == 3.2)
+        #expect(female.micros.potassiumMg == 800)
+        let unknown = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [],
+                                            bodyMassKg: 70, now: now)
+        #expect(unknown.micros.ironFloorMg == 13)         // sex unknown → neutral anchors
+        #expect(unknown.micros.calciumFloorMg == 1000)
+    }
+
     @Test func customNumbersOutrankTheMath() {
         let r = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [],
                                       bodyMassKg: 70,

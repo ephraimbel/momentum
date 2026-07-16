@@ -252,7 +252,7 @@ struct FuelGoalsSheet: View {
                 .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
                 .foregroundStyle(Theme.inkTertiary)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("≈\(r.kcalFloor.formatted())")
+                Text(r.kcalFloor.formatted())
                     .font(.display(26, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                     .contentTransition(.numericText())
                 Text(r.kcalIsGoal ? "kcal goal" : "kcal floor")
