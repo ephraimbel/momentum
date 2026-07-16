@@ -33,15 +33,18 @@ struct PaywallView: View {
     /// Everything Pro unlocks, organized to eight one-liners (related capabilities share a row) so
     /// the whole paywall — list, both plans, CTA — fits one screen with no scroll. Copy is sized to
     /// a single row; no truncation, ever.
+    // Held to EIGHT rows so the size-adaptive layout keeps fitting an SE without truncating or
+    // scrolling (the scale math is tuned for this count). Fueling joins as a flagship line; the two
+    // former utility rows (voice/metronome + watch/share) merge into one to make room.
     private static let features: [(String, String)] = [
         ("figure.run", "Your full adaptive training plan"),
         ("brain.head.profile", "AI coach chat & post-run reads"),
+        ("fork.knife", "AI fueling & calorie tracking"),
         ("gauge.with.needle", "Pace insights & session reviews"),
         ("waveform.path.ecg", "Recovery & injury-aware training"),
         ("flag.checkered", "Race predictions, 5K to marathon"),
         ("chart.xyaxis.line", "Analytics, history & records"),
-        ("speaker.wave.2", "Voice coach & metronome"),
-        ("applewatch", "Watch premium & every share style"),
+        ("applewatch", "Watch, voice coach & share styles"),
     ]
 
     var body: some View {
