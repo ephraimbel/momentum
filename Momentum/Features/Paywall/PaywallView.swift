@@ -51,10 +51,13 @@ struct PaywallView: View {
         GeometryReader { geo in
             // One scale drives the whole scrollable stack so the paywall reads *identically* on every
             // iPhone — full-size on a 6.9" Pro Max, gently condensed on a 4.7" SE — instead of the
-            // plans getting shoved under the pinned CTA (and feature copy truncating) on short screens.
-            // 760 ≈ the safe-area height of a 6.1" (iPhone 16/17), so every modern phone stays at full
-            // scale and only the SE condenses; clamped so it never shrinks past legibility.
-            let s = min(1, max(0.8, geo.size.height / 760))
+            // plans getting shoved under the pinned CTA on short screens.
+            // Divisor 820: a 6.1" Dynamic-Island phone (iPhone 15/16, ~759pt usable — the Island eats
+            // MORE top inset than the 14's notch, so it's the tightest of the "tall" phones) condenses
+            // ~7% so the Monthly card clears the pinned CTA with margin; 6.7"+ stays clamped at 1.0
+            // (pristine). Paired with the trimmed section paddings below — together they lift Monthly
+            // clear without either lever having to over-shrink. Clamped so it never shrinks past legibility.
+            let s = min(1, max(0.8, geo.size.height / 820))
             content(s)
         }
     }
@@ -62,20 +65,23 @@ struct PaywallView: View {
     private func content(_ s: CGFloat) -> some View {
         ScrollView {
             VStack(spacing: 0) {
+                // Section gaps trimmed from the original airy spacing (lg/md+2) so the full stack —
+                // through the Monthly card — clears the pinned CTA on 6.1" phones. All scale with
+                // `s`, so tall phones (s=1) keep breathing room and short ones condense together.
                 lockup(s)
-                    .padding(.top, Theme.Space.lg * s)
+                    .padding(.top, Theme.Space.md * s)
                 hero(s)
-                    .padding(.top, (Theme.Space.md + 2) * s)
+                    .padding(.top, (Theme.Space.sm + 2) * s)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
                 featureList(s)
-                    .padding(.top, (Theme.Space.md + 2) * s)
+                    .padding(.top, (Theme.Space.md - 2) * s)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
                 plans(s)
-                    .padding(.top, (Theme.Space.md + 2) * s)
+                    .padding(.top, (Theme.Space.md - 2) * s)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
             .padding(.horizontal, max(Theme.Space.lg, Theme.Space.xl * s))
-            .padding(.bottom, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.xs)
         }
         .scrollIndicators(.hidden)
         // Only the CTA is pinned — `safeAreaInset` insets the scroll content above it, so the plans
