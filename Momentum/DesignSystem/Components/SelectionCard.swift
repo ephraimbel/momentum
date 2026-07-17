@@ -13,8 +13,6 @@ struct SelectionCard: View {
     var onToggleFavorite: (() -> Void)? = nil
     let action: () -> Void
 
-    @State private var pressed = false
-
     var body: some View {
         Button {
             Haptics.selection()
@@ -70,15 +68,21 @@ struct SelectionCard: View {
                     .stroke(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
-        .scaleEffect(pressed ? 0.97 : 1)
+        .buttonStyle(PressableScaleStyle())
         .animation(.spring(response: 0.34, dampingFraction: 0.7), value: isSelected)
-        .animation(Motion.lively, value: pressed)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
-                .onEnded { _ in pressed = false }
-        )
+    }
+}
+
+/// Scales a button's label on press using the button's OWN press state, so the press cancels the
+/// instant the user starts scrolling. Replaces a `.simultaneousGesture(DragGesture(minimumDistance:
+/// 0))` that recognized on touch-down and fired the tap on a light scroll (the scroll-vs-tap bug:
+/// scrolling a list of these cards would select whichever one the finger started on).
+struct PressableScaleStyle: ButtonStyle {
+    var scale: CGFloat = 0.97
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(Motion.lively, value: configuration.isPressed)
     }
 }
 

@@ -142,6 +142,7 @@ struct SignInView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(presentedAsSheet ? "Close" : "Back")
             .padding(.leading, Theme.Space.sm)
+            .zIndex(1)   // keep Close/Back above the ScrollView below, or the scroll layer eats its taps
 
             // Scrolls so the whole column stays reachable with the keyboard up on small screens.
             ScrollView(showsIndicators: false) {
