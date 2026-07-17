@@ -95,29 +95,21 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The style to actually RENDER for the app's current appearance (the Apple Maps behavior):
-    /// the adaptive looks follow dark mode — Realistic slides into its night lighting, the Light
-    /// basemap pairs with Dark — while deliberate looks (Dusk, Night, Streets, Outdoors, Dark,
-    /// the satellites) render exactly as chosen in either appearance.
+    /// The style to RENDER: the athlete's chosen style, EXACTLY as picked. The old code also paired
+    /// the Light basemap → Dark under dark mode, so choosing Light in dark mode silently stayed dark
+    /// (user report 2026-07-16). Now Light — and every other explicit pick — is literal in both
+    /// appearances. The ONE exception is **Realistic**: it's the app default and its whole identity is
+    /// dynamic real-world lighting, so it slides into night lighting under dark mode — which keeps the
+    /// DEFAULT dark-mode map dark. Anyone wanting a fixed day/dusk/night/dark look picks that style
+    /// (Dusk, Night, Dark are their own picker choices).
     func mapboxStyle(for scheme: ColorScheme) -> MapboxMaps.MapStyle {
-        guard scheme == .dark else { return mapboxStyle }
-        switch self {
-        case .realistic: return .standard(lightPreset: .night)
-        case .standard: return .dark
-        default: return mapboxStyle
-        }
+        if scheme == .dark, self == .realistic { return .standard(lightPreset: .night) }
+        return mapboxStyle
     }
 
-    /// URI variant of `mapboxStyle(for:)` for snapshot/UIKit surfaces: the adaptive pairs follow
-    /// dark mode (Light basemap → Dark; the Standard moods fall back to Standard day — a URI can't
-    /// carry the light preset); deliberate looks render as chosen.
-    func styleURI(for scheme: ColorScheme) -> StyleURI {
-        guard scheme == .dark else { return styleURI }
-        switch self {
-        case .standard: return .dark
-        default: return styleURI
-        }
-    }
+    /// URI variant for snapshot/UIKit surfaces — literal in either appearance. (A URI can't carry
+    /// Realistic's night preset, so Realistic renders as Standard day here regardless, as before.)
+    func styleURI(for _: ColorScheme) -> StyleURI { styleURI }
 
     /// The Standard style's light preset, when this option is one of its moods — applied to
     /// snapshot previews via the style-import config (the URI alone can't express it).
