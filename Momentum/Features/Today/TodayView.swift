@@ -30,9 +30,22 @@ struct TodayView: View {
     @State private var viewport: Viewport = .idle
     @State private var launch: TodayLaunch?
     @State private var locator = LocationService()
-    /// Where the map opens for a brand-new athlete with no fix and no location permission yet — a
-    /// neutral view, never the puck (which would prompt). Start/recenter asks + flies to them.
-    private static let defaultMapCenter = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
+    /// Where the map opens for an athlete we haven't located yet — no stored fix, no permission.
+    /// Deliberately NOT a city: this used to be hardcoded to San Francisco, so the first frame of the
+    /// product showed a stranger's neighbourhood to everyone in London, Lagos or Tokyo — a guess the
+    /// athlete can see straight through. Instead we centre their own meridian, read off the device
+    /// time zone (no permission, always available), and pull back far enough that no neighbourhood is
+    /// implied. The map reads as "not located yet" rather than "located, wrongly".
+    /// Never the puck here: that viewport spins up Mapbox's location provider and would prompt on
+    /// arrival. The ask stays contextual — Start and recenter do it, and fly to them.
+    private static var unlocatedViewport: Viewport {
+        // Earth turns 15°/hour ⇒ one degree of longitude per 240 s of UTC offset. Zones legitimately
+        // run past ±12 h (Kiritimati is +14), so clamp rather than wrap into the wrong hemisphere.
+        let longitude = min(180, max(-180, Double(TimeZone.current.secondsFromGMT()) / 240))
+        // Flat: pitch on a world-scale camera reads as a tilted globe, not a map.
+        return .camera(center: CLLocationCoordinate2D(latitude: 28, longitude: longitude),
+                       zoom: 3.0, pitch: 0)
+    }
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
     // The athlete's app-wide base-map choice — persists across launches and stays in sync with every
@@ -203,7 +216,7 @@ struct TodayView: View {
                 } else if locator.isAuthorized {
                     viewport = .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
                 } else {
-                    viewport = .camera(center: Self.defaultMapCenter, zoom: 11, pitch: mapStyle.explorePitch)
+                    viewport = Self.unlocatedViewport
                 }
             }
             runAppearDeepLinks()
@@ -248,10 +261,16 @@ struct TodayView: View {
         // Start or recenter, never a re-skin).
         .onChange(of: mapStyle) {
             if !worldMode, !marketingHero {
-                let target: Viewport = locator.isAuthorized
-                    ? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
-                    : .camera(center: lastKnownCoordinate ?? Self.defaultMapCenter,
-                              zoom: 13.5, pitch: mapStyle.explorePitch)
+                // Re-tilting only makes sense over a place we can actually point at — an un-located
+                // athlete keeps the flat world view rather than being tipped into a pitched globe.
+                let target: Viewport
+                if locator.isAuthorized {
+                    target = .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
+                } else if let coord = lastKnownCoordinate {
+                    target = .camera(center: coord, zoom: 13.5, pitch: mapStyle.explorePitch)
+                } else {
+                    target = Self.unlocatedViewport
+                }
                 withAnimation(Motion.standard) { viewport = target }
             }
         }
