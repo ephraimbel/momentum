@@ -21,10 +21,11 @@ struct StrengthSummaryContent: View {
             VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, session).reveal(0)
-                if !prs.isEmpty {
-                    prSection.reveal(0.12)
-                    EarnedShareButton(workout: workout, weightUnit: weightUnit, title: "Share your PR").reveal(0.18)
-                }
+                if !prs.isEmpty { prSection.reveal(0.12) }
+                // Always offered — see CardioSummaryView. The title stays honest: a session with no
+                // record on it is worth sharing, but it isn't a PR and must not claim to be.
+                EarnedShareButton(workout: workout, weightUnit: weightUnit,
+                                  title: prs.isEmpty ? "Share this session" : "Share your PR").reveal(0.18)
                 WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.22)
                 AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.24)
                 PlanProposalCard().reveal(0.28)

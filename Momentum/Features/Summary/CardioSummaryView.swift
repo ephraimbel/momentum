@@ -38,10 +38,13 @@ struct CardioSummaryContent: View {
             VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, gps).reveal(0)
-                if !hits.isEmpty {
-                    achievementsSection.reveal(0.10)
-                    EarnedShareButton(workout: workout, distanceUnit: distanceUnit, title: "Share your run").reveal(0.16)
-                }
+                if !hits.isEmpty { achievementsSection.reveal(0.10) }
+                // Sharing is not gated on a record. It used to sit inside the achievements branch, so
+                // the ~90% of runs that set no PR offered no way to share at all — and the share card
+                // is the growth loop for a solo app. The badge above is what's *earned*; the run
+                // itself is always worth showing.
+                EarnedShareButton(workout: workout, distanceUnit: distanceUnit,
+                                  title: "Share your run").reveal(0.16)
                 WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.20)
                 routeMap(gps).reveal(0.22)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)

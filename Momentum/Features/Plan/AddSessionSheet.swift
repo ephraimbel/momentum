@@ -11,6 +11,7 @@ struct AddSessionSheet: View {
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
+    @Query private var profiles: [UserProfile]
 
     @State private var date: Date
     @State private var sport: WorkoutType = .run
@@ -20,7 +21,12 @@ struct AddSessionSheet: View {
     @State private var showSportPicker = false
 
     enum GoalKind: Hashable { case open, distance }
-    private let distanceUnit: DistanceUnit = .auto
+    /// The athlete's chosen unit. This was pinned to `.auto`, which resolves off LOCALE — so a US
+    /// athlete who had explicitly chosen metric typed "5" meaning 5 km and got 5 miles (8047 m)
+    /// stored, then saw it rendered back as "8 km". Wrong data, not just a wrong label.
+    private var distanceUnit: DistanceUnit {
+        DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
+    }
     private var isGPS: Bool { sport.isGPS }
     private var isTimed: Bool { sport.isTimed }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }

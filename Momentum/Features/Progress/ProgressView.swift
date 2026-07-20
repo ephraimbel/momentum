@@ -146,7 +146,11 @@ struct ProgressScreen: View {
 
     private var plan: TrainingPlan? { profiles.first?.plan }
 
-    private var distanceUnit: DistanceUnit { .auto }
+    /// The athlete's chosen unit — not a bare `.auto`, which ignored an explicit metric/imperial
+    /// preference and silently resolved off locale instead.
+    private var distanceUnit: DistanceUnit {
+        DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
+    }
     private var weightUnit: WeightUnit { WeightUnit(rawValue: profiles.first?.weightUnit ?? "") ?? .default() }
 
     // These aggregates walk EVERY workout (and its sets). As computed vars they re-ran on every
@@ -174,7 +178,9 @@ struct ProgressScreen: View {
     @State private var cachedWeekVolumes: [(week: Date, meters: Double)]?
     /// Per-render O(N) walks folded into the cache pass: the 12-week distance tile and the
     /// 28-day intensity mix re-walked every workout on each Trends body evaluation.
-    @State private var cachedKm12wk = 0
+    /// Stored in METRES (SI everywhere; convert at display time) — it used to cache a pre-rounded
+    /// kilometre count, which is what made the tile below it read "km" to a miles athlete.
+    @State private var cachedDistance12wkM: Double = 0
     @State private var cachedIntensityMix: IntensityMix.Mix?
     /// Whether any lifting history exists — gates the MUSCLE FOCUS rail target (running lights
     /// leg muscles too, but the strength section only mounts with actual strength workouts).
@@ -242,8 +248,8 @@ struct ProgressScreen: View {
         cachedFormPoint = computeFormPoint()
         cachedWeekVolumes = computeWeekVolumes()
         let cutoff12 = Calendar.current.date(byAdding: .weekOfYear, value: -12, to: Date()) ?? Date()
-        cachedKm12wk = Int((workouts.filter { $0.startedAt >= cutoff12 }
-            .compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
+        cachedDistance12wkM = workouts.filter { $0.startedAt >= cutoff12 }
+            .compactMap { $0.gps?.distanceM }.reduce(0, +)
         cachedIntensityMix = computeIntensityMix()
         cachedHasStrength = workouts.contains { $0.type.isStrengthStyle && $0.strength != nil }
     }
@@ -1000,11 +1006,12 @@ struct ProgressScreen: View {
     /// The at-a-glance trend row — free + up top, so "how I'm trending" reads before the Pro charts.
     private func trendMetrics() -> some View {
         let paceFaster = insights.paceTrendPct < -1
-        let km = cachedKm12wk   // folded into refreshAggregates — this ran per render pass
+        // Folded into refreshAggregates — this ran per render pass.
+        let far = Formatters.wholeDistance(meters: cachedDistance12wkM, unit: distanceUnit)
         return HStack(spacing: Theme.Space.sm) {
             metricTile(paceFaster ? "▲ \(Int(abs(insights.paceTrendPct).rounded()))%" : "Steady",
                        paceFaster ? "Faster / 8 wk" : "Pace", iris: paceFaster)
-            metricTile("\(km)", "km · 12 wk", iris: false)
+            metricTile("\(far.value)", "\(far.unit) · 12 wk", iris: false)
             metricTile("\(profiles.first?.prs.count ?? 0)", "PRs", iris: false)
         }
     }
@@ -1097,11 +1104,12 @@ struct ProgressScreen: View {
         let cal = Calendar.current
         let month = cal.dateInterval(of: .month, for: Date())
         let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
-        let km = Int((mine.compactMap { $0.gps?.distanceM }.reduce(0, +) / 1000).rounded())
+        let far = Formatters.wholeDistance(meters: mine.compactMap { $0.gps?.distanceM }.reduce(0, +),
+                                           unit: distanceUnit)
         return HStack(spacing: 0) {
             summaryCell("\(mine.count)", "Sessions")
             Divider().frame(height: 34).overlay(Theme.hairline)
-            summaryCell("\(km)", "km this month")
+            summaryCell("\(far.value)", "\(far.unit) this month")
             Divider().frame(height: 34).overlay(Theme.hairline)
             summaryCell("\(profiles.first?.prs.count ?? 0)", "PRs")
         }

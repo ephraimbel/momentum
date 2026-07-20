@@ -24,6 +24,7 @@ struct StrengthSaveView: View {
     @State private var title = ""
     @State private var desc = ""
     @State private var celebrating = false
+    @State private var saveFailed = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
 
@@ -65,6 +66,14 @@ struct StrengthSaveView: View {
                 CompletionCelebration(title: "Workout saved") { onDone() }
             }
         }
+        // The sets are already on disk — only the name and notes failed to write, so say exactly that
+        // and keep the athlete on the screen with their text intact rather than dismissing over it.
+        .alert("Couldn't save your notes", isPresented: $saveFailed) {
+            Button("Try again") { save() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Your workout and every set are safe. The title and notes didn't write — your text is still here.")
+        }
         .task {
             guard reader == nil else { return }
             let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)
@@ -98,12 +107,13 @@ struct StrengthSaveView: View {
     private func save() {
         focus = nil
         // Commit through the reader's own context (where `workout` lives) so the write persists.
-        reader?.commit {
+        // Never celebrate a write that didn't land: the title and notes exist only in these fields.
+        guard let reader, reader.commit({
             $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        }) else { saveFailed = true; return }
         // Persist the records this session set (fresh context — the logged sets are complete there).
-        if let reader, let workout = reader.workout {
+        if let workout = reader.workout {
             let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)
             PersonalRecord.persist(hits.compactMap { hit in
                 hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
@@ -157,23 +167,33 @@ final class FinishedWorkoutReader {
         self.workout = try? context.fetch(descriptor).first
     }
 
-    func commit(title: String, note: String) {
+    @discardableResult
+    func commit(title: String, note: String) -> Bool {
         commit { $0.title = title; $0.note = note }
     }
 
     /// General edit hook: mutate the fresh-context workout, then persist through the same context
     /// (writes made through any other context wouldn't see these relationships resolved).
-    func commit(_ mutate: (Workout) -> Void) {
-        guard let workout else { return }
+    ///
+    /// Reports success rather than swallowing it. This is the one screen in the app where a dropped
+    /// write loses something the athlete typed by hand — a failed `save()` here used to dismiss the
+    /// sheet as if it had worked, taking the title, note, sport and effort with it. A nil `workout`
+    /// (the initial fetch failed) is the same failure wearing a different hat: the fields render and
+    /// accept edits that have nowhere to land.
+    @discardableResult
+    func commit(_ mutate: (Workout) -> Void) -> Bool {
+        guard let workout else { return false }
         mutate(workout)
-        try? context.save()
+        do { try context.save(); return true } catch { return false }
     }
 
     /// Explicit user discard — deletes through the fresh context so the cascade sees the full,
-    /// non-stale relationship graph.
-    func delete() {
-        guard let workout else { return }
+    /// non-stale relationship graph. Reports success: a discard that silently fails leaves the
+    /// workout in the list, so the athlete taps Discard again on something they already threw away.
+    @discardableResult
+    func delete() -> Bool {
+        guard let workout else { return false }
         context.delete(workout)
-        try? context.save()
+        do { try context.save(); return true } catch { return false }
     }
 }

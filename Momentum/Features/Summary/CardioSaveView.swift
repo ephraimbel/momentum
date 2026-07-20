@@ -29,6 +29,8 @@ struct CardioSaveView: View {
     @State private var mapStyle: MapStyleOption = .persisted
     @State private var initialMapStyle: MapStyleOption = .persisted
     @State private var celebrating = false
+    @State private var saveFailed = false
+    @State private var discardFailed = false
     @State private var confirmDiscard = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -74,6 +76,20 @@ struct CardioSaveView: View {
             if celebrating {
                 CompletionCelebration(title: "\(workout?.type.title ?? "Run") saved") { onDone() }
             }
+        }
+        // The recording itself is already on disk — only these edits failed to write. Say that
+        // plainly and keep the athlete here with their text, rather than dismissing over the loss.
+        .alert("Couldn't save your details", isPresented: $saveFailed) {
+            Button("Try again") { save() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Your route and every metric are safe. The name, notes and effort didn't write — your text is still here.")
+        }
+        .alert("Couldn't discard this recording", isPresented: $discardFailed) {
+            Button("Try again") { discard() }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("It's still in your history. Nothing was deleted.")
         }
         // The save screen is itself a fullScreenCover — RootView's app-level paywall cover cannot
         // present on top of it, so the Pro map-style gate needs its own host here.
@@ -232,51 +248,55 @@ struct CardioSaveView: View {
 
     private func save() {
         focus = nil
-        if let reader, let workout = reader.workout {
-            reader.commit {
-                $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-                $0.type = sportType
-                $0.perceivedEffort = effort
-                $0.gps?.mapStyleRaw = mapStyle.rawValue
-                // Recompute on the fresh context so the estimate sees the complete GPS detail.
-                $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
-            }
-            // The saved snapshot must match the chosen basemap (grid tile + History thumb). Re-render
-            // off the save path when the style changed (or the finish-time render failed); the tile
-            // shows the previous image until the new one lands, and the healer covers a failure.
-            if mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil {
-                let style = mapStyle
-                let readerContext = reader.context
-                Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
-            }
-            // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
-            // only). Plan mutations go through the main context; only scalars are read off `workout`.
-            if let note = PlanCoaching.adaptToEffort(workout, plan: profiles.first?.plan, in: context) {
-                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
-                services.notifications.schedulePlannedReminders(profiles.first?.plan)
-            }
-            // Persist any records this run set (detected against the fresh context, so the samples
-            // are complete) — the PR shelf is what the "PRs" stat counts.
-            let recordsContext = reader.context
-            var records: [(type: PRType, value: Double, exercise: Exercise?)] =
-                CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: recordsContext)
-                    .compactMap { hit in hit.prType.map { (type: $0, value: hit.value, exercise: Exercise?.none) } }
-            // A first-of-discipline workout earns no "you got better" headline (detect guards on an
-            // empty prior), yet its own bests must still SEED the record book — mirror how StrengthPRs
-            // records the first lift off a 0 baseline. persist dedupes per (type, workout), so a run
-            // that also headlined can never double-log.
-            if CardioAchievements.isFirstOfType(workout, in: recordsContext) {
-                records += RecordsBook.cardioCandidates(workout)
-                    .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
-            }
-            PersonalRecord.persist(records, workout: workout, in: recordsContext)
-            // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
-            // (a never-locked GPS run finished by accident has nothing worth exporting).
-            if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
-                let saved = workout
-                Task { await services.health.save(saved) }
-            }
+        // Never celebrate a write that didn't land. Title, notes, sport, effort and map style exist
+        // only in these fields until the commit succeeds — this used to fall straight through to the
+        // celebration and dismiss, taking all five with it, whether the store rejected the write or
+        // the workout had never loaded at all.
+        guard let reader, let workout = reader.workout else { saveFailed = true; return }
+        guard reader.commit({
+            $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.type = sportType
+            $0.perceivedEffort = effort
+            $0.gps?.mapStyleRaw = mapStyle.rawValue
+            // Recompute on the fresh context so the estimate sees the complete GPS detail.
+            $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
+        }) else { saveFailed = true; return }
+
+        // The saved snapshot must match the chosen basemap (grid tile + History thumb). Re-render
+        // off the save path when the style changed (or the finish-time render failed); the tile
+        // shows the previous image until the new one lands, and the healer covers a failure.
+        if mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil {
+            let style = mapStyle
+            let readerContext = reader.context
+            Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
+        }
+        // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
+        // only). Plan mutations go through the main context; only scalars are read off `workout`.
+        if let note = PlanCoaching.adaptToEffort(workout, plan: profiles.first?.plan, in: context) {
+            services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
+            services.notifications.schedulePlannedReminders(profiles.first?.plan)
+        }
+        // Persist any records this run set (detected against the fresh context, so the samples
+        // are complete) — the PR shelf is what the "PRs" stat counts.
+        let recordsContext = reader.context
+        var records: [(type: PRType, value: Double, exercise: Exercise?)] =
+            CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: recordsContext)
+                .compactMap { hit in hit.prType.map { (type: $0, value: hit.value, exercise: Exercise?.none) } }
+        // A first-of-discipline workout earns no "you got better" headline (detect guards on an
+        // empty prior), yet its own bests must still SEED the record book — mirror how StrengthPRs
+        // records the first lift off a 0 baseline. persist dedupes per (type, workout), so a run
+        // that also headlined can never double-log.
+        if CardioAchievements.isFirstOfType(workout, in: recordsContext) {
+            records += RecordsBook.cardioCandidates(workout)
+                .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
+        }
+        PersonalRecord.persist(records, workout: workout, in: recordsContext)
+        // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
+        // (a never-locked GPS run finished by accident has nothing worth exporting).
+        if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
+            let saved = workout
+            Task { await services.health.save(saved) }
         }
         Haptics.success()
         withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
@@ -294,7 +314,9 @@ struct CardioSaveView: View {
         if let reader, let session = reader.workout?.plannedSession {
             PlanCoaching.setCompletion(session, done: false, in: reader.context)
         }
-        reader?.delete()
+        // A discard that silently failed still dismissed, so the run reappeared in History and the
+        // athlete discarded it again on something they thought was already gone.
+        if let reader, !reader.delete() { discardFailed = true; return }
         Haptics.medium()
         onDone()
     }

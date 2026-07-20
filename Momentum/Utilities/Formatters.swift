@@ -69,6 +69,16 @@ enum Formatters {
         return "\(str) \(suffix)"
     }
 
+    /// Whole distance units for stat tiles that render the number and its unit separately — a big
+    /// numeral above a small "mi · 12 wk" caption. Exists so a tile never hardcodes "km": doing that
+    /// told every imperial athlete their mileage was kilometres, in an app whose default resolves to
+    /// imperial for its largest market.
+    static func wholeDistance(meters: Double, unit: DistanceUnit) -> (value: Int, unit: String) {
+        let u = unit.resolved()
+        let value = u == .imperial ? meters / metersPerMile : meters / 1000
+        return (Int(value.rounded()), u == .imperial ? "mi" : "km")
+    }
+
     // MARK: Weight — rounded to nearest 0.5 kg or 1 lb
     static func weight(kg: Double, unit: WeightUnit) -> String {
         switch unit {

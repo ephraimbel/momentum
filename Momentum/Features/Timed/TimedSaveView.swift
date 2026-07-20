@@ -19,6 +19,8 @@ struct TimedSaveView: View {
     @State private var effort: Int?
     @State private var celebrating = false
     @State private var confirmDiscard = false
+    @State private var saveFailed = false
+    @State private var discardFailed = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
 
@@ -53,6 +55,18 @@ struct TimedSaveView: View {
             if celebrating {
                 CompletionCelebration(title: "\(workout?.type.title ?? "Session") saved") { onDone() }
             }
+        }
+        .alert("Couldn't save your details", isPresented: $saveFailed) {
+            Button("Try again") { save() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Your session is safe. The name, notes and effort didn't write — your text is still here.")
+        }
+        .alert("Couldn't discard this session", isPresented: $discardFailed) {
+            Button("Try again") { discard() }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("It's still in your history. Nothing was deleted.")
         }
         .onAppear {
             guard let workout else { return }
@@ -128,11 +142,13 @@ struct TimedSaveView: View {
 
     private func save() {
         focus = nil
+        // Never celebrate a write that didn't land — the title, notes and effort live only in these
+        // fields, and dismissing over a failed save discards what the athlete just typed.
         if let workout {
             workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             workout.perceivedEffort = effort
-            try? context.save()
+            do { try context.save() } catch { saveFailed = true; return }
             let saved = workout
             Task { await services.health.save(saved) }   // mirror to Apple Health
         }
@@ -142,9 +158,11 @@ struct TimedSaveView: View {
 
     private func discard() {
         focus = nil
+        // A silent failure here dismissed anyway, leaving the workout in History for the athlete to
+        // discard a second time.
         if let workout {
             context.delete(workout)
-            try? context.save()
+            do { try context.save() } catch { discardFailed = true; return }
         }
         Haptics.medium()
         onDone()
