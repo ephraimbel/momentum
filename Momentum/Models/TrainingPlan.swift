@@ -21,7 +21,14 @@ final class TrainingPlan {
     /// renewal (`PlanService.renewBlock`). Ignored for dated-race plans — they run one continuous
     /// macrocycle to race day. Additive: a plan stored before this field decodes as block 0.
     var blockIndex: Int = 0
-    /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from the first session) —
+    /// The day this block was generated from — the anchor for `weekPhases` and "Week N of M".
+    /// Deliberately distinct from the earliest session, which can sit *earlier*: finished work
+    /// carries across a rebuild (`PlanService.persist`), and a completed goal race often lands in the
+    /// week before the block that follows it. Anchoring on the block keeps the macrocycle labels from
+    /// sliding a week when history rides along. Additive: a plan stored before this field decodes as
+    /// nil, and the Plan page falls back to the first session's week — what those plans were built on.
+    var blockStart: Date?
+    /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from `blockStart`) —
     /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
     var weekPhases: [String] = []
     @Relationship(deleteRule: .cascade) var sessions: [PlannedSession] = []

@@ -231,16 +231,20 @@ enum PlanService {
                         calendar: Calendar = .current) -> TrainingPlan {
         // Replace any existing plan — but the athlete's name for it survives the rebuild.
         let carriedName = profile.plan?.name ?? ""
-        // This week's story survives too: completed sessions from the CURRENT calendar week detach
-        // from the old plan before its cascade delete and re-attach to the new block — rebuilding on
-        // a Thursday must not turn Monday's finished run into a "Rest day". Scoped to this week so
-        // the week strip/phase indexing (anchored on the earliest session) never drifts into history;
-        // the workouts themselves are never touched either way.
+        // Finished work survives too: completed sessions from the CURRENT calendar week detach from
+        // the old plan before its cascade delete and re-attach to the new block — rebuilding on a
+        // Thursday must not turn Monday's finished run into a "Rest day". A completed RACE carries
+        // however far back it sits: it's the event the whole block was built for, and `completeRace`
+        // rebuilds the day AFTER race day — so a Saturday race read on Monday is already "last week"
+        // and would otherwise be erased from the board at the emotional peak of the season.
+        // Carried history can therefore predate the block, which is why `blockStart` (not the earliest
+        // session) anchors phase indexing and "Week N of M". The workouts themselves are never touched.
         var carriedDone: [PlannedSession] = []
         if let existing = profile.plan {
             if let weekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start {
                 carriedDone = existing.sessions.filter {
-                    $0.status == .completed && $0.date >= weekStart && $0.date <= startDate
+                    $0.status == .completed && $0.date <= startDate
+                        && ($0.date >= weekStart || $0.runType == .race)
                 }
                 let carriedIDs = Set(carriedDone.map(\.id))
                 existing.sessions.removeAll { carriedIDs.contains($0.id) }   // detach from the cascade
@@ -268,6 +272,7 @@ enum PlanService {
         trainingPlan.weekPhases = plan.weeks.map(\.phase.rawValue)
 
         let anchor = calendar.startOfDay(for: startDate)
+        trainingPlan.blockStart = anchor   // the block's own day zero — see `TrainingPlan.blockStart`
         var sessions: [PlannedSession] = []
         for week in plan.weeks {
             for gen in week.sessions {

@@ -533,19 +533,57 @@ struct PlanCoachingTests {
 
     /// A real race plan whose race date is already `raceDaysAgo` in the past: generated from far
     /// enough back that the race session landed on the calendar.
-    private func raceProfile(in ctx: ModelContext, raceDaysAgo: Int) -> UserProfile {
+    /// `now` is injectable so a fixture can pin the weekday — the post-race carry-over behaves
+    /// differently depending on whether race day falls in the same calendar week as the rebuild.
+    private func raceProfile(in ctx: ModelContext, raceDaysAgo: Int, now: Date = Date()) -> UserProfile {
         let cal = Calendar.current
         let profile = UserProfile()
         profile.distanceUnit = "metric"
         profile.disciplines = ["running"]
         profile.goal = .raceDistance
         profile.daysPerWeek = 4
-        profile.raceDate = cal.date(byAdding: .day, value: -raceDaysAgo, to: cal.startOfDay(for: Date()))
+        profile.raceDate = cal.date(byAdding: .day, value: -raceDaysAgo, to: cal.startOfDay(for: now))
         profile.raceDistanceM = 42_195
         ctx.insert(profile)
-        let start = cal.date(byAdding: .weekOfYear, value: -8, to: Date())!
+        let start = cal.date(byAdding: .weekOfYear, value: -8, to: now)!
         PlanService.regenerate(for: profile, startDate: start, in: ctx)
         return profile
+    }
+
+    /// A goal race that lands in the PREVIOUS calendar week still survives the post-race rebuild.
+    /// `PlanService.persist` scopes its carry-over to the current week, and `completeRace` runs the
+    /// day AFTER race day — so a Saturday race opened on Monday fell outside that window and the
+    /// finished race was cascade-deleted, erasing the season's defining session at its emotional peak.
+    /// The dates are pinned because the bug only reproduced on the ~3 weekdays where race day crosses
+    /// the boundary: a `Date()`-relative test passed four days in seven. Saturday→Monday straddles the
+    /// boundary whether the locale starts its weeks on Sunday or Monday, so this holds anywhere.
+    @Test func raceInThePreviousCalendarWeekSurvivesTheRebuild() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let raceDay = try #require(DateComponents(calendar: cal, year: 2026, month: 9, day: 12).date)  // Saturday
+        let monday = try #require(DateComponents(calendar: cal, year: 2026, month: 9, day: 14).date)   // Monday
+        #expect(!cal.isDate(raceDay, equalTo: monday, toGranularity: .weekOfYear),
+                "fixture must straddle a week boundary or it isn't exercising the bug")
+
+        let profile = raceProfile(in: ctx, raceDaysAgo: 2, now: monday)
+        let plan = try #require(profile.plan)
+        let raceSession = try #require(plan.sessions.first { $0.runType == .race },
+                                       "race plan must carry its race session")
+        let race = Workout()
+        race.type = .run
+        race.startedAt = raceSession.date
+        race.durationS = 10_800
+        ctx.insert(race)
+        PlanCoaching.markComplete(raceSession, with: race, in: ctx)
+
+        #expect(PlanService.completeRace(for: profile, today: monday, in: ctx) != nil)
+        let next = try #require(profile.plan)
+        // The race the athlete just ran is still on the board, completed — never erased.
+        #expect(next.sessions.contains { $0.runType == .race && $0.status == .completed })
+        // And carrying it did NOT drag the block's anchor back into last week: the macrocycle still
+        // starts on the rebuild day, so week 1 stays week 1 and the phase labels don't slide.
+        #expect(next.blockStart.map { cal.isDate($0, inSameDayAs: monday) } == true)
     }
 
     @Test func completeRaceRecalibratesAndOpensRecoveryBlock() throws {

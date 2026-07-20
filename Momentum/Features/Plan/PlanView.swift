@@ -349,14 +349,18 @@ struct PlanView: View {
             return days <= 7 ? "\(label) · \(day) — race week"
                              : "\(label) · \(day) · \(Int(ceil(Double(days) / 7.0))) weeks to go"
         }
-        guard let idx = planWeekIndex(of: currentWeekStart), planWeekStarts.count > 1 else { return nil }
+        // Counted over the BLOCK's weeks, not the strip's: carried history (a finished race from
+        // before this block) is a look-back and must not inflate "of N" or shift the current week.
+        let blockWeeks = blockWeekStarts
+        guard let idx = blockWeeks.firstIndex(where: { Calendar.current.isDate($0, inSameDayAs: currentWeekStart) }),
+              blockWeeks.count > 1 else { return nil }
         // Open-ended (no race): a rolling block that renews when it wraps — say so, so "Week 6 of 6"
         // reads as a checkpoint, not a plan running out.
         if plan?.raceDate == nil {
-            return "Rolling block \((plan?.blockIndex ?? 0) + 1) · Week \(idx + 1) of \(planWeekStarts.count)"
+            return "Rolling block \((plan?.blockIndex ?? 0) + 1) · Week \(idx + 1) of \(blockWeeks.count)"
         }
         let prefix = (plan?.name.isEmpty ?? true) ? "Training plan · " : ""
-        return "\(prefix)Week \(idx + 1) of \(planWeekStarts.count)"
+        return "\(prefix)Week \(idx + 1) of \(blockWeeks.count)"
     }
 
     /// The athlete's name for the block is the page title ("Austin Marathon"); unnamed plans stay "Plan".
@@ -557,7 +561,11 @@ struct PlanView: View {
               let start = cal.dateInterval(of: .weekOfYear, for: first)?.start else {
             weekStartsCache = []; planFirstWeek = nil; return
         }
-        planFirstWeek = start
+        // The strip spans every week the plan touches — including finished work carried across a
+        // rebuild (a completed race), which can predate the block. The BLOCK's first week is
+        // `blockStart`, so phases and "Week N of M" stay put when history rides along. Legacy plans
+        // have no `blockStart` and fall back to the earliest session — what they were built on.
+        planFirstWeek = plan.blockStart.flatMap { cal.dateInterval(of: .weekOfYear, for: $0)?.start } ?? start
         var out: [Date] = []
         var d = start
         while d <= last, out.count < 64 {
@@ -583,6 +591,13 @@ struct PlanView: View {
 
     /// The Monday of every week the plan spans — the strip's data (memoized in `weekStartsCache`).
     private var planWeekStarts: [Date] { weekStartsCache }
+
+    /// The block's own weeks. The strip can lead with carried history — a finished race that predates
+    /// this block — and that's a look-back, not "week zero": the counter measures from `blockStart`.
+    private var blockWeekStarts: [Date] {
+        guard let first = planFirstWeek else { return weekStartsCache }
+        return weekStartsCache.filter { $0 >= first }
+    }
 
     private func planWeekIndex(of week: Date) -> Int? {
         planWeekStarts.firstIndex { Calendar.current.isDate($0, inSameDayAs: week) }
