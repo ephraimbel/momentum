@@ -26,12 +26,35 @@ struct FuelView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query(sort: \Meal.eatenAt, order: .reverse) private var meals: [Meal]
-    @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
+    /// Bounded on purpose. The page judges TODAY and offers repeats from the recent past — it never
+    /// needed every meal ever logged. `fetchLimit` runs AFTER the sort, and we sort by the very key
+    /// we window on, so "newest 500" is exactly "the recent journal" (this is NOT the case
+    /// CardioSummaryView warns about — there a limit ran ahead of an in-memory filter and silently
+    /// dropped rows). A relative-date `#Predicate` is the wrong tool here: a property initializer
+    /// captures its `Date` once when the view's storage is created and never re-derives it, so a
+    /// long-lived session would quietly drift past its own window.
+    /// 500 ≈ 3 months at 6 meals/day: comfortably more than `usuals` walks (200). FuelHistoryView
+    /// keeps its own unbounded query + 365-day in-memory window — untouched, and correctly divergent.
+    private static var recentMeals: FetchDescriptor<Meal> {
+        var d = FetchDescriptor<Meal>(sortBy: [SortDescriptor(\Meal.eatenAt, order: .reverse)])
+        d.fetchLimit = 500
+        return d
+    }
+    /// Only TODAY's workouts are ever read (`FuelReadoutBuilder` takes `prefix(20)`, then filters to
+    /// today). 30 is headroom over that prefix; sorted newest-first, today's can never fall out.
+    private static var recentWorkouts: FetchDescriptor<Workout> {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\Workout.startedAt, order: .reverse)])
+        d.fetchLimit = 30
+        return d
+    }
+    @Query(FuelView.recentMeals) private var meals: [Meal]
+    @Query(FuelView.recentWorkouts) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
 
     @State private var draft = ""
-    @State private var estimating: Set<UUID> = []
+    /// In-flight estimates, retained by meal id so a Delete can CANCEL one before it comes back to a
+    /// deleted SwiftData object (it also drives the shimmer, exactly like the old `Set<UUID>`).
+    @State private var estimateTasks: [UUID: Task<Void, Never>] = [:]
     @State private var editing: Meal?
     @State private var showingReadout = false
     @State private var showingGoals = false
@@ -39,7 +62,33 @@ struct FuelView: View {
     @State private var voiceBase = ""
     @FocusState private var composing: Bool
     @Environment(PaywallController.self) private var paywall
+    @Environment(\.scenePhase) private var scenePhase
     private let estimator = FuelEstimator()
+    /// How many times the journal will re-fire an estimate on its own before it rests. A meal the
+    /// model can't parse must not cost an API call on every tab visit for the rest of its life; the
+    /// athlete's own "Estimate again" always overrides the cap.
+    private static let maxEstimateAttempts = 3
+
+    // Everything derived from SwiftData is snapshotted per data change instead of per body
+    // evaluation — the ProgressView `refreshAggregates` / TodayView `cachedPendingToday` pattern.
+    // `readout` was a COMPUTED property read 7× per pass (banner, kcal headline, strip, rings,
+    // sheet, log, retry): each read mapped 80 meals into engine inputs, walked the plan with
+    // per-session calendar math, ran the BMR/carb/sodium pipeline, and built strings. Every
+    // keystroke in the composer re-evaluates the body, so the athlete paid for all of it per letter.
+    @State private var cachedReadout: FuelReadiness.DayReadout?
+    @State private var cachedTip: String?
+    @State private var cachedTodayMeals: [Meal] = []
+    @State private var cachedUsuals: [Meal] = []
+    /// Row titles decoded ONCE per refresh — `Meal.journalTitle` runs a JSONDecoder over `itemsData`
+    /// on every single access, and every visible row calls it on every render pass.
+    @State private var cachedTitles: [UUID: String] = [:]
+    /// The signature the caches were built from. nil = never built (first frame).
+    @State private var cacheToken: Int?
+    /// The clock is a real input, not incidental: the engine paces `status` across the waking day
+    /// (06:00→22:00), opens and closes the 90-minute refuel window, and `FuelTips` switches on hour
+    /// bands. Today that tracks live only because the readout recomputes constantly — memoizing it
+    /// without this would freeze the refuel banner on. One tick a minute while the page is visible.
+    @State private var minuteTick = 0
 
     var body: some View {
         NavigationStack {
@@ -126,16 +175,148 @@ struct FuelView: View {
             // Estimates that couldn't run at log time (offline, function down) retry quietly
             // whenever the page appears — the loop self-heals without the athlete doing anything.
             .task { await retryPendingEstimates() }
+            // First frame, and every return to the tab. Unconditional: it's also how a plan edit
+            // made on the Plan tab reaches the carb target (the signature hashes plan IDENTITY, not
+            // its session list — see `cacheSignature`).
+            .onAppear { refreshDerived() }
+            // Any data change — a meal logged or deleted, an estimate landing, the adjuster saved,
+            // a workout finishing, the day rolling over, the minute ticking.
+            .onChange(of: cacheSignature) { refreshDerived() }
+            // The clock tick. `.task` is cancelled on disappear, so an off-tab Fuel page costs
+            // nothing; `&+=` so a very long session can't trap on overflow.
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    guard !Task.isCancelled else { return }
+                    minuteTick &+= 1
+                }
+            }
+            // Foregrounding after hours asleep: the sleep above resumes late, so re-judge at once
+            // rather than showing yesterday's pacing for up to a minute.
+            .onChange(of: scenePhase) { _, phase in if phase == .active { refreshDerived() } }
             .onDisappear { if voice.isRecording { voice.stop() } }
         }
     }
 
     // MARK: Readout (SwiftData → engine inputs via the shared builder; the engine stays pure)
 
-    private var readout: FuelReadiness.DayReadout {
-        FuelReadoutBuilder.readout(meals: Array(meals), plan: profiles.first?.plan,
-                                   workouts: Array(workouts), profile: profiles.first)
+    /// Cheap-but-CORRECT cache key. The readout depends on meal CONTENT, not meal count — when a
+    /// pending estimate lands, `carbsG` goes nil → a number with the count unchanged, so a
+    /// count-only signature would silently freeze the rings on stale numbers. We hash the value
+    /// fields themselves, but only over TODAY's meals: the query sorts `eatenAt` descending and a
+    /// meal can't be logged in the future (the detail sheet's DatePicker is bounded `...Date()`),
+    /// so today's are a leading prefix. That's a few dozen Int hash combines per body pass, against
+    /// an engine run that allocates 80 structs, walks the plan, and formats strings.
+    private var cacheSignature: Int {
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        var h = Hasher()
+        // The day stamp — so a rollover past midnight re-judges even on an empty journal
+        // (the ProgressView lesson: engines bake "today" into their own math).
+        h.combine(todayStart)
+        h.combine(minuteTick)
+        // Today's meals, BY CONTENT — this is the line that makes a landing estimate roll the rings.
+        for m in todaySlice(since: todayStart) {
+            h.combine(m.eatenAt)
+            h.combine(m.kcal); h.combine(m.carbsG); h.combine(m.proteinG)
+            h.combine(m.fatG); h.combine(m.sodiumMg)
+            h.combine(m.potassiumMg); h.combine(m.magnesiumMg)
+            h.combine(m.ironMg); h.combine(m.calciumMg)
+        }
+        // Today's workouts, by content: they raise the energy floor, add sweat sodium, and are the
+        // whole of `refuelDue`.
+        for w in workouts {
+            if w.isDeleted { continue }
+            guard w.startedAt >= todayStart else { break }
+            h.combine(w.startedAt); h.combine(w.durationS); h.combine(w.calories)
+        }
+        // `usuals` reads the recent past. Count + the newest row's identity is enough: a meal's TEXT
+        // is immutable after logging (the detail sheet edits portions and the clock, never the
+        // words), and only today's meals ever gain numbers — already hashed above. The identity
+        // catches the pathological equal-count delete-plus-insert.
+        h.combine(meals.count)
+        h.combine(meals.first?.persistentModelID)
+        // The fueling adjuster's inputs — O(1) scalars on one object, so exact, with no
+        // sheet-dismiss hook to forget.
+        let p = profiles.first
+        h.combine(p?.bodyMassKg); h.combine(p?.heightCm); h.combine(p?.birthYear)
+        h.combine(p?.sex); h.combine(p?.fuelGoalKind)
+        h.combine(p?.fuelCustomKcal); h.combine(p?.fuelCustomProteinG)
+        h.combine(p?.fuelCustomCarbsG); h.combine(p?.fuelCustomFatG); h.combine(p?.fuelCustomSodiumMg)
+        // Plan IDENTITY only — deliberately NOT `plan.sessions.count`. TodayView can afford that
+        // (the plan changes under it while it's on screen); Fuel has no plan-editing surface, and
+        // touching the relationship would fault every session of a 52-week plan on every body
+        // evaluation. Plan edits made on another tab land through the unconditional `.onAppear`.
+        h.combine(p?.plan?.persistentModelID)
+        return h.finalize()
     }
+
+    private var isCacheValid: Bool { cacheToken == cacheSignature }
+
+    /// Never serves a cached value once the signature has moved — the TodayView rule. It carries
+    /// less danger here than there: `DayReadout` is a pure value type (Ints, Strings, Bools, Dates,
+    /// no SwiftData references), so a stale one can only ever be stale numbers, never a
+    /// cascade-deleted object. The guard is what keeps those numbers honest on the frame a meal or
+    /// an estimate lands.
+    private var readout: FuelReadiness.DayReadout {
+        if isCacheValid, let r = cachedReadout { return r }
+        return computeReadout(now: Date()).readout
+    }
+
+    /// The one tip line, judged with the SAME `now` as the readout it reads (as two independent
+    /// computed properties they could disagree across an hour boundary mid-frame).
+    private var tip: String? {
+        if isCacheValid { return cachedTip }
+        return computeReadout(now: Date()).tip
+    }
+
+    /// Today's meals as a leading slice — the query sorts `eatenAt` descending and a meal can't be
+    /// logged in the future (the detail sheet's DatePicker is bounded `...Date()`), so today's rows
+    /// are a prefix. Deleted models are skipped rather than read: these compute passes now run
+    /// EAGERLY inside the same transaction as `context.delete`, before @Query has republished, so
+    /// the array can still hold a row that no longer exists. Skipping (not breaking) on a deleted
+    /// row keeps the rest of today intact.
+    private func todaySlice(since todayStart: Date) -> [Meal] {
+        var today: [Meal] = []
+        for m in meals {
+            if m.isDeleted { continue }
+            guard m.eatenAt >= todayStart else { break }
+            today.append(m)
+        }
+        return today
+    }
+
+    /// The engine pass itself. Only TODAY's meals reach the builder (it took `prefix(80)` and the
+    /// engine then filtered to today — same set, same `DayReadout`, without mapping a month of
+    /// history into engine inputs first).
+    private func computeReadout(now: Date) -> (readout: FuelReadiness.DayReadout, today: [Meal], tip: String?) {
+        let todayStart = Calendar.current.startOfDay(for: now)
+        let today = todaySlice(since: todayStart)
+        let r = FuelReadoutBuilder.readout(meals: today, plan: profiles.first?.plan,
+                                           workouts: Array(workouts), profile: profiles.first, now: now)
+        return (r, today, FuelTips.line(readout: r, now: now))
+    }
+
+    /// One pass, one place — so the body never runs an engine. Called on appear, on every signature
+    /// change, on the minute tick, on foreground, and eagerly from every mutator so the change frame
+    /// costs one engine run instead of four.
+    private func refreshDerived() {
+        let pass = computeReadout(now: Date())
+        cachedReadout = pass.readout
+        cachedTip = pass.tip
+        cachedTodayMeals = pass.today
+        let repeats = computeUsuals()
+        cachedUsuals = repeats
+        // Decode `itemsData` once per meal per refresh instead of once per row per render pass.
+        var titles: [UUID: String] = [:]
+        for m in pass.today { titles[m.id] = m.journalTitle }
+        for m in repeats where titles[m.id] == nil { titles[m.id] = m.journalTitle }
+        cachedTitles = titles
+        cacheToken = cacheSignature
+    }
+
+    /// The row/chip title, decoded at refresh time. Falls back to the live property so a meal that
+    /// somehow isn't in the map (a stale frame) still reads correctly — just at the old cost.
+    private func title(_ meal: Meal) -> String { cachedTitles[meal.id] ?? meal.journalTitle }
 
     // MARK: Readout strip — the judgment at a glance, deliberately quiet; tap for the full story
 
@@ -144,7 +325,7 @@ struct FuelView: View {
     /// grows by transform and still earns iridescence exactly at the floor — subtle ≠ unearned.
     private var readoutStrip: some View {
         let r = readout
-        let tip = FuelTips.line(readout: r, now: Date())
+        let tip = self.tip
         let fraction = min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG)))
         return Button { showingReadout = true } label: {
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
@@ -158,8 +339,11 @@ struct FuelView: View {
                         .monospacedDigit()
                         .contentTransition(.numericText())
                     Spacer(minLength: 0)
-                    if r.pendingCount > 0 {
-                        Text("\(r.pendingCount) estimating…")
+                    // Count what is ACTUALLY in flight, not every numberless meal: a meal that hit
+                    // the retry cap has no numbers and no task, and would otherwise claim to be
+                    // "estimating…" forever.
+                    if !estimateTasks.isEmpty {
+                        Text("\(estimateTasks.count) estimating…")
                             .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                             .transition(.opacity)
                     }
@@ -319,41 +503,80 @@ struct FuelView: View {
     private func log() {
         guard canLog else { return }
         if voice.isRecording { voice.stop() }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Plan-derived and meal-independent — read BEFORE the insert, while the cache token is
+        // still current (reading it after lands on the stale-token fallback and pays a full
+        // engine run for a string the plan already knew).
+        let label = readout.drivingSession
+        // Local-first: the athlete's own history answers before the network is ever asked.
+        // Resolved BEFORE the insert so the meal being logged can't be its own candidate.
+        let remembered = FuelLocalResolver.match(for: text, in: context)
+
         let meal = Meal()
-        meal.text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        meal.text = text
+        if let remembered { FuelLocalResolver.copyNumbers(from: remembered, to: meal) }
+
         withAnimation(Motion.standard) {
             context.insert(meal)
             try? context.save()
+            refreshDerived()
         }
+        // One event, one haptic. A local hit never also fires the estimate's `Haptics.light()` —
+        // two taps back to back read as a stutter, not as speed.
         Haptics.success()
-        let label = readout.drivingSession
+
         draft = ""
         voiceBase = ""
         composing = false
-        estimate(meal, sessionLabel: label)
+        // A remembered meal never enters `estimateTasks`, so there is no shimmer and no crossfade:
+        // the numbers are simply already there. That absence IS the feedback (FUEL-FLOW §2 — the
+        // searching beat exists because the app is genuinely searching; here it isn't).
+        if remembered == nil { estimate(meal, sessionLabel: label) }
     }
 
     /// Fire (or re-fire) the estimate for one meal. Manual numbers always survive (`apply` guards).
+    /// The task is retained by meal id so a Delete can cancel it, and the write is guarded on the
+    /// model still being alive: long-pressing Delete during the ~1–3s shimmer must never come back
+    /// to a deleted SwiftData object. The attempt is counted at FIRE time, not on completion — a
+    /// request that never returns (app killed, network hung) has to burn its attempt or the cap
+    /// bounds nothing.
     private func estimate(_ meal: Meal, sessionLabel: String?) {
-        estimating.insert(meal.id)
-        Task {
-            if let e = await estimator.estimate(text: meal.text, photoJPEG: nil,
-                                                sessionLabel: sessionLabel, durationS: nil) {
+        let id = meal.id
+        estimateTasks[id]?.cancel()
+        meal.estimateAttempts += 1
+        try? context.save()
+        let task = Task { @MainActor in
+            let e = await estimator.estimate(text: meal.text, sessionLabel: sessionLabel, durationS: nil)
+            // Cancellation normally gets here first, but a delete landing during the final
+            // suspension point wouldn't be seen by it — `isDeleted` flips the moment
+            // `context.delete` runs, and `modelContext` goes nil once the delete is processed.
+            guard !Task.isCancelled, !meal.isDeleted, meal.modelContext != nil else {
+                estimateTasks[id] = nil
+                return
+            }
+            if let e {
                 withAnimation(Motion.standard) {
                     FuelEstimator.apply(e, to: meal)
+                    meal.estimateAttempts = 0   // it resolved; nothing owed
                     try? context.save()
+                    refreshDerived()
                 }
                 Haptics.light()
             }
-            _ = withAnimation(Motion.standard) { estimating.remove(meal.id) }
+            withAnimation(Motion.standard) { estimateTasks[id] = nil }
         }
+        estimateTasks[id] = task
     }
 
     /// Self-heal: pending meals from an offline log (or a not-yet-deployed function) retry when the
-    /// page appears. Bounded to today's few — never a backlog storm.
+    /// page appears — but only `maxEstimateAttempts` times each. Past that the meal rests on its
+    /// manual-entry line and stops costing anything. Bounded to today's few — never a backlog storm.
     private func retryPendingEstimates() async {
         let label = readout.drivingSession
-        for meal in todayMeals.filter({ $0.source == "pending" && $0.carbsG == nil && !estimating.contains($0.id) }).prefix(5) {
+        let due = todayMeals.filter {
+            $0.needsEstimate(maxAttempts: Self.maxEstimateAttempts) && estimateTasks[$0.id] == nil
+        }
+        for meal in due.prefix(5) {
             estimate(meal, sessionLabel: label)
         }
     }
@@ -408,23 +631,33 @@ struct FuelView: View {
 
     /// Most-repeated meals with numbers ready to reuse, recency-breaking ties — an established
     /// athlete sees their true usuals, a new one sees recents. Same rule, no cliff.
-    private var usuals: [Meal] {
-        var byKey: [String: (count: Int, latest: Meal)] = [:]
-        for meal in meals.prefix(200) where meal.carbsG != nil {
-            let key = meal.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { continue }
-            if var entry = byKey[key] {
-                entry.count += 1
-                if meal.eatenAt > entry.latest.eatenAt { entry.latest = meal }
-                byKey[key] = entry
+    ///
+    /// Unlike the readout, this vends live `Meal` references — so the signature guard is
+    /// load-bearing here, not belt-and-braces. `meals.count` is in the signature, so a delete
+    /// invalidates the cache before a deleted row can be handed back to a `ForEach`.
+    private var usuals: [Meal] { isCacheValid ? cachedUsuals : computeUsuals() }
+
+    /// Grouped by the SAME canonical key the typed lookup uses, so "2 eggs and toast" and
+    /// "2 eggs, toast" are one chip counted twice, not two chips counted once. The group's
+    /// representative follows the same manual-then-recency rule as a typed match, so tapping the
+    /// chip and re-typing the meal produce byte-identical rows.
+    private func computeUsuals() -> [Meal] {
+        var groups: [String: (count: Int, best: Meal)] = [:]
+        for meal in meals.prefix(200) where !meal.isDeleted && meal.carbsG != nil {
+            let key = MealTextKey.normalized(meal.text)
+            guard MealTextKey.isMatchable(key) else { continue }
+            if var group = groups[key] {
+                group.count += 1
+                if FuelLocalResolver.outranks(meal, group.best) { group.best = meal }
+                groups[key] = group
             } else {
-                byKey[key] = (1, meal)
+                groups[key] = (1, meal)
             }
         }
-        return byKey.values
-            .sorted { ($0.count, $0.latest.eatenAt) > ($1.count, $1.latest.eatenAt) }
+        return groups.values
+            .sorted { ($0.count, $0.best.eatenAt) > ($1.count, $1.best.eatenAt) }
             .prefix(5)
-            .map(\.latest)
+            .map(\.best)
     }
 
     @ViewBuilder
@@ -441,7 +674,7 @@ struct FuelView: View {
                                 Image(systemName: "plus")
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(Theme.inkTertiary)
-                                Text(meal.journalTitle)
+                                Text(title(meal))
                                     .font(.rounded(Theme.FontSize.label, weight: .semibold))
                                     .foregroundStyle(Theme.inkSecondary)
                                     .lineLimit(1)
@@ -453,7 +686,7 @@ struct FuelView: View {
                             .overlay(Capsule().stroke(Theme.hairline))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Log again: \(meal.journalTitle)")
+                        .accessibilityLabel("Log again: \(title(meal))")
                     }
                 }
             }
@@ -462,33 +695,27 @@ struct FuelView: View {
 
     /// One tap re-logs a usual: numbers and items copy over, the clock is now, and the old note
     /// stays behind (it narrated a different day's session). No AI round-trip, no waiting.
+    /// Identical semantics to a typed local match — one definition, in `FuelLocalResolver`.
     private func repeatMeal(_ source: Meal) {
         let meal = Meal()
         meal.text = source.text
-        meal.itemsData = source.itemsData
-        meal.kcal = source.kcal
-        meal.carbsG = source.carbsG
-        meal.proteinG = source.proteinG
-        meal.fatG = source.fatG
-        meal.sodiumMg = source.sodiumMg
-        meal.fluidsMl = source.fluidsMl
-        meal.potassiumMg = source.potassiumMg
-        meal.magnesiumMg = source.magnesiumMg
-        meal.ironMg = source.ironMg
-        meal.calciumMg = source.calciumMg
-        meal.source = source.source
-        meal.confidence = source.confidence
+        FuelLocalResolver.copyNumbers(from: source, to: meal)
         withAnimation(Motion.standard) {
             context.insert(meal)
             try? context.save()
+            refreshDerived()
         }
         Haptics.success()
     }
 
     // MARK: Today's meals
 
+    /// Vends live `Meal` references, so the signature guard matters: `meals.count` is hashed, and a
+    /// delete therefore invalidates the cache before a deleted row reaches a `ForEach` or
+    /// `retryPendingEstimates()`.
     private var todayMeals: [Meal] {
-        meals.filter { Calendar.current.isDateInToday($0.eatenAt) }
+        isCacheValid ? cachedTodayMeals
+                     : meals.filter { !$0.isDeleted && Calendar.current.isDateInToday($0.eatenAt) }
     }
 
     private var rowTransition: AnyTransition {
@@ -519,14 +746,14 @@ struct FuelView: View {
     }
 
     private func mealRow(_ meal: Meal) -> some View {
-        let isEstimating = estimating.contains(meal.id)
+        let isEstimating = estimateTasks[meal.id] != nil
         // Once resolved, the title is the AI's clean item list ("Eggs ×2 · Toast · Coffee") —
         // the athlete's raw words stay on the model and in the detail sheet.
         return Button { if !isEstimating { editing = meal } } label: {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Theme.Space.sm) {
-                        Text(meal.journalTitle)
+                        Text(title(meal))
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .lineLimit(2).multilineTextAlignment(.leading)
                             .contentTransition(.opacity)
@@ -566,10 +793,21 @@ struct FuelView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            // The cap is ours, not the athlete's — asking for it by hand always earns a fresh run.
+            if !isEstimating, meal.carbsG == nil {
+                Button {
+                    meal.estimateAttempts = 0
+                    estimate(meal, sessionLabel: readout.drivingSession)
+                } label: { Label("Estimate again", systemImage: "sparkles") }
+            }
             Button(role: .destructive) {
+                // Cancel FIRST: an in-flight estimate must never come back to a deleted model.
+                estimateTasks[meal.id]?.cancel()
+                estimateTasks[meal.id] = nil
                 withAnimation(Motion.standard) {
                     context.delete(meal)
                     try? context.save()
+                    refreshDerived()
                 }
                 Haptics.medium()
             } label: { Label("Delete meal", systemImage: "trash") }

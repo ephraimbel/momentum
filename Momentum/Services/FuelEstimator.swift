@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 /// Client for the `meal-estimate` Edge Function (FUEL pillar) — the AI's ONLY job in fueling:
-/// turn "chicken rice bowl" (± a plate photo) into approximate numbers, which the deterministic
+/// turn "chicken rice bowl" into approximate numbers, which the deterministic
 /// `FuelReadiness` engine then judges. Mirrors `AIService`'s contract: unconfigured/offline/slow →
 /// nil, and the caller keeps the meal honestly `pending` with manual entry always available.
 /// A meal log NEVER blocks on this.
@@ -32,7 +32,7 @@ struct FuelEstimator {
     }
 
     private let session: URLSession
-    private let timeoutS: TimeInterval = 10   // vision runs a beat slower than text-only reads
+    private let timeoutS: TimeInterval = 8   // text-only extraction; covers the server's Haiku fallback
 
     /// The server capped today's estimates (429 — generous daily limit, abuse guard only). Remember
     /// until local midnight and skip the network: retries would be futile, and every meal still
@@ -43,17 +43,17 @@ struct FuelEstimator {
 
     /// nil = couldn't estimate (unconfigured, offline, slow, or the function declined) — the meal
     /// stays pending. `context` gives the model the training frame ("tomorrow's long session, 1h45m").
-    func estimate(text: String, photoJPEG: Data?, sessionLabel: String?, durationS: Double?) async -> Estimate? {
+    /// Text-only: the server reads `text` and `context` and nothing else (photos left the app
+    /// 2026-07-16 and the function never looked at the base64 blob we used to send).
+    func estimate(text: String, sessionLabel: String?, durationS: Double?) async -> Estimate? {
         guard let endpoint, let bearer else { return nil }
         if let until = Self.estimateLimitedUntil {
             if Date() < until { return nil }
             Self.estimateLimitedUntil = nil
         }
         struct Context: Encodable { let session: String?; let durationS: Double? }
-        struct Body: Encodable { let text: String; let photoBase64: String?; let context: Context }
-        let body = Body(text: text,
-                        photoBase64: photoJPEG?.base64EncodedString(),
-                        context: Context(session: sessionLabel, durationS: durationS))
+        struct Body: Encodable { let text: String; let context: Context }
+        let body = Body(text: text, context: Context(session: sessionLabel, durationS: durationS))
         var req = URLRequest(url: endpoint, timeoutInterval: timeoutS)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -7,7 +7,7 @@ import SwiftData
 /// are the readiness signal, protein the recovery signal, sodium the endurance electrolyte. No
 /// weight-loss framing anywhere, ever.
 ///
-/// A meal saves instantly offline — one sentence and/or a photo. The `meal-estimate` Edge Function
+/// A meal saves instantly offline — one sentence in the athlete's own words. The `meal-estimate` Edge Function
 /// fills the numbers when reachable (`source == "ai"`); the athlete can always set or correct them
 /// (`source == "manual"`, which a later estimate never overwrites); until either happens the meal
 /// sits honestly `pending` and the day's totals simply exclude it.
@@ -47,6 +47,11 @@ final class Meal {
     var note: String?
     /// Estimator confidence 0–1 (surfaced as a quiet "≈" — every number here is approximate).
     var confidence: Double?
+    /// How many times the estimator has been fired for this meal. Bounded retry: the journal stops
+    /// re-firing after `FuelView.maxEstimateAttempts`, so a meal the model simply can't parse never
+    /// becomes a permanent API tax on every tab visit; a deliberate "Estimate again" resets it.
+    /// Defaulted, like every property on this model — implicit lightweight migration only.
+    var estimateAttempts: Int = 0
 
     init() {}
 }
@@ -130,9 +135,24 @@ extension Meal {
         fatG = items.map(\.fatG).reduce(0, +)
         sodiumMg = items.map(\.sodiumMg).reduce(0, +)
         fluidsMl = items.map(\.fluidsMl).reduce(0, +)
-        potassiumMg = items.compactMap(\.potassiumMg).reduce(0, +)
-        magnesiumMg = items.compactMap(\.magnesiumMg).reduce(0, +)
-        ironMg = items.compactMap(\.ironMg).reduce(0, +)
-        calciumMg = items.compactMap(\.calciumMg).reduce(0, +)
+        // Micros stay nil-preserving. Since 2026-07-21 the estimator no longer returns them
+        // (docs/FUEL-FLOW.md), so every item carries nil and an all-nil set must sum to nil,
+        // not 0 — a stored 0 would read as a measured zero to any future micro surface rather
+        // than as "never estimated". Historical meals that DO carry values still sum normally.
+        potassiumMg = Self.optionalSum(items.compactMap(\.potassiumMg))
+        magnesiumMg = Self.optionalSum(items.compactMap(\.magnesiumMg))
+        ironMg = Self.optionalSum(items.compactMap(\.ironMg))
+        calciumMg = Self.optionalSum(items.compactMap(\.calciumMg))
+    }
+
+    /// Σ, but nil for an empty set — keeps "no data" distinct from a real zero.
+    private static func optionalSum<N: AdditiveArithmetic>(_ values: [N]) -> N? {
+        values.isEmpty ? nil : values.reduce(N.zero, +)
+    }
+
+    /// A meal the estimator should still try: no numbers yet, never hand-set, under the attempt cap.
+    /// Pure and free of SwiftData ceremony so the retry cap is unit-testable on its own.
+    func needsEstimate(maxAttempts: Int) -> Bool {
+        source == "pending" && carbsG == nil && estimateAttempts < maxAttempts
     }
 }

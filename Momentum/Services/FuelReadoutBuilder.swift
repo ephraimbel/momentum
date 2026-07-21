@@ -61,7 +61,9 @@ enum FuelReadoutBuilder {
         line += " · protein \(r.proteinG)/\(r.proteinFloorG)g · fat \(r.fatG)/\(r.fatFloorG)g · sodium \(r.sodiumMg)/\(r.sodiumFloorMg)mg"
         line += " · energy \(r.kcal)/\(r.kcalFloor) kcal"
         if let d = r.drivingSession { line += " · carb target keyed to \(d)" }
-        if r.pendingCount > 0 { line += " · \(r.pendingCount) meal(s) still estimating" }
+        // Phrased as a FACT about the meals, not a claim about in-flight work: once a meal hits the
+        // retry cap it stops estimating but still has no numbers, and "still estimating" would lie.
+        if r.pendingCount > 0 { line += " · \(r.pendingCount) meal(s) without numbers yet" }
         return line
     }
 }

@@ -50,6 +50,23 @@ nothing ever blocks) with the athlete's words and a **shimmer skeleton** where t
 be — a soft gradient sweep (transform-only, Reduce Motion → static "Estimating…"). Meanwhile the
 `meal-estimate` Edge Function (Gemini Flash primary, Claude fallback) parses the sentence.
 
+**The searching beat only happens when the meal is genuinely new.** Before the composer touches the
+network, the typed text is canonicalized (`MealTextKey`) and looked up against the athlete's own
+recent meals (`FuelLocalResolver`). An exact-normalized hit resolves the meal **instantly, offline,
+for free** — the same path the usuals chip takes, reached by typing. No shimmer, no badge, no toast:
+the absence of the searching beat *is* the feedback. The hit carries the numbers and the itemized
+breakdown but **never the old coach note** (it narrated a different day's session — carrying it
+forward would be a fabricated claim). The athlete's own words for today stay theirs. The matcher is
+biased hard toward precision: quantities stay welded to their food ("2 eggs, 1 slice toast" never
+matches "1 egg, 2 slices toast"), digits and duplicates are preserved, plurals are deliberately not
+stemmed. A miss costs one cheap estimate; a wrong match would silently write someone else's
+nutrition into the day, so it must never happen.
+
+If an estimate genuinely can't be parsed, the retry is **capped** (3 attempts per meal, persisted on
+the model). Past that the meal rests honestly on its "Couldn't estimate — tap to set the numbers"
+line instead of re-billing an API call on every tab visit, forever. Long-press → **Estimate again**
+always overrides the cap: the limit is the app's, never the athlete's.
+
 **3 · Resolve (itemized)** — the shimmer crossfades into the result:
 - **Per-item breakdown** (the Amy move): `2 eggs · toast, 1 slice · butter · coffee` — each item
   carries qty, unit, and its own kcal/carbs/protein/fat/sodium/fluids.
@@ -83,7 +100,8 @@ baseline + the day's real burn, protein 1.4 g/kg, sodium baseline + sweat add-on
 - **Race briefing**: race-week fueling was already woven in (Riegel-predicted finish → plan).
 
 ## Rules that make it feel right
-- A log NEVER waits on the network; estimates self-heal on page appear.
+- A log NEVER waits on the network; a meal the athlete has logged before resolves locally with no
+  network at all; estimates self-heal on page appear, up to a bounded 3 attempts per meal.
 - Every number reads ≈; the athlete's hand always outranks the AI's.
 - Tips are one line, deterministic, and often absent — silence is a feature.
 - Motion: transforms only, reveal-cascade entry, reduce-motion honored everywhere.
@@ -93,6 +111,12 @@ baseline + the day's real burn, protein 1.4 g/kg, sodium baseline + sweat add-on
 most-repeated meals (recency breaks ties; new users see recents — same rule, no cliff). One tap
 re-logs it instantly: numbers and items copy over, the clock is now, the stale session note stays
 behind. No AI round-trip, no waiting — the daily-logger's path is one tap.
+
+**Typing a usual takes the same instant path** (see §2): chips and typed matches are grouped and
+ranked by one shared rule (`MealTextKey.outranks` — the athlete's hand beats the estimate, then most
+recent) and copied by one shared definition (`FuelLocalResolver.copyNumbers`), so tapping the chip
+and re-typing the meal produce byte-identical rows. Correct a bad estimate once and every future
+match of that text inherits the correction.
 
 ## Later (explicitly deferred)
 Add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness ·

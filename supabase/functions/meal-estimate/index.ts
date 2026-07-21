@@ -9,6 +9,13 @@
 // Fueling, not dieting: the numbers exist to answer "fueled for the work?", so the note speaks
 // to training readiness. Never diet, weight, or medical language.
 //
+// Returns, per item: name/qty/unit + kcal, carbs, protein, fat, sodium, fluids — and per meal:
+// confidence, tags, note. It no longer returns the endurance micros (potassium/magnesium/iron/
+// calcium): removed 2026-07-21 because nothing in the app has ever displayed them (docs/FUEL-FLOW.md)
+// and they cost roughly a quarter of every response. The Swift model still carries the fields and
+// all historical values, so old meals decode and render exactly as before; if the monthly coach
+// insight ever ships, ask for them again from that date forward.
+//
 // Provider: **Gemini 2.5 Flash primary** (user decision 2026-07-16 — the Amy stack; ~2–3× cheaper
 // and fast on short structured outputs), with **Claude Haiku as automatic fallback** when
 // GEMINI_API_KEY is unset or the Gemini call fails — so estimation never breaks across the switch.
@@ -64,9 +71,8 @@ about their next training session.
 Break the meal into ITEMS (the athlete's words may pack several foods: "2 eggs, toast, coffee" is \
 three items). For each item return: name (short, title-case), qty (a number), unit (a natural short \
 unit for that food: "egg", "slice", "cup", "bowl", "gel", "serving"), and that item's kcal, \
-carbohydrate grams, protein grams, fat grams, sodium milligrams, fluid milliliters (0 unless \
-it's a drink), potassium milligrams, magnesium milligrams, iron milligrams (decimals fine), and \
-calcium milligrams — the endurance micros. Typical home/restaurant portions unless quantities are given. confidence is 0-1 \
+carbohydrate grams, protein grams, fat grams, sodium milligrams, and fluid milliliters (0 unless \
+it's a drink). Typical home/restaurant portions unless quantities are given. confidence is 0-1 \
 (branded sports nutrition rates higher; vague descriptions lower).
 
 tags: up to 3 from exactly this set: "carb-dense", "protein", "electrolytes", "light", "pre-session", \
@@ -97,13 +103,12 @@ const ANTHROPIC_SCHEMA = {
           fat_g: { type: "integer" },
           sodium_mg: { type: "integer" },
           fluids_ml: { type: "integer" },
-          potassium_mg: { type: "integer" },
-          magnesium_mg: { type: "integer" },
-          iron_mg: { type: "number" },
-          calcium_mg: { type: "integer" },
+          // Removed 2026-07-21: potassium_mg / magnesium_mg / iron_mg / calcium_mg. The model was
+          // paying output tokens for four numbers the app has never rendered (docs/FUEL-FLOW.md).
+          // Do not re-add without a surface that displays them. `additionalProperties: false` here
+          // means properties and `required` must always be edited together.
         },
-        required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml",
-                   "potassium_mg", "magnesium_mg", "iron_mg", "calcium_mg"],
+        required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml"],
       },
     },
     confidence: { type: "number" },
@@ -147,13 +152,9 @@ async function estimateWithGemini(userJSON: string): Promise<unknown> {
                   fat_g: { type: "integer" },
                   sodium_mg: { type: "integer" },
                   fluids_ml: { type: "integer" },
-                  potassium_mg: { type: "integer" },
-                  magnesium_mg: { type: "integer" },
-                  iron_mg: { type: "number" },
-                  calcium_mg: { type: "integer" },
+                  // The endurance micros were removed here too on 2026-07-21 — see ANTHROPIC_SCHEMA.
                 },
-                required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml",
-                           "potassium_mg", "magnesium_mg", "iron_mg", "calcium_mg"],
+                required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml"],
               },
             },
             confidence: { type: "number" },
