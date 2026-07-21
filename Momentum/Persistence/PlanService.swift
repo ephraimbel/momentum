@@ -242,9 +242,15 @@ enum PlanService {
         var carriedDone: [PlannedSession] = []
         if let existing = profile.plan {
             if let weekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start {
+                // The race exemption is bounded to the recent past. Unbounded, every rebuild re-carried
+                // every race the athlete had ever run, so a multi-season history accumulated on the
+                // plan forever — and one old enough could push the block past the Plan strip's
+                // 64-week span entirely. Eight weeks covers the post-race rebuild (which runs the day
+                // after) with room for an athlete who doesn't open the app for a while.
+                let raceFloor = calendar.date(byAdding: .weekOfYear, value: -8, to: startDate) ?? weekStart
                 carriedDone = existing.sessions.filter {
                     $0.status == .completed && $0.date <= startDate
-                        && ($0.date >= weekStart || $0.runType == .race)
+                        && ($0.date >= weekStart || ($0.runType == .race && $0.date >= raceFloor))
                 }
                 let carriedIDs = Set(carriedDone.map(\.id))
                 existing.sessions.removeAll { carriedIDs.contains($0.id) }   // detach from the cascade

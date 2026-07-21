@@ -61,7 +61,8 @@ struct CardioSaveView: View {
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
                                              showsHeader: false, canEditPhoto: true,
                                              mapStyleOverride: mapStyle,
-                                             revealDelay: CompletionCelebration.handoff)
+                                             revealDelay: CompletionCelebration.handoff,
+                                             showsVerdict: true)
                         editor
                     }
                     .padding(Theme.Space.md)
@@ -100,8 +101,7 @@ struct CardioSaveView: View {
                 // Dismisses itself into the summary underneath — it no longer closes the screen.
                 // The ring sweeps across the athlete's week, and the arc it travels is this session.
                 CompletionCelebration(title: "\(workoutType.title) complete",
-                                      ringFrom: weekRing?.from ?? 0,
-                                      ringTo: weekRing?.to ?? 1,
+                                      ring: weekRing.map { (from: $0.from, to: $0.to) },
                                       caption: weekCaption) { celebrating = false }
             }
         }
@@ -156,8 +156,11 @@ struct CardioSaveView: View {
         // "16 of 19.88 mi this week" — false precision on a target nobody set to two decimals.
         let target = Formatters.wholeDistance(meters: ring.targetM, unit: distanceUnit)
         if ring.closedTheWeek { return "\(target.value) \(target.unit) — week complete" }
-        let done = Formatters.wholeDistance(meters: ring.completedM, unit: distanceUnit)
-        return "\(done.value) of \(target.value) \(target.unit) this week"
+        // The completed side FLOORS rather than rounds. Rounding both independently printed
+        // "32 of 32 km this week" under a ring visibly short of full, whenever the week landed
+        // within half a unit of target. Flooring can only ever understate what's banked.
+        let per = distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
+        return "\(Int(ring.completedM / per)) of \(target.value) \(target.unit) this week"
     }
 
     private var editor: some View {
@@ -353,12 +356,15 @@ struct CardioSaveView: View {
         // off this run. A discard must not leave that phantom completion behind — reopen the session
         // and sever the link (the inverse of `PlanCoaching.markComplete`), through the same fresh
         // context so the relationship resolves. Do this before delete, while the link still exists.
-        if let reader, let session = reader.workout?.plannedSession {
+        // Hold the planned session BEFORE the delete (the relationship won't resolve afterwards),
+        // but un-credit it only once the delete has actually landed. Reversing the credit first meant
+        // a failed delete left the plan session reopened while the alert said "Nothing was deleted" —
+        // the workout still in History, its plan credit silently gone.
+        let session = reader?.workout?.plannedSession
+        if let reader, !reader.delete() { discardFailed = true; return }
+        if let reader, let session {
             PlanCoaching.setCompletion(session, done: false, in: reader.context)
         }
-        // A discard that silently failed still dismissed, so the run reappeared in History and the
-        // athlete discarded it again on something they thought was already gone.
-        if let reader, !reader.delete() { discardFailed = true; return }
         Haptics.medium()
         onDone()
     }

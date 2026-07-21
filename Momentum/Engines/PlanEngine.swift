@@ -372,18 +372,15 @@ enum PlanEngine {
 
         // Race-specific shaping: the long run progresses toward a race-appropriate peak and is clamped
         // there so a 5K plan doesn't drift into marathon volume (and a marathon's long run actually
-        // gets long). Short races sharpen with intervals; long races build threshold with tempo.
+        // gets long). The companion rule — short races sharpen with intervals, long races build
+        // threshold with tempo — is applied inside `qualityWorkout` (see its `shortRace`), which is
+        // where the session menu is actually chosen.
         let longCap = raceDistanceM.map { longRunPeak(forRaceM: $0) }
         if let cap = longCap {
             // Seeded athletes start from their own longest run (never forced up to half-peak); everyone
             // else uses the race-appropriate default. Both cap at the race peak.
             longBase = currentWeeklyVolumeM != nil ? min(longBase, cap) : min(max(longBase, cap * 0.5), cap)
         }
-        let useIntervals: Bool = {
-            if let r = raceDistanceM { return r <= 12_000 }     // 5K/10K → speed; half/marathon → tempo
-            return goal == .raceDistance || goal == .endurance
-        }()
-
         var out: [GeneratedSession] = []
         // `paceOverride` lets VO₂ / threshold interval sessions carry a rep pace other than 5k pace.
         func makeRun(_ type: RunType, _ base: Double, hard: Bool, intervals: String? = nil,

@@ -18,6 +18,13 @@ struct CardioSummaryContent: View {
     /// beat, so the summary would already be sitting fully drawn the moment it lifted. History
     /// passes 0 and reveals immediately.
     var revealDelay: Double = 0
+    /// Whether to read this run against the athlete's history and say what it meant.
+    ///
+    /// Off in history, deliberately. The verdict is written in the present tense — "that's 3 this
+    /// week" — which is true the moment you finish and nonsense on a run from six months ago. It
+    /// would also insert a row a beat after the screen appeared, shoving the content down; the
+    /// post-workout surface hides that behind the celebration, a history screen has nowhere to put it.
+    var showsVerdict: Bool = false
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
@@ -69,8 +76,9 @@ struct CardioSummaryContent: View {
                 samplePts = samplePoints(gps)
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
                 // Only when no badge fired — a record run is already spoken for, and two readings of
-                // the same run stacked on each other is noise, not generosity.
-                if hits.isEmpty { verdict = computeVerdict(gps) }
+                // the same run stacked on each other is noise, not generosity. The extra fetch is
+                // skipped entirely in history, where the line isn't shown.
+                if showsVerdict, hits.isEmpty { verdict = computeVerdict(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
                 if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
@@ -129,16 +137,23 @@ struct CardioSummaryContent: View {
         }
     }
 
-    /// Read this run against the athlete's own recent history. Bounded to the 60 most recent earlier
-    /// sessions: ranking among comparable distances and counting the trailing week never need more,
-    /// and an unbounded fetch would fault the whole workout table at the one moment the screen must
-    /// not stall. Type filtering happens in memory — a `#Predicate` on the enum isn't worth the risk
-    /// of silently matching nothing.
+    /// Read this run against the athlete's own history.
+    ///
+    /// Deliberately UNBOUNDED. This carried `fetchLimit = 60`, but the limit applied before the
+    /// in-memory type filter, so it was 60 workouts of every discipline: a lifter who trains four
+    /// times a week buries their running history in about ten weeks. The engine would then rank
+    /// today against a truncated past and announce "Your fastest at this distance" over a run two
+    /// minutes off a real best — or, with 60 straight non-runs behind it, greet a veteran with
+    /// "Your first one on the board". `RunVerdict`'s whole contract is that it never over-claims,
+    /// and a window that silently hides the evidence breaks it.
+    ///
+    /// The cost is nil in practice: `CardioAchievements.detect` already fetches the entire table
+    /// unbounded in this same `.task`, a beat earlier. Type filtering stays in memory — a
+    /// `#Predicate` on the enum isn't worth the risk of silently matching nothing.
     private func computeVerdict(_ gps: GPSDetail) -> RunVerdict.Verdict? {
         let start = workout.startedAt
         var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt < start })
         descriptor.sortBy = [SortDescriptor(\.startedAt, order: .reverse)]
-        descriptor.fetchLimit = 60
         let priors = ((try? context.fetch(descriptor)) ?? [])
             .filter { $0.type == workout.type }
             .compactMap { w -> RunVerdict.Run? in
