@@ -8,6 +8,9 @@ import SwiftData
 struct CardioSaveView: View {
     let workoutId: UUID
     var distanceUnit: DistanceUnit = .auto
+    /// Known from the launch, so the celebration can name the discipline on the very first frame —
+    /// the reader hasn't loaded yet at that point, and a ride shouldn't read "Run complete".
+    var workoutType: WorkoutType = .run
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -28,7 +31,10 @@ struct CardioSaveView: View {
     /// The map style THIS run renders with — previewed live on the hero map, persisted on Save.
     @State private var mapStyle: MapStyleOption = .persisted
     @State private var initialMapStyle: MapStyleOption = .persisted
-    @State private var celebrating = false
+    /// Plays on ARRIVAL, not on the way out. The beat used to fire after Save, so the reward for a
+    /// run landed a minute later as a dismissal transition, and the moment itself was spent on a
+    /// form. It also covers the reader's first fetch, so the load has somewhere to hide.
+    @State private var celebrating = true
     @State private var saveFailed = false
     @State private var discardFailed = false
     @State private var confirmDiscard = false
@@ -46,9 +52,13 @@ struct CardioSaveView: View {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
                     VStack(spacing: Theme.Space.lg) {
+                        // The cascade waits for the celebration's fade to begin, so the two
+                        // cross-dissolve into one motion instead of the summary being fully drawn
+                        // and waiting behind it.
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
                                              showsHeader: false, canEditPhoto: true,
-                                             mapStyleOverride: mapStyle)
+                                             mapStyleOverride: mapStyle,
+                                             revealDelay: CompletionCelebration.handoff)
                         editor
                     }
                     .padding(Theme.Space.md)
@@ -60,21 +70,32 @@ struct CardioSaveView: View {
             }
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Save \(workout?.type.title.lowercased() ?? "activity")")
+            // Not "Save run": the recording was already on disk before this screen appeared, so a
+            // filing verb described work the athlete wasn't doing and framed their run as paperwork.
+            .navigationTitle(workout?.type.title ?? workoutType.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Discard", role: .destructive) { confirmDiscard = true }
-                        .foregroundStyle(Theme.inkSecondary)
+                    // Discard sits behind a menu now. As a standing top-left button it made the
+                    // first thing you saw after finishing a run an invitation to throw it away.
+                    Menu {
+                        Button("Discard recording", systemImage: "trash", role: .destructive) {
+                            confirmDiscard = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
+                    }
+                    .accessibilityLabel("More options")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }.fontWeight(.bold)
+                    Button("Done") { save() }.fontWeight(.bold)
                 }
             }
         }
         .overlay {
             if celebrating {
-                CompletionCelebration(title: "\(workout?.type.title ?? "Run") saved") { onDone() }
+                // Dismisses itself into the summary underneath — it no longer closes the screen.
+                CompletionCelebration(title: "\(workoutType.title) complete") { celebrating = false }
             }
         }
         // The recording itself is already on disk — only these edits failed to write. Say that
@@ -298,8 +319,9 @@ struct CardioSaveView: View {
             let saved = workout
             Task { await services.health.save(saved) }
         }
+        // No celebration here any more — it played on arrival, where the moment actually is.
         Haptics.success()
-        withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
+        onDone()
     }
 
     /// Throw the recording away (an explicit user action — distinct from the never-destroy-on-edit

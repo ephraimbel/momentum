@@ -573,8 +573,11 @@ struct CardioTrackingView: View {
         }
         .animation(Motion.standard, value: vm.stepTitle)
         .padding(Theme.Space.md)
-        .confirmationDialog("End this \(type.title.lowercased())?", isPresented: $confirmStop, titleVisibility: .visible) {
-            Button("Finish", role: .destructive) { Task { onFinish(await vm.finish()) } }
+        // Finishing is the goal, not a loss. A destructive role paints the primary action red and
+        // frames crossing your own finish line as damage — the last thing the athlete should read
+        // before the reveal. The confirmation stays (a mis-tap mid-run is real); the alarm goes.
+        .confirmationDialog("Finish this \(type.title.lowercased())?", isPresented: $confirmStop, titleVisibility: .visible) {
+            Button("Finish") { Task { onFinish(await vm.finish()) } }
             Button("Keep going", role: .cancel) {}
         }
     }

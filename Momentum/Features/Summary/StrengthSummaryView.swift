@@ -10,6 +10,9 @@ struct StrengthSummaryContent: View {
     /// Show the user's title/description header (off in the save editor, which has editable fields).
     var showsHeader: Bool = true
     var canEditPhoto: Bool = false
+    /// Added to every reveal below, so the cascade waits for the celebration beat playing over it.
+    /// See `CardioSummaryContent.revealDelay`. History passes 0 and reveals immediately.
+    var revealDelay: Double = 0
 
     @Environment(\.modelContext) private var context
     @State private var prs: [StrengthPRs.Hit] = []
@@ -20,17 +23,17 @@ struct StrengthSummaryContent: View {
             // the AI read, then the supporting detail. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
-                headline(workout, session).reveal(0)
-                if !prs.isEmpty { prSection.reveal(0.12) }
+                headline(workout, session).reveal(revealDelay)
+                if !prs.isEmpty { prSection.reveal(revealDelay + 0.12) }
                 // Always offered — see CardioSummaryView. The title stays honest: a session with no
                 // record on it is worth sharing, but it isn't a PR and must not claim to be.
                 EarnedShareButton(workout: workout, weightUnit: weightUnit,
-                                  title: prs.isEmpty ? "Share this session" : "Share your PR").reveal(0.18)
-                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.22)
-                AIReadCard(workout: workout, weightUnit: weightUnit).reveal(0.24)
-                PlanProposalCard().reveal(0.28)
-                muscleSection(session).reveal(0.32)
-                exercisesSection(session).reveal(0.40)
+                                  title: prs.isEmpty ? "Share this session" : "Share your PR").reveal(revealDelay + 0.18)
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.22)
+                AIReadCard(workout: workout, weightUnit: weightUnit).reveal(revealDelay + 0.24)
+                PlanProposalCard().reveal(revealDelay + 0.28)
+                muscleSection(session).reveal(revealDelay + 0.32)
+                exercisesSection(session).reveal(revealDelay + 0.40)
             }
             .task {
                 prs = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: context)
@@ -52,7 +55,8 @@ struct StrengthSummaryContent: View {
         return VStack(spacing: Theme.Space.lg) {
             CountUpHero(target: volume,
                         format: { "\(Int($0.rounded()))" },
-                        label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))")
+                        label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))",
+                        delay: revealDelay)
             if let competenceText { EarnedLine(text: competenceText) }
             HStack(spacing: Theme.Space.lg) {
                 stat("\(session.totalSets)", "Sets")

@@ -7,10 +7,20 @@ struct CompletionCelebration: View {
     let title: String
     var onDone: () -> Void
 
+    /// Wall time from appear to `onDone` — the sum of the beats in `run()` below. Callers schedule
+    /// work to land *after* the beat rather than stalling the screen before it.
+    static let duration: Double = 0.86
+
+    /// When the fade-out starts. Content underneath should begin its own reveal here, so the two
+    /// cross-dissolve into one motion instead of playing back to back with a dead gap between.
+    static let handoff: Double = 0.60
+
     @State private var ring = 0.0
     @State private var check = 0.0      // checkmark + title scale/opacity
     @State private var bloom = 0.0
     @State private var fade = 1.0
+    /// Guards `onDone` against firing twice when a tap and the timed run race each other.
+    @State private var handedOff = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -36,9 +46,26 @@ struct CompletionCelebration: View {
             }
         }
         .opacity(fade)
+        .contentShape(Rectangle())
+        // Skippable. An athlete finishing five sessions a week sees this every time, and a beat you
+        // can't get past stops being a reward and becomes a toll. Tapping cuts to the summary.
+        .onTapGesture { finish(fadeDuration: 0.12) }
         .task { await run() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
+        .accessibilityHint("Tap to skip")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// Fade out and hand back exactly once, whichever gets here first — the timed run or a tap.
+    private func finish(fadeDuration: Double) {
+        guard !handedOff else { return }
+        handedOff = true
+        withAnimation(.easeIn(duration: fadeDuration)) { fade = 0 }
+        Task {
+            try? await Task.sleep(for: .seconds(fadeDuration))
+            onDone()
+        }
     }
 
     private func run() async {
@@ -52,8 +79,8 @@ struct CompletionCelebration: View {
             withAnimation(.spring(response: 0.36, dampingFraction: 0.6)) { check = 1 }
             try? await Task.sleep(for: .seconds(0.42))
         }
-        withAnimation(.easeIn(duration: 0.26)) { fade = 0 }
-        try? await Task.sleep(for: .seconds(0.26))
-        onDone()
+        // Routed through the same single exit as a tap, so a skip mid-beat can't be followed by a
+        // second hand-off when the timeline catches up.
+        finish(fadeDuration: 0.26)
     }
 }

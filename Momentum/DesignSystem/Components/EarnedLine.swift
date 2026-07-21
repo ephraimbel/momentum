@@ -7,15 +7,21 @@ import SwiftUI
 struct EarnedLine: View {
     let text: String
     var systemImage: String = "rosette"
+    /// Whether this line actually marks progress. The accent rule is that iridescence is earned and
+    /// nothing else wears it — so a line about turning up ("that's 3 this week") gets the same glass
+    /// capsule with the accent withheld, rather than borrowing a personal best's clothes.
+    var earned: Bool = true
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: systemImage).font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.ink)
-            Text(text).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            Image(systemName: systemImage).font(.system(size: 13, weight: .bold))
+                .foregroundStyle(earned ? Theme.ink : Theme.inkSecondary)
+            Text(text).font(.rounded(Theme.FontSize.body, weight: .semibold))
+                .foregroundStyle(earned ? Theme.ink : Theme.inkSecondary)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
-        .momentumGlass(iridescent: .line)
+        .momentumGlass(iridescent: earned ? .line : nil)
         .accessibilityElement(children: .combine)
     }
 }

@@ -17,7 +17,8 @@ struct TimedSaveView: View {
     @State private var title = ""
     @State private var desc = ""
     @State private var effort: Int?
-    @State private var celebrating = false
+    /// Plays on ARRIVAL — see `CardioSaveView.celebrating`.
+    @State private var celebrating = true
     @State private var confirmDiscard = false
     @State private var saveFailed = false
     @State private var discardFailed = false
@@ -39,7 +40,8 @@ struct TimedSaveView: View {
             }
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Save \(workout?.type.title.lowercased() ?? "activity")")
+            // Not "Save …": the session was on disk before this screen appeared.
+            .navigationTitle(workout?.type.title ?? "Activity")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -47,13 +49,14 @@ struct TimedSaveView: View {
                         .foregroundStyle(Theme.inkSecondary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }.fontWeight(.bold)
+                    Button("Done") { save() }.fontWeight(.bold)
                 }
             }
         }
         .overlay {
             if celebrating {
-                CompletionCelebration(title: "\(workout?.type.title ?? "Session") saved") { onDone() }
+                // Dismisses into the summary underneath — it no longer closes the screen.
+                CompletionCelebration(title: "\(workout?.type.title ?? "Session") complete") { celebrating = false }
             }
         }
         .alert("Couldn't save your details", isPresented: $saveFailed) {
@@ -152,8 +155,9 @@ struct TimedSaveView: View {
             let saved = workout
             Task { await services.health.save(saved) }   // mirror to Apple Health
         }
+        // No celebration here any more — it played on arrival, where the moment actually is.
         Haptics.success()
-        withAnimation(.easeOut(duration: 0.2)) { celebrating = true }
+        onDone()
     }
 
     private func discard() {

@@ -13,10 +13,17 @@ struct CardioSummaryContent: View {
     /// Live style override from the save editor's map-style row — the hero map previews the choice
     /// before it's saved. nil (history/read-only) renders the workout's own persisted style.
     var mapStyleOverride: MapStyleOption? = nil
+    /// Added to every reveal in the cascade below. The post-run presentation plays a celebration
+    /// over this content; without the offset the whole cascade would run — and finish — behind that
+    /// beat, so the summary would already be sitting fully drawn the moment it lifted. History
+    /// passes 0 and reveals immediately.
+    var revealDelay: Double = 0
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
     @State private var hits: [CardioAchievements.Hit] = []
+    /// What this run MEANT, when it didn't set a record. Runs that did are carried by the badges.
+    @State private var verdict: RunVerdict.Verdict?
     // The splits' cumulative-distance walk (a haversine per accepted sample) cached once — the
     // splits section re-ran it on every body pass through the reveal cascade.
     @State private var samplePts: [CardioMetrics.SamplePoint] = []
@@ -37,30 +44,33 @@ struct CardioSummaryContent: View {
             // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
-                headline(workout, gps).reveal(0)
-                if !hits.isEmpty { achievementsSection.reveal(0.10) }
+                headline(workout, gps).reveal(revealDelay)
+                if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.10) }
                 // Sharing is not gated on a record. It used to sit inside the achievements branch, so
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
                 // is the growth loop for a solo app. The badge above is what's *earned*; the run
                 // itself is always worth showing.
                 EarnedShareButton(workout: workout, distanceUnit: distanceUnit,
-                                  title: "Share your run").reveal(0.16)
-                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(0.20)
-                routeMap(gps).reveal(0.22)
-                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(0.30)
-                if workout.durationS >= FuelingGuide.carbsFromS { refuelNote.reveal(0.32) }
-                PlanProposalCard().reveal(0.34)
-                repsSection(gps).reveal(0.35).id("paceReview")   // a structured run's headline: how each rep landed
-                SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(0.36)
+                                  title: "Share your run").reveal(revealDelay + 0.16)
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.20)
+                routeMap(gps).reveal(revealDelay + 0.22)
+                AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.30)
+                if workout.durationS >= FuelingGuide.carbsFromS { refuelNote.reveal(revealDelay + 0.32) }
+                PlanProposalCard().reveal(revealDelay + 0.34)
+                repsSection(gps).reveal(revealDelay + 0.35).id("paceReview")   // a structured run's headline: how each rep landed
+                SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.36)
                 RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
-                                   healthHRSeries: healthHR).reveal(0.38)
-                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(0.385)
-                TimeInZonesCard(workout: workout).reveal(0.39)
-                splitsSection(gps).reveal(0.40)
+                                   healthHRSeries: healthHR).reveal(revealDelay + 0.38)
+                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(revealDelay + 0.385)
+                TimeInZonesCard(workout: workout).reveal(revealDelay + 0.39)
+                splitsSection(gps).reveal(revealDelay + 0.40)
             }
             .task {
                 samplePts = samplePoints(gps)
                 hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
+                // Only when no badge fired — a record run is already spoken for, and two readings of
+                // the same run stacked on each other is noise, not generosity.
+                if hits.isEmpty { verdict = computeVerdict(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
                 if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
@@ -102,9 +112,41 @@ struct CardioSummaryContent: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// One self-relative line that frames the run as progress — the top achievement, if any.
-    private var competenceText: String? {
-        hits.first.map { "\($0.label) · \($0.detail)" }
+    /// The single self-relative line under the hero. When the run set a record the badges below
+    /// carry it — this used to restate `hits.first`, printing the same sentence twice in a row. So
+    /// the slot belongs to the verdict instead, and every run gets a reading rather than just the
+    /// one in ten that PRs.
+    private var competenceLine: RunVerdict.Verdict? { hits.isEmpty ? verdict : nil }
+
+    /// Each tone gets a glyph that matches what it's claiming — a rosette over "that's 3 this week"
+    /// reads as an award for turning up, which devalues the badge that means something.
+    private func glyph(_ tone: RunVerdict.Tone) -> String {
+        switch tone {
+        case .earned: return "rosette"
+        case .gain: return "arrow.up.right"
+        case .beginning: return "flag"
+        case .steady: return "calendar"
+        }
+    }
+
+    /// Read this run against the athlete's own recent history. Bounded to the 60 most recent earlier
+    /// sessions: ranking among comparable distances and counting the trailing week never need more,
+    /// and an unbounded fetch would fault the whole workout table at the one moment the screen must
+    /// not stall. Type filtering happens in memory — a `#Predicate` on the enum isn't worth the risk
+    /// of silently matching nothing.
+    private func computeVerdict(_ gps: GPSDetail) -> RunVerdict.Verdict? {
+        let start = workout.startedAt
+        var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt < start })
+        descriptor.sortBy = [SortDescriptor(\.startedAt, order: .reverse)]
+        descriptor.fetchLimit = 60
+        let priors = ((try? context.fetch(descriptor)) ?? [])
+            .filter { $0.type == workout.type }
+            .compactMap { w -> RunVerdict.Run? in
+                guard let g = w.gps, g.distanceM > 0 else { return nil }
+                return RunVerdict.Run(date: w.startedAt, distanceM: g.distanceM, durationS: w.durationS)
+            }
+        let this = RunVerdict.Run(date: start, distanceM: gps.distanceM, durationS: workout.durationS)
+        return RunVerdict.verdict(for: this, priors: priors, unit: distanceUnit)
     }
 
     private var achievementsSection: some View {
@@ -162,10 +204,15 @@ struct CardioSummaryContent: View {
         let isImperial = distanceUnit.resolved() == .imperial
         let distanceTarget = isImperial ? gps.distanceM / Formatters.metersPerMile : gps.distanceM / 1000
         return VStack(spacing: Theme.Space.lg) {
+            // `steadyNumeral` picks its decimals from the final value and holds them, so a clean 5 km
+            // reads "5" at rest instead of "5.00" — without the digit count shifting mid-tally.
             CountUpHero(target: distanceTarget,
-                        format: { String(format: "%.2f", $0) },
-                        label: isImperial ? "Miles" : "Kilometers")
-            if let competenceText { EarnedLine(text: competenceText) }
+                        format: Formatters.steadyNumeral(target: distanceTarget),
+                        label: isImperial ? "Miles" : "Kilometers",
+                        delay: revealDelay)
+            if let line = competenceLine {
+                EarnedLine(text: line.text, systemImage: glyph(line.tone), earned: line.tone == .earned)
+            }
             // Equal-width stats so the row stays balanced whether it's 3 or 5 — Avg HR joins Time,
             // pace, and elevation whenever the run has heart-rate data (ours, or backfilled from Health).
             HStack(alignment: .top, spacing: Theme.Space.md) {

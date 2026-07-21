@@ -26,7 +26,7 @@ struct WorkoutRunner: ViewModifier {
                 } else if presented.type.isTimed {
                     TimedSaveView(workoutId: presented.id) { summary = nil }
                 } else {
-                    CardioSaveView(workoutId: presented.id) { summary = nil }
+                    CardioSaveView(workoutId: presented.id, workoutType: presented.type) { summary = nil }
                 }
             }
     }
@@ -59,11 +59,29 @@ struct WorkoutRunner: ViewModifier {
         guard let id else { return }
         if let workout = fetchWorkout(id) {
             // Deterministic active-energy estimate (body-mass aware) — drives the calorie stat and the
-            // Apple Health energy sample. Recomputed on save if the sport type is corrected.
+            // Apple Health energy sample. Recomputed on save if the sport type is corrected. Stays on
+            // the synchronous path: the summary reads through a fresh context, so a calorie figure
+            // written after that read would simply never appear.
             workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
             try? context.save()   // persist now so the fresh-context strength summary reader sees it
             if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
             else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
+        }
+        // Present FIRST. Everything below faults the whole workout history and rewrites the plan;
+        // running it here used to stall the app at the exact moment the athlete crossed their finish
+        // line. None of it changes what the summary displays, so it waits for the celebration.
+        summary = PresentedWorkout(id: id, type: type)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.2))
+            adaptAfterFinish(id)
+        }
+    }
+
+    /// The adaptive pass: protective load easing, pace recalibration, athlete-model ingest and
+    /// reminder rescheduling. Deliberately deferred past the reveal — it's heavy, it's all
+    /// main-actor SwiftData work, and nothing it produces is on screen yet.
+    private func adaptAfterFinish(_ id: UUID) {
+        if let workout = fetchWorkout(id) {
             // Protective adaptation first (ACWR-driven, ≤1×/week, never auto-increases load) —
             // then pace recalibration only when the plan was NOT just eased. The old order could
             // announce "paces got faster" and ease those same sessions in one save.
@@ -92,7 +110,6 @@ struct WorkoutRunner: ViewModifier {
         }
         // Refresh next-workout reminders so they reflect the completed/credited/recalibrated/eased plan.
         services.notifications.schedulePlannedReminders(plan)
-        summary = PresentedWorkout(id: id, type: type)
     }
 
     private func fetchWorkout(_ id: UUID) -> Workout? {

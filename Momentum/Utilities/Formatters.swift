@@ -52,21 +52,40 @@ enum Formatters {
     static func distance(meters: Double, unit: DistanceUnit) -> String {
         let u = unit.resolved()
         let value = u == .imperial ? meters / metersPerMile : meters / 1000
-        let suffix = u == .imperial ? "mi" : "km"
-        let str: String
-        if value >= 100 {
-            str = String(Int(value.rounded()))
-        } else {
-            let hundredths = (value * 100).rounded() / 100
-            if hundredths == hundredths.rounded() {
-                str = String(Int(hundredths))                       // 6.00 → "6"
-            } else if (hundredths * 10) == (hundredths * 10).rounded() {
-                str = String(format: "%.1f", hundredths)            // 3.50 → "3.5"
-            } else {
-                str = String(format: "%.2f", hundredths)            // 5.03 → "5.03"
-            }
+        return "\(distanceNumeral(value)) \(u == .imperial ? "mi" : "km")"
+    }
+
+    /// The numeral alone, already in display units — for heroes that render the unit as a separate
+    /// label beneath. Same rounding as `distance(meters:unit:)`, which is written in terms of it.
+    static func distanceNumeral(_ value: Double) -> String {
+        if value >= 100 { return String(Int(value.rounded())) }
+        let hundredths = (value * 100).rounded() / 100
+        if hundredths == hundredths.rounded() {
+            return String(Int(hundredths))                          // 6.00 → "6"
+        } else if (hundredths * 10) == (hundredths * 10).rounded() {
+            return String(format: "%.1f", hundredths)               // 3.50 → "3.5"
         }
-        return "\(str) \(suffix)"
+        return String(format: "%.2f", hundredths)                   // 5.03 → "5.03"
+    }
+
+    /// A numeral formatter for a count-up hero: the decimal places are chosen from the FINAL value
+    /// and then held for every frame.
+    ///
+    /// Dropping trailing zeros per-frame the way `distanceNumeral` does would change the number's
+    /// digit COUNT mid-animation ("3" → "3.1" → "3.14"), and the number would visibly change width
+    /// as it counted. Tabular figures can't fix that — they equalise digit *width*, not how many
+    /// there are. So a clean 5 km run counts "0 → 5", and a 4.45 counts "0.00 → 4.45".
+    static func steadyNumeral(target: Double) -> (Double) -> String {
+        let hundredths = (target * 100).rounded() / 100
+        let places: Int
+        if target >= 100 || hundredths == hundredths.rounded() {
+            places = 0
+        } else if (hundredths * 10) == (hundredths * 10).rounded() {
+            places = 1
+        } else {
+            places = 2
+        }
+        return { String(format: "%.\(places)f", $0) }
     }
 
     /// Whole distance units for stat tiles that render the number and its unit separately — a big

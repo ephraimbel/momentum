@@ -29,6 +29,9 @@ struct CountUpHero: View {
     let label: String
     var size: CGFloat = Theme.FontSize.heroNumber
     var duration: Double = 0.9
+    /// Hold the tally until this many seconds after appear — so a hero sitting under a celebration
+    /// beat doesn't count up behind it and be sitting finished by the time the beat lifts.
+    var delay: Double = 0
 
     @State private var shown = 0.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,7 +53,7 @@ struct CountUpHero: View {
         .accessibilityValue(format(target))
         .onAppear {
             guard !reduceMotion else { shown = target; return }
-            withAnimation(.easeOut(duration: duration)) { shown = target }
+            withAnimation(.easeOut(duration: duration).delay(delay)) { shown = target }
         }
     }
 }

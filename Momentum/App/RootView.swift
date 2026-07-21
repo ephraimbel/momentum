@@ -127,7 +127,7 @@ struct RootView: View {
                 .background {
                     Color.clear.fullScreenCover(isPresented: $showSaveScreen) {
                         if let run = recentWorkouts.first(where: { $0.type.isGPS && $0.gps != nil }) {
-                            CardioSaveView(workoutId: run.id) { showSaveScreen = false }
+                            CardioSaveView(workoutId: run.id, workoutType: run.type) { showSaveScreen = false }
                         }
                     }
                 }
@@ -154,7 +154,7 @@ struct RootView: View {
             } else if presented.type.isTimed {
                 TimedSaveView(workoutId: presented.id) { recoverySave = nil }
             } else {
-                CardioSaveView(workoutId: presented.id) { recoverySave = nil }
+                CardioSaveView(workoutId: presented.id, workoutType: presented.type) { recoverySave = nil }
             }
         }
         // Onboarding presents from THIS always-installed level, not from the signed-in branch:
