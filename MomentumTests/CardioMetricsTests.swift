@@ -46,4 +46,46 @@ struct CardioMetricsTests {
         #expect(splits[2].isPartial == true)
         #expect(abs(splits[2].distanceM - 500) < 0.5)
     }
+
+    // MARK: - Average pace / speed
+    //
+    // These pin the ONE definition. Expected values are hardcoded literals, never expressed with the
+    // operators under test — `3060 / 10.1` would pass for any implementation that made the same
+    // mistake as the code.
+
+    @Test func steadyRunAveragesExactly() {
+        // 8 km in 45:00 ⇒ 337.5 s/km. The case the EMA also got right; it must not move.
+        #expect(CardioMetrics.averagePaceSPerKm(distanceM: 8000, durationS: 2700) == 337.5)
+    }
+
+    /// The motivating case: the athlete walks the last minute before reaching for Finish. The EMA
+    /// followed the walk; the average must not.
+    @Test func endingOnAWalkDoesNotDragTheAverage() {
+        let pace = CardioMetrics.averagePaceSPerKm(distanceM: 10_100, durationS: 3060)
+        #expect(abs(pace - 302.970297) < 1e-5)
+    }
+
+    /// The opposite direction, and the dangerous one: a hard finish made the EMA read FASTER than
+    /// the athlete ever averaged, which fabricates fitness rather than merely losing it.
+    @Test func aFastFinishDoesNotFlatterTheAverage() {
+        let pace = CardioMetrics.averagePaceSPerKm(distanceM: 6216.2, durationS: 1980)
+        #expect(abs(pace - 318.52) < 0.01)
+    }
+
+    @Test func degenerateInputIsZeroAndFinite() {
+        for (d, t) in [(0.0, 1800.0), (5000.0, 0.0), (0.0, 0.0), (-5.0, 100.0)] {
+            let pace = CardioMetrics.averagePaceSPerKm(distanceM: d, durationS: t)
+            let speed = CardioMetrics.averageSpeedMS(distanceM: d, durationS: t)
+            #expect(pace == 0 && pace.isFinite)
+            #expect(speed == 0 && speed.isFinite)
+        }
+    }
+
+    @Test func paceAndSpeedAreReciprocal() {
+        let d = 20_000.0, t = 2400.0
+        let pace = CardioMetrics.averagePaceSPerKm(distanceM: d, durationS: t)
+        let speed = CardioMetrics.averageSpeedMS(distanceM: d, durationS: t)
+        #expect(abs(speed - 8.3333333) < 1e-6)
+        #expect(abs(pace * speed - 1000) < 1e-9)
+    }
 }

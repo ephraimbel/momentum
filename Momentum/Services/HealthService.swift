@@ -301,9 +301,11 @@ final class HealthService: HealthServing {
         if type.isGPS {
             let gps = GPSDetail()
             gps.distanceM = distanceM
-            if distanceM > 0, duration > 0 {
-                if type.discipline == .cycling { gps.avgSpeedMS = distanceM / duration }
-                else { gps.avgPaceSPerKm = duration / (distanceM / 1000) }
+            // Same helper as live capture — the guards live inside it now.
+            if type.discipline == .cycling {
+                gps.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: distanceM, durationS: duration)
+            } else {
+                gps.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: duration)
             }
             gps.avgHR = avgHR
             w.gps = gps

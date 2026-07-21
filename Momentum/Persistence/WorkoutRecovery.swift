@@ -59,9 +59,9 @@ enum WorkoutRecovery {
             // Distance/elevation were checkpointed every 5s while live; derive the average from
             // what actually stuck so the summary math is self-consistent.
             if workout.type.discipline == .cycling {
-                gps.avgSpeedMS = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
+                gps.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: gps.distanceM, durationS: workout.durationS)
             } else if gps.distanceM > 0, workout.durationS > 0 {
-                gps.avgPaceSPerKm = workout.durationS / (gps.distanceM / 1000)
+                gps.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: gps.distanceM, durationS: workout.durationS)
             }
         }
 

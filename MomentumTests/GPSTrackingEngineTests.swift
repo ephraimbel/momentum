@@ -91,4 +91,44 @@ struct GPSTrackingEngineTests {
         let delta = resumed.distanceM - before.distanceM
         #expect(delta > 0 && delta < 8)                        // ~4.4m, never the 44m paused walk
     }
+
+    /// CoreLocation reports a NEGATIVE `speed` when it has no valid Doppler measurement — under
+    /// canopy, in an urban canyon, on a cold re-acquire. That sentinel used to be clamped with
+    /// `max(0, ...)` into a confident "stationary", so a runner under trees was auto-paused while
+    /// still moving: the clock froze, position-only fixes kept adding distance, and the finished run
+    /// came back short on time and fast on pace.
+    @Test func invalidDopplerSpeedDoesNotLatchAutoPause() async {
+        let engine = GPSTrackingEngine(type: .run)
+        let t0 = Date(timeIntervalSince1970: 2_000_000)
+        await engine.begin(now: t0)
+        func ingest(_ dt: Double, speed: Double, lat: Double) async {
+            await engine.ingest(fix(t0, dt, speed: speed, lat: lat), now: t0.addingTimeInterval(dt))
+        }
+        // Running normally.
+        for i in 0..<10 {
+            await ingest(Double(i), speed: 3, lat: 37.0 + Double(i) * 0.000027)
+        }
+        #expect(await engine.snapshot().state == .tracking)
+
+        // Signal degrades: speed unknown, but the athlete is demonstrably still covering ground.
+        for i in 10..<25 {
+            await ingest(Double(i), speed: -1, lat: 37.0 + Double(i) * 0.000027)
+        }
+        #expect(await engine.snapshot().state == .tracking,
+                "an unknown speed is not evidence of stopping — this auto-paused before the fix")
+    }
+
+    /// The guard must not break real auto-pause: a genuine, measured zero still pauses.
+    @Test func aMeasuredZeroSpeedStillAutoPauses() async {
+        let engine = GPSTrackingEngine(type: .run)
+        let t0 = Date(timeIntervalSince1970: 3_000_000)
+        await engine.begin(now: t0)
+        func ingest(_ dt: Double, speed: Double, lat: Double) async {
+            await engine.ingest(fix(t0, dt, speed: speed, lat: lat), now: t0.addingTimeInterval(dt))
+        }
+        await ingest(0, speed: 3, lat: 37.0)
+        await ingest(1, speed: 0, lat: 37.0)
+        await ingest(7, speed: 0, lat: 37.0)
+        #expect(await engine.snapshot().state == .autoPaused)
+    }
 }

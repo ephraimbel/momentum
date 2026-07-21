@@ -42,8 +42,7 @@ struct DurabilityTests {
         #expect(pending?.gps?.samples.count == 10)
 
         let id = try #require(pending?.id)
-        await store.finishWorkout(distanceM: 500, durationS: 120,
-                                  elevationGainM: 10, smoothedPaceSPerKm: 300)
+        await store.finishWorkout(distanceM: 500, durationS: 120, elevationGainM: 10)
 
         // Finished → marker cleared, nothing pending, aggregates final.
         #expect(ActiveWorkoutMarker.pendingID == nil)
@@ -52,6 +51,10 @@ struct DurabilityTests {
         let finished = all.first { $0.id == id }
         #expect(finished?.gps?.distanceM == 500)
         #expect(finished?.durationS == 120)
+        // 500 m in 120 s ⇒ 240 s/km. This call used to hand in a `smoothedPaceSPerKm: 300` that
+        // disagreed with its own distance and duration, and nothing asserted on it — which is
+        // precisely how the store came to persist the live EMA unnoticed.
+        #expect(finished?.gps?.avgPaceSPerKm == 240.0)
         ActiveWorkoutMarker.clear()
     }
 
@@ -73,8 +76,7 @@ struct DurabilityTests {
         #expect(pending.gps?.hrSamples.map(\.bpm).sorted() == [120, 140, 160])
 
         await store.attachHR(140)
-        await store.finishWorkout(distanceM: 1000, durationS: 300,
-                                  elevationGainM: 0, smoothedPaceSPerKm: 300)
+        await store.finishWorkout(distanceM: 1000, durationS: 300, elevationGainM: 0)
         let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
         #expect(all.first { $0.id == pending.id }?.gps?.avgHR == 140)
         ActiveWorkoutMarker.clear()
@@ -106,6 +108,63 @@ struct DurabilityTests {
 
         let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
         #expect(all.first?.strength?.totalVolumeKg == 960)
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// The headline regression: the finish path stores total ÷ total, not the live EMA. Read back
+    /// through a SEPARATE context so this proves persistence, not an in-memory value.
+    @Test func finishStoresTheTrueAverageNotTheLiveEMA() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        await store.beginWorkout(type: .run, startedAt: Date(timeIntervalSinceReferenceDate: 0))
+        // 10.1 km in 51:00 — the "walked the last minute" shape.
+        await store.finishWorkout(distanceM: 10_100, durationS: 3060, elevationGainM: 0)
+
+        let fresh = ModelContext(container)
+        let w = try #require(try fresh.fetch(FetchDescriptor<Workout>()).first)
+        let pace = try #require(w.gps?.avgPaceSPerKm)
+        #expect(abs(pace - 302.970297) < 1e-4)
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// Walk and hike fall into the same branch as running and were storing the EMA too.
+    @Test func walksAndHikesTakeThePaceBranch() async throws {
+        for type in [WorkoutType.walk, .hike] {
+            ActiveWorkoutMarker.clear()
+            let container = try makeContainer()
+            let store = GPSWorkoutStore(modelContainer: container)
+            await store.beginWorkout(type: type, startedAt: Date(timeIntervalSinceReferenceDate: 0))
+            await store.finishWorkout(distanceM: 3000, durationS: 2400, elevationGainM: 0)
+            let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
+            #expect(all.first?.gps?.avgPaceSPerKm == 800.0, "\(type) should store 800 s/km")
+        }
+        ActiveWorkoutMarker.clear()
+    }
+
+    @Test func cyclingStoresSpeedAndLeavesPaceZero() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        await store.beginWorkout(type: .ride, startedAt: Date(timeIntervalSinceReferenceDate: 0))
+        await store.finishWorkout(distanceM: 20_000, durationS: 2400, elevationGainM: 0)
+        let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
+        let gps = try #require(all.first?.gps)
+        #expect(abs(gps.avgSpeedMS - 8.3333333) < 1e-6)
+        #expect(gps.avgPaceSPerKm == 0)
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// A never-locked run must not persist infinity into a field that is synced and exported.
+    @Test func zeroDistanceFinishStoresZeroNotInfinity() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        await store.beginWorkout(type: .run, startedAt: Date(timeIntervalSinceReferenceDate: 0))
+        await store.finishWorkout(distanceM: 0, durationS: 600, elevationGainM: 0)
+        let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
+        let pace = try #require(all.first?.gps?.avgPaceSPerKm)
+        #expect(pace == 0 && pace.isFinite)
         ActiveWorkoutMarker.clear()
     }
 }

@@ -325,8 +325,8 @@ enum LogWorkoutBuilder {
             let gps = GPSDetail()
             gps.distanceM = distanceM
             if durationS > 0, distanceM > 0 {
-                if isBike { gps.avgSpeedMS = distanceM / durationS }
-                else { gps.avgPaceSPerKm = durationS / (distanceM / 1000) }
+                if isBike { gps.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: distanceM, durationS: durationS) }
+                else { gps.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS) }
             }
             w.gps = gps
         } else if type.isStrengthStyle {

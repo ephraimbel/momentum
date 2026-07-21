@@ -47,16 +47,17 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
-                       smoothedPaceSPerKm: Double) {
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self],
               let workoutID, let workout = self[workoutID, as: Workout.self] else { return }
         detail.distanceM = distanceM
         detail.elevationGainM = elevationGainM
+        // The stored aggregate is total ÷ total, never the live EMA — see `averagePaceSPerKm`.
+        // Walk and hike fall into the else branch too, so they were storing the EMA as well.
         if type.discipline == .cycling {   // all bike variants report speed, not pace
-            detail.avgSpeedMS = durationS > 0 ? distanceM / durationS : 0
+            detail.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: distanceM, durationS: durationS)
         } else {
-            detail.avgPaceSPerKm = smoothedPaceSPerKm
+            detail.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS)
         }
         workout.durationS = durationS
         workout.elapsedS = durationS

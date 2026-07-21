@@ -11,16 +11,20 @@ protocol GPSWorkoutSink: Sendable {
     /// Update rolled-up aggregates (every ~5s).
     func checkpoint(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async
     /// Finalize aggregates and clear the active-workout marker.
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
-                       smoothedPaceSPerKm: Double) async
+    /// The live EMA is deliberately NOT a parameter. It was one, it went unused-but-passed, and the
+    /// store persisted it as the workout's average pace. An argument nobody has to justify is how
+    /// that survived — so the value simply cannot reach persistence any more.
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async
 }
 
 struct NoopGPSWorkoutSink: GPSWorkoutSink {
     func beginWorkout(type: WorkoutType, startedAt: Date) async {}
     func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) async {}
     func checkpoint(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async {}
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
-                       smoothedPaceSPerKm: Double) async {}
+    /// The live EMA is deliberately NOT a parameter. It was one, it went unused-but-passed, and the
+    /// store persisted it as the workout's average pace. An argument nobody has to justify is how
+    /// that survived — so the value simply cannot reach persistence any more.
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async {}
 }
 
 /// Cardio capture engine (PRD §8.3). A strict state machine over a pure `GPSProcessor`.
@@ -133,8 +137,15 @@ actor GPSTrackingEngine {
         lastMovingMark = now
 
         // Auto-pause / resume (manual pause is sticky and not overridden here).
-        if state != .paused {
-            let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now,
+        //
+        // An UNKNOWN speed is not evidence of stopping. CoreLocation reports a negative sentinel for
+        // `speed` under canopy, in an urban canyon, or on a cold re-acquire — and `max(0,)` turned
+        // that sentinel into a confident "stationary", latching auto-pause on an athlete who was
+        // still running. That freezes the clock while position-only fixes keep accruing distance,
+        // so the run comes back short on time and its pace reads fast. Skip the decision instead:
+        // hold whatever state we were in until the device tells us something it actually measured.
+        if state != .paused, fix.speedMS >= 0 {
+            let pausedBySpeed = processor.shouldAutoPause(speedMS: fix.speedMS, now: now,
                                                           currentlyPaused: state == .autoPaused)
             if !pausedBySpeed {
                 // Real movement → a manual-resume override is done its job; normal auto-pause resumes.
@@ -187,8 +198,7 @@ actor GPSTrackingEngine {
         state = .saving
         await sink.finishWorkout(distanceM: processor.distanceM,
                                  durationS: durationOverrideS ?? movingTimeS,
-                                 elevationGainM: processor.elevationGainM,
-                                 smoothedPaceSPerKm: processor.smoothedPaceSPerKm)
+                                 elevationGainM: processor.elevationGainM)
         state = .summary
     }
 

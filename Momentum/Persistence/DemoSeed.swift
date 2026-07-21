@@ -428,7 +428,7 @@ enum DemoSeed {
         let gps = GPSDetail()
         gps.distanceM = distanceM
         gps.elevationGainM = 178
-        gps.avgPaceSPerKm = durationS / (distanceM / 1000)    // ~4:14 /km ≈ 6:49 /mi
+        gps.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS)  // ~4:14 /km
         gps.avgCadence = 183
         let speed = distanceM / durationS                     // ~3.94 m/s
         let last = Double(pts.count - 1)
