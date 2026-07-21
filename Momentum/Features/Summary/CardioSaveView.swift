@@ -11,6 +11,9 @@ struct CardioSaveView: View {
     /// Known from the launch, so the celebration can name the discipline on the very first frame —
     /// the reader hasn't loaded yet at that point, and a ride shouldn't read "Run complete".
     var workoutType: WorkoutType = .run
+    /// The athlete's week and the arc this session added, computed at finish. nil (history, crash
+    /// recovery, the debug harness) falls back to a plain sweep.
+    var weekRing: WeekRing.Reading? = nil
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -95,7 +98,11 @@ struct CardioSaveView: View {
         .overlay {
             if celebrating {
                 // Dismisses itself into the summary underneath — it no longer closes the screen.
-                CompletionCelebration(title: "\(workoutType.title) complete") { celebrating = false }
+                // The ring sweeps across the athlete's week, and the arc it travels is this session.
+                CompletionCelebration(title: "\(workoutType.title) complete",
+                                      ringFrom: weekRing?.from ?? 0,
+                                      ringTo: weekRing?.to ?? 1,
+                                      caption: weekCaption) { celebrating = false }
             }
         }
         // The recording itself is already on disk — only these edits failed to write. Say that
@@ -138,6 +145,19 @@ struct CardioSaveView: View {
         } message: {
             Text("This permanently deletes the recording — it won't be saved to your history.")
         }
+    }
+
+    /// The ring's legend. Without it the sweep is just a shape moving; with it the athlete can see
+    /// exactly what they added and what's left. The "week complete" line is the one earned claim
+    /// here, and only the session that actually crossed the line gets to make it.
+    private var weekCaption: String? {
+        guard let ring = weekRing else { return nil }
+        // Whole units on both sides. A prescribed week summed to 19.88 mi and the caption read
+        // "16 of 19.88 mi this week" — false precision on a target nobody set to two decimals.
+        let target = Formatters.wholeDistance(meters: ring.targetM, unit: distanceUnit)
+        if ring.closedTheWeek { return "\(target.value) \(target.unit) — week complete" }
+        let done = Formatters.wholeDistance(meters: ring.completedM, unit: distanceUnit)
+        return "\(done.value) of \(target.value) \(target.unit) this week"
     }
 
     private var editor: some View {

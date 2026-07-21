@@ -19,6 +19,11 @@ struct RootView: View {
     @State private var recoverySave: PresentedWorkout?
     /// Once per process: a fresh launch is the only moment the marker can't belong to a live workout.
     @MainActor private static var didCheckRecovery = false
+    /// The athlete's chosen unit, for the save screens presented from here — they default to `.auto`,
+    /// which resolves off locale and ignores an explicit metric/imperial preference.
+    private var distanceUnit: DistanceUnit {
+        DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
+    }
     @State private var selection: AppTab = {
         #if DEBUG
         // Deterministic deep-links for sim verification (tab-bar taps are unreliable in the sim).
@@ -127,7 +132,19 @@ struct RootView: View {
                 .background {
                     Color.clear.fullScreenCover(isPresented: $showSaveScreen) {
                         if let run = recentWorkouts.first(where: { $0.type.isGPS && $0.gps != nil }) {
-                            CardioSaveView(workoutId: run.id, workoutType: run.type) { showSaveScreen = false }
+                            // Reads the real week through the shared reader, so this harness verifies
+                            // the ring the finish flow actually draws — not a lookalike. `--ring-demo`
+                            // substitutes a mid-week reading, because the seed's run is the only one
+                            // in its week and so exercises only the baseline-of-zero case.
+                            CardioSaveView(workoutId: run.id, distanceUnit: distanceUnit,
+                                           workoutType: run.type,
+                                           weekRing: debugFlag("--ring-demo")
+                                               ? WeekRing.reading(justFinishedM: 7_000, earlierThisWeekM: 19_000,
+                                                                  targetM: 32_000)
+                                               : WeekRingReader.reading(for: run, plan: profiles.first?.plan,
+                                                                        profile: profiles.first, in: context)) {
+                                showSaveScreen = false
+                            }
                         }
                     }
                 }
@@ -154,7 +171,8 @@ struct RootView: View {
             } else if presented.type.isTimed {
                 TimedSaveView(workoutId: presented.id) { recoverySave = nil }
             } else {
-                CardioSaveView(workoutId: presented.id, workoutType: presented.type) { recoverySave = nil }
+                CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
+                               workoutType: presented.type) { recoverySave = nil }
             }
         }
         // Onboarding presents from THIS always-installed level, not from the signed-in branch:

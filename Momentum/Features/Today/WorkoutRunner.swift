@@ -12,6 +12,10 @@ struct WorkoutRunner: ViewModifier {
     @Environment(Services.self) private var services
     @Query private var profiles: [UserProfile]
     @State private var summary: PresentedWorkout?
+    /// The athlete's running week and the arc this session just added to it — computed at finish,
+    /// while the workout is still in hand, so the celebration can draw something true on its very
+    /// first frame (the summary's own reader hasn't loaded by then).
+    @State private var weekRing: WeekRing.Reading?
 
     private var plan: TrainingPlan? { profiles.first?.plan }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto }
@@ -26,7 +30,10 @@ struct WorkoutRunner: ViewModifier {
                 } else if presented.type.isTimed {
                     TimedSaveView(workoutId: presented.id) { summary = nil }
                 } else {
-                    CardioSaveView(workoutId: presented.id, workoutType: presented.type) { summary = nil }
+                    // `distanceUnit` was never passed, so the whole cardio summary silently fell back
+                    // to `.auto` (locale) and ignored an explicit metric/imperial choice.
+                    CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
+                                   workoutType: presented.type, weekRing: weekRing) { summary = nil }
                 }
             }
     }
@@ -66,6 +73,7 @@ struct WorkoutRunner: ViewModifier {
             try? context.save()   // persist now so the fresh-context strength summary reader sees it
             if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
             else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
+            weekRing = WeekRingReader.reading(for: workout, plan: plan, profile: profiles.first, in: context)
         }
         // Present FIRST. Everything below faults the whole workout history and rewrites the plan;
         // running it here used to stall the app at the exact moment the athlete crossed their finish

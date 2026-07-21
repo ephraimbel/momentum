@@ -5,7 +5,27 @@ import SwiftUI
 /// then it fades to reveal the summary. Plays once; honors Reduce Motion (snaps + brief hold).
 struct CompletionCelebration: View {
     let title: String
+    /// Where the ring starts and where it sweeps to. Defaults to a plain 0→1 for surfaces that have
+    /// nothing real to measure — but when a `WeekRing.Reading` is available the sweep is the
+    /// athlete's week, and the arc it travels is exactly what this session just added.
+    var ringFrom: Double
+    var ringTo: Double
+    /// The legend the ring needs to mean anything ("14 of 20 mi this week"). A ring with no reading
+    /// beside it is decoration no matter what it's wired to.
+    var caption: String?
     var onDone: () -> Void
+
+    init(title: String, ringFrom: Double = 0, ringTo: Double = 1, caption: String? = nil,
+         onDone: @escaping () -> Void) {
+        self.title = title
+        self.ringFrom = ringFrom
+        self.ringTo = ringTo
+        self.caption = caption
+        self.onDone = onDone
+        // Seeded so the first painted frame already shows the week as it stood — starting at zero
+        // and jumping would read as the week resetting before it filled.
+        _ring = State(initialValue: ringFrom)
+    }
 
     /// Wall time from appear to `onDone` — the sum of the beats in `run()` below. Callers schedule
     /// work to land *after* the beat rather than stalling the screen before it.
@@ -32,17 +52,27 @@ struct CompletionCelebration: View {
                         .frame(width: 180, height: 180)
                         .opacity(0.25 * bloom)
                         .blur(radius: 24)
-                    ProgressRing(progress: ring).frame(width: 132, height: 132)
+                    // The week as it stood sits in ink; the iridescent arc growing out of it is
+                    // this session, and nothing else.
+                    ProgressRing(progress: ring, baseline: ringFrom).frame(width: 132, height: 132)
                     Image(systemName: "checkmark")
                         .font(.system(size: 46, weight: .bold))
                         .foregroundStyle(Theme.ink)
                         .scaleEffect(0.5 + 0.5 * check)
                         .opacity(check)
                 }
-                Text(title)
-                    .font(.display(28, weight: .black))
-                    .foregroundStyle(Theme.ink)
-                    .opacity(check)
+                VStack(spacing: Theme.Space.xs) {
+                    Text(title)
+                        .font(.display(28, weight: .black))
+                        .foregroundStyle(Theme.ink)
+                    if let caption {
+                        Text(caption)
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                .opacity(check)
             }
         }
         .opacity(fade)
@@ -52,7 +82,7 @@ struct CompletionCelebration: View {
         .onTapGesture { finish(fadeDuration: 0.12) }
         .task { await run() }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
+        .accessibilityLabel(caption.map { "\(title). \($0)" } ?? title)
         .accessibilityHint("Tap to skip")
         .accessibilityAddTraits(.isButton)
     }
@@ -71,10 +101,10 @@ struct CompletionCelebration: View {
     private func run() async {
         Haptics.celebration()
         if reduceMotion {
-            ring = 1; check = 1; bloom = 1
+            ring = ringTo; check = 1; bloom = 1
             try? await Task.sleep(for: .seconds(0.5))
         } else {
-            withAnimation(.easeOut(duration: 0.5)) { ring = 1; bloom = 1 }
+            withAnimation(.easeOut(duration: 0.5)) { ring = ringTo; bloom = 1 }
             try? await Task.sleep(for: .seconds(0.18))
             withAnimation(.spring(response: 0.36, dampingFraction: 0.6)) { check = 1 }
             try? await Task.sleep(for: .seconds(0.42))
