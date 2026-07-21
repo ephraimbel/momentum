@@ -52,9 +52,9 @@ struct CompletionCelebration: View {
                         .frame(width: 180, height: 180)
                         .opacity(0.25 * bloom)
                         .blur(radius: 24)
-                    // The week as it stood sits in ink; the iridescent arc growing out of it is
-                    // this session, and nothing else.
-                    ProgressRing(progress: ring, baseline: ringFrom).frame(width: 132, height: 132)
+                    // Seeded at the week as it stood and swept to where it stands now — the arc it
+                    // travels IS this session, expressed as growth rather than as a second colour.
+                    ProgressRing(progress: ring).frame(width: 132, height: 132)
                     Image(systemName: "checkmark")
                         .font(.system(size: 46, weight: .bold))
                         .foregroundStyle(Theme.ink)

@@ -64,6 +64,9 @@ struct WorkoutRunner: ViewModifier {
     private func finish(_ id: UUID?, type: WorkoutType, planned: PlannedSession?) {
         launch = nil
         guard let id else { return }
+        // Cleared up front: it's only recomputed inside the branch below, so a workout that failed
+        // to fetch would otherwise have shown the PREVIOUS session's ring.
+        weekRing = nil
         if let workout = fetchWorkout(id) {
             // Deterministic active-energy estimate (body-mass aware) — drives the calorie stat and the
             // Apple Health energy sample. Recomputed on save if the sport type is corrected. Stays on
@@ -79,16 +82,24 @@ struct WorkoutRunner: ViewModifier {
         // running it here used to stall the app at the exact moment the athlete crossed their finish
         // line. None of it changes what the summary displays, so it waits for the celebration.
         summary = PresentedWorkout(id: id, type: type)
+        // Captured HERE, while we're still inside a view update. `plan`/`profiles` read through
+        // `@Query`, and reaching for a property wrapper from a detached Task a second later is not
+        // reliable — a nil profile would have meant `schedulePlannedReminders(nil)`, quietly wiping
+        // the athlete's reminders. SwiftData models are references, so holding them is safe.
+        let capturedPlan = plan
+        let capturedProfile = profiles.first
+        let capturedUnit = distanceUnit
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.2))
-            adaptAfterFinish(id)
+            adaptAfterFinish(id, plan: capturedPlan, profile: capturedProfile, unit: capturedUnit)
         }
     }
 
     /// The adaptive pass: protective load easing, pace recalibration, athlete-model ingest and
     /// reminder rescheduling. Deliberately deferred past the reveal — it's heavy, it's all
     /// main-actor SwiftData work, and nothing it produces is on screen yet.
-    private func adaptAfterFinish(_ id: UUID) {
+    private func adaptAfterFinish(_ id: UUID, plan: TrainingPlan?, profile: UserProfile?,
+                                  unit: DistanceUnit) {
         if let workout = fetchWorkout(id) {
             // Protective adaptation first (ACWR-driven, ≤1×/week, never auto-increases load) —
             // then pace recalibration only when the plan was NOT just eased. The old order could
@@ -106,14 +117,14 @@ struct WorkoutRunner: ViewModifier {
                 let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
                 services.notifications.notifyPlanUpdated(
                     title: "Your paces just got faster",
-                    body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: distanceUnit)).")
+                    body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: unit)).")
             } else if workout.type.isStrengthStyle,
                       let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context) {
                 services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
             }
         }
         // Let the Athlete Model learn from this session (local, never blocks the summary).
-        if let profile = profiles.first {
+        if let profile {
             services.athleteModel.ingest(profile: profile, in: context)
         }
         // Refresh next-workout reminders so they reflect the completed/credited/recalibrated/eased plan.

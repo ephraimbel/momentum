@@ -44,7 +44,7 @@ struct CardioSummaryContent: View {
             // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
-                headline(workout, gps).reveal(revealDelay)
+                headline(workout, gps)   // staggers its own children; no outer reveal
                 if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.10) }
                 // Sharing is not gated on a record. It used to sit inside the achievements branch, so
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
@@ -203,6 +203,10 @@ struct CardioSummaryContent: View {
     private func headline(_ workout: Workout, _ gps: GPSDetail) -> some View {
         let isImperial = distanceUnit.resolved() == .imperial
         let distanceTarget = isImperial ? gps.distanceM / Formatters.metersPerMile : gps.distanceM / 1000
+        // Staggered internally rather than revealed as one block: the hero used to arrive with the
+        // verdict and the final stat row already settled beside it, so the distance was still
+        // tallying while everything it implies sat there finished. Now the number lands, then what
+        // it meant, then the detail.
         return VStack(spacing: Theme.Space.lg) {
             // `steadyNumeral` picks its decimals from the final value and holds them, so a clean 5 km
             // reads "5" at rest instead of "5.00" — without the digit count shifting mid-tally.
@@ -210,8 +214,10 @@ struct CardioSummaryContent: View {
                         format: Formatters.steadyNumeral(target: distanceTarget),
                         label: isImperial ? "Miles" : "Kilometers",
                         delay: revealDelay)
+                .reveal(revealDelay)
             if let line = competenceLine {
                 EarnedLine(text: line.text, systemImage: glyph(line.tone), earned: line.tone == .earned)
+                    .reveal(revealDelay + 0.14)
             }
             // Equal-width stats so the row stays balanced whether it's 3 or 5 — Avg HR joins Time,
             // pace, and elevation whenever the run has heart-rate data (ours, or backfilled from Health).
@@ -222,6 +228,7 @@ struct CardioSummaryContent: View {
                 stat("\(Int(gps.elevationGainM)) m", "Elevation")
                 if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
+            .reveal(revealDelay + 0.22)
         }
         .padding(.vertical, Theme.Space.md)
     }

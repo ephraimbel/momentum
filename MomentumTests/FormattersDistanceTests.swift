@@ -33,6 +33,33 @@ struct FormattersDistanceTests {
         #expect(Formatters.distance(meters: Formatters.metersPerMile, unit: .imperial) == "1 mi")
     }
 
+    // MARK: wholeDistance — number and unit split apart
+
+    /// Load-bearing in two places that both used to hardcode "km": the Progress trend/history tiles
+    /// and the celebration's week caption. The unit word has to come from the athlete's setting, and
+    /// the value has to be whole — "16 of 19.88 mi this week" was false precision on a target nobody
+    /// set to two decimals.
+    @Test func wholeDistanceReturnsARoundedValueAndTheRightUnitWord() {
+        let metric = Formatters.wholeDistance(meters: 32_000, unit: .metric)
+        #expect(metric.value == 32)
+        #expect(metric.unit == "km")
+
+        let imperial = Formatters.wholeDistance(meters: 32_000, unit: .imperial)
+        #expect(imperial.value == 20)          // 19.88 mi, rounded — never rendered as 19.88
+        #expect(imperial.unit == "mi")
+    }
+
+    @Test func wholeDistanceRoundsRatherThanTruncates() {
+        #expect(Formatters.wholeDistance(meters: 26_000, unit: .imperial).value == 16)   // 16.16
+        #expect(Formatters.wholeDistance(meters: 1_600, unit: .metric).value == 2)       // 1.6 → 2
+        #expect(Formatters.wholeDistance(meters: 1_400, unit: .metric).value == 1)       // 1.4 → 1
+    }
+
+    @Test func wholeDistanceHandlesZero() {
+        #expect(Formatters.wholeDistance(meters: 0, unit: .metric).value == 0)
+        #expect(Formatters.wholeDistance(meters: 0, unit: .imperial).unit == "mi")
+    }
+
     // MARK: steadyNumeral — the count-up's digit count must not move
 
     /// The property that matters: whatever the hero counts THROUGH renders with the same number of
