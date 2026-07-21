@@ -256,11 +256,44 @@ final class HealthService: HealthServing {
             count += 1
         }
 
+        return Self.commitImport(
+            count: count, imported: imported, saved: saved,
+            save: { try context.save() },
+            rollback: { context.rollback() },
+            record: { imported, saved in
+                UserDefaults.standard.set(Array(imported), forKey: Self.importedKey)
+                UserDefaults.standard.set(Array(saved), forKey: Self.savedKey)
+            })
+    }
+
+    /// Commit imported rows, THEN record that they were imported — never the other way round.
+    ///
+    /// The dedupe ledger used to be written to `UserDefaults` before a `try?`-swallowed
+    /// `context.save()`. A failed save therefore left the HealthKit UUIDs permanently marked as
+    /// consumed while the `Workout` rows were never persisted, and `shouldImport` skips them on every
+    /// future sync — silently and irrecoverably losing Garmin/Watch workouts, with no way back short
+    /// of "Delete all data". Leaving the ledger untouched costs at most a repeated import attempt;
+    /// writing it early costs the workout.
+    ///
+    /// Overlap verdicts are recorded even when nothing was inserted. That is the steady state — a
+    /// sync that finds only duplicates — and the old `count > 0` guard discarded the verdict every
+    /// time, so the "don't re-evaluate every sync" the code claimed never actually happened.
+    ///
+    /// Extracted with injected effects so the ordering is a test, not a comment.
+    static func commitImport(count: Int, imported: Set<String>, saved: Set<String>,
+                             save: () throws -> Void,
+                             rollback: () -> Void,
+                             record: (Set<String>, Set<String>) -> Void) -> Int {
         if count > 0 {
-            UserDefaults.standard.set(Array(imported), forKey: Self.importedKey)
-            UserDefaults.standard.set(Array(saved), forKey: Self.savedKey)
-            try? context.save()
+            do {
+                try save()
+            } catch {
+                // Drop the pending inserts too, so the retry doesn't duplicate them.
+                rollback()
+                return 0
+            }
         }
+        record(imported, saved)
         return count
     }
 

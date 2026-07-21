@@ -297,4 +297,53 @@ struct RecoverySignalsIllnessWatchTests {
         #expect(s.wristTempDeltaC == 0.6)
         #expect(s.blendedReadiness(base: 70) < 45)       // reads strained, not moderate
     }
+
+    // MARK: - Import commit ordering
+    //
+    // The dedupe ledger is what stops a HealthKit workout being imported twice. If it is written and
+    // the rows are then NOT saved, those workouts are skipped forever — silent, irrecoverable loss of
+    // Garmin/Watch data. So the order is load-bearing, and these pin it.
+
+    @MainActor @Test func aFailedSaveRecordsNothingSoTheNextSyncRetries() {
+        var recorded = false
+        var rolledBack = false
+        struct Boom: Error {}
+        let n = HealthService.commitImport(
+            count: 3, imported: ["a", "b"], saved: ["x"],
+            save: { throw Boom() },
+            rollback: { rolledBack = true },
+            record: { _, _ in recorded = true })
+
+        #expect(n == 0, "a failed save must not report imports")
+        #expect(!recorded, "THE bug: the ledger must not be written when the rows didn't persist")
+        #expect(rolledBack, "pending inserts must be dropped or the retry duplicates them")
+    }
+
+    @MainActor @Test func aSuccessfulSaveRecordsTheLedger() {
+        var got: (Set<String>, Set<String>)?
+        let n = HealthService.commitImport(
+            count: 2, imported: ["a", "b"], saved: ["x", "y"],
+            save: {}, rollback: { Issue.record("must not roll back on success") },
+            record: { got = ($0, $1) })
+
+        #expect(n == 2)
+        #expect(got?.0 == ["a", "b"])
+        #expect(got?.1 == ["x", "y"])
+    }
+
+    /// The steady state: a sync that finds only duplicates. Nothing is inserted, so nothing is saved,
+    /// but the overlap verdicts still have to be remembered — the old `count > 0` guard threw them
+    /// away every time, so the work was redone on every single sync.
+    @MainActor @Test func overlapVerdictsArePersistedEvenWhenNothingWasImported() {
+        var recorded: Set<String>?
+        var saveCalled = false
+        let n = HealthService.commitImport(
+            count: 0, imported: ["dup-1", "dup-2"], saved: [],
+            save: { saveCalled = true }, rollback: {},
+            record: { imported, _ in recorded = imported })
+
+        #expect(n == 0)
+        #expect(!saveCalled, "nothing was inserted — there is nothing to save")
+        #expect(recorded == ["dup-1", "dup-2"], "the verdict must survive, or every sync re-evaluates it")
+    }
 }
