@@ -1916,7 +1916,7 @@ struct ProgressScreen: View {
                 if v1 - v0 > (best.map { $0.v1 - $0.v0 } ?? 0) { best = (lift, v0, v1) }
             }
             if let best {
-                let unit = WeightUnit.default()
+                let unit = weightUnit   // the athlete's preference, matching every sibling strength surface
                 out.append(GrowthDelta(label: best.lift.uppercased(),
                                        from: Formatters.weight(kg: best.v0, unit: unit),
                                        to: Formatters.weight(kg: best.v1, unit: unit),

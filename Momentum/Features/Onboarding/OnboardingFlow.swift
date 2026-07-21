@@ -171,12 +171,17 @@ struct OnboardingFlow: View {
 
     private var header: some View {
         HStack(spacing: Theme.Space.md) {
+            // Hidden on the first step: its `back()` is a no-op, so a visible chevron there is a
+            // dead, feedback-less tap target on the entry screen.
             Button { goBack() } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(width: 28, height: 28)
             }
+            .opacity(vm.canGoBack ? 1 : 0)
+            .disabled(!vm.canGoBack)
+            .accessibilityHidden(!vm.canGoBack)
             GeometryReader { geo in
                 let w = max(10, geo.size.width * vm.progress)
                 ZStack(alignment: .leading) {

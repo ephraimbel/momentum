@@ -91,7 +91,9 @@ struct CompletionCelebration: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(caption.map { "\(title). \($0)" } ?? title)
         .accessibilityHint("Tap to skip")
-        .accessibilityAddTraits(.isButton)
+        // Modal to VoiceOver, so the swipe rotor can't wander onto the summary and toolbar sitting
+        // behind the opaque overlay during the ~0.86s beat. Fixes all three save screens at once.
+        .accessibilityAddTraits([.isButton, .isModal])
     }
 
     /// Fade out and hand back exactly once, whichever gets here first — the timed run or a tap.

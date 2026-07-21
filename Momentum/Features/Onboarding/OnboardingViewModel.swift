@@ -202,6 +202,10 @@ final class OnboardingViewModel {
         step = steps[idx + 1]
     }
 
+    /// Whether there's a previous step to return to. The header hides its back chevron on the first
+    /// step rather than showing a control whose tap does nothing.
+    var canGoBack: Bool { (steps.firstIndex(of: step) ?? 0) > 0 }
+
     func back() {
         guard let idx = steps.firstIndex(of: step), idx > 0 else { return }
         step = steps[idx - 1]
@@ -329,8 +333,13 @@ final class OnboardingViewModel {
         profile.sessionMinutes = sessionMinutes
         // Day-granular (races have a DAY, not a time) — a time component here made Plan Settings'
         // structural comparison read an untouched sheet as changed.
-        profile.raceDate = hasRace ? Calendar.current.startOfDay(for: raceDate) : nil
-        profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
+        // Guard on the GOAL, not just `hasRace`. Picking a race and then switching the goal away
+        // (Run a race → Lose fat) used to leave `raceDate` set — the sibling fields below all guard
+        // on `goal == .raceDistance`, so the engine periodized the whole block toward a phantom race
+        // and the reveal promised "race-ready by <date>" for a goal that isn't racing.
+        let racing = goal == .raceDistance
+        profile.raceDate = (racing && hasRace) ? Calendar.current.startOfDay(for: raceDate) : nil
+        profile.raceDistanceM = racing ? raceDistance?.meters : nil
         // Only carried when the runVolume step applies (running, non-beginner); otherwise nil → the
         // engine's experience-tier defaults. Guarded so flipping back to "new" can't leak a seeded value.
         if running, experience != .new {

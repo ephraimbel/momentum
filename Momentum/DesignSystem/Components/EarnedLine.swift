@@ -16,9 +16,16 @@ struct EarnedLine: View {
         HStack(spacing: 8) {
             Image(systemName: systemImage).font(.system(size: 13, weight: .bold))
                 .foregroundStyle(earned ? Theme.ink : Theme.inkSecondary)
+            // Wraps to two lines. The verdict this carries can be a full sentence — a first-ever run
+            // reads "Your first one on the board. Everything after this has something to measure
+            // against." — and `lineLimit(1)` truncated the one line that says what the run MEANT,
+            // on every device and worse at large type. Two lines fits every current verdict; the
+            // scale factor still catches an outlier at accessibility sizes.
             Text(text).font(.rounded(Theme.FontSize.body, weight: .semibold))
                 .foregroundStyle(earned ? Theme.ink : Theme.inkSecondary)
-                .lineLimit(1).minimumScaleFactor(0.7)
+                .lineLimit(2).minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
         .momentumGlass(iridescent: earned ? .line : nil)

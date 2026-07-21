@@ -23,7 +23,10 @@ struct SelectionCard: View {
                     Image(systemName: systemImage)
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 40, height: 40)
-                        .background(Circle().fill(isSelected ? Color.white.opacity(0.16) : Theme.background))
+                        // Appearance-adapting: when selected, the card fills with `Theme.ink` (near
+                        // WHITE in dark mode), so a hardcoded white disc vanished. `Theme.background`
+                        // is the ink's counterpart in both palettes, so the disc reads either way.
+                        .background(Circle().fill(isSelected ? Theme.background.opacity(0.16) : Theme.background))
                         .symbolEffect(.bounce, value: isSelected)
                 }
                 VStack(alignment: .leading, spacing: 2) {

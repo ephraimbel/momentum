@@ -272,7 +272,10 @@ struct AddSessionSheet: View {
         s.discipline = sport.discipline      // coaching bucket; sportType carries the exact sport
         s.status = .planned
         if isGPS {
-            s.runType = .easy
+            // Only a run carries a RunType — a hand-added Ride/Walk/Hike used to inherit `.easy`,
+            // which then rendered a spurious "Easy" run-type chip (and a running HR-zone chip) in the
+            // session detail. Ride/walk/hike leave it nil and show only their sport + goal.
+            if sport == .run { s.runType = .easy }
             if goalKind == .distance {
                 s.targetDistanceM = goalValue * (distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000)
             }
