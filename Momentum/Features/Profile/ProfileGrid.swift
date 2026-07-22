@@ -7,8 +7,9 @@ enum ProfileGridTab: String, CaseIterable {
     var label: String { self == .grid ? "Grid" : "Highlights" }
 }
 
-/// The pinned segmented control that sits above the grid (the profile's `▦ Grid` / `✦ Highlights`
-/// toggle, TikTok's grid/repost tabs re-cast). Opaque background so scrolling tiles hide beneath it.
+/// The segmented control that sits above the grid (the profile's `▦ Grid` / `✦ Highlights` toggle,
+/// TikTok's grid/repost tabs re-cast). Scrolls with the content — it is not pinned. Keeps its own
+/// background + bottom hairline so it reads as a divider between the profile header and the grid.
 struct ProfileGridTabBar: View {
     @Binding var tab: ProfileGridTab
     @Namespace private var underline

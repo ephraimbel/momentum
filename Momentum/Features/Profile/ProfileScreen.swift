@@ -88,9 +88,10 @@ struct ProfileScreen: View {
     var body: some View {
         ScrollViewReader { scroll in
         ScrollView {
-            // pinnedViews is what actually pins the Grid/Highlights tab bar (the Section header
-            // below) — without it the "pinned segmented control" scrolled away with the tiles.
-            LazyVStack(alignment: .leading, spacing: Theme.Space.lg, pinnedViews: [.sectionHeaders]) {
+            // The Grid / Highlights toggle scrolls WITH the content — no `pinnedViews`, so it rides
+            // just above the grid and moves off-screen as you scroll (user preference 2026-07-22),
+            // rather than sticking under the profile header as a mini-header.
+            LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                 Group {
                     identity
                     if let profile, !profile.bio.isEmpty {
@@ -106,15 +107,14 @@ struct ProfileScreen: View {
                         .padding(.horizontal, Theme.Space.md)
                 } else {
                     // The grid rides high — the athlete's training is the hero. Lifetime totals,
-                    // discipline mix, and consistency now live one tap away under "Highlights".
-                    Section {
-                        ProfileGrid(workouts: workouts, stats: stats, highlights: highlights,
-                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
-                                    prWorkoutIds: Set(records.compactMap { $0.workout?.id })) { id in
-                            immersive = ImmersiveStart(id: id)
-                        }
-                    } header: {
-                        ProfileGridTabBar(tab: gridTab)
+                    // discipline mix, and consistency live one tap away under "Highlights". The
+                    // toggle and grid are plain siblings (no Section header) so the bar scrolls with
+                    // the tiles instead of pinning.
+                    ProfileGridTabBar(tab: gridTab)
+                    ProfileGrid(workouts: workouts, stats: stats, highlights: highlights,
+                                weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
+                                prWorkoutIds: Set(records.compactMap { $0.workout?.id })) { id in
+                        immersive = ImmersiveStart(id: id)
                     }
                 }
             }
