@@ -7,10 +7,10 @@ import PhotosUI
 /// Continue, an anticipation "building" beat, a celebratory reveal) rendered in momentum's
 /// monochrome + earned-iridescence identity.
 struct OnboardingFlow: View {
-    /// Called when the flow ends. `requestedReview` is true when the athlete tapped "Rate momentum"
-    /// on the final beat — RootView fires the native prompt once Today is settled (presenting it
-    /// mid-teardown of the onboarding cover cancels it).
-    var onComplete: (_ requestedReview: Bool) -> Void
+    /// Called when the flow ends and the app takes over. Onboarding no longer asks for a rating —
+    /// guideline 5.6.3 forbids the ask on first launch / during onboarding, so it moved to the
+    /// finished-workout moment (see `AppReview` + `WorkoutRunner`).
+    var onComplete: () -> Void
 
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,7 +26,6 @@ struct OnboardingFlow: View {
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
-    @State private var showReview = false             // the rating priming beat, the last thing before the app
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var healthImport: HealthImportState = .idle   // calibration: the Health baseline card
@@ -54,14 +53,6 @@ struct OnboardingFlow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
-            }
-            // The rating beat rides above the flow as a full-screen moment — tapping "Start training"
-            // on the primers step raises it, and the only ways forward (rate / maybe later) enter the
-            // app. Presented here (not a nested cover) so it never races the onboarding cover.
-            if showReview {
-                reviewStep
-                    .transition(.opacity.combined(with: .scale(scale: 1.03)))
-                    .zIndex(1)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -135,9 +126,6 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-equipment") { vm.activities = [.strength]; vm.step = .equipment }
             if args.contains("--onboarding-why") { vm.activities = [.run]; vm.step = .why }
             if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
-            // Sits over `.notifications` (a non-question, side-effect-free step) so the screenshot
-            // isn't interrupted by the primers location prompt — the overlay covers it either way.
-            if args.contains("--onboarding-review") { vm.activities = [.run]; vm.step = .notifications; showReview = true }
             #endif
         }
         .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
@@ -1234,67 +1222,12 @@ struct OnboardingFlow: View {
             }
             .reveal(0.15)
             Spacer()
-            OversizedButton(title: "Start training") { withAnimation(Motion.standard) { showReview = true } }
+            // Straight into the app — no rating beat here any more (5.6.3).
+            OversizedButton(title: "Start training") { onComplete() }
                 .reveal(0.3)
         }
         // Ask for location here so the app opens with the map already centered on the athlete.
         .onAppear { locator.requestAuthorization() }
-    }
-
-    // MARK: Rating beat (last thing before the app)
-
-    /// A calm, on-brand ask for an App Store rating — the "Rate momentum" button raises the native
-    /// StoreKit prompt (the actual pop-up; iOS owns its look and rate-limits it), then continues into
-    /// the app whether or not it appeared. "Maybe later" just continues. Never blocks entry.
-    private var reviewStep: some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer(minLength: 0)
-            ratingStars
-            VStack(spacing: Theme.Space.sm) {
-                Text("Help the next runner")
-                    .font(.serif(27, weight: .medium)).foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("A quick rating is how they find momentum. It takes a second.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .reveal(0.18)
-            Spacer(minLength: 0)
-            VStack(spacing: Theme.Space.sm) {
-                OversizedButton(title: "Rate momentum") { onComplete(true) }
-                Button { Haptics.light(); onComplete(false) } label: {
-                    Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                .buttonStyle(.plain)
-            }
-            .reveal(0.3)
-        }
-        .padding(.horizontal, Theme.Space.lg)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background.ignoresSafeArea())
-    }
-
-    /// Five gold stars that light up in sequence — the universal review signifier, warm against the
-    /// monochrome screen. Decorative, never an input; the button below is what rates.
-    @State private var starsLit = false
-    private var ratingStars: some View {
-        HStack(spacing: 12) {
-            ForEach(0..<5, id: \.self) { i in
-                Image(systemName: "star.fill")
-                    .font(.system(size: 40, weight: .semibold))
-                    .foregroundStyle(LinearGradient(colors: [Color(hex: "FFDD66"), Color(hex: "F4A62A")],
-                                                    startPoint: .top, endPoint: .bottom))
-                    .shadow(color: Color(hex: "F4A62A").opacity(0.5), radius: 8)
-                    .scaleEffect(starsLit ? 1 : 0.4)
-                    .opacity(starsLit ? 1 : 0)
-                    .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.62)
-                        .delay(0.1 + Double(i) * 0.09), value: starsLit)
-            }
-        }
-        .accessibilityHidden(true)
-        .onAppear { starsLit = true }
     }
 
     // MARK: Scaffolding

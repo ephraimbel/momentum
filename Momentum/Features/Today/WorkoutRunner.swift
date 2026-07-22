@@ -10,6 +10,10 @@ struct WorkoutRunner: ViewModifier {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    /// The native App Store rating prompt. Fired ONLY here — the finished-workout moment, after
+    /// several genuine saves (`AppReview`) — never during onboarding, which is what got the app
+    /// rejected under guideline 5.6.3.
+    @Environment(\.requestReview) private var requestReview
     @Query private var profiles: [UserProfile]
     @State private var summary: PresentedWorkout?
     /// The athlete's running week and the arc this session just added to it — computed at finish,
@@ -26,16 +30,29 @@ struct WorkoutRunner: ViewModifier {
             .fullScreenCover(item: $summary) { presented in
                 // Strava-style: name + describe the workout, Save → celebration → back.
                 if presented.type.isStrengthStyle {
-                    StrengthSaveView(workoutId: presented.id) { summary = nil }
+                    StrengthSaveView(workoutId: presented.id) { dismissSummary() }
                 } else if presented.type.isTimed {
-                    TimedSaveView(workoutId: presented.id) { summary = nil }
+                    TimedSaveView(workoutId: presented.id) { dismissSummary() }
                 } else {
                     // `distanceUnit` was never passed, so the whole cardio summary silently fell back
                     // to `.auto` (locale) and ignored an explicit metric/imperial choice.
                     CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
-                                   workoutType: presented.type, weekRing: weekRing) { summary = nil }
+                                   workoutType: presented.type, weekRing: weekRing) { dismissSummary() }
                 }
             }
+    }
+
+    /// Close the summary, and — at the finished-workout moment, the app's positive peak — ask for a
+    /// rating if the athlete has now saved enough workouts to count as engaged. The save views count
+    /// only KEPT workouts, so a discard never reaches the threshold. Delayed so the cover is fully
+    /// gone before the system prompt appears (presenting it mid-teardown cancels it).
+    private func dismissSummary() {
+        summary = nil
+        guard AppReview.shouldRequestReview() else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.8))
+            requestReview()
+        }
     }
 
     @ViewBuilder

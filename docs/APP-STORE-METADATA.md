@@ -80,7 +80,16 @@ BUILT FOR APPLE, BUILT FOR YOU
 Momentum keeps you moving: fitness you can trust, without the burnout.
 
 Fueling guidance, never dieting. Coaching, never a diagnosis.
+
+Terms of Use (EULA): https://momentumco.app/terms
+Privacy Policy: https://momentumco.app/privacy
 ```
+> **Legal links added 2026-07-22 for guideline 3.1.2(c)** — an auto-renewable-subscription app must
+> expose a functional Terms of Use (EULA) link in the App Store metadata. The two lines above go at
+> the END of the live ASC description (both URLs verified live). Belt-and-suspenders, ALSO set the
+> custom EULA in ASC (see the remediation runbook below). The app itself already shows both links in
+> the paywall fine-print and Settings, and the subscription title/length/price/renewal terms on the
+> paywall — the miss was metadata-only.
 
 ## What's New (first release)
 ```
@@ -113,6 +122,48 @@ The App Store renders these prices natively from the product — the listing **d
 5. **Create the app record** in App Store Connect (pick the name above once availability is confirmed).
 6. In Xcode: **Product → Archive** (Release) → distribution signing → **upload** via Organizer (or Transporter).
 7. Attach this metadata, screenshots (6.7"/6.9" + iPad if supported), and the privacy label; submit to TestFlight, then App Review.
+
+## App Review rejection remediation — 2026-07-22 (three issues, one resubmission)
+
+A rejection cited 5.6.3, 2.1(b) and 3.1.2(c). One is code (done); two are your App Store Connect
+actions. Do all three, then upload the new build (bump `CURRENT_PROJECT_VERSION` — builds 1–3 are
+used) and reply to the reviewer with the screen recording noted below.
+
+### 1 — Guideline 5.6.3 (rating during onboarding) — FIXED IN CODE ✅
+The rating ask was the last beat of onboarding. It's gone. The native prompt now fires only from the
+**finished-workout moment**, after the athlete has SAVED three workouts through the app (`AppReview` +
+`WorkoutRunner.dismissSummary`) — never on first launch, never in onboarding, once ever. Ships in the
+new build; no ASC action.
+
+### 2 — Guideline 2.1(b) (In-App Purchases not submitted) — YOUR ASC ACTION
+The subscriptions exist but weren't submitted for review. In App Store Connect:
+1. **Subscriptions** → the `Momentum Pro` group → each product (`momentum_pro_monthly`,
+   `momentum_pro_annual`): status must be **Ready to Submit**. Fill anything missing (localized
+   display name, description, **subscription duration**, price).
+2. Add the **App Review screenshot** each subscription requires (a screenshot of your paywall showing
+   that product — `--seed-demo --debug-free --paywall` gives you a clean one). *Without this screenshot
+   the IAP cannot be submitted — this is the specific blocker Apple named.*
+3. On the **version** page (1.0), scroll to **In-App Purchases and Subscriptions** and **attach both
+   products to this version** so they submit together with the build.
+4. Submit the version — the IAPs go to review with it.
+
+### 3 — Guideline 3.1.2(c) (subscription metadata — Terms of Use) — YOUR ASC ACTION
+The app already shows title/length/price/renewal-terms + functional Privacy and Terms links on the
+paywall (both URLs verified live). The miss is ASC metadata:
+1. **App Description** — the two legal-link lines are now appended to the description in this doc;
+   paste them onto the end of the live description on the 1.0 version page.
+2. **App Information → License Agreement (EULA)**: replace Apple's standard EULA with your **custom**
+   EULA. Either paste the text of `https://momentumco.app/terms`, or (simpler) keep the description
+   link — Apple accepts "App Description **or** EULA field." Doing both is safest.
+3. **App Privacy → Privacy Policy URL**: confirm it is set to `https://momentumco.app/privacy`.
+
+### Reviewer reply
+Apple asked for confirmation. After the above, reply in Resolution Center with a **screen recording**
+that shows, in one pass: opening the paywall → the subscription **title, length ("/ year", "/ month"),
+price**, and **renewal terms** are visible → tapping **Terms** and **Privacy** opens working pages.
+Add the same note to **App Review Information → Notes** for future submissions.
+
+---
 
 ## ASO strategy notes (repositioned 2026-07-16 — SOLO app, no social)
 - **The lane:** "Bevel for endurance athletes" — health/recovery data decides the training — crossed

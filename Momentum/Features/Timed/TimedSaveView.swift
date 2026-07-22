@@ -157,6 +157,7 @@ struct TimedSaveView: View {
         }
         // No celebration here any more — it played on arrival, where the moment actually is.
         Haptics.success()
+        AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
         onDone()
     }
 
