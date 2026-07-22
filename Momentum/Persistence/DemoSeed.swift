@@ -141,12 +141,34 @@ enum DemoSeed {
             profile.raceDate = Calendar.current.date(byAdding: .day, value: 2, to: Date())
             profile.goalFinishTimeS = 5_400   // chasing 1:30
         }
+        // --seed-plan-5day: the committed 5-day athlete — experienced, aggressive, 50 km/wk, half
+        // marathon ~7 weeks out, with generation backdated 5 weeks so "this week" lands mid-BUILD.
+        // The plan-texture showcase: the two-quality week (threshold cruise + VO₂ touch), the
+        // medium-long/recovery-jog fill texture, and the plateau'd long-run wave all render on the
+        // current week's board without any week-hopping.
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-5day") {
+            profile.disciplines = ["running"]
+            profile.goal = .raceDistance
+            profile.daysPerWeek = 5
+            profile.experience = ["running": "experienced"]
+            profile.planIntensity = PlanIntensity.aggressive.rawValue
+            profile.weeklyRunVolumeM = 50_000
+            profile.longestRunM = 16_000
+            profile.raceDistanceM = RaceDistance.half.meters
+            profile.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 7, to: Date())
+        }
         PlanService.regenerate(for: profile, in: context)
         // --plan-renewal: regenerate the rolling block starting ~6 weeks back so "today" lands at the
         // end of the block, surfacing the Plan page's block-renewal checkpoint card for verification.
         if ProcessInfo.processInfo.arguments.contains("--plan-renewal"),
            let back = Calendar.current.date(byAdding: .weekOfYear, value: -6, to: Date()) {
             PlanService.regenerate(for: profile, startDate: back, in: context)
+        }
+        // The 5-day showcase backdates the same plan so today sits in a build week (see above).
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-5day"),
+           let back = Calendar.current.date(byAdding: .weekOfYear, value: -5, to: Date()) {
+            PlanService.regenerate(for: profile, startDate: back, in: context)
+            profile.plan?.name = "Berlin Half"
         }
         // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
         if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
