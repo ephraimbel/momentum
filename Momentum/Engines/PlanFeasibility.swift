@@ -32,7 +32,10 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self { case .gentle: 3; case .balanced: 3; case .aggressive: 4 }
     }
 
-    /// Bias on quality (hard) sessions per week vs. the balanced baseline.
+    /// Bias on quality (hard) sessions per week vs. the balanced baseline. Wired in
+    /// `PlanEngine.cardioSessions`: >1.0 (or experienced) at real volume (≥45 km/wk) unlocks the
+    /// SECOND weekly quality session (build/peak, ≥5 run days, no injury history) — the
+    /// Pfitzinger-style two-hard-days week. ≤1.0 at modest volume keeps the single-quality default.
     var qualityBias: Double {
         switch self { case .gentle: 0.85; case .balanced: 1.0; case .aggressive: 1.2 }
     }

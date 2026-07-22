@@ -93,10 +93,14 @@ enum StructuredWorkoutBuilder {
         switch runType {
         case .intervals:
             // Distance reps ("6×400m", "4×1km") or time reps ("5×3min"); rep pace = the plan's target
-            // (5k / VO₂ / threshold), recovery + warm-up derive from P5k.
+            // (5k / VO₂ / threshold), recovery + warm-up derive from P5k. Threshold cruise reps take
+            // a SHORT 60 s recovery (Daniels — the point of cruise intervals is that T effort barely
+            // drops between reps); the default 120 s doubled the rest and diluted the stimulus.
+            let cruise = session.intervals?.lowercased().contains("threshold") == true
             if let d = parseIntervals(session.intervals) {
                 return intervals(reps: d.reps, repTarget: .distance(d.distanceM), repPace: pace,
-                                 easyPace: easyPace, recoveryPace: recoveryPace, unitLabel: repDistanceLabel(d.distanceM))
+                                 easyPace: easyPace, recoveryPace: recoveryPace, unitLabel: repDistanceLabel(d.distanceM),
+                                 recoveryOverrideS: cruise ? 60 : nil)
             }
             if let t = parseTimeReps(session.intervals) {
                 return intervals(reps: t.reps, repTarget: .duration(t.seconds), repPace: pace,
@@ -138,8 +142,9 @@ enum StructuredWorkoutBuilder {
     // MARK: Interval session (distance or time reps)
 
     static func intervals(reps: Int, repTarget: WorkoutStep.Target, repPace: Double,
-                          easyPace: Double, recoveryPace: Double, unitLabel: String) -> StructuredWorkout {
-        let recoveryS = recoveryDuration(for: repTarget)
+                          easyPace: Double, recoveryPace: Double, unitLabel: String,
+                          recoveryOverrideS: Double? = nil) -> StructuredWorkout {
+        let recoveryS = recoveryOverrideS ?? recoveryDuration(for: repTarget)
         var steps: [WorkoutStep] = [WorkoutStep(kind: .warmup, target: .distance(warmupM), paceSPerKm: easyPace)]
         for i in 1...max(1, reps) {
             steps.append(WorkoutStep(kind: .work, target: repTarget, paceSPerKm: repPace, repIndex: i, repTotal: reps))

@@ -366,7 +366,12 @@ struct PlanEngineTests {
         let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
         let baseHard = plan.weeks.filter { $0.phase == .base }.flatMap(\.sessions).filter(\.isHardRun)
         #expect(!baseHard.isEmpty)
-        #expect(baseHard.allSatisfy { [.tempo, .hills, .fartlek].contains($0.runType) })
+        // Threshold cruise reps are pyramidal-compliant (they're the tempo dose in absorbable
+        // pieces — the oversized-tempo swap); VO₂/race-pace sharpening stays out of base.
+        #expect(baseHard.allSatisfy {
+            [.tempo, .hills, .fartlek].contains($0.runType)
+                || ($0.runType == .intervals && ($0.intervals?.contains("threshold") ?? false))
+        })
     }
 
     @Test func qualityRepsProgressAcrossTheBlock() {
@@ -700,5 +705,189 @@ struct PlanEngineTests {
         if let iv = legacy.intervals, iv.contains("×1km") {
             #expect((Int(iv.prefix { $0.isNumber }) ?? 0) <= 7)
         }
+    }
+
+    // MARK: Quality density (the second weekly quality session — PlanIntensity.qualityBias, wired)
+
+    @Test func aggressiveHighVolumeWeekCarriesTwoQualitySessions() {
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 5)
+        inp.raceDistanceM = 21_097
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 12,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.intensity = .aggressive
+        inp.currentWeeklyVolumeM = 50_000
+        inp.longestRunM = 16_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+
+        let buildWeeks = plan.weeks.filter { $0.phase == .build }
+        #expect(!buildWeeks.isEmpty)
+        for week in buildWeeks {
+            let quality = week.sessions.filter { $0.isHardRun && $0.runType != .long }
+            #expect(quality.count == 2, "build week \(week.index): expected two quality days, got \(quality.count)")
+            // The two stimuli differ, and the days are never back-to-back (running-only week has room).
+            if quality.count == 2 {
+                #expect(quality[0].intervals != quality[1].intervals)
+                #expect(abs(quality[0].dayOffset - quality[1].dayOffset) >= 2,
+                        "build week \(week.index): quality days adjacent")
+            }
+            // The week still fills exactly the athlete's day budget.
+            #expect(week.sessions.count == 5)
+        }
+        // Base stays single-quality (pyramidal), taper stays single (freshness).
+        for week in plan.weeks where week.phase == .base || week.isTaper {
+            #expect(week.sessions.filter { $0.isHardRun && $0.runType != .long }.count <= 1)
+        }
+    }
+
+    @Test func balancedModestWeekKeepsOneQuality() {
+        // The default athlete is untouched by the second-quality slot: balanced intensity, 4 days.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4, runExp: .some)
+        inp.raceDistanceM = 10_000
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.currentWeeklyVolumeM = 30_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        for week in plan.weeks {
+            #expect(week.sessions.filter { $0.isHardRun && $0.runType != .long }.count <= 1)
+        }
+    }
+
+    @Test func injuryHistoryBlocksTheSecondQualitySlot() {
+        // The same protective cap as the ramp: a body that's been hurt gets one quality day, period.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 5)
+        inp.raceDistanceM = 21_097
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 12,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.intensity = .aggressive
+        inp.currentWeeklyVolumeM = 50_000
+        inp.injuryHistory = [.knee]
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        for week in plan.weeks {
+            #expect(week.sessions.filter { $0.isHardRun && $0.runType != .long }.count <= 1)
+        }
+    }
+
+    // MARK: Easy-day texture (medium-long + recovery jog, not three identical easies)
+
+    @Test func fiveDayWeekHasMediumLongAndRecoveryTexture() {
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 5)
+        inp.raceDistanceM = 42_195
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 14,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.currentWeeklyVolumeM = 42_000
+        inp.longestRunM = 14_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        // A normal training week (not deload/taper) carries a recovery jog and a medium-long run —
+        // the fill days are distinct sizes, not one repeated number.
+        let week = plan.weeks.first { !$0.isDeload && !$0.isTaper }!
+        #expect(week.sessions.contains { $0.runType == .recovery })
+        let mediumLong = week.sessions.first { $0.rationale?.contains("Medium-long") ?? false }
+        #expect(mediumLong != nil)
+        // The medium-long outsizes the recovery jog and stays under the week's true long run.
+        let long = week.sessions.first { $0.runType == .long || $0.runType == .progression }?.targetDistanceM ?? 0
+        let rec = week.sessions.first { $0.runType == .recovery }?.targetDistanceM ?? 0
+        if let ml = mediumLong?.targetDistanceM {
+            #expect(ml > rec)
+            #expect(ml < long)
+        }
+    }
+
+    // MARK: 10K band (threshold-centric, not a long 5K)
+
+    @Test func tenKTrainsThresholdNotRawFiveKSpeed() {
+        func buildQuality(_ raceM: Double) -> [GeneratedSession] {
+            var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+            inp.raceDistanceM = raceM
+            inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10,
+                                                 to: Date(timeIntervalSinceReferenceDate: 0))
+            let plan = PlanEngine.generate(profile: inp, catalog: [],
+                                           startDate: Date(timeIntervalSinceReferenceDate: 0))
+            return plan.weeks.filter { $0.phase == .build }.flatMap(\.sessions)
+                .filter { $0.isHardRun && $0.runType != .long }
+        }
+        // 10K build work never prescribes "@ 5K" reps; it cruises at threshold with VO₂ touches.
+        let tenK = buildQuality(10_000)
+        #expect(!tenK.isEmpty)
+        #expect(!tenK.contains { $0.intervals?.contains("@ 5K") ?? false })
+        #expect(tenK.contains { $0.intervals?.contains("threshold") ?? false })
+        // And its taper touch is at RACE pace, not 5K pace (the old menu sharpened too fast).
+        let taper = PlanEngine.qualityWorkout(weekIndex: 9, raceDistanceM: 10_000, level: .some,
+                                              p5k: 300, phase: .taper)
+        #expect(taper.intervals?.contains("race pace") ?? false)
+        // 5K plans keep their speed menu (regression guard on the new band boundary).
+        #expect(buildQuality(5_000).contains { $0.intervals?.contains("@ 5K") ?? false })
+    }
+
+    // MARK: Long-run caps + plateau wave
+
+    @Test func longRunDurationCappedForSlowerRunners() {
+        // A 7:00/km-5K athlete's marathon long run caps near 3 h of running, not at 32 km (4+ h).
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4, runExp: .some)
+        inp.raceDistanceM = 42_195
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 16,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        let seed = CalibrationSeed(recentRun: nil, estimatedP5kSPerKm: 420)
+        let plan = PlanEngine.generate(profile: inp, catalog: [], calibration: seed,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let capM: Double = (10_800.0 / PlanEngine.pace(.long, p5k: 420)) * 1000
+        let allSessions: [GeneratedSession] = plan.weeks.flatMap(\.sessions)
+        let longs: [GeneratedSession] = allSessions.filter { $0.runType == .long || $0.runType == .progression }
+        let maxLong: Double = longs.compactMap(\.targetDistanceM).max() ?? 0
+        #expect(maxLong > 0)
+        #expect(maxLong <= capM + 1_000, "long run \(maxLong) exceeds the ~3h cap \(capM)")
+    }
+
+    @Test func plateauedLongRunOscillatesInsteadOfRepeating() {
+        // Once weekly volume holds at its ceiling, the long run waves (1.0/0.88/0.95) — months of
+        // identical Sundays were the tell of a template.
+        var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
+        inp.raceDistanceM = 42_195
+        inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 24,
+                                             to: Date(timeIntervalSinceReferenceDate: 0))
+        inp.currentWeeklyVolumeM = 40_000
+        inp.longestRunM = 13_000
+        let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
+        // The last stretch of build weeks sits at the plateau: their long runs must not all match.
+        let plateauLongs = plan.weeks.filter { $0.phase == .build }.suffix(6)
+            .compactMap { week in
+                week.sessions.first { $0.runType == .long || $0.runType == .progression }?.targetDistanceM
+            }
+        #expect(plateauLongs.count >= 3)
+        #expect(Set(plateauLongs).count >= 2, "plateau long runs all identical: \(plateauLongs)")
+    }
+
+    // MARK: Tempo overflow → cruise intervals
+
+    @Test func oversizedTempoBecomesCruiseIntervals() {
+        // A 90 km/wk athlete's tempo allocation (~16 km) far exceeds ~25 min at T — the prescription
+        // becomes cruise intervals (same dose, absorbable pieces). weekIndex 1 lands the long-race
+        // build menu's tempo slot.
+        let big = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 42_195, level: .experienced,
+                                            p5k: 240, weeklyVolumeM: 90_000, qualityDistanceM: 16_000)
+        #expect(big.type == .intervals)
+        #expect(big.intervals?.contains("threshold") ?? false)
+        // A modest allocation keeps the classic continuous tempo.
+        let small = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 42_195, level: .experienced,
+                                              p5k: 240, weeklyVolumeM: 40_000, qualityDistanceM: 5_000)
+        #expect(small.type == .tempo)
+    }
+
+    // MARK: Cruise recovery is short (Daniels ~60 s), regular intervals keep full recovery
+
+    @Test func cruiseIntervalsTakeShortRecoveries() {
+        let session = PlannedSession()
+        session.discipline = .running
+        session.runType = .intervals
+        session.intervals = "6×1km @ threshold"
+        session.targetPaceSPerKm = 314
+        let cruise = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: 300)
+        let cruiseRecovery = cruise?.steps.first { $0.kind == .recovery }
+        #expect(cruiseRecovery?.target == .duration(60))
+
+        session.intervals = "6×1km @ 5K"
+        session.targetPaceSPerKm = 300
+        let speed = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: 300)
+        let speedRecovery = speed?.steps.first { $0.kind == .recovery }
+        #expect(speedRecovery?.target == .duration(120))
     }
 }
