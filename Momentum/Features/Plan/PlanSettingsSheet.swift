@@ -290,6 +290,22 @@ struct PlanSettingsSheet: View {
                 Text(f.detail)
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // The honest alternatives ("push the race out", "aim for the half first") — the
+                // same guidance onboarding shows with a tight verdict; dropping it here left the
+                // settings sheet saying "that's tight" with no way forward.
+                if !f.options.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(f.options, id: \.self) { opt in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Theme.purple).padding(.top, 2)
+                                Text(opt).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
             Spacer(minLength: 0)
         }

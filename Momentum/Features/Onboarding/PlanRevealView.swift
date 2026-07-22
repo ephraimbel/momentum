@@ -195,6 +195,11 @@ struct PlanRevealView: View {
         let weekCount = min(16, (sessions.map { weekOf($0.date) }.max() ?? 0) + 1)
         guard weekCount > 0 else { return ([], "") }
 
+        // A long season charts its first 16 weeks — say so, or "30 WEEKS" in the stat strip above
+        // sits over a 16-bar chart with no explanation.
+        let totalWeeks = (sessions.map { weekOf($0.date) }.max() ?? 0) + 1
+        let truncationNote = totalWeeks > weekCount ? " · first \(weekCount) of \(totalWeeks) weeks shown" : ""
+
         if vm.running {
             var m = [Double](repeating: 0, count: weekCount)
             for s in sessions where s.discipline == .running && weekOf(s.date) < weekCount {
@@ -202,11 +207,11 @@ struct PlanRevealView: View {
             }
             let peak = m.max() ?? 0
             let cap = "Peaks at \(Formatters.distance(meters: peak, unit: distanceUnit)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
-            return (m, peak > 0 ? cap : "")
+            return (m, peak > 0 ? cap + truncationNote : "")
         } else {
             var c = [Double](repeating: 0, count: weekCount)
             for s in sessions where weekOf(s.date) < weekCount { c[weekOf(s.date)] += 1 }
-            return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week")
+            return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week" + truncationNote)
         }
     }
 

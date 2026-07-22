@@ -107,7 +107,9 @@ struct AddSessionSheet: View {
 
     /// The day strip always spans from the earlier of {today, the pre-selected day} through at least
     /// two weeks out — so a `defaultDate` outside today…+13 (future week / past rest day) is still
-    /// shown and selectable, never silently applied on a hidden day. Capped so it can't run away.
+    /// shown and selectable, never silently applied on a hidden day. Capped so it can't run away —
+    /// and when the cap would cut the pre-selected day off (a rest day in week 11+ of a long plan),
+    /// that day is appended anyway, because the guarantee above is the whole point of this strip.
     private var dayStrip: [Date] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
@@ -115,7 +117,9 @@ struct AddSessionSheet: View {
         let first = min(today, def)
         let last = max(cal.date(byAdding: .day, value: 13, to: today) ?? today, def)
         let span = min((cal.dateComponents([.day], from: first, to: last).day ?? 13) + 1, 70)
-        return (0..<max(1, span)).compactMap { cal.date(byAdding: .day, value: $0, to: first) }
+        var days = (0..<max(1, span)).compactMap { cal.date(byAdding: .day, value: $0, to: first) }
+        if !days.contains(where: { cal.isDate($0, inSameDayAs: def) }) { days.append(def) }
+        return days
     }
 
     private func dayBadge(_ day: Date) -> some View {

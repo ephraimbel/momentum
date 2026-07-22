@@ -9,6 +9,7 @@ import SwiftData
 struct PlanProposalCard: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(PaywallController.self) private var paywall
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
 
@@ -105,6 +106,12 @@ struct PlanProposalCard: View {
     }
 
     private func apply(_ p: PlanCoaching.Proposal) {
+        // Free to see the coach's proposal, Pro to apply it — the same boundary as coach chat's
+        // Apply and the Plan tab's tune card, so the monetization line never drifts per surface.
+        guard paywall.isEntitled(to: .aiCoach) else {
+            paywall.present(for: .aiCoach)
+            return
+        }
         let changed = PlanCoaching.apply(p.rec, to: plan, in: context)
         if changed > 0 { services.analytics.log(.planSessionAdapted) }
         Haptics.success()

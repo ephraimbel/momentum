@@ -12,6 +12,7 @@ struct SessionPaceReviewCard: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(PaywallController.self) private var paywall
     @Query private var profiles: [UserProfile]
 
     /// nil = undecided, `>= 0` = eased (n sessions), `-1` = declined. Latches like PlanProposalCard
@@ -109,6 +110,12 @@ struct SessionPaceReviewCard: View {
     }
 
     private func ease() {
+        // Same Apply boundary as chat / the tune card / the load proposal: free to see the
+        // verdict, Pro to have the coach rewrite the plan from it.
+        guard paywall.isEntitled(to: .aiCoach) else {
+            paywall.present(for: .aiCoach)
+            return
+        }
         let changed = PlanCoaching.easeQualityPaces(plan, in: context)
         if changed > 0 { services.analytics.log(.planSessionAdapted) }
         Haptics.success()

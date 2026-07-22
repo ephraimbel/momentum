@@ -36,8 +36,9 @@ struct RacePredictionCard: View {
                 }
                 HStack(spacing: Theme.Space.sm) {
                     if let days {
-                        Label(days == 0 ? "Race day" : "\(days) day\(days == 1 ? "" : "s") to go",
-                              systemImage: "flag.checkered")
+                        // The shared countdown grammar (days inside two weeks, weeks beyond) — this
+                        // card used to say "84 days to go" while the Plan header said "12 weeks".
+                        Label(Formatters.raceCountdown(days: days), systemImage: "flag.checkered")
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
                     }
                     Spacer()
@@ -50,7 +51,7 @@ struct RacePredictionCard: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(IridescentMaterial().opacity(0.5), lineWidth: 1))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Projected \(label) finish \(Formatters.duration(s: finish))"
-                                + (days.map { ", \($0) days to go" } ?? ""))
+                                + (days.map { ", \(Formatters.raceCountdown(days: $0))" } ?? ""))
         }
     }
 }

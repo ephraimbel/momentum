@@ -1043,7 +1043,7 @@ struct OnboardingFlow: View {
         return questionScaffold("Chasing a time?",
                                 subtitle: "Optional — your goal for the \(raceLabel). We'll point the plan at it.") {
             metricRow("Hours", "\(vm.goalHours)",
-                      { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(8, vm.goalHours + 1) }).reveal(cascade(0))
+                      { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(9, vm.goalHours + 1) }).reveal(cascade(0))
             metricRow("Minutes", String(format: "%02d", vm.goalMinutes),
                       { vm.goalMinutes = (vm.goalMinutes + 55) % 60 }, { vm.goalMinutes = (vm.goalMinutes + 5) % 60 }).reveal(cascade(1))
             if let t = vm.goalFinishTimeS, let m = vm.raceDistance?.meters, m > 0 {
