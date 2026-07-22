@@ -1433,6 +1433,15 @@ struct ProgressScreen: View {
         .background(card)
     }
 
+    /// The plan already took a structural change this week (`lastAdaptedAt` — the same ≤1/week gate
+    /// every engine shares). The chip's old `@State` latch reset on every screen load, so the same
+    /// completed-load recommendation could be re-applied and compound across launches — the exact
+    /// hazard `PlanCoaching.apply`'s doc warns about. `lastAdaptedAt` is the persistent latch.
+    private var planAdaptedThisWeek: Bool {
+        guard let last = plan?.lastAdaptedAt else { return false }
+        return (Calendar.current.dateComponents([.day], from: last, to: Date()).day ?? .max) < 7
+    }
+
     /// The recommendation chip. For actionable recs (increase/ease/rest) it's a button that
     /// reshapes the upcoming plan; hold/start are informational only.
     @ViewBuilder
@@ -1440,6 +1449,8 @@ struct ProgressScreen: View {
         let actionable = rec == .increase || rec == .ease || rec == .rest
         if adjustedPlan {
             chipLabel("Plan updated", icon: "checkmark")
+        } else if planAdaptedThisWeek {
+            chipLabel("Adapted this week", icon: "checkmark")
         } else if actionable {
             Button {
                 let changed = PlanCoaching.apply(rec, to: plan, in: context)

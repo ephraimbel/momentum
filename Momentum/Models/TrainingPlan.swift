@@ -31,6 +31,18 @@ final class TrainingPlan {
     /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from `blockStart`) —
     /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
     var weekPhases: [String] = []
+    /// Pace-recalibration evidence ledger (the multi-run confirmation rule): one strong run banks a
+    /// candidate 5k-equivalent here; a second qualifying run within 14 days confirms and applies.
+    /// The standard is 2–3 confirming sessions before raising fitness — never off one great day.
+    /// Additive: plans stored before these fields decode as nil (no pending evidence).
+    var pendingP5kSPerKm: Double?
+    var pendingP5kAt: Date?
+    /// Last *applied* automatic pace sharpening — caps recalibration to ≤1/week, so back-to-back
+    /// strong runs can't compound the ≤3% per-update bound into a runaway ratchet.
+    var lastRecalibratedAt: Date?
+    /// Last consented pace easing (+2% per approval) — same weekly cap in the other direction; the
+    /// ease is honest once, a slow downward ratchet if tapped after every session.
+    var lastPaceEasedAt: Date?
     @Relationship(deleteRule: .cascade) var sessions: [PlannedSession] = []
 
     init() {}

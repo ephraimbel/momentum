@@ -236,6 +236,9 @@ enum CoachActions {
 
         case .easePaces:
             guard let plan = profile.plan else { return .declined(reason: noPlan) }
+            guard PlanCoaching.canEasePaces(plan, today: today, calendar: calendar) else {
+                return .declined(reason: "I eased your paces less than a week ago — let a few sessions land at the new targets first, then we'll look again.")
+            }
             guard PlanCoaching.easeQualityPaces(plan, from: today, in: context, calendar: calendar) > 0 else {
                 return .declined(reason: "There are no upcoming paced runs to ease right now.")
             }

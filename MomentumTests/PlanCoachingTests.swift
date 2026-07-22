@@ -114,14 +114,22 @@ struct PlanCoachingTests {
         let future = futureEasyRun(in: ctx, p5k: 322)
         let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 322
 
-        // A hard 5k in 1600 s ⇒ ~320 s/km equivalent (within the 3% bound of 322).
-        let w = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 8)
-        let rec = PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx)
+        // Two-run confirmation: the first hard 5k (~320 s/km equivalent) BANKS evidence only.
+        let first = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 8)
+        #expect(PlanCoaching.recalibratePaces(from: first, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == 322)                   // untouched — one great day proves nothing
+        #expect(plan.pendingP5kAt != nil)                // …but the evidence is banked
+
+        // The second qualifying run confirms and applies.
+        let second = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 8)
+        let rec = PlanCoaching.recalibratePaces(from: second, plan: plan, in: ctx)
 
         #expect(rec != nil)
         #expect(abs(plan.p5kSPerKm - 320) < 1)                              // lowered to the equivalent
         #expect(rec?.sessionsUpdated == 1)
         #expect(abs((future.targetPaceSPerKm ?? 0) - PlanEngine.pace(.easy, p5k: 320)) < 1)  // future pace re-derived
+        #expect(plan.pendingP5kAt == nil)                // evidence consumed
+        #expect(plan.lastRecalibratedAt != nil)          // weekly cap armed
     }
 
     @Test func bigImprovementIsCappedAtThreePercent() throws {
@@ -130,11 +138,79 @@ struct PlanCoachingTests {
         let future = futureEasyRun(in: ctx, p5k: 360)
         let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 360
 
-        // A blazing 5k in 1500 s ⇒ 300 s/km equivalent, but a single run may only drop p5k ~3%.
-        let w = run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9)
-        _ = PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx)
+        // Two blazing 5ks (300 s/km equivalent) confirm — but an applied update still moves ≤3%.
+        _ = PlanCoaching.recalibratePaces(from: run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9),
+                                          plan: plan, in: ctx)
+        _ = PlanCoaching.recalibratePaces(from: run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9),
+                                          plan: plan, in: ctx)
 
         #expect(abs(plan.p5kSPerKm - 360 * 0.97) < 1)   // 349.2, not 300
+    }
+
+    @Test func raceResultBypassesTwoRunConfirmation() throws {
+        // A finished goal race is maximal, definitive evidence — no second run required.
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let raceDay = PlannedSession()
+        raceDay.date = Calendar.current.startOfDay(for: Date())
+        raceDay.discipline = .running; raceDay.runType = .race; raceDay.status = .planned
+        let future = futureEasyRun(in: ctx, p5k: 322)
+        let plan = makePlan(in: ctx, sessions: [raceDay, future]); plan.p5kSPerKm = 322
+
+        let w = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 9)
+        PlanCoaching.markComplete(raceDay, with: w, in: ctx)
+        let rec = PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx)
+
+        #expect(rec != nil)
+        #expect(abs(plan.p5kSPerKm - 320) < 1)
+    }
+
+    @Test func appliedRecalibrationIsCappedToOncePerWeek() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let future = futureEasyRun(in: ctx, p5k: 340)
+        let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 340
+        plan.lastRecalibratedAt = Calendar.current.date(byAdding: .day, value: -2, to: Date())
+
+        // A qualifying faster run two days after an applied update: nothing moves, nothing banks.
+        let w = run(in: ctx, distanceM: 5000, durationS: 1650, rpe: 8)
+        #expect(PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == 340)
+        #expect(plan.pendingP5kAt == nil)
+    }
+
+    @Test func movedSessionsGetAdaptedToo() throws {
+        // reconcileMissed rolls slipped sessions forward as `.moved` — they must still receive
+        // eases and pace updates, or the athlete who misses days keeps stale prescriptions on
+        // exactly the sessions ahead of them.
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let moved = PlannedSession()
+        moved.date = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        moved.discipline = .running; moved.runType = .tempo; moved.status = .moved
+        moved.targetDistanceM = 8000
+        moved.targetPaceSPerKm = PlanEngine.sessionPace(.tempo, p5k: 330, intervals: nil, raceDistanceM: nil)
+        let plan = makePlan(in: ctx, sessions: [moved]); plan.p5kSPerKm = 330
+
+        #expect(PlanCoaching.apply(.ease, to: plan, in: ctx) == 1)   // the moved session was eased
+        #expect((moved.targetDistanceM ?? 0) < 8000)
+    }
+
+    @Test func easeQualityPacesHasAWeeklyCooldown() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let future = futureEasyRun(in: ctx, p5k: 330)
+        let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 330
+
+        #expect(PlanCoaching.canEasePaces(plan))
+        #expect(PlanCoaching.easeQualityPaces(plan, in: ctx) == 1)   // first ease applies (+2%)
+        let eased = plan.p5kSPerKm
+        #expect(abs(eased - 330 * 1.02) < 0.01)
+
+        // A second tap inside the week is refused — the ratchet has a brake.
+        #expect(!PlanCoaching.canEasePaces(plan))
+        #expect(PlanCoaching.easeQualityPaces(plan, in: ctx) == 0)
+        #expect(plan.p5kSPerKm == eased)
     }
 
     @Test func easyRunDoesNotChangePaces() throws {

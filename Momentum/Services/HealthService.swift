@@ -216,6 +216,7 @@ final class HealthService: HealthServing {
             ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
                 .map { ($0.startedAt, $0.startedAt.addingTimeInterval(max($0.elapsedS, $0.durationS))) }
         let plan = ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? []).first?.plan
+        var importedWorkouts: [Workout] = []
 
         for hk in hkWorkouts {
             guard Self.shouldImport(sourceBundle: hk.sourceRevision.source.bundleIdentifier,
@@ -253,10 +254,11 @@ final class HealthService: HealthServing {
             // shelf's live writer) and the history backfill is one-shot, so without this every
             // imported best after the first Progress visit was silently dropped.
             RecordsBook.record(workout, in: context)
+            importedWorkouts.append(workout)
             count += 1
         }
 
-        return Self.commitImport(
+        let committed = Self.commitImport(
             count: count, imported: imported, saved: saved,
             save: { try context.save() },
             rollback: { context.rollback() },
@@ -264,6 +266,25 @@ final class HealthService: HealthServing {
                 UserDefaults.standard.set(Array(imported), forKey: Self.importedKey)
                 UserDefaults.standard.set(Array(saved), forKey: Self.savedKey)
             })
+
+        // The adaptive pass, for athletes who record on their watch. An import credited the plan
+        // (above) but the plan never LEARNED from it — pace recalibration and protective load
+        // easing ran only on live-tracked saves, so a Garmin-first athlete's plan adapted off
+        // recovery signals alone, never off performance. Same order as WorkoutRunner: protect
+        // first (ACWR ease/rest), sharpen only when nothing was eased this pass. Recent runs only
+        // (≤48 h): a historical backfill must never rewrite today's plan off last month's fitness.
+        // No pushes here — the athlete isn't mid-finish-glow; the coaching events land in the bell.
+        if committed > 0, plan != nil {
+            let all = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
+            if PlanCoaching.autoAdapt(plan, workouts: all, in: context) == nil {
+                let horizon = Date().addingTimeInterval(-48 * 3600)
+                for w in importedWorkouts.sorted(by: { $0.startedAt < $1.startedAt })
+                    where w.type.discipline == .running && w.startedAt >= horizon {
+                    _ = PlanCoaching.recalibratePaces(from: w, plan: plan, in: context)
+                }
+            }
+        }
+        return committed
     }
 
     /// Commit imported rows, THEN record that they were imported — never the other way round.

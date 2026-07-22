@@ -82,7 +82,7 @@ struct SessionPaceReviewCard: View {
             }
             .foregroundStyle(Theme.inkSecondary)
             .padding(.top, 2)
-        } else if easedOutcome == nil, plan != nil {
+        } else if easedOutcome == nil, plan != nil, PlanCoaching.canEasePaces(plan) {
             HStack(spacing: Theme.Space.sm) {
                 Button { ease() } label: {
                     HStack(spacing: 6) {
