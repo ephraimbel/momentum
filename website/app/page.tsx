@@ -425,6 +425,7 @@ function Pricing() {
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
                 <li><span className="tick" aria-hidden />AI coach, post-run reads &amp; voice guidance</li>
+                <li><span className="tick" aria-hidden />AI fueling &amp; calorie tracking, keyed to your training</li>
                 <li><span className="tick" aria-hidden />Recovery-aware training &amp; the injury loop</li>
                 <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
                 <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
@@ -526,7 +527,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, fueling, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
