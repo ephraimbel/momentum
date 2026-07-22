@@ -12,9 +12,11 @@ extension Theme {
         static let protein = Color(hex: "2E8CE8")    // bright azure
         static let fat = Color(hex: "C96F3B")        // peach
         static let sodium = Color(hex: "9A5BD6")     // lilac
-        // Micros are collected but NOT displayed (user call 2026-07-16): iron/calcium/K/Mg are
-        // slow-moving health markers — the future surface is a monthly coach insight, not daily
-        // rings built on the AI's roughest estimates. Inks reserved for that day:
+        // Micros get no daily RINGS (user call 2026-07-16: slow-moving markers don't belong on
+        // the dashboard) — but since 2026-07-22 they display in the Today card's MICROS grid
+        // against sex-aware floors, and are estimated again (briefly cut 2026-07-21 while
+        // nothing rendered them). Inks reserved for the day they earn color: the card's cells
+        // deliberately stay monochrome for now.
         static let iron = Color(hex: "C4586B")       // garnet rose
         static let calcium = Color(hex: "2FA96C")    // spring mint
     }

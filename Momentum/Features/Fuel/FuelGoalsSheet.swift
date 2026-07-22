@@ -7,7 +7,8 @@ import SwiftData
 /// day's real burn, pauses on race/long days); **Build** adds a small surplus; **Custom** is the
 /// athlete's own numbers. Everything is deterministic engine math (Mifflin-St Jeor × a daily-life
 /// base + the day's REAL training burn — no survey "activity levels"), and the preview rolls live
-/// as choices change. Carbs stay keyed to training unless custom says otherwise — that's the moat.
+/// as choices change. Carbs stay KEYED to training — and since 2026-07-22 the goal tunes the g/kg
+/// within the easy/moderate tiers (Leaner trims, Build adds); long runs and race eve never move.
 struct FuelGoalsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
@@ -66,7 +67,7 @@ struct FuelGoalsSheet: View {
         VStack(spacing: 0) {
             goalRow(.fuel, fuelForTitle, fuelForLine)
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            goalRow(.leaner, "Leaner", "A gentle deficit that never raids training. Protein rises to protect muscle.")
+            goalRow(.leaner, "Leaner", "A gentle deficit that never raids training. Protein rises to protect muscle; carbs ease on lighter days.")
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
             goalRow(.build, "Build", "A small surplus for strength and rebuild blocks.")
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
@@ -290,7 +291,7 @@ struct FuelGoalsSheet: View {
                 .contentTransition(.numericText())
             Text(kind == .custom && Int(customCarbs) != nil
                  ? "Training burn still adds to the day's energy."
-                 : "Carbs stay keyed to your training — big sessions raise them. Training burn adds to the day's energy.")
+                 : "Carbs stay keyed to your training — big sessions raise them, your goal tunes the lighter days. Training burn adds to the day's energy.")
                 .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             if let note = r.goalNote {

@@ -150,9 +150,18 @@ extension Meal {
         values.isEmpty ? nil : values.reduce(N.zero, +)
     }
 
-    /// A meal the estimator should still try: no numbers yet, never hand-set, under the attempt cap.
-    /// Pure and free of SwiftData ceremony so the retry cap is unit-testable on its own.
+    /// Is running the estimator on this meal capable of doing anything? No numbers yet, and the
+    /// athlete hasn't set them by hand (`FuelEstimator.apply` discards its whole response for a
+    /// `manual` meal, so firing at one spends a billed call to change nothing).
+    ///
+    /// THE shared gate: `needsEstimate` is this plus the attempt cap, and the hand-fired
+    /// "Estimate again" is this alone — deliberately ignoring the cap, which is the app's limit
+    /// and never the athlete's. Two paths, one predicate, so they cannot drift apart.
+    var isEstimable: Bool { source != "manual" && carbsG == nil }
+
+    /// A meal the journal should still try on its own: estimable, still honestly `pending`, and
+    /// under the attempt cap. Pure and free of SwiftData ceremony so the cap is unit-testable.
     func needsEstimate(maxAttempts: Int) -> Bool {
-        source == "pending" && carbsG == nil && estimateAttempts < maxAttempts
+        isEstimable && source == "pending" && estimateAttempts < maxAttempts
     }
 }

@@ -14,6 +14,29 @@ enum FuelLocalResolver {
     /// normalize in well under a millisecond, and this runs once per send — never in a body pass.
     static let candidateLimit = 300
 
+    /// THE candidate population — the newest `candidateLimit` meals whose numbers actually
+    /// resolved. Both remembering paths draw from this ONE function: the typed lookup below and
+    /// the usuals chips (`FuelView.computeUsuals`).
+    ///
+    /// That sharing is load-bearing, not tidiness. The two used to compute their own windows —
+    /// the chips walked the newest 200 rows of any kind and filtered afterwards, the lookup
+    /// fetched the newest 300 *resolved* rows — so a meal the athlete corrected by hand could sit
+    /// inside one window and outside the other. `outranks` puts `manual` first the moment it is
+    /// visible, so the same words would resolve to the corrected numbers when TYPED and to a
+    /// stale estimate when TAPPED. One population is the only way "the chip and the typed match
+    /// produce byte-identical rows" can actually be true.
+    ///
+    /// The predicate filters BEFORE the limit, so a run of unresolved meals can't push real
+    /// candidates out of the window.
+    static func candidates(in context: ModelContext) -> [Meal] {
+        var descriptor = FetchDescriptor<Meal>(
+            predicate: #Predicate<Meal> { $0.carbsG != nil && $0.source != "pending" },
+            sortBy: [SortDescriptor(\.eatenAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = candidateLimit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
     /// The remembered meal whose text canonicalizes to the same key, or nil.
     ///
     /// Call this BEFORE inserting the new meal, so the meal being logged can never be its own
@@ -23,21 +46,14 @@ enum FuelLocalResolver {
         let key = MealTextKey.normalized(text)
         guard MealTextKey.isMatchable(key) else { return nil }
 
-        // Only meals whose numbers actually resolved. Same gate the usuals chips use, so a chip
-        // and a typed match are always drawn from the same population.
-        var descriptor = FetchDescriptor<Meal>(
-            predicate: #Predicate<Meal> { $0.carbsG != nil && $0.source != "pending" },
-            sortBy: [SortDescriptor(\.eatenAt, order: .reverse)]
-        )
-        descriptor.fetchLimit = candidateLimit
-
-        guard let meals = try? context.fetch(descriptor), !meals.isEmpty else { return nil }
-        let candidates = meals.map {
+        let meals = candidates(in: context)
+        guard !meals.isEmpty else { return nil }
+        let ranked = meals.map {
             MealTextKey.Candidate(key: MealTextKey.normalized($0.text),
                                   isManual: $0.source == "manual",
                                   eatenAt: $0.eatenAt)
         }
-        guard let i = MealTextKey.bestMatchIndex(key: key, among: candidates) else { return nil }
+        guard let i = MealTextKey.bestMatchIndex(key: key, among: ranked) else { return nil }
         return meals[i]
     }
 
@@ -88,5 +104,28 @@ enum FuelLocalResolver {
     static func outranks(_ a: Meal, _ b: Meal) -> Bool {
         MealTextKey.outranks(aIsManual: a.source == "manual", aEatenAt: a.eatenAt,
                              bIsManual: b.source == "manual", bEatenAt: b.eatenAt)
+    }
+
+    /// Rung TWO of the resolution ladder: no history match, but every food phrase is a staple the
+    /// deterministic table knows — compose the meal locally and skip the network. Returns false
+    /// (meal untouched) when any phrase is a stranger; the AI takes those.
+    ///
+    /// Provenance: `source = "ai"` — machine-estimated, exactly like the model's answer, just from
+    /// a pinned table instead of a prompt (`confidence` 0.9 says which). Deliberately NOT a new
+    /// source value, per the precedent on `copyNumbers`: a third case would ripple through every
+    /// `source ==` check for an analytics nicety. And like a local hit, no `note` — nobody wrote
+    /// coach narration for this meal, and the app never fabricates coaching.
+    static func applyStaples(to meal: Meal, text: String) -> Bool {
+        guard let items = FoodStaples.compose(text) else { return false }
+        meal.items = items.map {
+            MealItem(name: $0.name, qty: $0.qty, unit: $0.unit, kcal: $0.kcal,
+                     carbsG: $0.carbsG, proteinG: $0.proteinG, fatG: $0.fatG,
+                     sodiumMg: $0.sodiumMg, fluidsMl: $0.fluidsMl,
+                     potassiumMg: $0.potassiumMg, magnesiumMg: $0.magnesiumMg,
+                     ironMg: $0.ironMg, calciumMg: $0.calciumMg)
+        }
+        meal.source = "ai"
+        meal.confidence = FoodStaples.confidence
+        return true
     }
 }

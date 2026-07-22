@@ -139,6 +139,37 @@ struct FuelReadinessTests {
         #expect(r.carbsFloorG == 560)             // the classic load is untouched
     }
 
+    @Test func leanerEasesCarbsOnLighterDays() {
+        // The goal tunes the tier (2026-07-22): a deficit trims the carb bank on days that can
+        // afford it — bottom of the consensus band, never below it.
+        let easy = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [],
+                                         bodyMassKg: 70, goal: goal(.leaner), now: now)
+        #expect(easy.carbsFloorG == 175)          // 2.5 g/kg, down from the default 3
+        let session = FuelReadiness.SessionInput(date: now, durationS: 1.5 * 3600, isRace: false)
+        let moderate = FuelReadiness.readout(meals: [], sessions: [session], workoutsToday: [],
+                                             bodyMassKg: 70, goal: goal(.leaner), now: now)
+        #expect(moderate.carbsFloorG == 280)      // 4 g/kg, down from the default 5
+    }
+
+    @Test func leanerNeverTouchesTheLongRun() {
+        // Big days keep their full load for every goal — the same protection as the energy pause.
+        let long = FuelReadiness.SessionInput(date: now.addingTimeInterval(86_400),
+                                              durationS: 2.6 * 3600, isRace: false)
+        let r = FuelReadiness.readout(meals: [], sessions: [long], workoutsToday: [],
+                                      bodyMassKg: 70, goal: goal(.leaner), now: now)
+        #expect(r.carbsFloorG == 420)             // 6 g/kg — the work is funded, deficit or not
+    }
+
+    @Test func buildAddsSubstrateOnLighterDays() {
+        let easy = FuelReadiness.readout(meals: [], sessions: [], workoutsToday: [],
+                                         bodyMassKg: 70, goal: goal(.build), now: now)
+        #expect(easy.carbsFloorG == 245)          // 3.5 g/kg
+        let session = FuelReadiness.SessionInput(date: now, durationS: 1.5 * 3600, isRace: false)
+        let moderate = FuelReadiness.readout(meals: [], sessions: [session], workoutsToday: [],
+                                             bodyMassKg: 70, goal: goal(.build), now: now)
+        #expect(moderate.carbsFloorG == 385)      // 5.5 g/kg — a little substrate for the rebuild
+    }
+
     @Test func buildAddsASmallSurplusAndTrainingBurnStillAdds() {
         let ride = FuelReadiness.WorkoutInput(endedAt: now.addingTimeInterval(-3 * 3600),
                                               durationS: 3600, kcal: 500)

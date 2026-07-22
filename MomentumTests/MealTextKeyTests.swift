@@ -102,6 +102,47 @@ struct MealTextKeyTests {
         #expect(key("2 eggs. toast") == key("2 eggs, toast"))
     }
 
+    /// v1 dropped a leading decimal point outright (the guard demanded a digit to its LEFT, and a
+    /// token that hasn't started has none), so ".5 cup oats" keyed as FIVE cups — a tenfold
+    /// quantity inversion, and a live collision with anyone who had logged "5 cup ...".
+    @Test("A leading decimal point is a half, not a five")
+    func leadingDecimal() {
+        #expect(key(".5 cup oats") != key("5 cup oats"))
+        #expect(key(".25 cup nuts") != key("25 cup nuts"))
+        // ".5" and "0.5" are the same portion, so they are one key — a recall win the precision
+        // bias allows precisely because both texts mean the same amount.
+        #expect(key(".5 cup oats") == key("0.5 cup oats"))
+        // It stays welded to its food rather than severing the segment: "oats .5 cup" is one food.
+        #expect(key("oats .5 cup") == key("oats 0.5 cup"))
+    }
+
+    /// THE fraction test. v1 broke on "/" unconditionally, so "1/2 cup oats" became the segments
+    /// ["1", "2 cup oats"] — the key asserting TWO cups, with the orphan numerator free to sort
+    /// anywhere. Two meals sharing a unit word then collapsed onto one key and the resolver copied
+    /// the wrong plate's nutrition, silently and with no searching beat to hint at it.
+    @Test("A typed fraction stays whole and stays on its own food")
+    func typedFractions() {
+        #expect(key("1/2 cup oats") != key("2 cup oats"))
+        #expect(key("1/2 cup oats") != key("1 cup oats"))
+        #expect(key("1/2 tbsp butter, 2 tbsp jam") != key("1/2 tbsp jam, 2 tbsp butter"))
+        #expect(key("2 oz cheese, 1/2 oz almonds") != key("2 oz almonds, 1/2 oz cheese"))
+        #expect(key("3/4 cup rice, 4 cup broth") != key("3/4 cup broth, 4 cup rice"))
+        // Same fraction, same food, either phrasing — still one key.
+        #expect(key("1/2 cup oats and coffee") == key("coffee, 1/2 cup oats"))
+        // A ratio is a number too: "2:1 carb drink" must not invert into "1 carb drink | 2".
+        #expect(key("2:1 carb drink") != key("1:2 carb drink"))
+    }
+
+    /// The digit-flanked rule must not steal the separators' day job. A slash between WORDS is
+    /// still the "w/" shorthand and a period between words is still a full stop.
+    @Test("Separators not flanked by digits still break as before")
+    func separatorsStillBreak() {
+        #expect(key("2 eggs; toast / coffee") == key("2 eggs, toast, coffee"))
+        #expect(key("toast w/ butter") == key("toast with butter"))
+        #expect(key("eggs/toast") == key("eggs, toast"))
+        #expect(key("2 eggs. 5 slices toast") == key("2 eggs, 5 slices toast"))
+    }
+
     /// Deliberately NOT stemmed. Pinned so nobody "fixes" this into a recall win later without
     /// re-arguing the false-positive risk.
     @Test("Plurals are not stemmed — an intentional miss")
@@ -184,6 +225,6 @@ struct MealTextKeyTests {
 
     @Test("Version is pinned — bump it deliberately when the algorithm changes")
     func versionPinned() {
-        #expect(MealTextKey.version == 1)
+        #expect(MealTextKey.version == 2)   // v2: digit-flanked separators are number content
     }
 }

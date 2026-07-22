@@ -58,6 +58,9 @@ struct FuelView: View {
     @State private var editing: Meal?
     @State private var showingReadout = false
     @State private var showingGoals = false
+    /// Drives the `.navigationDestination` for Meal history — a Button gates the push (a
+    /// NavigationLink can't be intercepted), so free athletes hit the paywall instead.
+    @State private var showingHistory = false
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
     @FocusState private var composing: Bool
@@ -112,23 +115,26 @@ struct FuelView: View {
                 .padding(.bottom, Theme.Space.xxl)
                 .animation(Motion.standard, value: readout.refuelDue)
             }
-            // FUEL is a Pro pillar (user decision 2026-07-16): the whole page frosts behind the
-            // unified lock card for free athletes — see it whole, unlock it whole.
-            .proLocked(.fuel)
+            // FUEL is a Pro pillar, but the page is "try-then-paywall" (user decision, mirrors the
+            // AI coach): free athletes see the REAL page — honest empty rings/kcal, a live composer
+            // they can focus and TYPE into — and the wall fires only on a Pro ACTION (send, history,
+            // goals, a usuals chip, a logged-meal tap). No whole-page frost; typing is the "try".
             .background(Theme.background)
             .navigationTitle("Fuel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // The fueling adjuster — the plan adjuster's sibling (goals, body inputs, custom).
                 ToolbarItem(placement: .topBarLeading) {
-                    if paywall.isEntitled(to: .fuel) {
-                    Button { showingGoals = true } label: {
+                    // Always visible; the ACTION gates. Entitled → open the adjuster; free → paywall.
+                    Button {
+                        if paywall.isEntitled(to: .fuel) { showingGoals = true }
+                        else { paywall.present(for: .fuel) }
+                    } label: {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                     }
                     .accessibilityLabel("Fueling goals")
-                    }
                 }
                 // The page title wears the brand voice: lowercase Space Grotesk, small and
                 // centered — the shared masthead language across fuel / plan / progress
@@ -140,14 +146,17 @@ struct FuelView: View {
                         .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if paywall.isEntitled(to: .fuel) {
-                    NavigationLink { FuelHistoryView() } label: {
+                    // A NavigationLink can't be intercepted, so this is a Button that gates the push:
+                    // entitled → navigate (via the `.navigationDestination` below); free → paywall.
+                    Button {
+                        if paywall.isEntitled(to: .fuel) { showingHistory = true }
+                        else { paywall.present(for: .fuel) }
+                    } label: {
                         Image(systemName: "calendar")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                     }
                     .accessibilityLabel("Meal history")
-                    }
                 }
                 if showsDone {
                     ToolbarItem(placement: .confirmationAction) {
@@ -158,6 +167,8 @@ struct FuelView: View {
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $editing) { MealDetailSheet(meal: $0) }
             .sheet(isPresented: $showingGoals) { FuelGoalsSheet() }
+            // Meal history — pushed only once the gated toolbar button has confirmed entitlement.
+            .navigationDestination(isPresented: $showingHistory) { FuelHistoryView() }
             // Dictation streams into the composer as it's recognized — voice is input sugar;
             // everything downstream of the field is identical to typing.
             .onChange(of: voice.transcript) { _, spoken in
@@ -221,6 +232,14 @@ struct FuelView: View {
             h.combine(m.fatG); h.combine(m.sodiumMg)
             h.combine(m.potassiumMg); h.combine(m.magnesiumMg)
             h.combine(m.ironMg); h.combine(m.calciumMg)
+            // The BREAKDOWN, not just the sums — `cachedTitles` is decoded from `itemsData`, and
+            // an edit can rewrite the item list while every total above stays byte-identical:
+            // removing a water or a black coffee subtracts zero from all five, and stepping a
+            // zero-calorie item only moves `qty`. Without these three the row would keep naming an
+            // item the athlete just deleted, which is precisely the promise the detail sheet makes
+            // ("your hand outranks the estimate") read back to them as a lie. A few hundred bytes
+            // per today-meal, against the engine run this cache exists to avoid.
+            h.combine(m.itemsData); h.combine(m.fluidsMl); h.combine(m.source)
         }
         // Today's workouts, by content: they raise the energy floor, add sweat sodium, and are the
         // whole of `refuelDue`.
@@ -229,12 +248,15 @@ struct FuelView: View {
             guard w.startedAt >= todayStart else { break }
             h.combine(w.startedAt); h.combine(w.durationS); h.combine(w.calories)
         }
-        // `usuals` reads the recent past. Count + the newest row's identity is enough: a meal's TEXT
-        // is immutable after logging (the detail sheet edits portions and the clock, never the
-        // words), and only today's meals ever gain numbers — already hashed above. The identity
-        // catches the pathological equal-count delete-plus-insert.
+        // `usuals` reads the recent past. A meal's TEXT is immutable after logging (the detail
+        // sheet edits portions and the clock, never the words), and only today's meals ever gain
+        // numbers — already hashed above. So count plus the identity of both ENDS of the window is
+        // enough. Both ends, because `meals` is windowed at 500: past that, deleting an older meal
+        // pulls the 501st row in and leaves the count pinned, so count alone would go blind to
+        // exactly the delete `usuals` needs to hear about. The tail identity always shifts.
         h.combine(meals.count)
         h.combine(meals.first?.persistentModelID)
+        h.combine(meals.last?.persistentModelID)
         // The fueling adjuster's inputs — O(1) scalars on one object, so exact, with no
         // sheet-dismiss hook to forget.
         let p = profiles.first
@@ -314,15 +336,21 @@ struct FuelView: View {
         cacheToken = cacheSignature
     }
 
-    /// The row/chip title, decoded at refresh time. Falls back to the live property so a meal that
-    /// somehow isn't in the map (a stale frame) still reads correctly — just at the old cost.
-    private func title(_ meal: Meal) -> String { cachedTitles[meal.id] ?? meal.journalTitle }
+    /// The row/chip title, decoded at refresh time. Honors the same validity guard as `usuals` and
+    /// `todayMeals`: once the signature has moved, the map describes the meal as it WAS, so we pay
+    /// the decode for one frame rather than name items the athlete has already removed. Falls back
+    /// to the live property for a meal that simply isn't in the map — right, just at the old cost.
+    private func title(_ meal: Meal) -> String {
+        guard isCacheValid, let cached = cachedTitles[meal.id] else { return meal.journalTitle }
+        return cached
+    }
 
     // MARK: Readout strip — the judgment at a glance, deliberately quiet; tap for the full story
 
-    /// "Building · ≈90 of 350 g carbs" — status word, the carb numbers, a 5-point bar, and the one
-    /// tip. Small type, no display numerals (those live in the tap-through sheet). The bar still
-    /// grows by transform and still earns iridescence exactly at the floor — subtle ≠ unearned.
+    /// "Building · ≈90 of 350 g carbs · FOR tomorrow's long session (1h 45m)" — status word, the
+    /// carb numbers, a 5-point bar, the session the target is keyed to, and the one tip. Small
+    /// type, no display numerals (those live in the tap-through sheet). The bar still grows by
+    /// transform and still earns iridescence exactly at the floor — subtle ≠ unearned.
     private var readoutStrip: some View {
         let r = readout
         let tip = self.tip
@@ -333,8 +361,7 @@ struct FuelView: View {
                     Text(statusWord(r.status))
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
                         .contentTransition(.opacity)
-                    Text(r.status == .empty ? "aiming ≈\(r.carbsFloorG)–\(r.carbsHighG) g carbs"
-                                            : "≈\(r.carbsG) of \(r.carbsFloorG) g carbs")
+                    Text(carbsLine(r))
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                         .monospacedDigit()
                         .contentTransition(.numericText())
@@ -361,6 +388,25 @@ struct FuelView: View {
                     .clipShape(Capsule())
                     .animation(Motion.lively, value: fraction)
                     .animation(Motion.standard, value: r.status)
+                // WHY this target — the driving session, on the dashboard. The plan↔fuel link is
+                // the page's entire differentiator, and it lived one tap deep in the sheet; now it
+                // composes with the status line as one sentence: "Fueled · ≈390 g carbs banked —
+                // FOR tomorrow's long session (1h 45m)". Hidden on an easy horizon (nil), exactly
+                // like the sheet's keyed-to line. Race eve steps up half a voice (secondary ink,
+                // semibold) — the one morning the denominator IS the headline.
+                if let driving = r.drivingSession {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("FOR")
+                            .font(.rounded(10, weight: .bold)).tracking(1.2)
+                            .foregroundStyle(Theme.inkTertiary)
+                        Text(driving)
+                            .font(.rounded(Theme.FontSize.label, weight: r.raceEve ? .semibold : .medium))
+                            .foregroundStyle(r.raceEve ? Theme.inkSecondary : Theme.inkTertiary)
+                            .lineLimit(1)
+                    }
+                    .padding(.top, 2)
+                    .transition(.opacity)
+                }
                 if let tip {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("TIP")
@@ -386,7 +432,10 @@ struct FuelView: View {
         .animation(Motion.standard, value: r)
         .animation(Motion.standard, value: tip)
         .accessibilityLabel("Fueling readout")
-        .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams of carbohydrates")
+        .accessibilityValue(
+            (r.status == .fueled ? "about \(r.carbsG) grams of carbohydrates banked, floor met"
+                                 : "about \(r.carbsG) of \(r.carbsFloorG) grams of carbohydrates")
+            + (r.drivingSession.map { ", keyed to \($0)" } ?? ""))
         .accessibilityHint("Shows the full fueling detail")
         .sheet(isPresented: $showingReadout) { FuelReadoutSheet(readout: readout) }
     }
@@ -401,24 +450,52 @@ struct FuelView: View {
         }
     }
 
+    /// The carb clause after the status word. Past the floor the fraction goes away — "≈390 of
+    /// 210 g" reads like a mistake once you've sailed past it (a floor is not a denominator to
+    /// overshoot); from there the total banked is the whole story, in the engine's own verb.
+    private func carbsLine(_ r: FuelReadiness.DayReadout) -> String {
+        switch r.status {
+        case .empty: return "aiming ≈\(r.carbsFloorG)–\(r.carbsHighG) g carbs"
+        case .fueled: return "≈\(r.carbsG) g carbs banked"
+        case .behind, .onTrack: return "≈\(r.carbsG) of \(r.carbsFloorG) g carbs"
+        }
+    }
+
     private var bannerTransition: AnyTransition {
         reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 
+    /// The recovery-window nudge is an AFFORDANCE, not a statement: its one job is getting the
+    /// refuel meal logged, so tapping it opens the composer with the keyboard up. The chevron
+    /// speaks the same quiet "tappable" language as the strip and the rows. (Focusing costs and
+    /// spends nothing, so it needs no Pro gate — SEND still walls via `attemptLog`.)
     private var refuelBanner: some View {
-        HStack(spacing: Theme.Space.sm) {
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.purple)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Theme.purple.opacity(0.1)))
-            Text("Recovery window is open — carbs + protein within the hour do the most good.")
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
+        Button {
+            composing = true
+            Haptics.light()
+        } label: {
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.purple)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Theme.purple.opacity(0.1)))
+                Text("Recovery window is open — carbs + protein within the hour do the most good.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.forward")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(Theme.Space.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.purple.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.purple.opacity(0.25)))
+        .accessibilityLabel("Recovery window is open — carbs and protein within the hour do the most good")
+        .accessibilityHint("Opens the meal composer")
     }
 
     // MARK: Composer — jot it like a note, or speak it (Amy-style); logging never blocks
@@ -429,18 +506,22 @@ struct FuelView: View {
     private var composer: some View {
         let fieldShape = RoundedRectangle(cornerRadius: 26, style: .continuous)
         return HStack(alignment: .bottom, spacing: Theme.Space.sm) {
-            TextField("What did you eat? \u{201C}2 eggs, toast, coffee\u{201D}", text: $draft, axis: .vertical)
+            // Just the question — the old inline example ("2 eggs, toast, coffee") truncated to
+            // "2 eggs, t…" on every device width once the mic + send buttons took their room,
+            // which taught nothing and read broken. The usuals chips and the journal itself are
+            // the teaching-by-example surface now.
+            TextField("What did you eat?", text: $draft, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                 .lineLimit(1...4)
                 .focused($composing)
                 .submitLabel(.send)
-                .onSubmit(log)
+                .onSubmit(attemptLog)
                 .padding(.leading, 4)
                 .padding(.vertical, 8)
             if voice.isSupported {
                 micButton
             }
-            Button(action: log) {
+            Button(action: attemptLog) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.background)
                     .frame(width: 34, height: 34)
@@ -500,53 +581,81 @@ struct FuelView: View {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func log() {
+    /// The Pro gate on logging — mirrors the coach's `attemptSend`. Typing is the free "try"; the
+    /// SEND action is where the wall lives. Both the send button and the field's `.onSubmit` route
+    /// here, so a free athlete's draft survives (the wall opens over it) while nothing logs.
+    private func attemptLog() {
+        guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
+        logFromComposer()
+    }
+
+    /// The composer's send: take the draft, reset the field, run the ladder.
+    private func logFromComposer() {
         guard canLog else { return }
         if voice.isRecording { voice.stop() }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = ""
+        voiceBase = ""
+        composing = false
+        log(text: text)
+    }
+
+    /// The resolution ladder — one place, three rungs (FUEL-FLOW §2):
+    ///  1. **History** — the athlete's own meal with the same canonical key; their (possibly
+    ///     hand-corrected) numbers outrank every table and every model.
+    ///  2. **Staples** — every food phrase is in `FoodStaples`' deterministic table; compose
+    ///     locally. "2 gels and a banana" never costs an API call, even on day one.
+    ///  3. **AI** — the estimator, for everything the first two rungs honestly can't answer.
+    /// Rungs 1–2 land with no shimmer: the searching beat exists because the app is genuinely
+    /// searching, and on a local resolve it isn't. Deliberately does NOT touch composer state —
+    /// the quick-log chips call this too, and a chip tap must never eat a draft mid-typing.
+    private func log(text: String) {
         // Plan-derived and meal-independent — read BEFORE the insert, while the cache token is
         // still current (reading it after lands on the stale-token fallback and pays a full
         // engine run for a string the plan already knew).
         let label = readout.drivingSession
-        // Local-first: the athlete's own history answers before the network is ever asked.
         // Resolved BEFORE the insert so the meal being logged can't be its own candidate.
         let remembered = FuelLocalResolver.match(for: text, in: context)
 
         let meal = Meal()
         meal.text = text
-        if let remembered { FuelLocalResolver.copyNumbers(from: remembered, to: meal) }
+        let resolvedLocally: Bool
+        if let remembered {
+            FuelLocalResolver.copyNumbers(from: remembered, to: meal)
+            resolvedLocally = true
+        } else {
+            resolvedLocally = FuelLocalResolver.applyStaples(to: meal, text: text)
+        }
 
         withAnimation(Motion.standard) {
             context.insert(meal)
             try? context.save()
             refreshDerived()
         }
-        // One event, one haptic. A local hit never also fires the estimate's `Haptics.light()` —
-        // two taps back to back read as a stutter, not as speed.
+        // One event, one haptic. A local resolve never also fires the estimate's `Haptics.light()`
+        // — two taps back to back read as a stutter, not as speed.
         Haptics.success()
-
-        draft = ""
-        voiceBase = ""
-        composing = false
-        // A remembered meal never enters `estimateTasks`, so there is no shimmer and no crossfade:
-        // the numbers are simply already there. That absence IS the feedback (FUEL-FLOW §2 — the
-        // searching beat exists because the app is genuinely searching; here it isn't).
-        if remembered == nil { estimate(meal, sessionLabel: label) }
+        if !resolvedLocally { estimate(meal, sessionLabel: label) }
     }
 
     /// Fire (or re-fire) the estimate for one meal. Manual numbers always survive (`apply` guards).
     /// The task is retained by meal id so a Delete can cancel it, and the write is guarded on the
     /// model still being alive: long-pressing Delete during the ~1–3s shimmer must never come back
-    /// to a deleted SwiftData object. The attempt is counted at FIRE time, not on completion — a
-    /// request that never returns (app killed, network hung) has to burn its attempt or the cap
-    /// bounds nothing.
+    /// to a deleted SwiftData object.
+    ///
+    /// The attempt is counted at FIRE time and handed back only on a proven `.unavailable` — a
+    /// request that never returns (app killed, network hung) must burn its attempt or the cap
+    /// bounds nothing, but a request that never LEFT (airplane mode, unconfigured, rate-limited
+    /// before sending) billed nothing and must not spend the budget. Counting those was how an
+    /// hour offline used to strand a meal for good: three tab visits at 30,000 feet exhausted the
+    /// cap on calls that were never made, and landing never brought the estimate back.
     private func estimate(_ meal: Meal, sessionLabel: String?) {
         let id = meal.id
         estimateTasks[id]?.cancel()
         meal.estimateAttempts += 1
         try? context.save()
         let task = Task { @MainActor in
-            let e = await estimator.estimate(text: meal.text, sessionLabel: sessionLabel, durationS: nil)
+            let outcome = await estimator.estimate(text: meal.text, sessionLabel: sessionLabel, durationS: nil)
             // Cancellation normally gets here first, but a delete landing during the final
             // suspension point wouldn't be seen by it — `isDeleted` flips the moment
             // `context.delete` runs, and `modelContext` goes nil once the delete is processed.
@@ -554,7 +663,8 @@ struct FuelView: View {
                 estimateTasks[id] = nil
                 return
             }
-            if let e {
+            switch outcome {
+            case .estimated(let e):
                 withAnimation(Motion.standard) {
                     FuelEstimator.apply(e, to: meal)
                     meal.estimateAttempts = 0   // it resolved; nothing owed
@@ -562,6 +672,13 @@ struct FuelView: View {
                     refreshDerived()
                 }
                 Haptics.light()
+            case .unavailable:
+                // Never asked, never billed — refund the attempt so the meal is still due when
+                // there's a network again. Floored at 0 against any double-refund.
+                meal.estimateAttempts = max(0, meal.estimateAttempts - 1)
+                try? context.save()
+            case .declined:
+                break   // the function answered and we still have no numbers — the attempt stands
             }
             withAnimation(Motion.standard) { estimateTasks[id] = nil }
         }
@@ -572,6 +689,11 @@ struct FuelView: View {
     /// page appears — but only `maxEstimateAttempts` times each. Past that the meal rests on its
     /// manual-entry line and stops costing anything. Bounded to today's few — never a backlog storm.
     private func retryPendingEstimates() async {
+        // The AUTO-fire estimate path. Every USER-initiated estimate() caller walls too — log() via
+        // attemptLog, and "Estimate again" in the row menu — but this one fires on its own when the
+        // page appears. A lapsed athlete can still hold pending meals; firing the estimator for a
+        // non-entitled user spends money on a non-payer, so the wall guards the auto-retry too.
+        guard paywall.isEntitled(to: .fuel) else { return }
         let label = readout.drivingSession
         let due = todayMeals.filter {
             $0.needsEstimate(maxAttempts: Self.maxEstimateAttempts) && estimateTasks[$0.id] == nil
@@ -581,17 +703,24 @@ struct FuelView: View {
         }
     }
 
-    // MARK: The day's energy — one perfectly centered number (floors live in the strip + sheet)
+    // MARK: The day's energy — one perfectly centered number, and the target it's aiming at
 
+    /// The biggest numeral on the page answers "how much"; the caption beneath now answers "of how
+    /// much" — the page's whole question ("fueled for the work?") answered without a tap. The
+    /// phrasing mirrors the readout sheet's floor cell EXACTLY, so the two zoom levels can never
+    /// disagree: a chosen goal reads "of 2,347 kcal today", the classic floor keeps its "+"
+    /// ("of 2,650+ kcal" — a floor, never a ceiling). VoiceOver has said "about X of Y
+    /// kilocalories" since day one; sighted athletes finally get the same sentence.
     private var kcalHeadline: some View {
         let r = readout
         return VStack(spacing: 2) {
             Text(r.kcal.formatted())
                 .font(.display(30, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
                 .contentTransition(.numericText())
-            Text(r.kcalIsGoal ? "kcal goal" : "kcal")
+            Text(r.kcalIsGoal ? "of \(r.kcalFloor.formatted()) kcal today" : "of \(r.kcalFloor.formatted())+ kcal")
                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                .contentTransition(.opacity)
+                .monospacedDigit()
+                .contentTransition(.numericText())
             if let note = r.goalNote {
                 Text(note)
                     .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -601,6 +730,7 @@ struct FuelView: View {
         }
         .frame(maxWidth: .infinity)
         .animation(Motion.standard, value: r.kcal)
+        .animation(Motion.standard, value: r.kcalFloor)   // a finished workout raises the floor — roll it
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Energy")
         .accessibilityValue("about \(r.kcal) of \(r.kcalFloor) kilocalories")
@@ -614,9 +744,11 @@ struct FuelView: View {
     /// Motion renders complete); a landing estimate rolls rings and numerals together.
     private var ringsRow: some View {
         let r = readout
-        // The four numbers an athlete acts on TODAY. Iron/calcium (and K/Mg) keep flowing into
-        // the data for a future monthly coach insight — daily rings were the wrong surface for
-        // slow-moving health markers built on the AI's roughest estimates.
+        // The four numbers an athlete acts on TODAY. Daily rings remain the wrong surface for
+        // slow-moving markers (iron/calcium/K/Mg) — but as of 2026-07-22 those live one tap away
+        // in the Today card's MICROS grid, against sex-aware floors, and are estimated again
+        // (they were briefly cut 2026-07-21 while nothing displayed them; the card met the
+        // stated re-add condition).
         return HStack(alignment: .top, spacing: 0) {
             FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
             FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
@@ -632,18 +764,23 @@ struct FuelView: View {
     /// Most-repeated meals with numbers ready to reuse, recency-breaking ties — an established
     /// athlete sees their true usuals, a new one sees recents. Same rule, no cliff.
     ///
-    /// Unlike the readout, this vends live `Meal` references — so the signature guard is
-    /// load-bearing here, not belt-and-braces. `meals.count` is in the signature, so a delete
-    /// invalidates the cache before a deleted row can be handed back to a `ForEach`.
-    private var usuals: [Meal] { isCacheValid ? cachedUsuals : computeUsuals() }
+    /// Unlike the readout, this vends live `Meal` references, so a deleted row reaching a `ForEach`
+    /// is a real hazard. The signature is the first guard; `isDeleted` on the way out is the second
+    /// and the unconditional one — a tombstone is filtered here whether or not the signature
+    /// noticed. Deliberately does NOT recompute on a stale signature: `computeUsuals` now runs a
+    /// fetch, and a fetch in `body` is the exact pattern this whole cache exists to delete. One
+    /// frame of last refresh's chips is the cheaper, safer trade.
+    private var usuals: [Meal] { cachedUsuals.filter { !$0.isDeleted } }
 
     /// Grouped by the SAME canonical key the typed lookup uses, so "2 eggs and toast" and
-    /// "2 eggs, toast" are one chip counted twice, not two chips counted once. The group's
-    /// representative follows the same manual-then-recency rule as a typed match, so tapping the
-    /// chip and re-typing the meal produce byte-identical rows.
+    /// "2 eggs, toast" are one chip counted twice, not two chips counted once — over the SAME
+    /// candidate population (`FuelLocalResolver.candidates`) and ranked by the same
+    /// manual-then-recency rule, so tapping the chip and re-typing the meal produce byte-identical
+    /// rows. Two windows here would mean a correction the athlete made is visible to one path and
+    /// not the other. Called only from `refreshDerived`, never from `body`.
     private func computeUsuals() -> [Meal] {
         var groups: [String: (count: Int, best: Meal)] = [:]
-        for meal in meals.prefix(200) where !meal.isDeleted && meal.carbsG != nil {
+        for meal in FuelLocalResolver.candidates(in: context) {
             let key = MealTextKey.normalized(meal.text)
             guard MealTextKey.isMatchable(key) else { continue }
             if var group = groups[key] {
@@ -663,27 +800,34 @@ struct FuelView: View {
     @ViewBuilder
     private var usualsRow: some View {
         let list = usuals
-        if !list.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Space.xs) {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Space.xs) {
+                if list.isEmpty {
+                    // Day one, before any usuals exist: the staples starters. These are quick-log
+                    // AFFORDANCES, not sample data — nothing logs until tapped — and they carry
+                    // the teaching-by-example the composer placeholder used to (badly, truncated).
+                    // Every starter composes deterministically ($0, instant; a unit test pins
+                    // that), and the row hands over to the athlete's own usuals the moment they
+                    // have any. Free athletes see them and hit the wall on tap, like every chip.
+                    ForEach(FoodStaples.starters, id: \.self) { text in
+                        Button {
+                            if paywall.isEntitled(to: .fuel) { log(text: text) }
+                            else { paywall.present(for: .fuel) }
+                        } label: {
+                            chipLabel(text)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Quick log: \(text)")
+                    }
+                } else {
                     ForEach(list) { meal in
                         Button {
-                            repeatMeal(meal)
+                            // A lapsed athlete with history must still hit the wall here rather
+                            // than re-log for free.
+                            if paywall.isEntitled(to: .fuel) { repeatMeal(meal) }
+                            else { paywall.present(for: .fuel) }
                         } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(Theme.inkTertiary)
-                                Text(title(meal))
-                                    .font(.rounded(Theme.FontSize.label, weight: .semibold))
-                                    .foregroundStyle(Theme.inkSecondary)
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, Theme.Space.sm + 2)
-                            .padding(.vertical, 7)
-                            .frame(maxWidth: 210)
-                            .background(Capsule().fill(Theme.surface))
-                            .overlay(Capsule().stroke(Theme.hairline))
+                            chipLabel(title(meal))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Log again: \(title(meal))")
@@ -691,6 +835,28 @@ struct FuelView: View {
                 }
             }
         }
+    }
+
+    /// One chip, one look — a personal usual and a staples starter are the same affordance, so
+    /// they wear the same anatomy and the row never shifts style as history accrues.
+    private func chipLabel(_ text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Theme.inkTertiary)
+            Text(text)
+                .font(.rounded(Theme.FontSize.label, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, Theme.Space.sm + 2)
+        .padding(.vertical, 7)
+        // 250, not 210: at 210 both visible chips routinely clipped mid-word ("dark chocolate
+        // and a glass of…"). At 250 a clipped chip is rare and the next chip still peeks in from
+        // the edge — the scroll affordance.
+        .frame(maxWidth: 250)
+        .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().stroke(Theme.hairline))
     }
 
     /// One tap re-logs a usual: numbers and items copy over, the clock is now, and the old note
@@ -710,12 +876,15 @@ struct FuelView: View {
 
     // MARK: Today's meals
 
-    /// Vends live `Meal` references, so the signature guard matters: `meals.count` is hashed, and a
-    /// delete therefore invalidates the cache before a deleted row reaches a `ForEach` or
-    /// `retryPendingEstimates()`.
+    /// Vends live `Meal` references, so — as with `usuals` — the signature is the first guard and
+    /// the `isDeleted` filter is the unconditional one: no deleted row reaches a `ForEach` or
+    /// `retryPendingEstimates()` even on a frame the signature hasn't caught up with. The
+    /// stale-path recompute is kept here because it is an in-memory filter, not a fetch.
     private var todayMeals: [Meal] {
-        isCacheValid ? cachedTodayMeals
-                     : meals.filter { !$0.isDeleted && Calendar.current.isDateInToday($0.eatenAt) }
+        guard isCacheValid else {
+            return meals.filter { !$0.isDeleted && Calendar.current.isDateInToday($0.eatenAt) }
+        }
+        return cachedTodayMeals.filter { !$0.isDeleted }
     }
 
     private var rowTransition: AnyTransition {
@@ -749,7 +918,12 @@ struct FuelView: View {
         let isEstimating = estimateTasks[meal.id] != nil
         // Once resolved, the title is the AI's clean item list ("Eggs ×2 · Toast · Coffee") —
         // the athlete's raw words stay on the model and in the detail sheet.
-        return Button { if !isEstimating { editing = meal } } label: {
+        return Button {
+            // An estimating row still ignores taps; otherwise entitled → open the editor, free → paywall.
+            guard !isEstimating else { return }
+            if paywall.isEntitled(to: .fuel) { editing = meal }
+            else { paywall.present(for: .fuel) }
+        } label: {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Theme.Space.sm) {
@@ -794,8 +968,20 @@ struct FuelView: View {
         .buttonStyle(.plain)
         .contextMenu {
             // The cap is ours, not the athlete's — asking for it by hand always earns a fresh run.
-            if !isEstimating, meal.carbsG == nil {
+            // `isEstimable` is the same gate the automatic path uses, minus the cap: without the
+            // `manual` half of it this offered a billed call on a hand-set meal, which
+            // `FuelEstimator.apply` discards on arrival. Repeatable, chargeable, and inert.
+            //
+            // "Estimate again" fires the billed estimator, so it is a Pro ACTION and walls exactly
+            // like every sibling (send, history, goals, usuals, row tap). A meal logged while Pro
+            // then downgraded (lapse/refund/--debug-free) keeps its row on the honest free page; the
+            // long-press menu is a separate gesture from the gated row tap (820), so it needs its own
+            // wall — otherwise a non-payer could re-fire a paid AI call, repeatably, since it also
+            // zeroes the cap. The Delete item stays ungated: it spends nothing and is the athlete's
+            // own data.
+            if !isEstimating, meal.isEstimable {
                 Button {
+                    guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
                     meal.estimateAttempts = 0
                     estimate(meal, sessionLabel: readout.drivingSession)
                 } label: { Label("Estimate again", systemImage: "sparkles") }
@@ -819,9 +1005,11 @@ struct FuelView: View {
 
 // MARK: - The full readout (tap-through from the strip)
 
-/// The depth behind the strip: the engine's plain-words headline, the display-size carb number
-/// and full band bar, the three floor cells, and what session the target is keyed to. Everything
-/// here is the same `DayReadout` the strip judged — one engine, two zoom levels.
+/// The depth behind the strip — the COMPLETE "what am I aiming for today" reference (2026-07-22):
+/// the engine's plain-words headline, the display-size carb number and full band bar, the macro
+/// floor cells, the sex-aware micro floors, and what session the target is keyed to. Every target
+/// here already wears the athlete's chosen goal (the engine adapts energy, protein AND carbs to
+/// it). Everything is the same `DayReadout` the strip judged — one engine, two zoom levels.
 private struct FuelReadoutSheet: View {
     let readout: FuelReadiness.DayReadout
     @Environment(\.dismiss) private var dismiss
@@ -865,6 +1053,27 @@ private struct FuelReadoutSheet: View {
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
                     }
                     .reveal(0.14)
+                    // The micros (2026-07-22): sex-aware RDA/AI floors, eaten values summed from
+                    // meals that carry them. Daily RINGS were and remain the wrong surface for
+                    // slow-moving markers — but the tap-through card is exactly where the complete
+                    // picture belongs, and this display is what re-justified estimating them.
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        Text("MICROS")
+                            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
+                            .foregroundStyle(Theme.inkTertiary)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
+                                  alignment: .leading, spacing: Theme.Space.md) {
+                            floorCell("≈\(r.micros.potassiumMg.formatted())",
+                                      "of \(r.micros.potassiumFloorMg.formatted())+ mg potassium")
+                            floorCell("≈\(r.micros.magnesiumMg)",
+                                      "of \(r.micros.magnesiumFloorMg)+ mg magnesium")
+                            floorCell("≈\(ironText(r.micros.ironMg)) mg",
+                                      "of \(ironText(r.micros.ironFloorMg))+ mg iron")
+                            floorCell("≈\(r.micros.calciumMg.formatted())",
+                                      "of \(r.micros.calciumFloorMg.formatted())+ mg calcium")
+                        }
+                    }
+                    .reveal(0.18)
                     if let driving = r.drivingSession {
                         Text("Carb target keyed to \(driving) — glycogen banks overnight, so the eve matters as much as the morning.")
                             .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
@@ -896,6 +1105,11 @@ private struct FuelReadoutSheet: View {
             Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Iron carries a decimal only when it earns one — "≈4.2 mg" but "of 18+ mg", never "18.0+".
+    private func ironText(_ v: Double) -> String {
+        v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
     }
 }
 

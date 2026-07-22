@@ -148,6 +148,15 @@ enum FuelReadiness {
     static let carbsPerKgModerate = 5.0    // ≥1 h session today/tomorrow
     static let carbsPerKgLong = 6.0        // ≥2.5 h session today/tomorrow
     static let carbsPerKgRaceEve = 8.0     // race tomorrow — the classic load
+    /// Goal-adaptive tiers (2026-07-22, user call): within a training-KEYED tier, the chosen goal
+    /// tunes the g/kg on the days that can afford it. Leaner sits at the bottom of the consensus
+    /// band for the horizon (never below it — a floor is still a floor); Build sits half a gram
+    /// above the default. Long runs and race eve NEVER move, for either goal — the same
+    /// protection as the energy-deficit pause: the goal must never raid the work.
+    static let carbsPerKgLeanerEasy = 2.5
+    static let carbsPerKgLeanerModerate = 4.0
+    static let carbsPerKgBuildEasy = 3.5
+    static let carbsPerKgBuildModerate = 5.5
     /// Band width shown above each floor (floor…floor+width is "the band").
     static let carbsBandWidthPerKg = 2.0
     /// Refuel window after a ≥1 h session (FuelingGuide's "within the hour", with grace).
@@ -189,20 +198,35 @@ enum FuelReadiness {
         }
         let driver = horizon.max { $0.durationS < $1.durationS }
 
-        let carbsPerKg: Double
+        let tierCarbsPerKg: Double
         var drivingLabel: String?
         var raceEve = false, drivingIsToday = false
         if let driver, driver.durationS >= FuelingGuide.carbsFromS {
             let tomorrow = !calendar.isDate(driver.date, inSameDayAs: now)
             let long = driver.durationS >= FuelingGuide.highCarbFromS
-            carbsPerKg = driver.isRace && tomorrow ? carbsPerKgRaceEve : (long ? carbsPerKgLong : carbsPerKgModerate)
+            tierCarbsPerKg = driver.isRace && tomorrow ? carbsPerKgRaceEve : (long ? carbsPerKgLong : carbsPerKgModerate)
             raceEve = driver.isRace && tomorrow
             drivingIsToday = !tomorrow
             let when = tomorrow ? "tomorrow's" : "today's"
             let what = driver.isRace ? "race" : (long ? "long session" : "session")
             drivingLabel = "\(when) \(what) (\(durationLabel(driver.durationS)))"
         } else {
-            carbsPerKg = carbsPerKgEasy
+            tierCarbsPerKg = carbsPerKgEasy
+        }
+        // The goal tunes the tier (2026-07-22): the carb target stays KEYED to the training
+        // horizon — that half of the original rule stands — but within an easy or moderate tier
+        // the chosen goal now moves the g/kg. Big days (long tier, race eve) pass through
+        // untouched for every goal: `bigDay` below is derived from the TIER, before adjustment,
+        // so a leaner-lowered moderate day can never accidentally re-classify itself.
+        let tierIsBig = raceEve || tierCarbsPerKg >= carbsPerKgLong
+        let carbsPerKg: Double
+        switch goal.kind {
+        case .leaner where !tierIsBig:
+            carbsPerKg = tierCarbsPerKg >= carbsPerKgModerate ? carbsPerKgLeanerModerate : carbsPerKgLeanerEasy
+        case .build where !tierIsBig:
+            carbsPerKg = tierCarbsPerKg >= carbsPerKgModerate ? carbsPerKgBuildModerate : carbsPerKgBuildEasy
+        default:
+            carbsPerKg = tierCarbsPerKg
         }
 
         let trainedKcal = workoutsToday.compactMap(\.kcal).reduce(0, +)
@@ -211,7 +235,7 @@ enum FuelReadiness {
         let age = goal.birthYear.map { max(14, calendar.component(.year, from: now) - $0) } ?? fallbackAge
         let basal = bmr(kg: kg, heightCm: goal.heightCm ?? fallbackHeightCm, age: age, isMale: goal.isMale)
         let maintenance = basal * activityBase
-        let bigDay = raceEve || carbsPerKg >= carbsPerKgLong
+        let bigDay = tierIsBig   // derived from the TIER above — goal adjustment can't reclassify a day
         var kcalIsGoal = true
         var goalNote: String?
         let kcalBase: Double

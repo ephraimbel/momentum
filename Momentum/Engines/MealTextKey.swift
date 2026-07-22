@@ -15,7 +15,11 @@ enum MealTextKey {
 
     /// Bumped whenever the algorithm changes. Nothing depends on it at runtime (keys aren't
     /// stored); it exists so tests can pin the contract they were written against.
-    static let version = 1
+    ///
+    /// v2 (2026-07-21): separators flanked by digits are read as part of the NUMBER, not as food
+    /// boundaries — see `numberInternalSeparators`. v1 split "1/2 tbsp butter" into "1" plus
+    /// "2 tbsp butter", inverting the fraction and letting the denominator sort onto another food.
+    static let version = 2
 
     // MARK: Tables
 
@@ -37,6 +41,18 @@ enum MealTextKey {
 
     /// Deleted outright rather than split on, so "reese's" and "reeses" are the same food.
     private static let apostrophes: Set<Character> = ["'", "\u{2019}", "\u{2018}", "`", "\u{00B4}"]
+
+    /// Separators that live INSIDE a number when digits flank them: the decimal point of
+    /// "1.5 cups", the solidus of "1/2 tbsp butter", the ratio colon of "2:1 carb drink".
+    ///
+    /// Every one of these is also a `segmentBreaker`, and that collision is what made v1 unsafe:
+    /// breaking on the slash turned "1/2 cup oats" into the segments ["1", "2 cup oats"] — the
+    /// numerator orphaned, the DENOMINATOR promoted to the leading token of the next segment, and
+    /// the whole key asserting *two* cups. Worse, `segments.sorted()` then let that orphan drift,
+    /// so "1/2 tbsp butter, 2 tbsp jam" and "1/2 tbsp jam, 2 tbsp butter" collapsed to one key —
+    /// the exact quantity-drift false positive `quantityStaysBound` exists to make impossible.
+    /// Reading them as number content is what makes "numerals survive verbatim" literally true.
+    private static let numberInternalSeparators: Set<Character> = [".", "/", ":"]
 
     /// Words that JOIN foods rather than name one — treated exactly like a comma. ("w" catches
     /// the "toast w/ butter" shorthand, whose slash would otherwise strand a lone "w" token.)
@@ -64,7 +80,8 @@ enum MealTextKey {
     ///
     /// Invariants worth stating out loud:
     /// - Every numeral in the source text survives verbatim as its own token. "4 eggs" can never
-    ///   match "2 eggs".
+    ///   match "2 eggs", and a written fraction stays whole and stays welded to its food:
+    ///   "1/2 cup oats" is neither "2 cup oats" nor a stray "1" free to sort onto another item.
     /// - Plurals are NOT stemmed. "2 egg" and "2 eggs" are different keys — a deliberate, tested
     ///   miss (see the type doc: precision over recall).
     /// - Duplicate segments are preserved, never Set-deduped. "coffee, coffee" != "coffee".
@@ -74,6 +91,16 @@ enum MealTextKey {
     ///   Deleting emoji would collapse "1 🍕" and "1 🍔" to the same key — the exact bug class we
     ///   are here to prevent.
     static func normalized(_ raw: String) -> String {
+        segments(raw).sorted().joined(separator: " | ")
+    }
+
+    /// The meal's FOOD PHRASES, in the order the athlete wrote them — the same segmentation the
+    /// key is built from, exposed so `FoodStaples` can try to resolve each food deterministically.
+    /// "2 eggs and toast with coffee" → ["2 eggs", "toast", "coffee"]. Every rule documented on
+    /// `normalized` (quantity welding, joiner words, fillers, apostrophes, number words) applies
+    /// here identically — `normalized` IS `segments(...).sorted().joined(" | ")`, so the two can
+    /// never drift.
+    static func segments(_ raw: String) -> [String] {
         let folded = raw
             .precomposedStringWithCanonicalMapping
             .folding(options: [.diacriticInsensitive, .caseInsensitive],
@@ -110,12 +137,19 @@ enum MealTextKey {
             // "reese's" -> "reeses" (join, don't split).
             if apostrophes.contains(c) { i += 1; continue }
 
-            // A period flanked by digits is a decimal, not a full stop: "1.5 cups" stays intact,
-            // which is what makes the "numerals survive verbatim" invariant literally true.
-            if c == ".",
-               let last = token.last, last.isNumber,
-               i + 1 < chars.count, chars[i + 1].isNumber {
-                token.append(c); i += 1; continue
+            // A separator flanked by digits belongs to the NUMBER, not between two foods:
+            // "1.5 cups", "1/2 tbsp butter", "2:1 carb drink" each stay one token in one segment.
+            if numberInternalSeparators.contains(c), i + 1 < chars.count, chars[i + 1].isNumber {
+                if let last = token.last, last.isNumber {
+                    token.append(c); i += 1; continue
+                }
+                // A LEADING decimal point has no digit on its left, so the guard above can't see
+                // it — and falling through to the breaker DELETES the point, keying ".5 cup oats"
+                // as five cups. Seed the zero the athlete left off, so ".5" and "0.5" are one key
+                // and neither can ever alias onto "5".
+                if c == ".", token.isEmpty {
+                    token = "0."; i += 1; continue
+                }
             }
 
             if segmentBreakers.contains(c) {
@@ -135,7 +169,7 @@ enum MealTextKey {
         _ = closeToken()   // a trailing joiner has nothing left to join
         closeSegment()
 
-        return segments.sorted().joined(separator: " | ")
+        return segments
     }
 
     /// Convenience: a key worth looking up.
