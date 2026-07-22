@@ -694,4 +694,137 @@ struct PlanCoachingTests {
         // And the new block still generated real upcoming work.
         #expect(next.sessions.contains { $0.status == .planned })
     }
+
+    // MARK: Adjacent-day long-run credit (the ±1-day grace)
+
+    /// Saturday's long run planned, the athlete runs it Friday: same-day matching finds nothing,
+    /// so the long-run grace credits tomorrow's prescription — the week's marquee session must
+    /// never read as skipped because life moved it a day.
+    @Test func longRunDoneDayEarlyCreditsTomorrowsPrescription() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let long = PlannedSession()
+        long.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 5400
+        let g = GPSDetail(); g.distanceM = 15500; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx)?.id == long.id)
+        #expect(long.status == .completed)
+    }
+
+    /// The grace never weakens the fulfillment rule: a short Friday jog leaves Saturday's long run
+    /// exactly where it was.
+    @Test func shortJogNeverCreditsAdjacentLongRun() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let long = PlannedSession()
+        long.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 1200
+        let g = GPSDetail(); g.distanceM = 4000; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx) == nil)
+        #expect(long.status == .planned)
+    }
+
+    /// A same-day session always wins over an adjacent long run — the grace is a fallback, never
+    /// a competitor.
+    @Test func sameDaySessionOutranksAdjacentLongRun() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let today = PlannedSession()
+        today.date = cal.startOfDay(for: Date())
+        today.discipline = .running
+        today.runType = .easy
+        today.targetDistanceM = 14000
+        today.status = .planned
+        let tomorrowLong = PlannedSession()
+        tomorrowLong.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        tomorrowLong.discipline = .running
+        tomorrowLong.runType = .long
+        tomorrowLong.targetDistanceM = 16000
+        tomorrowLong.status = .planned
+        let plan = makePlan(in: ctx, sessions: [today, tomorrowLong])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 5000
+        let g = GPSDetail(); g.distanceM = 15000; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx)?.id == today.id)
+        #expect(today.status == .completed)
+        #expect(tomorrowLong.status == .planned)
+    }
+
+    /// The grace applies only to long runs — an adjacent-day interval session is never swallowed
+    /// by a free run the day before.
+    @Test func adjacentQualitySessionNeverCredited() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let intervals = PlannedSession()
+        intervals.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        intervals.discipline = .running
+        intervals.runType = .intervals
+        intervals.targetDistanceM = 8000
+        intervals.status = .planned
+        let plan = makePlan(in: ctx, sessions: [intervals])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 3000
+        let g = GPSDetail(); g.distanceM = 8000; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx) == nil)
+        #expect(intervals.status == .planned)
+    }
+
+    // MARK: Brief — the eyebrow variant
+
+    /// Surfaces whose eyebrow already names the kind drop the leading type word; the full brief is
+    /// untouched (default), and dropping never produces an empty line.
+    @Test func briefDropsLeadingTypeUnderAnEyebrow() {
+        let s = PlannedSession()
+        s.discipline = .running
+        s.runType = .tempo
+        s.targetDistanceM = 6000
+        s.targetPaceSPerKm = 300
+        let full = PlanCoaching.brief(for: s, distanceUnit: .metric)
+        let bare = PlanCoaching.brief(for: s, distanceUnit: .metric, dropLeadingType: true)
+        #expect(full.hasPrefix("Tempo "))
+        #expect(!bare.hasPrefix("Tempo"))
+        #expect(bare.contains("6 km"))
+        #expect(bare.contains("5:00"))
+
+        // No distance to carry the line → the label stays, even when asked to drop it.
+        let bareOnly = PlannedSession()
+        bareOnly.discipline = .running
+        bareOnly.runType = .easy
+        #expect(!PlanCoaching.brief(for: bareOnly, distanceUnit: .metric, dropLeadingType: true).isEmpty)
+    }
+
+    // MARK: Race countdown — one unit scheme everywhere
+
+    @Test func raceCountdownSpeaksDaysInsideTwoWeeksWeeksBeyond() {
+        #expect(Formatters.raceCountdown(days: 0) == "Race day")
+        #expect(Formatters.raceCountdown(days: 1) == "1 day to go")
+        #expect(Formatters.raceCountdown(days: 13) == "13 days to go")
+        #expect(Formatters.raceCountdown(days: 14) == "2 weeks to go")
+        #expect(Formatters.raceCountdown(days: 84) == "12 weeks to go")
+        #expect(Formatters.raceCountdown(days: 85) == "13 weeks to go")
+    }
 }

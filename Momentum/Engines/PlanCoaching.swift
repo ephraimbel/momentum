@@ -55,14 +55,33 @@ enum PlanCoaching {
     /// Credit a free workout toward today's matching planned session, if still open. Magnitude-aware
     /// (`PlanCredit`): the workout must plausibly *fulfill* the prescription — a short recovery jog
     /// leaves the day's long run open instead of silently completing it.
+    ///
+    /// The long run gets a ±1-day grace: it's the week's marquee session and real life routinely
+    /// shifts it a day (Saturday's 16 km done Friday). Same-day sessions always win; only when
+    /// nothing today credits do we look one day out, and only at long runs — the fulfillment rule
+    /// still applies, so a short Friday jog never swallows Saturday's prescription.
     @discardableResult
     static func creditWorkout(_ workout: Workout, to plan: TrainingPlan?, in context: ModelContext,
                               calendar: Calendar = .current) -> PlannedSession? {
         guard let plan else { return nil }
-        // `.moved` counts as open: reconcileMissed rolls every past-due session forward as .moved
-        // (routine after any slipped day), and the athlete who then does the work must get the
-        // credit — markComplete already accepts moved sessions.
-        let open = todaySessions(plan, on: workout.startedAt, calendar: calendar).filter {
+        if let hit = credit(among: todaySessions(plan, on: workout.startedAt, calendar: calendar),
+                            workout: workout, in: context) {
+            return hit
+        }
+        let adjacentLongs = [-1, 1].flatMap { delta -> [PlannedSession] in
+            guard let day = calendar.date(byAdding: .day, value: delta, to: workout.startedAt) else { return [] }
+            return todaySessions(plan, on: day, calendar: calendar).filter { $0.runType == .long }
+        }
+        return credit(among: adjacentLongs, workout: workout, in: context)
+    }
+
+    /// The shared matching pass: filter to open sessions of the workout's discipline, then let
+    /// `PlanCredit` pick the best fulfilled prescription. `.moved` counts as open: reconcileMissed
+    /// rolls every past-due session forward as .moved (routine after any slipped day), and the
+    /// athlete who then does the work must get the credit — markComplete already accepts moved.
+    private static func credit(among sessions: [PlannedSession], workout: Workout,
+                               in context: ModelContext) -> PlannedSession? {
+        let open = sessions.filter {
             ($0.status == .planned || $0.status == .moved)
                 && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
         }
@@ -525,7 +544,12 @@ enum PlanCoaching {
     }
 
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.
-    static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto) -> String {
+    ///
+    /// `dropLeadingType`: surfaces that already name the session's kind in an eyebrow ("TEMPO RUN")
+    /// pass true so the line reads "4 mi ~8:05 /mi" instead of restating "Tempo" twice. Falls back
+    /// to the full brief whenever dropping the label would leave nothing to say.
+    static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto,
+                      dropLeadingType: Bool = false) -> String {
         if session.discipline == .strength {
             let label = session.strengthTargets.count >= 5 ? "Full body" : "Strength"
             let n = session.strengthTargets.count
@@ -542,7 +566,8 @@ enum PlanCoaching {
             return session.runType?.rawValue.capitalized ?? "Session"
         }()
         let dist = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? ""
-        let base = "\(label) \(dist)".trimmingCharacters(in: .whitespaces)
+        let lead = (dropLeadingType && !dist.isEmpty) ? dist : "\(label) \(dist)"
+        let base = lead.trimmingCharacters(in: .whitespaces)
         if let pace = session.targetPaceSPerKm, pace > 0 {
             return "\(base) ~\(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
         }

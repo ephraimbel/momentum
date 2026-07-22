@@ -120,6 +120,18 @@ enum Formatters {
             : String(format: "%d:%02d", m, sec)
     }
 
+    // MARK: Race countdown — one rule everywhere: days inside two weeks, weeks beyond
+    /// "Race day" / "5 days to go" / "12 weeks to go". Every countdown surface (Plan header, race
+    /// projection card, reveal) speaks this unit scheme so the same race never reads as "84 days"
+    /// on one card and "12 weeks" on the next.
+    static func raceCountdown(days: Int) -> String {
+        switch days {
+        case ..<1: return "Race day"
+        case 1...13: return "\(days) day\(days == 1 ? "" : "s") to go"
+        default: return "\(Int(ceil(Double(days) / 7.0))) weeks to go"
+        }
+    }
+
     // MARK: Compact number — "12.4k", "1.2M", or an integer below 1,000 (no unit)
     static func compact(_ value: Double) -> String {
         let v = abs(value)
