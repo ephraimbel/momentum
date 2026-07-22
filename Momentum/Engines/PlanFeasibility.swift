@@ -166,7 +166,9 @@ struct PlanFeasibility: Sendable {
     /// Predicted finish time (s) for a distance from a 5K-equivalent pace, via Riegel (T = T₅ₖ·(D/5k)^1.06).
     static func predictedFinishS(distanceM: Double, p5kSPerKm: Double) -> Double {
         let t5k = p5kSPerKm * 5.0
-        return t5k * pow(distanceM / 5_000, 1.06)
+        // Same Riegel core as RacePredictor, same endurance tax past ~3 h — the feasibility verdict
+        // and the goal-time check must judge against the honest number, not the curve's optimism.
+        return DanielsPaces.enduranceCorrected(raceTimeS: t5k * pow(distanceM / 5_000, 1.06))
     }
 
     /// Sensible peak weekly volume (meters) to be *ready* for a distance, scaled by experience.

@@ -37,11 +37,14 @@ struct CoachInfoCardsTests {
         let profile = makeProfile(in: ctx, p5k: 300)   // a 25:00 5K runner
 
         let sections = CoachRacePredictor.sections(profile: profile)
-        #expect(sections.count == RaceDistance.allCases.count + 1)   // four races + the honesty line
+        // Every race + the ultra honesty line + the how-to-read line.
+        #expect(sections.count == RaceDistance.allCases.count + 2)
         let fiveK = sections.first { $0.title == "5K" }
         #expect(fiveK?.detail.contains("25:00") == true)             // race pace at 5K ≈ p5k itself
         let marathon = sections.first { $0.title == "Marathon" }
         #expect(marathon != nil)
+        // The 50K number never stands alone — the endurance-tax caveat rides with it.
+        #expect(sections.contains { $0.title == "About the ultra number" })
 
         // No calibrated fitness → no invented numbers.
         let empty = UserProfile()

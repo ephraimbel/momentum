@@ -19,6 +19,12 @@ enum CoachRacePredictor {
             return CoachSection(icon: "flag.checkered", title: race.label,
                                 detail: "\(PlanFeasibility.hms(finish)) at \(Formatters.pace(secPerKm: pace, unit: unit))")
         }
+        // The ultra number deserves its own honesty: the prediction already carries the endurance
+        // tax for the long day, but real ultras add what no equation sees.
+        if RaceDistance.allCases.contains(where: { $0.meters > 42_195 }) {
+            out.append(CoachSection(icon: "mountain.2", title: "About the ultra number",
+                                    detail: "The 50K already includes the endurance tax for hours on your feet — and real ultras add terrain, aid stops, and fueling on top. Treat it as a flat-road ceiling, not a target."))
+        }
         out.append(CoachSection(icon: "sparkles", title: "How to read this",
                                 detail: "Equivalent race times from your calibrated fitness today, not a promise. Run a strong workout and these sharpen on their own."))
         return out
