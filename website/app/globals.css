@@ -1768,3 +1768,266 @@ a {
     transform: none;
   }
 }
+
+/* ============================================================
+   Athlete photography layer (2026-07-22) — the luxury-endurance
+   pass. Every photograph is graded MONOCHROME in CSS: the brand
+   is ink and paper, and iridescence stays an earned accent. All
+   motion is transform-only and reduce-motion gated.
+   ============================================================ */
+
+/* --- Cinematic full-bleed bands --- */
+.cinema {
+  position: relative;
+  overflow: hidden;
+  min-height: 68vh;
+  display: grid;
+  align-items: center;
+  background: #0b0b0e;
+  color: #fff;
+}
+
+.cinema-tall {
+  min-height: 84vh;
+}
+
+.cinema-img {
+  position: absolute;
+  inset: -12% 0;
+  will-change: transform;
+  transform: scale(1.14);
+}
+
+.cinema-img img {
+  filter: grayscale(1) contrast(1.07) brightness(0.86);
+}
+
+.cinema-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(to bottom, rgba(11, 11, 14, 0.62), rgba(11, 11, 14, 0.18) 34%, rgba(11, 11, 14, 0.22) 62%, rgba(11, 11, 14, 0.72)),
+    radial-gradient(90% 120% at 18% 60%, rgba(11, 11, 14, 0.55), transparent 58%);
+}
+
+.cinema-content {
+  position: relative;
+  z-index: 2;
+  padding-block: clamp(88px, 14vh, 150px);
+}
+
+.cinema-title {
+  color: #fff;
+  font-size: clamp(44px, 6.4vw, 88px);
+  letter-spacing: -0.02em;
+  margin: 14px 0 0;
+}
+
+.cinema-lede {
+  color: rgba(255, 255, 255, 0.82);
+  max-width: 46ch;
+  margin-top: 18px;
+}
+
+.eyebrow-light {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.eyebrow-light::before {
+  background: linear-gradient(90deg, var(--iri-1), var(--iri-2), var(--iri-3), var(--iri-4), var(--iri-5));
+  opacity: 0.9;
+}
+
+/* Paper button — the CTA on dark photography. */
+.btn-paper {
+  background: #fff;
+  color: var(--ink);
+  border-color: transparent;
+}
+
+.btn-paper:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+
+.cta-cinema {
+  text-align: center;
+  display: grid;
+  justify-items: center;
+}
+
+.cta-cinema .cinema-lede {
+  margin-inline: auto;
+}
+
+.cta-cinema .btn {
+  margin-top: 30px;
+}
+
+/* --- Distance marquee — outline display type drifting past --- */
+.marquee {
+  overflow: hidden;
+  padding: clamp(34px, 6vh, 64px) 0 clamp(10px, 2vh, 22px);
+  background: var(--bg);
+}
+
+.marquee-track {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.55em;
+  width: max-content;
+  animation: marquee-drift 46s linear infinite;
+  font-family: var(--font-d);
+  font-weight: 700;
+  font-size: clamp(58px, 9vw, 128px);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.marquee-track span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.55em;
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgba(14, 14, 18, 0.18);
+}
+
+.marquee-track em {
+  font-style: normal;
+  -webkit-text-stroke: 0;
+  background: linear-gradient(90deg, var(--iri-1), var(--iri-2), var(--iri-3), var(--iri-4), var(--iri-5));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes marquee-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* --- The season trio — editorial photo cards --- */
+.seasons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 26px;
+  margin-top: 56px;
+}
+
+.season {
+  margin: 0;
+}
+
+.season-media {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--surface);
+  transition: transform 0.5s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.season-media img {
+  filter: grayscale(1) contrast(1.05) brightness(0.94);
+  transition: transform 1.1s cubic-bezier(0.2, 0.7, 0.2, 1), filter 0.7s ease;
+}
+
+.season:hover .season-media {
+  transform: translateY(-6px);
+  box-shadow: 0 30px 60px rgba(14, 14, 18, 0.16);
+}
+
+.season:hover .season-media img {
+  transform: scale(1.045);
+  filter: grayscale(1) contrast(1.06) brightness(1);
+}
+
+.season figcaption {
+  padding: 18px 6px 0;
+}
+
+.season-n {
+  display: block;
+  font-family: var(--font-d);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+
+.season figcaption h4 {
+  font-family: var(--font-d);
+  font-size: 22px;
+  font-weight: 700;
+  margin: 6px 0 4px;
+}
+
+.season figcaption p {
+  font-size: 14.5px;
+  color: var(--ink-2);
+  max-width: 34ch;
+}
+
+/* --- Manifesto, now photo-backed --- */
+.manifesto-photo > *:not(.manifesto-media):not(.manifesto-shade) {
+  position: relative;
+  z-index: 2;
+}
+
+.manifesto-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.manifesto-media img {
+  filter: grayscale(1) contrast(1.06) brightness(0.8);
+}
+
+.manifesto-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(to bottom, rgba(11, 11, 14, 0.66), rgba(11, 11, 14, 0.42) 40%, rgba(11, 11, 14, 0.78)),
+    radial-gradient(80% 110% at 16% 30%, rgba(11, 11, 14, 0.6), transparent 60%);
+}
+
+.manifesto-photo .manifesto-grid p {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* --- Responsive + reduce-motion --- */
+@media (max-width: 900px) {
+  .seasons {
+    grid-template-columns: 1fr;
+    max-width: 440px;
+    margin-inline: auto;
+  }
+
+  .cinema {
+    min-height: 56vh;
+  }
+
+  .cinema-tall {
+    min-height: 68vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+
+  .cinema-img {
+    transform: none;
+    inset: 0;
+  }
+
+  .season-media,
+  .season-media img {
+    transition: none;
+  }
+}

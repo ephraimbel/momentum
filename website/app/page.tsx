@@ -3,6 +3,8 @@ import PhoneFrame from "@/components/PhoneFrame";
 import Reveal from "@/components/Reveal";
 import RaceCalc from "@/components/RaceCalc";
 import Nav from "@/components/Nav";
+import Cinema from "@/components/Cinema";
+import { athleteBlur } from "@/components/athleteBlur";
 
 export default function Home() {
   return (
@@ -12,10 +14,13 @@ export default function Home() {
         <Hero />
         <Proof />
         <Pillars />
+        <CinemaStandard />
         <Gallery />
         <DeepDives />
+        <DistanceMarquee />
         <Predictor />
         <Goals />
+        <Seasons />
         <Manifesto />
         <Principles />
         <Pricing />
@@ -24,6 +29,118 @@ export default function Home() {
       </main>
       <Footer />
     </>
+  );
+}
+
+/** The first cinematic statement — the fog pack. Photography stays monochrome (the brand is ink
+ *  and paper); the single iridescent word is the earned accent. */
+function CinemaStandard() {
+  return (
+    <Cinema
+      src="/athletes/athlete-pack.jpg"
+      blur={athleteBlur["athlete-pack.jpg"]}
+      alt="A pack of marathoners emerging from morning fog"
+    >
+      <Reveal>
+        <p className="eyebrow eyebrow-light">The long game</p>
+        <h2 className="display cinema-title">
+          The work <span className="iri-text">compounds.</span>
+        </h2>
+        <p className="lede cinema-lede">
+          Every run measured. Every signal read. Every week adapted. momentum turns consistency
+          into fitness — and tells you the truth the whole way there.
+        </p>
+      </Reveal>
+    </Cinema>
+  );
+}
+
+/** Distance ticker — outline display type drifting past, Cadence-style. Decorative; hidden from
+ *  assistive tech, paused under reduce-motion. */
+function DistanceMarquee() {
+  const row = ["5K", "10K", "HALF", "MARATHON", "50K ULTRA"];
+  const items = [...row, ...row, ...row, ...row];
+  return (
+    <div className="marquee" aria-hidden>
+      <div className="marquee-track">
+        {items.map((t, i) => (
+          <span key={i}>
+            {t}
+            <em>·</em>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Editorial season trio — the macrocycle as photography: base, build, peak. */
+function Seasons() {
+  const cards = [
+    {
+      src: "/athletes/athlete-uphill.jpg",
+      blur: athleteBlur["athlete-uphill.jpg"],
+      alt: "A runner silhouetted against the sky, climbing at dusk",
+      n: "01",
+      h: "Base",
+      p: "Where the engine is built. Easy volume, laid down patiently.",
+    },
+    {
+      src: "/athletes/athlete-focus.jpg",
+      blur: athleteBlur["athlete-focus.jpg"],
+      alt: "A focused racer mid-stride on an empty road",
+      n: "02",
+      h: "Build",
+      p: "Where the work sharpens. Threshold, intervals, race-pace rehearsal.",
+    },
+    {
+      src: "/athletes/athlete-leaders.jpg",
+      blur: athleteBlur["athlete-leaders.jpg"],
+      alt: "Two leaders alone on the road in morning fog",
+      n: "03",
+      h: "Peak",
+      p: "Where it all shows up. Fresh legs, honest paces, race day.",
+    },
+  ];
+  return (
+    <section className="section" id="seasons" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head">
+            <p className="eyebrow">The season, periodized</p>
+            <h2 className="display">Base. Build. Peak.</h2>
+            <p className="lede">
+              momentum plans in real training blocks — and labels every week with why it exists.
+            </p>
+          </div>
+        </Reveal>
+        <div className="seasons">
+          {cards.map((c, i) => (
+            <Reveal key={c.h} delay={i * 110}>
+              <figure className="season">
+                <div className="season-media">
+                  <Image
+                    src={c.src}
+                    alt={c.alt}
+                    fill
+                    sizes="(max-width: 760px) 92vw, 30vw"
+                    quality={80}
+                    placeholder="blur"
+                    blurDataURL={c.blur}
+                    style={{ objectFit: "cover" }}
+                  />
+                </div>
+                <figcaption>
+                  <span className="season-n">{c.n}</span>
+                  <h4>{c.h}</h4>
+                  <p>{c.p}</p>
+                </figcaption>
+              </figure>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -472,9 +589,21 @@ function Manifesto() {
     <section className="section" id="method">
       <div className="wrap">
         <Reveal>
-        <div className="manifesto">
-          <div className="aura-m" aria-hidden />
-          <p className="eyebrow">The method</p>
+        <div className="manifesto manifesto-photo">
+          <div className="manifesto-media" aria-hidden>
+            <Image
+              src="/athletes/athlete-leaders.jpg"
+              alt=""
+              fill
+              sizes="(max-width: 1100px) 96vw, 1100px"
+              quality={80}
+              placeholder="blur"
+              blurDataURL={athleteBlur["athlete-leaders.jpg"]}
+              style={{ objectFit: "cover", objectPosition: "center 30%" }}
+            />
+          </div>
+          <div className="manifesto-shade" aria-hidden />
+          <p className="eyebrow eyebrow-light">The method</p>
           <h2 className="display">
             No red days. No guilt loops. <span className="iri-text-dark">Only momentum.</span>
           </h2>
@@ -604,20 +733,29 @@ function FAQ() {
 
 function FinalCTA() {
   return (
-    <section className="cta" id="download">
-      <div className="aura aura-3" aria-hidden style={{ left: "50%", transform: "translateX(-50%)", bottom: -260 }} />
-      <div className="wrap">
-        <h2 className="display">
-          keep <span className="iri-text">moving.</span>
-        </h2>
-        <p className="lede center">
-          Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
-        </p>
-        <a className="btn btn-ink" href="#">
-           Download on the App Store
-        </a>
-      </div>
-    </section>
+    <div id="download">
+      <Cinema
+        src="/athletes/athlete-dusk.jpg"
+        blur={athleteBlur["athlete-dusk.jpg"]}
+        alt="A lone runner silhouetted at dusk, reflected in still water"
+        tall
+        anchor="bottom"
+      >
+        <Reveal>
+          <div className="cta-cinema">
+            <h2 className="display cinema-title">
+              keep <span className="iri-text">moving.</span>
+            </h2>
+            <p className="lede cinema-lede">
+              Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
+            </p>
+            <a className="btn btn-paper" href="#">
+               Download on the App Store
+            </a>
+          </div>
+        </Reveal>
+      </Cinema>
+    </div>
   );
 }
 
