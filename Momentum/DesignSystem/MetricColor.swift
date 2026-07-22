@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// The analytics colour system for the Progress page. Kept intentionally restrained so the charts
-/// read as one clean family, not a rainbow: every line/area/sparkline uses the app's light
-/// periwinkle route accent, iridescence stays the "you are here / earned" pop on top, and the only
-/// other colour is a legible green/red on the trend percentages. Heart-rate zones keep their
-/// five-band palette — a recognised convention that classifies effort at a glance.
+/// The analytics colour system for the Progress page. Each metric *domain* owns exactly one ink,
+/// borrowed from the validated `Theme.Health` set (CVD-separated, ≥3:1 on both surfaces) — so the
+/// Trends charts read as distinct instruments, not one repeated squiggle. The doctrine holds:
+/// marks wear the domain ink, structure/text/axes stay monochrome, iridescence stays the earned
+/// "you are here" pop, and the free distance chart stays pure ink — colour arrives with Pro.
+/// Heart-rate zones keep their five-band palette — a recognised convention.
 enum MetricColor {
 
     // MARK: Trend direction — legible on the light card surface.
@@ -13,10 +14,22 @@ enum MetricColor {
     /// Trending the wrong way.
     static let negative = Color(hex: "E5484D")   // red
 
-    /// The single chart accent — the light route periwinkle, nudged a shade deeper/more saturated
-    /// than `Theme.route` (#B8C0FF) so a thin line reads clearly on the light card without losing
-    /// its light-purple character. Area fills + sparkline washes stay soft via low opacity.
+    /// The legacy single accent — the light route periwinkle. Still the tint for surfaces that
+    /// predate the domain inks (vitals sheets pass their own ink through `TrendChartCard`).
     static let chart = Color(hex: "8E9BF0")
+
+    // MARK: Domain inks — one per metric family, sourced from Theme.Health so the whole app
+    // colours each domain identically (Health segment, Trends charts, vitals strip sparklines).
+    /// Fitness — VO₂ / CTL, the long game. Deep periwinkle.
+    static let fitness = Theme.Health.sleepInk
+    /// Load / strain — effort accumulated. Peach ink, with `loadWash` for the safe-zone band.
+    static let load = Theme.Health.strainInk
+    static let loadWash = Theme.Health.strainWash
+    /// Pace / HR-derived speed metrics — crisp ice.
+    static let pace = Theme.Health.vitalsInk
+    /// Freshness / recovery-side reads — mint ink, with `freshWash` for "good zone" ribbons.
+    static let fresh = Theme.Health.recoveryInk
+    static let freshWash = Theme.Health.recoveryWash
 
     /// The five heart-rate zones, cool → hot (the Garmin/COROS convention).
     static let zones: [Color] = [
@@ -29,6 +42,15 @@ enum MetricColor {
 
     static func zone(_ index1: Int) -> Color { zones[max(0, min(4, index1 - 1))] }
 
-    /// Every summary metric shares the one chart accent.
-    static func of(_ kind: TrendAnalytics.SummaryMetric.Kind) -> Color { chart }
+    /// The domain ink for a summary metric — the vitals-strip sparklines carry each family's hue.
+    /// Cadence/climb stay monochrome (mechanics/terrain differentiate by form, not colour).
+    static func of(_ kind: TrendAnalytics.SummaryMetric.Kind) -> Color {
+        switch kind {
+        case .fitness: fitness
+        case .form: fresh
+        case .load: load
+        case .cadence, .climb: Theme.ink
+        case .efficiency: pace
+        }
+    }
 }

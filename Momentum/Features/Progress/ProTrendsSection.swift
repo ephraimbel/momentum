@@ -2,10 +2,11 @@ import SwiftUI
 import Charts
 
 /// The premium analytics layer for the Trends tab. Self-contained: hand it the workouts + units
-/// and it renders an at-a-glance vitals strip, the Fitness & Freshness (CTL·ATL·TSB) curve, and
-/// cadence/climb/efficiency trends — all in the app's chart language (mono line + faint area, the
-/// latest point in earned iridescence). Everything here is data the app already captures but never
-/// charted; gate the whole section with `.proLocked(.advancedAnalytics)` at the call site.
+/// and it renders an at-a-glance vitals strip, the full Fitness & Freshness PMC (CTL·ATL + the
+/// diverging Form strip), and cadence/climb/efficiency — each in its own honest form (dots vs a
+/// target zone, a mountain silhouette, a line against the efficient zone) and its domain ink,
+/// iridescence staying the earned "you are here" pop. Everything here is data the app already
+/// captures; gate the whole section with `.proLocked(.advancedAnalytics)` at the call site.
 struct ProTrendsSection: View {
     let workouts: [Workout]
     var distanceUnit: DistanceUnit = .auto
@@ -50,6 +51,7 @@ struct ProTrendsSection: View {
             if let model {
                 TrendVitalsStrip(metrics: model.metrics, imperial: imperial)
                 FitnessFreshnessCard(points: model.ffPoints, animate: appeared)
+                    .id("ffCard")   // --progress-scroll-ff sim-verification anchor
                 cadenceCard(model)
                 climbCard(model)
                 efficiencyCard(model)
@@ -88,29 +90,40 @@ struct ProTrendsSection: View {
 
     // MARK: Cadence · Climb · Efficiency (weekly)
 
+    /// Cadence — a dot plot: weekly samples read against the 174–186 target zone (180 is the
+    /// classic efficient turnover). Monochrome — mechanics differentiate by form, not colour.
     private func cadenceCard(_ model: Model) -> some View {
-        TrendChartCard(title: "Cadence", subtitle: "Weekly average · steps per minute",
+        TrendChartCard(title: "Cadence", subtitle: "Weekly average · the band is the efficient zone",
                        series: model.cadence, animate: appeared,
-                       reference: 180, referenceLabel: "180", // the classic efficient turnover
-                       explainer: MetricExplainers.cadence, tint: MetricColor.chart,
+                       reference: 180, referenceLabel: "180",
+                       explainer: MetricExplainers.cadence, tint: Theme.ink,
+                       form: .dots, band: 174...186, bandLabel: "TARGET",
+                       headline: true, headlineUnit: "spm",
                        format: { "\(Int($0.rounded()))" })
     }
 
+    /// Climb — a mountain silhouette: sharp linear peaks on a zero baseline, terrain rather than
+    /// a smoothed trend.
     private func climbCard(_ model: Model) -> some View {
         let series = model.climbMeters.map { TrendAnalytics.WeekValue(weekStart: $0.weekStart,
                                                                       value: imperial ? $0.value * 3.28084 : $0.value) }
-        let unit = imperial ? "feet" : "metres"
-        return TrendChartCard(title: "Climb", subtitle: "Total elevation gained per week · \(unit)",
-                              series: series, animate: appeared, filled: true,
-                              explainer: MetricExplainers.climb, tint: MetricColor.chart,
+        return TrendChartCard(title: "Climb", subtitle: "Elevation gained per week · your training terrain",
+                              series: series, animate: appeared,
+                              explainer: MetricExplainers.climb, tint: Theme.ink,
+                              form: .mountain,
+                              headline: true, headlineUnit: imperial ? "ft" : "m",
                               format: { Formatters.compact($0) })
     }
 
+    /// Aerobic efficiency — HR drift in the ice ink, read against the mint "efficient" zone
+    /// (under 5% drift on steady runs is the aerobically-fit read).
     private func efficiencyCard(_ model: Model) -> some View {
         TrendChartCard(title: "Aerobic efficiency",
                        subtitle: "Heart-rate drift on steady runs · lower is fitter",
                        series: model.efficiency, animate: appeared, lowerIsBetter: true,
-                       explainer: MetricExplainers.aerobicEfficiency, tint: MetricColor.chart,
+                       explainer: MetricExplainers.aerobicEfficiency, tint: MetricColor.pace,
+                       form: .line, band: 0...5, bandLabel: "EFFICIENT", bandTint: MetricColor.fresh,
+                       headline: true,
                        format: { String(format: "%.1f%%", $0) })
     }
 }
@@ -339,13 +352,26 @@ struct FitnessFreshnessCard: View {
 
     private var chart: some View {
         // The domain must clear FATIGUE too — ATL (7-day) spikes above CTL after a hard block, and
-        // a CTL-only ceiling let the dashed fatigue line shoot off the top of the card.
+        // a CTL-only ceiling let the dashed fatigue line shoot off the top of the card. It must
+        // also dip below zero for the Form bars (TSB goes negative when you're buried).
         let pts = plotted
         let maxY = max(pts.map(\.ctl).max() ?? 1, pts.map(\.atl).max() ?? 1)
+        let minTSB = pts.map(\.tsb).min() ?? 0
+        let floor = min(0, minTSB * 1.15)
         return Chart {
+            // FORM as a thin diverging strip around the zero line — fresh days rise mint, buried
+            // days dip peach (the sanctioned mint+peach pairing; position carries the sign). The
+            // full PMC read in one panel: the line is what you've built, the strip is what it cost.
+            ForEach(pts) { p in
+                BarMark(x: .value("Day", p.date), y: .value("Form", animate ? p.tsb : 0),
+                        width: .fixed(1.5))
+                    .foregroundStyle((p.tsb >= 0 ? MetricColor.fresh : MetricColor.load).opacity(0.38))
+            }
+            RuleMark(y: .value("Zero", 0))
+                .foregroundStyle(Theme.inkTertiary.opacity(0.35)).lineStyle(StrokeStyle(lineWidth: 1))
             ForEach(pts) { p in
                 AreaMark(x: .value("Day", p.date), y: .value("Fitness", animate ? p.ctl : 0))
-                    .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear], startPoint: .top, endPoint: .bottom))
+                    .foregroundStyle(LinearGradient(colors: [MetricColor.fitness.opacity(0.14), .clear], startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.monotone)
             }
             ForEach(pts) { p in
@@ -358,7 +384,7 @@ struct FitnessFreshnessCard: View {
             ForEach(pts) { p in
                 LineMark(x: .value("Day", p.date), y: .value("Fitness", animate ? p.ctl : 0),
                          series: .value("s", "ctl"))
-                    .foregroundStyle(MetricColor.chart)
+                    .foregroundStyle(MetricColor.fitness)
                     .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
@@ -368,12 +394,12 @@ struct FitnessFreshnessCard: View {
             }
             if let sel = scrub.pinned, let p = pts.first(where: { $0.date == sel }) {
                 TrendScrub.mark(at: sel,
-                                value: "Fitness \(Int(p.ctl.rounded())) · Fatigue \(Int(p.atl.rounded()))",
+                                value: "Fitness \(Int(p.ctl.rounded())) · Form \(p.tsb >= 0 ? "+" : "")\(Int(p.tsb.rounded()))",
                                 label: sel.formatted(.dateTime.month(.abbreviated).day()))
             }
         }
         .chartXSelection(value: $scrub.selection(dates: pts.map(\.date)))
-        .chartYScale(domain: 0...max(1, maxY * 1.12))
+        .chartYScale(domain: floor...max(1, maxY * 1.12))
         .chartXAxis {
             AxisMarks(values: .stride(by: .month)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated))
@@ -386,13 +412,21 @@ struct FitnessFreshnessCard: View {
                 AxisValueLabel().font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
             }
         }
-        .frame(height: 180)
+        .frame(height: 190)
     }
 
     private var legend: some View {
         HStack(spacing: Theme.Space.md) {
-            legendItem("Fitness", MetricColor.chart, dashed: false)
+            legendItem("Fitness", MetricColor.fitness, dashed: false)
             legendItem("Fatigue", Theme.inkTertiary, dashed: true)
+            // Form's dual swatch — mint above the line, peach below.
+            HStack(spacing: 5) {
+                HStack(spacing: 1) {
+                    RoundedRectangle(cornerRadius: 1).fill(MetricColor.fresh.opacity(0.7)).frame(width: 5, height: 8)
+                    RoundedRectangle(cornerRadius: 1).fill(MetricColor.load.opacity(0.7)).frame(width: 5, height: 8)
+                }
+                Text("Form ±").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            }
             Spacer()
             if let c = current {
                 Text("Fitness \(Int(c.ctl.rounded()))")
@@ -418,9 +452,13 @@ struct FitnessFreshnessCard: View {
 
 // MARK: - Generic weekly trend card (cadence / climb / efficiency)
 
-/// A weekly line/area chart in the shared chart language, with an optional reference line and a
-/// direction-aware latest-value pill. Used for the simpler single-series Pro trends.
+/// A weekly single-series chart in the shared card language — but each metric picks its honest
+/// FORM: `.line` for trends, `.bars` for magnitudes, `.dots` for samples against a target zone,
+/// `.mountain` for terrain. Optional reference line, "good zone" band, and the Oura-style
+/// big-number header (`headline`) so every card leads with its one-line answer.
 struct TrendChartCard: View {
+    enum ChartForm { case line, bars, dots, mountain }
+
     let title: String
     let subtitle: String
     let series: [TrendAnalytics.WeekValue]
@@ -431,19 +469,46 @@ struct TrendChartCard: View {
     var referenceLabel: String? = nil
     var explainer: MetricExplainer? = nil
     var tint: Color = Theme.ink
+    var form: ChartForm = .line
+    /// A "good zone" wash band (e.g. cadence 174–186, efficiency 0–5%) the marks read against.
+    var band: ClosedRange<Double>? = nil
+    var bandLabel: String? = nil
+    var bandTint: Color? = nil
+    /// Lead the card with the latest value in the display face + a direction-aware trend chip.
+    var headline: Bool = false
+    var headlineUnit: String? = nil
     let format: (Double) -> String
 
     @State private var scrub = ChartScrubState()   // tap-to-inspect any week (shared Trends mechanic)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                if headline {
+                    Text(title.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                        .foregroundStyle(Theme.inkTertiary)
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
                 }
                 Spacer(minLength: Theme.Space.sm)
                 if let explainer { MetricInfoButton(explainer: explainer) }
+            }
+            if headline {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(series.last.map { format($0.value) } ?? "—")
+                        .font(.display(30, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    if let headlineUnit {
+                        Text(headlineUnit).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer(minLength: Theme.Space.sm)
+                    if let t = trendPct, abs(t) >= 1 { trendChip(t) }
+                }
+                Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .padding(.bottom, Theme.Space.xs)
             }
             if series.count < 2 {
                 Text("Not enough data yet — keep logging.")
@@ -462,13 +527,60 @@ struct TrendChartCard: View {
         .accessibilityValue(series.last.map { "latest \(format($0.value))" } ?? subtitle)
     }
 
+    /// Latest week vs the average of the prior (up to) three — the headline's factual chip.
+    private var trendPct: Double? {
+        guard series.count >= 3, let last = series.last?.value else { return nil }
+        let prior = series.dropLast().suffix(3).map(\.value)
+        let avg = prior.reduce(0, +) / Double(prior.count)
+        guard abs(avg) > 0.0001 else { return nil }
+        return (last - avg) / abs(avg) * 100
+    }
+
+    /// A good-direction move earns the legible green; the other direction stays quiet ink —
+    /// no-shame, the zone/reference on the chart carries the judgment.
+    private func trendChip(_ t: Double) -> some View {
+        let good = lowerIsBetter ? t < 0 : t >= 0
+        return HStack(spacing: 1) {
+            Image(systemName: t >= 0 ? "arrow.up.right" : "arrow.down.right").font(.system(size: 9, weight: .black))
+            Text("\(min(99, Int(abs(t).rounded())))%").font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+        }
+        .foregroundStyle(good ? MetricColor.positive : Theme.inkSecondary)
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(Capsule().fill(good ? MetricColor.positive.opacity(0.12) : Theme.hairline.opacity(0.6)))
+    }
+
+    /// Bar width steps with the on-screen count so bars never touch (mirrors the Trends charts).
+    private var barWidth: CGFloat {
+        switch series.count {
+        case ...8: 18
+        case ...14: 10
+        default: 6
+        }
+    }
+
     private var chart: some View {
         let vals = series.map(\.value)
-        let lo = min(vals.min() ?? 0, reference ?? .greatestFiniteMagnitude)
-        let hi = max(vals.max() ?? 1, reference ?? -.greatestFiniteMagnitude)
+        var lo = vals.min() ?? 0
+        var hi = vals.max() ?? 1
+        if let reference { lo = min(lo, reference); hi = max(hi, reference) }
+        if let band { lo = min(lo, band.lowerBound); hi = max(hi, band.upperBound) }
         let pad = max((hi - lo) * 0.18, 1)
+        // Magnitude forms sit on a true zero baseline; trend forms zoom to the data.
+        let floor = (form == .bars || form == .mountain) ? 0 : lo - pad
         let last = series.last?.weekStart
         return Chart {
+            if let band {
+                RectangleMark(yStart: .value("Zone low", band.lowerBound),
+                              yEnd: .value("Zone high", band.upperBound))
+                    // An ink band needs less presence than a pastel one to read equally quiet.
+                    .foregroundStyle((bandTint ?? tint).opacity(bandTint == nil ? 0.06 : 0.12))
+                    .annotation(position: .overlay, alignment: .topTrailing) {
+                        if let bandLabel {
+                            Text(bandLabel).font(.system(size: 8, weight: .bold)).tracking(0.8)
+                                .foregroundStyle(Theme.inkTertiary).padding(3)
+                        }
+                    }
+            }
             if let reference {
                 RuleMark(y: .value("Reference", reference))
                     .foregroundStyle(Theme.inkTertiary.opacity(0.5))
@@ -481,30 +593,57 @@ struct TrendChartCard: View {
                     }
             }
             ForEach(series) { wk in
-                if filled {
-                    // Anchor the fill to the chart's floor, not the default y=0 baseline — otherwise
-                    // the gradient spills past the card whenever the domain doesn't start at zero.
-                    AreaMark(x: .value("Week", wk.weekStart),
-                             yStart: .value("floor", lo - pad),
-                             yEnd: .value("v", animate ? wk.value : lo - pad))
-                        .foregroundStyle(LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                switch form {
+                case .line:
+                    if filled {
+                        // Anchor the fill to the chart's floor, not the default y=0 baseline — otherwise
+                        // the gradient spills past the card whenever the domain doesn't start at zero.
+                        AreaMark(x: .value("Week", wk.weekStart),
+                                 yStart: .value("floor", lo - pad),
+                                 yEnd: .value("v", animate ? wk.value : lo - pad))
+                            .foregroundStyle(LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                            .interpolationMethod(.monotone)
+                    }
+                    LineMark(x: .value("Week", wk.weekStart), y: .value("v", animate ? wk.value : lo))
+                        .foregroundStyle(tint).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
+                case .mountain:
+                    // Terrain, not a trend — sharp linear peaks, a heavy-at-the-ridge gradient, no dots.
+                    AreaMark(x: .value("Week", wk.weekStart),
+                             yStart: .value("floor", 0),
+                             yEnd: .value("v", animate ? wk.value : 0))
+                        .foregroundStyle(LinearGradient(colors: [tint.opacity(0.30), tint.opacity(0.03)], startPoint: .top, endPoint: .bottom))
+                        .interpolationMethod(.linear)
+                    LineMark(x: .value("Week", wk.weekStart), y: .value("v", animate ? wk.value : 0))
+                        .foregroundStyle(tint.opacity(0.8)).lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .bevel))
+                        .interpolationMethod(.linear)
+                case .bars:
+                    BarMark(x: .value("Week", wk.weekStart), y: .value("v", animate ? wk.value : 0),
+                            width: .fixed(barWidth))
+                        .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial())
+                                                              : AnyShapeStyle(tint.opacity(0.85)))
+                        .cornerRadius(3)
+                case .dots:
+                    PointMark(x: .value("Week", wk.weekStart), y: .value("v", animate ? wk.value : lo))
+                        .foregroundStyle(wk.weekStart == last ? AnyShapeStyle(IridescentMaterial())
+                                                              : AnyShapeStyle(tint.opacity(0.85)))
+                        .symbolSize(wk.weekStart == last ? 90 : 40)
                 }
-                LineMark(x: .value("Week", wk.weekStart), y: .value("v", animate ? wk.value : lo))
-                    .foregroundStyle(tint).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                    .interpolationMethod(.monotone)
             }
-            if let wk = series.last, animate, scrub.pinned == nil {
+            if form == .line || form == .mountain, let wk = series.last, animate {
                 PointMark(x: .value("Week", wk.weekStart), y: .value("v", wk.value))
-                    .foregroundStyle(IridescentMaterial()).symbolSize(90)
-                    .annotation(position: .top, spacing: 6) { valuePill(format(wk.value)) }
+                    .foregroundStyle(IridescentMaterial()).symbolSize(form == .mountain ? 60 : 90)
+                    .annotation(position: .top, spacing: 6) {
+                        // The pill only where there's no big-number header saying the same thing.
+                        if !headline, scrub.pinned == nil { valuePill(format(wk.value)) }
+                    }
             }
             if let sel = scrub.pinned, let wk = series.first(where: { $0.weekStart == sel }) {
                 TrendScrub.mark(at: sel, value: format(wk.value), label: TrendScrub.weekLabel(sel))
             }
         }
         .chartXSelection(value: $scrub.selection(dates: series.map(\.weekStart)))
-        .chartYScale(domain: (lo - pad)...(hi + pad))
+        .chartYScale(domain: floor...(hi + pad))
         .chartXAxis {
             AxisMarks(values: .stride(by: .weekOfYear, count: max(2, series.count / 5))) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())

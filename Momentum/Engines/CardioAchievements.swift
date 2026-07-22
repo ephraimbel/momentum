@@ -38,7 +38,8 @@ enum CardioAchievements {
         // faster and would corrupt the run PRs), and only distances actually covered.
         if workout.type == .run {
             let pts = samplePoints(gps)
-            for (meters, name) in [(1000.0, "1K"), (5000.0, "5K"), (10000.0, "10K")] {
+            for (meters, name) in [(1000.0, "1K"), (5000.0, "5K"), (10000.0, "10K"),
+                                   (21_097.5, "half"), (42_195.0, "marathon"), (50_000.0, "50K")] {
                 guard gps.distanceM >= meters, let cur = CardioMetrics.fastestWindow(pts, distanceM: meters) else { continue }
                 let priorBest = prior.compactMap { w -> TimeInterval? in
                     guard let g = w.gps, g.distanceM >= meters else { return nil }
@@ -49,6 +50,9 @@ enum CardioAchievements {
                     case 1000: .fastest1k
                     case 5000: .fastest5k
                     case 10000: .fastest10k
+                    case 21_097.5: .fastestHalf
+                    case 42_195.0: .fastestMarathon
+                    case 50_000.0: .fastest50k
                     default: nil
                     }
                     hits.append(Hit(label: "Fastest \(name)", detail: Formatters.duration(s: cur),

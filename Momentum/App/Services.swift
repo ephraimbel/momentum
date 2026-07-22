@@ -142,6 +142,11 @@ protocol AIServing: AnyObject {
 protocol PaywallServing: AnyObject {
     /// Single source of truth for Pro gating (PRD §10). Stubbed true-for-dev in Phase 0.
     func isEntitled(to feature: Feature) -> Bool
+    /// Open the paywall for a locked feature (no-op when already entitled) — presentation is the
+    /// other half of gating, so surfaces that hold only the protocol (service-layer callers like
+    /// the summary's plan-proposal card) can gate-and-present without reaching for the concrete
+    /// `PaywallController`. Added 2026-07-22 when the first such caller appeared.
+    func present(for feature: Feature)
 }
 @MainActor
 protocol NotificationServing: AnyObject {
@@ -281,6 +286,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {
     func isEntitled(to feature: Feature) -> Bool { true }
+    func present(for feature: Feature) {}   // everything's entitled — there's never a wall to show
 }
 /// No-op voice coach for previews/tests.
 @MainActor

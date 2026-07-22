@@ -257,6 +257,10 @@ final class HealthService: HealthServing {
             importedWorkouts.append(workout)
             count += 1
         }
+        // One award pass for the whole batch (not per workout — sync walks full history): a
+        // Garmin/Watch run that crossed a milestone earns its coin without opening the app's
+        // own save flow. Backdated history persists already-seen (AwardsBook's freshness window).
+        if count > 0 { AwardsBook.sync(in: context) }
 
         let committed = Self.commitImport(
             count: count, imported: imported, saved: saved,

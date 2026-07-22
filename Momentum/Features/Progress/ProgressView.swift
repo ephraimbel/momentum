@@ -40,6 +40,7 @@ struct ProgressScreen: View {
     @State private var aggregatedForKey = ""                 // .task(id:) re-fires on every tab visit; only re-walk when data (or the day) moved
     @State private var showAllAdaptations = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     enum Segment: String, CaseIterable, Identifiable {
         case trends = "Trends", health = "Health", history = "History"
@@ -176,11 +177,8 @@ struct ProgressScreen: View {
     /// Full-history weekly distance buckets — the season chart and volume delta read the
     /// workouts themselves (snapshots only accumulate one per week of app use).
     @State private var cachedWeekVolumes: [(week: Date, meters: Double)]?
-    /// Per-render O(N) walks folded into the cache pass: the 12-week distance tile and the
-    /// 28-day intensity mix re-walked every workout on each Trends body evaluation.
-    /// Stored in METRES (SI everywhere; convert at display time) — it used to cache a pre-rounded
-    /// kilometre count, which is what made the tile below it read "km" to a miles athlete.
-    @State private var cachedDistance12wkM: Double = 0
+    /// Per-render O(N) walks folded into the cache pass: the 28-day intensity mix re-walked
+    /// every workout on each Trends body evaluation.
     @State private var cachedIntensityMix: IntensityMix.Mix?
     /// Whether any lifting history exists — gates the MUSCLE FOCUS rail target (running lights
     /// leg muscles too, but the strength section only mounts with actual strength workouts).
@@ -247,9 +245,6 @@ struct ProgressScreen: View {
         refreshWindowed()
         cachedFormPoint = computeFormPoint()
         cachedWeekVolumes = computeWeekVolumes()
-        let cutoff12 = Calendar.current.date(byAdding: .weekOfYear, value: -12, to: Date()) ?? Date()
-        cachedDistance12wkM = workouts.filter { $0.startedAt >= cutoff12 }
-            .compactMap { $0.gps?.distanceM }.reduce(0, +)
         cachedIntensityMix = computeIntensityMix()
         cachedHasStrength = workouts.contains { $0.type.isStrengthStyle && $0.strength != nil }
     }
@@ -318,6 +313,9 @@ struct ProgressScreen: View {
                 // prBadgeIDs — running the one-time backfill after it left History badge-less
                 // for the whole first session. Flag-guarded: one UserDefaults read thereafter.
                 RecordsBook.backfillIfNeeded(in: context)
+                // Awards ride the same visit: history that predates the awards system earns its
+                // coins here (already-seen — no celebration spam for months-old milestones).
+                AwardsBook.sync(in: context)
                 withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
                 aggregatedForKey = aggregateKey
             }
@@ -447,28 +445,43 @@ struct ProgressScreen: View {
                     },
                                  onLockedTap: { paywallController.present(for: .advancedAnalytics) })
                     .reveal(0)
-                    // FREE — distance is the one chart everyone gets: total + miles per week.
+                    // The page reads as a structured report — Endurance / Strength / Coach —
+                    // each chapter opened by an editorial masthead, so the two disciplines
+                    // never blur into one stream of look-alike cards.
+                    // FREE — distance is the one chart everyone gets; the window picker sits
+                    // with the chapter it governs.
+                    trendsSectionHeader("01", "Endurance", "Volume · speed · engine · racing")
+                        .reveal(0.02)
                     HStack { Spacer(); trendRangePicker }
                         .reveal(0.02)
                     distanceChart(insights).reveal(0.03).id("distanceChart")
                     // PRO — the fitness read (VO₂max), heart-rate zones, load/pace/intensity, the
                     // deep-dive analytics, and the coaching. One unlock opens the whole premium page.
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
-                        fitnessHero().id("fitness")
-                        hrZonesCard.id("hrZones")
-                        trendMetrics()
                         loadChart(insights)
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
-                        // The fitness/freshness curve, cadence, climb, aerobic efficiency.
+                        fitnessHero().id("fitness")
+                        hrZonesCard.id("hrZones")
+                        // The engine deep-dive: vitals strip, fitness/freshness, cadence, climb, efficiency.
                         ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit, pro: isAnalyticsPro).id("proTrends")
-                        // Strength progression — renders nothing without lifting history.
+                        raceOutlook()
+                        // STRENGTH — its own chapter, deliberately monochrome (the strength family's
+                        // ink-and-iridescence look). Header and section both vanish without lifting history.
+                        if cachedHasStrength {
+                            trendsSectionHeader("02", "Strength", "Lifts · volume · balance")
+                                .padding(.top, Theme.Space.sm)
+                        }
                         StrengthProgressSection(workouts: workouts, weightUnit: weightUnit, pro: isAnalyticsPro).id("strengthTrends")
+                        // COACH — the cross-discipline read: today's readiness hand-off, the AI
+                        // coach's verdict, and what Momentum has learned about you.
+                        trendsSectionHeader("03", "Coach", "Readiness · verdict · what we've learned")
+                            .padding(.top, Theme.Space.sm)
+                            .id("coachHead")
                         // "How am I right now" is the Health segment's story — Trends keeps only
                         // the compact hand-off strip (the retired formCard/recoveryCard/signalsRow
                         // depth all lives there now; Form/TSB stays with FitnessFreshnessCard above).
                         readinessStrip.id("formRace")
-                        raceOutlook()
                         coachCard(insights)
                         athleteStory
                     }
@@ -500,11 +513,19 @@ struct ProgressScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-mix") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("intensityMix", anchor: .center) }
                 }
+                // These two live BELOW the async Pro sections — scroll after the models resolve
+                // (at 0.9s the sections are still skeleton-height and the anchor lands too deep).
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-protrends") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("proTrends", anchor: .top) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { proxy.scrollTo("proTrends", anchor: .top) }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-strength") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("strengthTrends", anchor: .top) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { proxy.scrollTo("strengthTrends", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-ff") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { proxy.scrollTo("ffCard", anchor: .top) }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-scroll-coach") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { proxy.scrollTo("coachHead", anchor: .top) }
                 }
                 // --trend-range-{1m,3m,6m,1y}: preset the window so the Athlete Panel + picker can be
                 // verified without pixel-tapping. Fires on its own (panel stays at top); pair it with
@@ -844,10 +865,10 @@ struct ProgressScreen: View {
             let lo = series.map(\.vo2).min() ?? 0, hi = series.map(\.vo2).max() ?? 1
             Chart(series, id: \.date) { pt in
                 AreaMark(x: .value("W", pt.date, unit: .weekOfYear), y: .value("VO2", animateCharts ? pt.vo2 : lo))
-                    .foregroundStyle(LinearGradient(colors: [Theme.ink.opacity(0.08), .clear], startPoint: .top, endPoint: .bottom))
+                    .foregroundStyle(LinearGradient(colors: [MetricColor.fitness.opacity(0.12), .clear], startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.monotone)
                 LineMark(x: .value("W", pt.date, unit: .weekOfYear), y: .value("VO2", animateCharts ? pt.vo2 : lo))
-                    .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(MetricColor.fitness).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
                 if pt.date == last {
                     PointMark(x: .value("W", pt.date, unit: .weekOfYear), y: .value("VO2", animateCharts ? pt.vo2 : lo))
@@ -1001,31 +1022,6 @@ struct ProgressScreen: View {
         .background { if isGoal { RoundedRectangle(cornerRadius: 11).fill(IridescentMaterial()).opacity(0.10) } }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(RacePredictor.label(forRaceM: race.meters))\(isGoal ? ", your goal" : ""): projected \(Formatters.duration(s: timeS))")
-    }
-
-    /// The at-a-glance trend row — free + up top, so "how I'm trending" reads before the Pro charts.
-    private func trendMetrics() -> some View {
-        let paceFaster = insights.paceTrendPct < -1
-        // Folded into refreshAggregates — this ran per render pass.
-        let far = Formatters.wholeDistance(meters: cachedDistance12wkM, unit: distanceUnit)
-        return HStack(spacing: Theme.Space.sm) {
-            metricTile(paceFaster ? "▲ \(Int(abs(insights.paceTrendPct).rounded()))%" : "Steady",
-                       paceFaster ? "Faster / 8 wk" : "Pace", iris: paceFaster)
-            metricTile("\(far.value)", "\(far.unit) · 12 wk", iris: false)
-            metricTile("\(profiles.first?.prs.count ?? 0)", "PRs", iris: false)
-        }
-    }
-
-    private func metricTile(_ value: String, _ label: String, iris: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.display(19, weight: .heavy)).monospacedDigit()
-                // "Faster" is a good-direction move → legible emerald, matching the vitals chips.
-                .foregroundStyle(iris ? AnyShapeStyle(MetricColor.positive) : AnyShapeStyle(Theme.ink))
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.5).foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 12).padding(.horizontal, Theme.Space.md)
-        .background(card)
     }
 
     // MARK: - History (clean session feed)
@@ -1479,43 +1475,38 @@ struct ProgressScreen: View {
 
     // MARK: Charts
 
-    /// "↑12%" / "↓8%" vs the prior 3-week average; empty when essentially flat or no data.
-    private func trendSuffix(_ pct: Double) -> String {
-        guard abs(pct) >= 1 else { return "" }
-        return " · \(pct >= 0 ? "↑" : "↓")\(Int(abs(pct).rounded()))%"
-    }
-
-    /// Pace improves when seconds-per-km drops, so a negative trend reads as "faster".
-    private func paceTrendSuffix(_ pct: Double) -> String {
-        guard abs(pct) >= 1 else { return "" }
-        return pct < 0 ? " · \(Int(abs(pct).rounded()))% faster" : " · \(Int(pct.rounded()))% slower"
-    }
-
-    /// Weekly average running pace (PRD §10 pace trends) — lower is faster; weeks without runs are
-    /// dropped so a rest week doesn't read as a cliff.
+    /// PACE — the speed instrument: a crisp ice line with the axis INVERTED so getting faster
+    /// reads as climbing (the Strava/Garmin convention — a dropping line for improving pace reads
+    /// as decline). Weeks without runs are dropped so a rest week doesn't read as a cliff.
     private func paceChart(_ insights: ProgressInsights) -> some View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
         let paced = trendPoints(insights).filter { $0.avgPaceSPerKm > 0 }
         let slowest = paced.map(\.avgPaceSPerKm).max() ?? 0
         let fastest = paced.map(\.avgPaceSPerKm).min() ?? 1
         let last = paced.last?.date
-        let subtitle = trendIsDaily ? "Per \(unit), by day" : "Per \(unit)\(paceTrendSuffix(insights.paceTrendPct))"
+        let latest = paced.last.map { paceMMSS($0.avgPaceSPerKm) }
+        let subtitle = trendIsDaily ? "Average running pace by day · faster reads up"
+                                    : "Average running pace · faster reads up"
+        let faster = insights.paceTrendPct < -1
+        let delta: ChartDelta? = (!trendIsDaily && abs(insights.paceTrendPct) >= 1)
+            ? ChartDelta(text: faster ? "↑\(Int(abs(insights.paceTrendPct).rounded()))% faster"
+                                      : "↓\(Int(insights.paceTrendPct.rounded()))% slower",
+                         good: faster)
+            : nil
         return chartSection(trendIsDaily ? "Daily pace" : "Weekly pace", subtitle: subtitle,
-                            explainer: MetricExplainers.weeklyPace) {
+                            headline: latest, headlineUnit: "/\(unit)",
+                            delta: delta, explainer: MetricExplainers.weeklyPace) {
             if paced.count < 2 { notEnoughData } else {
                 Chart {
                     ForEach(paced) { p in
                         LineMark(x: .value("Date", p.date, unit: trendUnit),
                                  y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                            .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            .foregroundStyle(MetricColor.pace).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                             .interpolationMethod(.monotone)
                         PointMark(x: .value("Date", p.date, unit: trendUnit),
                                   y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
+                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.pace))
                             .symbolSize(p.date == last ? 90 : 22)
-                            .annotation(position: .top, spacing: 6) {
-                                if animateCharts, scrubPace.pinned == nil, p.date == last { valuePill(paceMMSS(p.avgPaceSPerKm)) }
-                            }
                     }
                     if let sel = scrubPace.pinned, let p = paced.first(where: { $0.date == sel }) {
                         TrendScrub.mark(at: sel, unit: trendUnit,
@@ -1524,7 +1515,8 @@ struct ProgressScreen: View {
                 }
                 .chartXSelection(value: $scrubPace.selection(dates: paced.map(\.date)))
                 .chartXScale(domain: paddedDomain(paced.map(\.date)))
-                .chartYScale(domain: (fastest * 0.93)...(slowest * 1.07))
+                // Array domain, slowest first → the y-axis runs slow-at-bottom to fast-at-top.
+                .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
                 .chartXAxis { trendAxis(insights.weeks.count) }
                 .chartYAxis { paceAxis }
                 .frame(height: 172)
@@ -1532,121 +1524,110 @@ struct ProgressScreen: View {
         }
     }
 
+    /// TRAINING LOAD — the strain instrument (Whoop's job, our doctrine): peach strain-ink bars
+    /// read against your steady zone, the ACWR sweet spot (0.8–1.3× your 4-week norm) drawn as a
+    /// soft wash band. Every bar answers "was that week productive or a spike?" at a glance.
     private func loadChart(_ insights: ProgressInsights) -> some View {
         let pts = trendPoints(insights)
         let maxLoad = pts.map(\.load).max() ?? 0
         let last = pts.last?.date
-        // The "usual" baseline is a WEEKLY norm — meaningless against daily bars, so it's hidden in
-        // the Week view (a daily load sits far below a weekly average and would float off the top).
+        // Daily view headlines the week-to-date total (same honesty rule as distance).
+        let latest = trendIsDaily ? pts.reduce(0) { $0 + $1.load } : pts.last?.load ?? 0
+        // The zone is a WEEKLY norm — meaningless against daily bars, so it's hidden in the Week
+        // view (a daily load sits far below a weekly average and would float off the top).
         let usual = trendIsDaily ? 0 : insights.chronic   // 4-week average weekly load = own baseline
         let barW: CGFloat = trendIsDaily ? 24 : loadBarWidth(insights.weeks.count)
-        let subtitle = "Effort × time, every sport\(trendIsDaily ? ", by day" : trendSuffix(insights.loadTrendPct))"
+        let subtitle = trendIsDaily
+            ? "This week so far · effort × time, every sport"
+            : "This week · the band is your steady zone (0.8–1.3× your norm)"
+        // Load has no "good" direction — the chip states the move, the zone judges it.
+        let delta: ChartDelta? = (!trendIsDaily && abs(insights.loadTrendPct) >= 1)
+            ? ChartDelta(text: "\(insights.loadTrendPct >= 0 ? "↑" : "↓")\(Int(abs(insights.loadTrendPct).rounded()))%", good: false)
+            : nil
         return chartSection(trendIsDaily ? "Daily training load" : "Weekly training load", subtitle: subtitle,
-                            explainer: MetricExplainers.trainingLoad) {
+                            headline: maxLoad > 0 ? Formatters.compact(latest) : nil, headlineUnit: "load",
+                            delta: delta, explainer: MetricExplainers.trainingLoad) {
             if maxLoad <= 0 { notEnoughData } else {
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    Chart {
-                        ForEach(pts) { p in
-                            // Bars slim down as the window widens so 13 or 26 weeks never collide.
-                            BarMark(x: .value("Date", p.date, unit: trendUnit),
-                                    y: .value("Load", animateCharts ? p.load : 0),
-                                    width: .fixed(barW))
-                                // Earned-iridescent only on the current bar; prior ones are clean ink.
-                                .foregroundStyle(p.date == last
-                                                 ? AnyShapeStyle(IridescentMaterial())
-                                                 : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
-                                .cornerRadius(3)
-                                .annotation(position: .top, spacing: 5) {
-                                    if animateCharts, scrubLoad.pinned == nil, p.date == last, p.load > 0 { valuePill(Formatters.compact(p.load)) }
-                                }
-                        }
-                        // Your recent norm — each bar reads as above/below "usual" rather than a bare number.
-                        if usual > 0, animateCharts {
-                            RuleMark(y: .value("Usual", usual))
-                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                                .foregroundStyle(Theme.inkTertiary.opacity(0.55))
-                                .annotation(position: .top, alignment: .leading, spacing: 1) {
-                                    Text("usual").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                                }
-                        }
-                        if let sel = scrubLoad.pinned, let p = pts.first(where: { $0.date == sel }) {
-                            TrendScrub.mark(at: sel, unit: trendUnit,
-                                            value: Formatters.compact(p.load), label: scrubDateLabel(sel))
-                        }
+                Chart {
+                    // The steady zone first, so bars draw over it.
+                    if usual > 0, animateCharts {
+                        RectangleMark(yStart: .value("Zone low", usual * 0.8),
+                                      yEnd: .value("Zone high", usual * 1.3))
+                            // The pastel wash needs less presence on charcoal to stay a whisper.
+                            .foregroundStyle(MetricColor.loadWash.opacity(colorScheme == .dark ? 0.18 : 0.28))
+                        RuleMark(y: .value("Usual", usual))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            .foregroundStyle(MetricColor.load.opacity(0.45))
+                            .annotation(position: .top, alignment: .leading, spacing: 1) {
+                                Text("usual").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                            }
                     }
-                    .chartXSelection(value: $scrubLoad.selection(dates: pts.map(\.date)))
-                    .chartXScale(domain: paddedDomain(pts.map(\.date)))
-                    .chartYScale(domain: 0...max(1, maxLoad * 1.18))
-                    .chartXAxis { trendAxis(insights.weeks.count) }
-                    .chartYAxis { valueAxis }
-                    .frame(height: 172)
-                    Text(trendIsDaily
-                         ? "Runs and lifts on one scale — how hard × how long you trained each day this week."
-                         : "Runs and lifts on one scale — how hard × how long you trained. The line is your recent norm.")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(pts) { p in
+                        // Bars slim down as the window widens so 13 or 26 weeks never collide;
+                        // earned-iridescent only on the current bar.
+                        BarMark(x: .value("Date", p.date, unit: trendUnit),
+                                y: .value("Load", animateCharts ? p.load : 0),
+                                width: .fixed(barW))
+                            .foregroundStyle(p.date == last
+                                             ? AnyShapeStyle(IridescentMaterial())
+                                             : AnyShapeStyle(MetricColor.load.opacity(0.85)))
+                            .cornerRadius(3)
+                    }
+                    if let sel = scrubLoad.pinned, let p = pts.first(where: { $0.date == sel }) {
+                        TrendScrub.mark(at: sel, unit: trendUnit,
+                                        value: Formatters.compact(p.load), label: scrubDateLabel(sel))
+                    }
                 }
+                .chartXSelection(value: $scrubLoad.selection(dates: pts.map(\.date)))
+                .chartXScale(domain: paddedDomain(pts.map(\.date)))
+                .chartYScale(domain: 0...max(1, maxLoad * 1.18, usual * 1.4))
+                .chartXAxis { trendAxis(insights.weeks.count) }
+                .chartYAxis { valueAxis }
+                .frame(height: 172)
             }
         }
     }
 
+    /// DISTANCE — the free flagship, and the page's monochrome statement: bold ink bars (a
+    /// magnitude wants bars, not a squiggle), the current bar glinting iridescent. Bevel-clean;
+    /// colour arrives with the Pro domain charts below.
     private func distanceChart(_ insights: ProgressInsights) -> some View {
         let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
         func disp(_ m: Double) -> Double { distanceUnit.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000 }
+        func short(_ v: Double) -> String { v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v) }
         let pts = trendPoints(insights)
         let maxDist = pts.map { disp($0.distanceM) }.max() ?? 0
         let last = pts.last?.date
-        let miles = unit == "mi" ? "Miles" : "Kilometres"
+        // Daily view headlines the week-to-date total (a rest-day "0.0" is honest but tells the
+        // athlete nothing); weekly views headline the current week's bar.
+        let latest = trendIsDaily ? pts.reduce(0) { $0 + disp($1.distanceM) }
+                                  : pts.last.map { disp($0.distanceM) } ?? 0
+        let miles = unit == "mi" ? "miles" : "kilometres"
         let title = trendIsDaily ? "Daily distance" : "Weekly distance"
-        let subtitle = trendIsDaily ? "\(miles) this week, by day"
-                                    : "\(miles) per week\(trendSuffix(insights.distanceTrendPct))"
-        return chartSection(title, subtitle: subtitle, explainer: MetricExplainers.weeklyDistance) {
+        let subtitle = trendIsDaily ? "This week so far · \(miles) by day"
+                                    : "This week · \(miles) per week, \(trendRange.windowPhrase)"
+        let delta: ChartDelta? = (!trendIsDaily && abs(insights.distanceTrendPct) >= 1)
+            ? ChartDelta(text: "\(insights.distanceTrendPct >= 0 ? "↑" : "↓")\(Int(abs(insights.distanceTrendPct).rounded()))%",
+                         good: insights.distanceTrendPct >= 0)
+            : nil
+        return chartSection(title, subtitle: subtitle,
+                            headline: maxDist > 0 ? short(latest) : nil, headlineUnit: unit,
+                            delta: delta, explainer: MetricExplainers.weeklyDistance) {
             if maxDist <= 0 { notEnoughData } else {
                 Chart {
                     ForEach(pts) { p in
-                        if trendIsDaily {
-                            // Daily bars read cleanly across a rest-day-punctuated week (a line would dip
-                            // to zero and zigzag); the current day glints iridescent.
-                            BarMark(x: .value("Day", p.date, unit: .day),
-                                    y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
-                                    width: .fixed(24))
-                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
-                                                                : AnyShapeStyle(MetricColor.chart.opacity(0.9)))
-                                .cornerRadius(3)
-                                .annotation(position: .top, spacing: 5) {
-                                    if animateCharts, scrubDistance.pinned == nil, p.date == last, disp(p.distanceM) > 0 {
-                                        let v = disp(p.distanceM)
-                                        valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
-                                    }
-                                }
-                        } else {
-                            AreaMark(x: .value("Week", p.date, unit: .weekOfYear),
-                                     y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
-                                .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.20), .clear],
-                                                                startPoint: .top, endPoint: .bottom))
-                                .interpolationMethod(.monotone)
-                            LineMark(x: .value("Week", p.date, unit: .weekOfYear),
-                                     y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
-                                .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                                .interpolationMethod(.monotone)
-                            if disp(p.distanceM) > 0 {
-                                PointMark(x: .value("Week", p.date, unit: .weekOfYear),
-                                          y: .value("Distance", animateCharts ? disp(p.distanceM) : 0))
-                                    .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.chart))
-                                    .symbolSize(p.date == last ? 90 : 22)
-                                    .annotation(position: .top, spacing: 6) {
-                                        if animateCharts, scrubDistance.pinned == nil, p.date == last {
-                                            let v = disp(p.distanceM)
-                                            valuePill(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
-                                        }
-                                    }
-                            }
-                        }
+                        // Bars read cleanly across rest weeks and rest days alike; widths slim
+                        // as the window widens so 26 weeks never collide.
+                        BarMark(x: .value("Date", p.date, unit: trendUnit),
+                                y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
+                                width: .fixed(trendIsDaily ? 24 : loadBarWidth(pts.count)))
+                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
+                                                            : AnyShapeStyle(Theme.ink.opacity(0.82)))
+                            .cornerRadius(3)
                     }
                     if let sel = scrubDistance.pinned, let p = pts.first(where: { $0.date == sel }) {
-                        let v = disp(p.distanceM)
                         TrendScrub.mark(at: sel, unit: trendUnit,
-                                        value: "\(v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v)) \(unit)",
+                                        value: "\(short(disp(p.distanceM))) \(unit)",
                                         label: scrubDateLabel(sel))
                     }
                 }
@@ -1766,16 +1747,6 @@ struct ProgressScreen: View {
         trendIsDaily ? TrendScrub.dayLabel(d) : TrendScrub.weekLabel(d)
     }
 
-    /// A small monospaced value callout pinned to the current week's mark — the "where you are now"
-    /// number, so the latest point reads precisely without labelling every week.
-    private func valuePill(_ text: String) -> some View {
-        Text(text).font(.system(size: 11, weight: .bold)).monospacedDigit()
-            .foregroundStyle(Theme.ink)
-            .padding(.horizontal, 7).padding(.vertical, 3)
-            .background(Capsule().fill(Theme.background))
-            .overlay(Capsule().stroke(Theme.hairline))
-    }
-
     /// Quiet placeholder when a chart has fewer than ~2 weeks of real data, so it never shows a lone
     /// floating bar or point.
     private var notEnoughData: some View {
@@ -1788,19 +1759,73 @@ struct ProgressScreen: View {
         .frame(height: 100)
     }
 
+    /// An editorial chapter masthead — display-face title, an index numeral, a hairline rule.
+    /// The Trends page reads as a structured report (01 Endurance / 02 Strength / 03 Coach)
+    /// instead of one continuous stream of cards.
+    private func trendsSectionHeader(_ index: String, _ title: String, _ sub: String) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            HStack(alignment: .lastTextBaseline) {
+                Text(title).font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
+                Spacer()
+                Text(index).font(.display(13, weight: .bold)).monospacedDigit()
+                    .tracking(1).foregroundStyle(Theme.inkTertiary)
+            }
+            Text(sub.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                .foregroundStyle(Theme.inkTertiary)
+            Rectangle().fill(Theme.hairline).frame(height: 1).padding(.top, Theme.Space.xs)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// A chart headline's trend chip. Good-direction moves earn the legible green; the other
+    /// direction stays quiet ink — no-shame, the chart itself tells that story.
+    private struct ChartDelta { let text: String; let good: Bool }
+
+    @ViewBuilder
+    private func deltaChip(_ d: ChartDelta) -> some View {
+        Text(d.text).font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+            .foregroundStyle(d.good ? MetricColor.positive : Theme.inkSecondary)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().fill(d.good ? MetricColor.positive.opacity(0.12)
+                                              : Theme.hairline.opacity(0.6)))
+    }
+
+    /// The shared card anatomy for a trend chart, Oura/Whoop-style: an uppercase eyebrow, a big
+    /// display-face headline (the current value — the card's one-line answer), a trend chip, a
+    /// quiet context caption, then the plot. Callers without a headline keep the old title header.
     private func chartSection<C: View>(_ title: String, subtitle: String,
+                                       headline: String? = nil, headlineUnit: String? = nil,
+                                       delta: ChartDelta? = nil,
                                        explainer: MetricExplainer? = nil,
                                        @ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                if headline != nil {
+                    sectionTitle(title.uppercased())
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
                 }
                 if let explainer {
                     Spacer(minLength: Theme.Space.sm)
                     MetricInfoButton(explainer: explainer)
                 }
+            }
+            if let headline {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(headline).font(.display(30, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    if let headlineUnit {
+                        Text(headlineUnit).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Spacer(minLength: Theme.Space.sm)
+                    if let delta { deltaChip(delta) }
+                }
+                Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .padding(.bottom, Theme.Space.xs)
             }
             content()
         }
@@ -1810,7 +1835,7 @@ struct ProgressScreen: View {
         // Collapse the chart into one clean spoken summary (the plot itself is hard to navigate aurally).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
-        .accessibilityValue(subtitle
+        .accessibilityValue(((headline.map { "\($0) \(headlineUnit ?? ""), " } ?? "") + subtitle)
             .replacingOccurrences(of: "↑", with: "up ")
             .replacingOccurrences(of: "↓", with: "down ")
             .replacingOccurrences(of: " · ", with: ", "))

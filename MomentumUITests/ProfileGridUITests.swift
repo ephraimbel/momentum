@@ -35,9 +35,10 @@ final class ProfileGridUITests: XCTestCase {
 
         // Highlights tab carries the moved lifetime/how-you-train/consistency sections.
         highlightsTab.tap()
-        XCTAssertTrue(app.staticTexts["Lifetime"].waitForExistence(timeout: 5), "Lifetime section not in Highlights.")
-        XCTAssertTrue(app.staticTexts["How you train"].exists, "How-you-train not in Highlights.")
-        XCTAssertTrue(app.staticTexts["Consistency"].exists, "Consistency not in Highlights.")
+        // Section headers are uppercased editorial rules (2026-07-22 design pass).
+        XCTAssertTrue(app.staticTexts["LIFETIME"].waitForExistence(timeout: 5), "Lifetime section not in Highlights.")
+        XCTAssertTrue(app.staticTexts["HOW YOU TRAIN"].exists, "How-you-train not in Highlights.")
+        XCTAssertTrue(app.staticTexts["CONSISTENCY"].exists, "Consistency not in Highlights.")
         dump(app, "verify_highlights")
 
         // Back to the grid; tap a run tile (label carries the distance) → immersive pager.

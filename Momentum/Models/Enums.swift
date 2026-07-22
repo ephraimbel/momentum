@@ -144,6 +144,11 @@ enum RunType: String, Codable, Sendable, CaseIterable {
 enum SessionStatus: String, Codable, Sendable, CaseIterable { case planned, completed, missed, moved }
 enum PRType: String, Codable, Sendable, CaseIterable {
     case fastest1k, fastest5k, fastest10k, longestRun, longestDuration
+    // Half/marathon benchmark windows (2026-07-22, awards pass) — additive: stored as new raw
+    // strings, so existing PersonalRecord rows are untouched.
+    case fastestHalf, fastestMarathon
+    // 50K benchmark window (2026-07-22) — the ultra finisher's own record, not a marathon split.
+    case fastest50k
     case heaviestWeight, bestE1RM, repMax, bestSetVolume, bestSessionVolume
 }
 enum WorkoutPrivacy: String, Codable, Sendable, CaseIterable {

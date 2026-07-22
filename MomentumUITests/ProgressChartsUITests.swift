@@ -8,6 +8,21 @@ final class ProgressChartsUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Swipe down the page until the element exists (or the attempts run out). The Trends page is
+    /// a long sectioned report — content low on the page isn't in the accessibility snapshot until
+    /// it nears the viewport.
+    @discardableResult
+    private func swipeUntilFound(_ element: XCUIElement, in app: XCUIApplication, attempts: Int = 12) -> Bool {
+        var found = element.waitForExistence(timeout: 3)
+        var tries = 0
+        while !found && tries < attempts {
+            app.swipeUp()
+            found = element.exists
+            tries += 1
+        }
+        return found
+    }
+
     func testWeeklyChartsShowValues() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--ui-test-route"]
@@ -28,11 +43,16 @@ final class ProgressChartsUITests: XCTestCase {
 
         // The trend charts should render on the default Trends segment. The default range decides the
         // granularity word — "Daily …" (1W) or "Weekly …" (wider windows) — so assert on the metric,
-        // not the prefix, and the test stays valid whatever the default window is.
-        let load = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "training load")).firstMatch
-        XCTAssertTrue(load.waitForExistence(timeout: 10), "Training-load chart not found.")
-        let distance = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "distance")).firstMatch
-        XCTAssertTrue(distance.waitForExistence(timeout: 5), "Distance chart not found.")
+        // not the prefix, and the test stays valid whatever the default window is. Each chart card
+        // is ONE accessibility element (children ignored) whose label is the card title — match the
+        // element's label type-agnostically (the visible title is now an uppercase eyebrow, so a
+        // StaticText query on the title-case string no longer applies).
+        let distance = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label ENDSWITH %@", "distance")).firstMatch
+        XCTAssertTrue(swipeUntilFound(distance, in: app), "Distance chart not found.")
+        let load = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label ENDSWITH %@", "training load")).firstMatch
+        XCTAssertTrue(swipeUntilFound(load, in: app), "Training-load chart not found.")
     }
 
     /// The consistency heatmap collapses its 112 color-only cells into ONE VoiceOver element with an
@@ -92,19 +112,19 @@ final class ProgressChartsUITests: XCTestCase {
         XCTAssertTrue(progressTab.waitForExistence(timeout: 15), "Progress tab not found.")
         progressTab.tap()
 
-        // Anchor on the readiness VALUE: a bare "Recovery" label also matches the HR-zones Z1
-        // row ("Recovery · Active recovery"), whose value is empty.
+        // The strip exposes label "Readiness" with the score as its VALUE ("100 out of 100, Primed").
+        // Anchoring on the label+value pair proves the score reaches VoiceOver — a bare "Recovery"
+        // label would also match the HR-zones Z1 row, whose value is empty. The strip lives in the
+        // Coach chapter at the bottom of the report — allow enough swipes to get there.
         let card = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "value CONTAINS 'Readiness'")).firstMatch
+            .matching(NSPredicate(format: "label == 'Readiness' AND value CONTAINS 'out of 100'")).firstMatch
         var found = card.waitForExistence(timeout: 3)
         var attempts = 0
-        while !found && attempts < 6 {
+        while !found && attempts < 14 {
             app.swipeUp()
             found = card.exists
             attempts += 1
         }
         XCTAssertTrue(found, "Recovery readiness card not exposed.")
-        let value = card.value as? String ?? ""
-        XCTAssertTrue(value.contains("Readiness"), "Recovery card missing its readiness value (got: \(value)).")
     }
 }

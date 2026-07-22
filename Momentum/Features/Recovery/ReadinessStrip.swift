@@ -69,7 +69,9 @@ struct ReadinessStrip: View {
             label
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
+        // No `.accessibilityElement(children: .ignore)` here — a Button is already one element,
+        // and the extra wrapper made XCUITest/VoiceOver read the combined child text instead of
+        // this label+value pair (the readiness score was silently unexposed).
         .accessibilityLabel("Readiness")
         .accessibilityValue(score.map { "\($0) out of 100, \(bandWord ?? "")" } ?? "Learning you")
         .accessibilityHint("Opens the Health segment")

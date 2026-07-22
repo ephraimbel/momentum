@@ -154,6 +154,8 @@ struct TimedSaveView: View {
             do { try context.save() } catch { saveFailed = true; return }
             let saved = workout
             Task { await services.health.save(saved) }   // mirror to Apple Health
+            // Timed sessions move the streak, session-count, and time-of-day awards.
+            AwardsBook.sync(in: context)
         }
         // No celebration here any more — it played on arrival, where the moment actually is.
         Haptics.success()

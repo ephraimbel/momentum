@@ -336,6 +336,9 @@ struct CardioSaveView: View {
                 .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
         }
         PersonalRecord.persist(records, workout: workout, in: recordsContext)
+        // Awards read the whole ledger (distance totals, streak, records) — sync after the PRs
+        // land so a run that breaks a barrier earns the coin in the same save.
+        AwardsBook.sync(in: recordsContext)
         // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
         // (a never-locked GPS run finished by accident has nothing worth exporting).
         if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {

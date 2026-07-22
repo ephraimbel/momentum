@@ -17,9 +17,13 @@ struct ProfileScreen: View {
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     /// PR shelf — tiles whose workout holds a current record carry the earned iridescent mark.
     @Query private var records: [PersonalRecord]
+    /// The awards ledger — feeds the Highlights trophy case and the gallery push.
+    @Query private var earnedAwards: [EarnedAward]
     @Environment(PaywallController.self) private var paywall
+    @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @State private var editing = false
+    @State private var showingAwards = false
     // Shared across BOTH live ProfileScreen instances (the Profile tab root and the Today-avatar
     // push) so the Grid/Highlights face never diverges between entry points — per-instance
     // @State meant picking Highlights on the tab, then opening via Today, showed Grid again.
@@ -30,6 +34,9 @@ struct ProfileScreen: View {
     }
     @State private var immersive: ImmersiveStart?
     #if DEBUG
+    // One-shot for --awards-gallery (static: both ProfileScreen instances share it, and the
+    // auto-push must never re-arm on the onAppear that follows popping the gallery).
+    @MainActor private static var didAutoOpenAwards = false
     // --share-card: open the share composer on the latest workout for sim verification.
     @State private var debugSharing = ProcessInfo.processInfo.arguments.contains("--share-card")
     // --analytics-lab: preview the Pro Trends analytics section in isolation for sim verification.
@@ -42,42 +49,44 @@ struct ProfileScreen: View {
     // property access, and the body touches them repeatedly. The fallback keeps the first frame
     // correct before the refresh task lands.
     @State private var cachedStats: ProfileStats?
-    @State private var cachedHighlights: ProfileHighlights?
-    /// Memo for the PRE-task fallback: the first body pass reads `stats`/`highlights` five times
-    /// across the header, grid, and highlights sections — each access re-walked the full history
-    /// before `refreshAggregates()` landed, all on the main actor before the first frame. A plain
-    /// reference box (fields not observed), so filling it mid-body is invisible to SwiftUI.
+    @State private var cachedShelf: AwardsShelf?
+    /// Memo for the PRE-task fallback: the first body pass reads `stats`/`awardsShelf` several
+    /// times across the header, grid, and highlights sections — each access re-walked the full
+    /// history before `refreshAggregates()` landed, all on the main actor before the first frame.
+    /// A plain reference box (fields not observed), so filling it mid-body is invisible to SwiftUI.
     private final class FallbackMemo {
         var count = -1
         var stats: ProfileStats?
-        var highlights: ProfileHighlights?
+        var shelf: AwardsShelf?
     }
     @State private var memo = FallbackMemo()
     private var stats: ProfileStats {
         if let cachedStats { return cachedStats }
-        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.highlights = nil }
+        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.shelf = nil }
         if let s = memo.stats { return s }
         let s = ProfileStats(workouts: workouts, plan: profile?.plan)
         memo.stats = s
         return s
     }
-    private var highlights: ProfileHighlights {
-        if let cachedHighlights { return cachedHighlights }
-        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.highlights = nil }
-        if let h = memo.highlights { return h }
-        let h = ProfileHighlights(stats: stats, workouts: workouts,
-                                  weightUnit: weightUnit, distanceUnit: distanceUnit)
-        memo.highlights = h
-        return h
+    private var awardsShelf: AwardsShelf {
+        if let cachedShelf { return cachedShelf }
+        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.shelf = nil }
+        if let s = memo.shelf { return s }
+        let s = AwardsShelf(earned: earnedAwards,
+                            snapshot: AwardsBook.snapshot(workouts: workouts, records: records,
+                                                          plan: profile?.plan))
+        memo.shelf = s
+        return s
     }
 
     @State private var aggregatedForCount = -1   // matches the count the caches were built for
+    @State private var shelfForAwardCount = -1   // awards can land without a new workout (plan check-offs)
 
     private func refreshAggregates() {
-        let fresh = ProfileStats(workouts: workouts, plan: profile?.plan)
-        cachedStats = fresh
-        cachedHighlights = ProfileHighlights(stats: fresh, workouts: workouts,
-                                             weightUnit: weightUnit, distanceUnit: distanceUnit)
+        cachedStats = ProfileStats(workouts: workouts, plan: profile?.plan)
+        cachedShelf = AwardsShelf(earned: earnedAwards,
+                                  snapshot: AwardsBook.snapshot(workouts: workouts, records: records,
+                                                                plan: profile?.plan))
     }
     private var weightUnit: WeightUnit { WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
@@ -111,11 +120,11 @@ struct ProfileScreen: View {
                     // toggle and grid are plain siblings (no Section header) so the bar scrolls with
                     // the tiles instead of pinning.
                     ProfileGridTabBar(tab: gridTab)
-                    ProfileGrid(workouts: workouts, stats: stats, highlights: highlights,
+                    ProfileGrid(workouts: workouts, stats: stats, awardsShelf: awardsShelf,
                                 weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
-                                prWorkoutIds: Set(records.compactMap { $0.workout?.id })) { id in
-                        immersive = ImmersiveStart(id: id)
-                    }
+                                prWorkoutIds: Set(records.compactMap { $0.workout?.id }),
+                                onOpen: { id in immersive = ImmersiveStart(id: id) },
+                                onOpenAwards: { showingAwards = true })
                 }
             }
             .padding(.top, Theme.Space.md)
@@ -136,6 +145,13 @@ struct ProfileScreen: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                     withAnimation { scroll.scrollTo("profile-badges", anchor: .top) }
                 }
+            }
+            // --awards-gallery: push the full trophy room for sim verification. Once per process:
+            // onAppear re-fires when the gallery pops back to the profile, and re-arming the push
+            // here trapped the back button in a loop (pop → 0.8s → pushed right back in).
+            if ProcessInfo.processInfo.arguments.contains("--awards-gallery"), !Self.didAutoOpenAwards {
+                Self.didAutoOpenAwards = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showingAwards = true }
             }
             if ProcessInfo.processInfo.arguments.contains("--profile-scroll-consistency") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
@@ -173,12 +189,18 @@ struct ProfileScreen: View {
         }
         #endif
         .task(id: workouts.count) {
+            // Award sync first, every visit: new awards can land without a new workout (a plan
+            // week checked off, a Health import elsewhere). No-ops when nothing changed.
+            AwardsBook.sync(in: context)
             // .task(id:) re-fires on every tab visit; the stats walk only needs to re-run
             // when the data actually moved — re-walking per switch read as tab-change jank.
-            guard aggregatedForCount != workouts.count else { return }
+            guard aggregatedForCount != workouts.count || shelfForAwardCount != earnedAwards.count
+            else { return }
             refreshAggregates()
             aggregatedForCount = workouts.count
+            shelfForAwardCount = earnedAwards.count
         }
+        .navigationDestination(isPresented: $showingAwards) { AwardsGalleryView() }
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
                                   weightUnit: weightUnit, distanceUnit: distanceUnit)

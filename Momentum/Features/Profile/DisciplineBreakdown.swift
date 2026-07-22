@@ -14,9 +14,12 @@ struct DisciplineBreakdown: View {
     }
     private var total: Int { max(1, counts.values.reduce(0, +)) }
 
+    @State private var drawn = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(spacing: Theme.Space.lg) {
-            ForEach(ranked, id: \.type) { row in
+            ForEach(Array(ranked.enumerated()), id: \.element.type) { index, row in
                 let share = Double(row.count) / Double(total)
                 VStack(spacing: Theme.Space.sm) {
                     HStack(spacing: Theme.Space.md) {
@@ -36,12 +39,19 @@ struct DisciplineBreakdown: View {
                             .foregroundStyle(Theme.inkTertiary)
                     }
                     // Full-width share track — every row measured against the same whole, so the
-                    // bars read as a composition of your training, not a ranking.
+                    // bars read as a composition of your training, not a ranking. Each bar draws
+                    // in from the left with a small stagger (a scale transform, never layout);
+                    // Reduce Motion shows them settled.
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule().fill(Theme.hairline.opacity(0.7))
                             Capsule().fill(Theme.ink.opacity(0.85))
                                 .frame(width: max(5, geo.size.width * share))
+                                .scaleEffect(x: drawn || reduceMotion ? 1 : 0.001, anchor: .leading)
+                                .animation(reduceMotion ? nil
+                                           : .spring(response: 0.55, dampingFraction: 0.85)
+                                               .delay(0.15 + Double(index) * 0.07),
+                                           value: drawn)
                         }
                     }
                     .frame(height: 5)
@@ -51,5 +61,6 @@ struct DisciplineBreakdown: View {
                 .accessibilityLabel("\(row.type.title): \(row.count) workouts, \(Int((share * 100).rounded())) percent of training")
             }
         }
+        .onAppear { drawn = true }
     }
 }

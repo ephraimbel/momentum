@@ -94,17 +94,25 @@ struct StrengthProgressSection: View {
         let lift = selectedLift ?? lifts.first ?? ""
         let series = model.seriesByLift[lift] ?? []
         let gain = ExerciseTrends.gainPercent(series)
-        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Lift progression").font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text("Estimated 1‑rep max · your working top set").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                }
-                Spacer()
-                if series.count >= 2, abs(gain) >= 0.5 { gainBadge(gain) }
+                Text("LIFT PROGRESSION").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                    .foregroundStyle(Theme.inkTertiary)
+                Spacer(minLength: Theme.Space.sm)
                 MetricInfoButton(explainer: MetricExplainers.liftProgression)
-                    .padding(.leading, Theme.Space.sm)
             }
+            // The headline answers for the selected lift — it re-reads as you flip chips.
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(series.last.map { Formatters.weight(kg: $0.e1RM, unit: weightUnit) } ?? "—")
+                    .font(.display(30, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Text("e1RM").font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                Spacer(minLength: Theme.Space.sm)
+                if series.count >= 2, abs(gain) >= 0.5 { gainBadge(gain) }
+            }
+            Text("Estimated 1‑rep max · your working top set")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .padding(.bottom, Theme.Space.xs)
             // Lift picker — the athlete's staples, most-trained first.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Theme.Space.sm) {
@@ -147,11 +155,15 @@ struct StrengthProgressSection: View {
         .background(Capsule().fill((gain >= 0 ? MetricColor.positive : MetricColor.negative).opacity(0.12)))
     }
 
+    /// The e1RM curve as a STEP line — strength moves in discrete jumps, session to session, and
+    /// the step form says so honestly (a smoothed curve implies strength you never had between
+    /// sessions). Ink line, iridescent BEST marker: the strength family's monochrome look.
     private func e1rmChart(_ series: [ExerciseTrends.Point]) -> some View {
         let disp: (Double) -> Double = { weightUnit == .lb ? $0 * Formatters.lbPerKg : $0 }
         let vals = series.map { disp($0.e1RM) }
         let lo = vals.min() ?? 0, hi = vals.max() ?? 1
         let pad = max((hi - lo) * 0.2, 2)
+        let best = series.max(by: { $0.e1RM < $1.e1RM })
         let last = series.last?.date
         return Group {
             if series.count < 2 {
@@ -166,20 +178,26 @@ struct StrengthProgressSection: View {
                         AreaMark(x: .value("Date", p.date),
                                  yStart: .value("floor", lo - pad),
                                  yEnd: .value("e1RM", appeared ? disp(p.e1RM) : lo - pad))
-                            .foregroundStyle(LinearGradient(colors: [MetricColor.chart.opacity(0.22), .clear], startPoint: .top, endPoint: .bottom))
-                            .interpolationMethod(.monotone)
+                            .foregroundStyle(LinearGradient(colors: [Theme.ink.opacity(0.10), .clear], startPoint: .top, endPoint: .bottom))
+                            .interpolationMethod(.stepEnd)
                         LineMark(x: .value("Date", p.date), y: .value("e1RM", appeared ? disp(p.e1RM) : lo))
-                            .foregroundStyle(MetricColor.chart).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                            .interpolationMethod(.monotone)
+                            .foregroundStyle(Theme.ink).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            .interpolationMethod(.stepEnd)
+                        // Each logged session is a visible tick on the steps.
+                        PointMark(x: .value("Date", p.date), y: .value("e1RM", appeared ? disp(p.e1RM) : lo))
+                            .foregroundStyle(Theme.ink).symbolSize(18)
                     }
-                    if let p = series.last, appeared, scrubE1RM.pinned == nil {
-                        PointMark(x: .value("Date", p.date), y: .value("e1RM", disp(p.e1RM)))
+                    // The all-time-in-view best earns the iridescent marker.
+                    if let best, appeared {
+                        PointMark(x: .value("Date", best.date), y: .value("e1RM", disp(best.e1RM)))
                             .foregroundStyle(IridescentMaterial()).symbolSize(90)
-                            .annotation(position: .top, spacing: 6) {
-                                Text(Formatters.weight(kg: p.e1RM, unit: weightUnit))
-                                    .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
-                                    .padding(.horizontal, 7).padding(.vertical, 3)
-                                    .background(Capsule().fill(Theme.surface).overlay(Capsule().stroke(Theme.hairline)))
+                            .annotation(position: best.date == last ? .topTrailing : .top, spacing: 5) {
+                                if scrubE1RM.pinned == nil {
+                                    Text("BEST").font(.system(size: 8, weight: .black)).tracking(0.8)
+                                        .foregroundStyle(Theme.ink)
+                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .background(Capsule().fill(IridescentMaterial()).opacity(0.55))
+                                }
                             }
                     }
                     if let sel = scrubE1RM.pinned, let p = series.first(where: { $0.date == sel }) {
@@ -209,15 +227,19 @@ struct StrengthProgressSection: View {
 
     // MARK: Weekly volume
 
+    /// Weekly tonnage as ink bars — weight moved is a magnitude, and bars on a zero baseline are
+    /// the honest form (the old line implied a continuous trend between training weeks).
     private func volumeCard(_ model: Model) -> some View {
         let raw = model.volumeKg
         let series = raw.map { TrendAnalytics.WeekValue(weekStart: $0.weekStart,
                                                         value: weightUnit == .lb ? $0.value * Formatters.lbPerKg : $0.value) }
         let unit = weightUnit == .lb ? "lb" : "kg"
         return TrendChartCard(title: "Training volume",
-                              subtitle: "Weight moved per week · working sets · \(unit)",
-                              series: series, animate: appeared, filled: true,
-                              explainer: MetricExplainers.trainingVolume, tint: MetricColor.chart,
+                              subtitle: "This week · weight moved across working sets",
+                              series: series, animate: appeared,
+                              explainer: MetricExplainers.trainingVolume, tint: Theme.ink,
+                              form: .bars,
+                              headline: true, headlineUnit: unit,
                               format: { Formatters.compact($0) })
     }
 
@@ -266,7 +288,7 @@ struct StrengthProgressSection: View {
             GeometryReader { geo in
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(top ? AnyShapeStyle(IridescentMaterial())
-                              : AnyShapeStyle(LinearGradient(colors: [MetricColor.chart, MetricColor.chart.opacity(0.55)],
+                              : AnyShapeStyle(LinearGradient(colors: [Theme.ink.opacity(0.85), Theme.ink.opacity(0.5)],
                                                              startPoint: .leading, endPoint: .trailing)))
                     .frame(width: max(load.sets > 0 ? 8 : 0, geo.size.width * appearedFrac(frac)))
                     .frame(maxHeight: .infinity, alignment: .center)
@@ -318,7 +340,8 @@ private struct LiftTile: View {
             Text(Formatters.weight(kg: metric.currentE1RMKg, unit: weightUnit))
                 .font(.display(22, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
                 .lineLimit(1).minimumScaleFactor(0.6)
-            Sparkline(values: metric.spark, tint: MetricColor.chart)
+            // Strength stays monochrome — the lift sparklines draw in ink, not a domain tint.
+            Sparkline(values: metric.spark, tint: Theme.ink.opacity(0.75))
                 .frame(height: 24).frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(Theme.Space.md)

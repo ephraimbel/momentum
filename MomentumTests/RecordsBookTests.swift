@@ -83,6 +83,26 @@ struct RecordsBookTests {
         #expect(f5kRows.count == 2)                                  // day-20 set it, day-2 beat it
     }
 
+    @Test func fiftyKRunSetsItsOwnRecordNotJustAMarathonSplit() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = UserProfile(); ctx.insert(profile)
+        // 50.5k not 50.0k: haversine step sums land a hair under nominal (same convention as 5.1k above).
+        _ = run(in: ctx, daysAgo: 3, distanceM: 50_500, paceSPerKm: 380)
+        try ctx.save()
+
+        RecordsBook.backfillIfNeeded(in: ctx, defaults: defaults())
+
+        let bests = RecordsBook.currentBests(profile.prs)
+        let f50 = try #require(bests.first { $0.type == .fastest50k })
+        #expect(abs(f50.value - 50 * 380) < 300)                     // ~5:17 at 6:20/km, window slack
+        // The marathon split from the same run still logs — the 50K record is additive.
+        #expect(bests.contains { $0.type == .fastestMarathon })
+        // Times improve downward for the new type, like every fastest record.
+        #expect(RecordsBook.beats(18_000, incumbent: f50.value, type: .fastest50k))
+        #expect(!RecordsBook.beats(20_000, incumbent: f50.value, type: .fastest50k))
+    }
+
     @Test func backfillIsIdempotent() throws {
         let container = try makeContainer()
         let ctx = container.mainContext

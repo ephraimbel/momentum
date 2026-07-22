@@ -22,7 +22,8 @@ enum RecordsBook {
     /// Times (fastest…) improve downward; distances/durations/weights improve upward.
     static func beats(_ candidate: Double, incumbent: Double, type: PRType) -> Bool {
         switch type {
-        case .fastest1k, .fastest5k, .fastest10k: candidate < incumbent
+        case .fastest1k, .fastest5k, .fastest10k, .fastestHalf, .fastestMarathon, .fastest50k:
+            candidate < incumbent
         default: candidate > incumbent
         }
     }
@@ -30,7 +31,8 @@ enum RecordsBook {
     /// Reduce the full PR history to the current best per type (cardio types only — strength
     /// records are per-exercise and live on the strength surfaces).
     static func currentBests(_ prs: [PersonalRecord]) -> [Best] {
-        let cardio: [PRType] = [.fastest1k, .fastest5k, .fastest10k, .longestRun, .longestDuration]
+        let cardio: [PRType] = [.fastest1k, .fastest5k, .fastest10k, .fastestHalf, .fastestMarathon,
+                                .fastest50k, .longestRun, .longestDuration]
         return cardio.compactMap { type in
             let rows = prs.filter { $0.type == type && $0.value > 0 }
             guard var best = rows.first else { return nil }
@@ -45,7 +47,10 @@ enum RecordsBook {
     /// best are persisted, so the book reads as a true progression.
     static func backfillIfNeeded(in context: ModelContext,
                                  defaults: UserDefaults = .standard) {
-        let flag = "com.momentum.records.backfill.v1"
+        // v3: re-replays history once for the 50K benchmark (2026-07-22; v2 added half/marathon
+        // the same day). Safe: `persist` dedupes per (type, workout), so already-persisted rows
+        // are skipped and only the new distance adds rows.
+        let flag = "com.momentum.records.backfill.v3"
         guard !defaults.bool(forKey: flag) else { return }
         defaults.set(true, forKey: flag)
 
@@ -102,7 +107,9 @@ enum RecordsBook {
                 prev = s
                 return .init(t: s.t.timeIntervalSince(first.t), cumulativeM: cumulative)
             }
-            for (meters, type) in [(1000.0, PRType.fastest1k), (5000.0, .fastest5k), (10000.0, .fastest10k)] {
+            for (meters, type) in [(1000.0, PRType.fastest1k), (5000.0, .fastest5k), (10000.0, .fastest10k),
+                                   (21_097.5, .fastestHalf), (42_195.0, .fastestMarathon),
+                                   (50_000.0, .fastest50k)] {
                 guard gps.distanceM >= meters,
                       let t = CardioMetrics.fastestWindow(pts, distanceM: meters) else { continue }
                 out.append((type, t))
@@ -119,6 +126,9 @@ extension PRType {
         case .fastest1k: "Fastest 1K"
         case .fastest5k: "Fastest 5K"
         case .fastest10k: "Fastest 10K"
+        case .fastestHalf: "Fastest half"
+        case .fastestMarathon: "Fastest marathon"
+        case .fastest50k: "Fastest 50K"
         case .longestRun: "Longest run"
         case .longestDuration: "Longest session"
         case .heaviestWeight: "Heaviest lift"

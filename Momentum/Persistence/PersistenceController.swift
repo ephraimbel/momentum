@@ -17,6 +17,7 @@ final class PersistenceController {
         Exercise.self,
         TrainingPlan.self, PlannedSession.self, PlannedExercise.self,
         PersonalRecord.self,
+        EarnedAward.self,
         AthleteModel.self, MemoryNote.self, FitnessSnapshot.self,
         ChatMessage.self,
         CoachingEvent.self,

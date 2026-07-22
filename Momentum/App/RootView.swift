@@ -73,6 +73,10 @@ struct RootView: View {
                     // so it can't trigger a location prompt "up front" (PRD §4.1, §11 privacy).
                     if showOnboarding { Theme.background.ignoresSafeArea() } else { tabs }
                 }
+                // Award unlocks meet the athlete wherever they land — awards can arrive from any
+                // path (save flows, Health import, a plan week completing), so the presenter sits
+                // once at the root rather than on each surface.
+                .awardUnlocks()
                 // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
                 // Full screen (not a sheet): the paywall is a considered, premium moment — it owns
                 // the whole canvas, like onboarding.

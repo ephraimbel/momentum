@@ -56,7 +56,7 @@ struct RecordsCard: View {
 
     private func value(_ best: RecordsBook.Best) -> String {
         switch best.type {
-        case .fastest1k, .fastest5k, .fastest10k, .longestDuration:
+        case .fastest1k, .fastest5k, .fastest10k, .fastestHalf, .fastestMarathon, .fastest50k, .longestDuration:
             Formatters.duration(s: best.value)
         case .longestRun:
             Formatters.distance(meters: best.value, unit: distanceUnit)

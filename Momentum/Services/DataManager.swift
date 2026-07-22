@@ -92,6 +92,7 @@ enum DataManager {
         wipe(Workout.self)         // any free workouts not under a profile (cascades gps/strength)
         wipe(TrainingPlan.self)
         wipe(PersonalRecord.self)
+        wipe(EarnedAward.self)
         wipe(AthleteModel.self)    // cascades its MemoryNote + FitnessSnapshot children
         wipe(ChatMessage.self)
         // Standalone records (no parent relationship to cascade through) — must be wiped explicitly
@@ -130,6 +131,7 @@ enum DataManager {
             wipe(Workout.self, chunk: 8)   // cascades gps samples + strength sets — the heavy rows
             wipe(TrainingPlan.self)
             wipe(PersonalRecord.self)
+            wipe(EarnedAward.self)
             wipe(AthleteModel.self)
             wipe(ChatMessage.self)
             wipe(CoachingEvent.self)
