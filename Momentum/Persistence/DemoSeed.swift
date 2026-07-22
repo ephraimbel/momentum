@@ -221,6 +221,32 @@ enum DemoSeed {
                 runIndex += 1
             }
         }
+        // --seed-ultra-run: one finished 50K (~6:20/km, ten days back) with real accepted samples,
+        // so the record-book backfill mints the Fastest 50K row through the genuine pipeline
+        // (fastest-window over the samples — never a hand-planted PersonalRecord).
+        if ProcessInfo.processInfo.arguments.contains("--seed-ultra-run") {
+            let start = Date().addingTimeInterval(-10 * 86_400 - 7 * 3600)
+            let w = Workout(); w.type = .run; w.startedAt = start
+            let paceSPerKm = 380.0, distanceM = 50_500.0
+            w.durationS = distanceM / 1000 * paceSPerKm
+            let gps = GPSDetail(); gps.distanceM = distanceM
+            gps.avgPaceSPerKm = paceSPerKm
+            gps.elevationGainM = 260
+            let step = 100.0
+            var ultraSamples: [LocationSample] = []
+            for i in 0...Int(distanceM / step) {
+                let s = LocationSample()
+                s.t = start.addingTimeInterval(Double(i) * step / 1000 * paceSPerKm)
+                s.lat = 30.1 + Double(i) * step / HeatmapBinning.metersPerDegLat
+                s.lon = -97.8
+                s.accepted = true
+                ultraSamples.append(s)
+            }
+            gps.samples = ultraSamples
+            w.gps = gps
+            context.insert(w)
+        }
+
         // Give the most recent run a guided-session rep breakdown so the summary's Reps section shows.
         if let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
             .filter({ $0.type == .run && $0.gps != nil })
