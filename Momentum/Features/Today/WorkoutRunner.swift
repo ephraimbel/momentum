@@ -64,7 +64,9 @@ struct WorkoutRunner: ViewModifier {
             let structured = planned.flatMap { StructuredWorkoutBuilder.build(from: $0, p5kSPerKm: plan?.p5kSPerKm,
                                                                               raceDistanceM: profiles.first?.raceDistanceM) }
             CardioTrackingView(type: type, goalMeters: goal, container: context.container,
-                               guideRoute: guide, structured: structured) { id in
+                               distanceUnit: distanceUnit,
+                               guideRoute: guide, structured: structured,
+                               targetPaceSPerKm: structured == nil ? planned?.targetPaceSPerKm : nil) { id in
                 finish(id, type: type, planned: planned)
             }
         case let .strength(type, planned):

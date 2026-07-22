@@ -76,6 +76,11 @@ struct TodayView: View {
     /// Today's pending plan session, memoized for the same reason (see `pendingToday`).
     @State private var cachedPendingToday: PlannedSession?
     @State private var pendingTodayToken: Int = 0
+    /// The deck's plan story when nothing is left to start — "today's done" or "rest day, next up
+    /// Thursday". Cached beside `cachedPendingToday` (same invalidation token) because the deck body
+    /// re-evaluates per frame while the map pans, and filtering the full session list per frame is
+    /// the exact anti-pattern the memoized plan row exists to avoid.
+    @State private var cachedPlanState: PlanStateLine?
     @State private var confirmResume = false
     @State private var pendingLoopStart: GeoPoint?
     @State private var showSportPicker = false
@@ -161,7 +166,43 @@ struct TodayView: View {
     }
     private func refreshPendingToday() {
         cachedPendingToday = computePendingToday()
+        cachedPlanState = computePlanState()
         pendingTodayToken = currentPendingToken
+    }
+
+    /// One quiet line that keeps the deck honest about the plan when there's no session to start —
+    /// the deck used to go silent on rest days and after the day's work, exactly when "what's next"
+    /// is the question. Tap-through lands on the Plan tab.
+    struct PlanStateLine: Equatable {
+        let icon: String
+        let text: String
+    }
+    private var planState: PlanStateLine? {
+        pendingTodayToken == currentPendingToken ? cachedPlanState : computePlanState()
+    }
+    private func computePlanState() -> PlanStateLine? {
+        guard plan != nil else { return nil }
+        let today = PlanCoaching.todaySessions(plan, on: Date())
+        if !today.isEmpty, today.allSatisfy({ $0.status == .completed }) {
+            return PlanStateLine(icon: "checkmark.circle.fill",
+                                 text: today.count == 1 ? "Today's session is done — nice work."
+                                                        : "Today's sessions are done — nice work.")
+        }
+        guard today.isEmpty, let next = nextPlannedSession() else { return nil }
+        let day = Calendar.current.isDateInTomorrow(next.date)
+            ? "tomorrow" : next.date.formatted(.dateTime.weekday(.wide))
+        return PlanStateLine(icon: "moon.zzz",
+                             text: "Rest day — next up \(day): \(PlanCoaching.brief(for: next, distanceUnit: distanceUnit))")
+    }
+    /// The nearest upcoming planned session (within a week, not today) — the "next up" of a rest day.
+    private func nextPlannedSession() -> PlannedSession? {
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        guard let horizon = cal.date(byAdding: .day, value: 8, to: todayStart) else { return nil }
+        return plan?.sessions
+            .filter { $0.status != .completed && !cal.isDateInToday($0.date)
+                      && $0.date > todayStart && $0.date < horizon }
+            .min { $0.date < $1.date }
     }
     private var isCardio: Bool { activity.isGPS }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
@@ -492,8 +533,15 @@ struct TodayView: View {
     /// fit and long sessions scroll inside it.
     private func planConfirmSheet(_ session: PlannedSession) -> some View {
         let exercises = session.strengthTargets.sorted { $0.order < $1.order }
+        // A quality run's shape — warm-up / reps / recovery / cool-down — in the detail sheet's
+        // row grammar. Strength always listed its whole prescription here while an interval day
+        // showed one line; the athlete confirming "Start run" deserves the same full picture.
+        let structure = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: plan?.p5kSPerKm,
+                                                       raceDistanceM: profiles.first?.raceDistanceM)?
+            .summaryLines(distanceUnit: distanceUnit) ?? []
+        let scrolls = !exercises.isEmpty || !structure.isEmpty
         return VStack(spacing: Theme.Space.lg) {
-            if exercises.isEmpty { Spacer(minLength: 0) }
+            if !scrolls { Spacer(minLength: 0) }
             ZStack {
                 Circle().fill(IridescentMaterial()).opacity(0.3).frame(width: 72, height: 72)
                 Image(systemName: PlanCoaching.icon(for: session))
@@ -513,14 +561,17 @@ struct TodayView: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
-            if exercises.isEmpty {
+            if !scrolls {
                 Spacer(minLength: 0)
             } else {
-                // The whole prescription, in the Plan detail sheet's row grammar — what you'll
-                // lift, how many sets and reps, and the suggested opening weight.
+                // The whole prescription, in the Plan detail sheet's row grammar — exercises with
+                // sets × reps and a suggested opening weight, or a guided run's step breakdown.
                 ScrollView {
                     VStack(spacing: Theme.Space.sm) {
                         ForEach(exercises, id: \.persistentModelID) { confirmExerciseRow($0) }
+                        ForEach(Array(structure.enumerated()), id: \.offset) { _, line in
+                            confirmStructureRow(line)
+                        }
                     }
                 }
                 .scrollIndicators(.hidden)
@@ -536,17 +587,34 @@ struct TodayView: View {
         }
         .padding(Theme.Space.lg)
         .frame(maxWidth: .infinity)
-        .presentationDetents([.height(confirmSheetHeight(exerciseCount: exercises.count))])
+        .presentationDetents([.height(confirmSheetHeight(rowCount: exercises.count + structure.count,
+                                                         hasRationale: !(session.rationale ?? "").isEmpty))])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
     }
 
-    /// 380pt for the calm cardio confirm; strength grows ~66pt per exercise row (name + suggested
-    /// start weight runs taller than a bare row), capped so a big full-body day scrolls inside the
-    /// sheet instead of swallowing the screen.
-    private func confirmSheetHeight(exerciseCount: Int) -> CGFloat {
-        guard exerciseCount > 0 else { return 380 }
-        return min(700, 380 + CGFloat(exerciseCount) * 66)
+    /// 380pt for the calm cardio confirm; prescription rows grow it (~66pt for a tall strength row,
+    /// which bounds the run rows too), capped so a big session scrolls inside the sheet instead of
+    /// swallowing the screen. A rationale line buys a little extra so it never squeezes the CTA.
+    private func confirmSheetHeight(rowCount: Int, hasRationale: Bool) -> CGFloat {
+        let base: CGFloat = hasRationale ? 420 : 380
+        guard rowCount > 0 else { return base }
+        return min(700, base + CGFloat(rowCount) * 66)
+    }
+
+    /// One structured-run step line — same content as SessionDetailSheet's Workout section rows.
+    private func confirmStructureRow(_ line: (label: String, detail: String)) -> some View {
+        HStack {
+            Text(line.label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            Spacer(minLength: Theme.Space.sm)
+            Text(line.detail).font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .monospacedDigit().foregroundStyle(Theme.inkSecondary)
+        }
+        .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
+        }
     }
 
     /// One prescribed exercise: name + suggested start weight on the left, sets × reps on the right
@@ -953,6 +1021,10 @@ struct TodayView: View {
                 planRow(session)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
                     .padding(.horizontal, Theme.Space.md)
+            } else if let state = planState {
+                planStateRow(state)
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                    .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
                 if isCardio && pendingToday == nil { goalControl }
@@ -1327,6 +1399,14 @@ struct TodayView: View {
                         .lineLimit(1)
                     Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .foregroundStyle(Theme.ink).lineLimit(1)
+                    // The why, right on the deck — an eased/moved/rebuild session must never show
+                    // its changed prescription without its one-line reason ("Eased today — poor
+                    // sleep…"). The row grows only on mornings the coach actually did something.
+                    if let why = session.rationale, !why.isEmpty {
+                        Text(why).font(.rounded(Theme.FontSize.label, weight: .medium))
+                            .foregroundStyle(Theme.inkTertiary).lineLimit(2)
+                            .padding(.top, 1)
+                    }
                     // Fuel at a glance, only when today's session is long enough to need it (≥1h) —
                     // the row grows a third line exactly on the mornings fueling matters. Tap-through
                     // lands on the session sheet, which carries the full before/during/after guidance.
@@ -1347,6 +1427,29 @@ struct TodayView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// The plan's one-line state when there is no session to start — "rest day, next up Thursday"
+    /// or "today's done". Same slim grammar as `planRow`; tap lands on the Plan tab.
+    private func planStateRow(_ state: PlanStateLine) -> some View {
+        Button { Haptics.light(); router.pendingTab = .plan } label: {
+            HStack(spacing: Theme.Space.sm + 2) {
+                Image(systemName: state.icon)
+                    .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 36, height: 36)
+                    .background { Circle().fill(Theme.surface); Circle().stroke(Theme.hairline) }
+                Text(state.text)
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(state.text)
     }
 
     /// "30–60 g carbs/hr · drink to thirst" — today's fuel line, from the same deterministic

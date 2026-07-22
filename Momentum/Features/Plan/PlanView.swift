@@ -57,10 +57,16 @@ struct PlanView: View {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
     }
 
-    /// Free tier sees the current week (the plan glimpse); other weeks are Pro (PRD §10/§13.10).
+    /// The live current week — the tune card and renewal prompt only make sense here.
     private var isCurrentWeek: Bool {
         guard let cur = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start else { return true }
         return Calendar.current.isDate(weekStart, inSameDayAs: cur)
+    }
+    /// Free tier sees the current week AND everything already trained — an athlete's own completed
+    /// work is never paywalled. Only weeks still ahead are the Pro tease (PRD §10/§13.10).
+    private var isFutureWeek: Bool {
+        guard let cur = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start else { return false }
+        return weekStart > cur
     }
     private var days: [Date] {
         (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) }
@@ -108,7 +114,7 @@ struct PlanView: View {
                     if isCurrentWeek { tuneSection }
                     weekBoard
                         .reveal(0.06)
-                        .proLocked(.fullPlan, active: !isCurrentWeek)
+                        .proLocked(.fullPlan, active: isFutureWeek)
                     coachsRead
                 }
                 .padding(Theme.Space.md)
@@ -629,6 +635,9 @@ struct PlanView: View {
             .background(card)
         } else if let proposal = PlanCoaching.proposeAdjustment(plan, workouts: workouts) {
             Button {
+                // Free to see the coach's thinking, Pro to apply it — the same boundary as chat's
+                // Apply and the post-run cards, so the monetization line never drifts per surface.
+                guard paywall.isEntitled(to: .aiCoach) else { paywall.present(for: .aiCoach); return }
                 let changed = PlanCoaching.apply(proposal.rec, to: plan, in: context)
                 if changed > 0 { Haptics.success(); withAnimation(Motion.standard) { adjusted = true } }
             } label: {
@@ -760,6 +769,11 @@ struct PlanView: View {
                         ForEach(sessions, id: \.persistentModelID) { session in
                             sessionLine(session)
                                 .contextMenu {
+                                    if session.status != .completed {
+                                        Button { Haptics.medium(); start(session) } label: {
+                                            Label("Start", systemImage: "play.fill")
+                                        }
+                                    }
                                     Button { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context); Haptics.success() } label: {
                                         Label(session.status == .completed ? "Mark not done" : "Mark done",
                                               systemImage: session.status == .completed ? "arrow.uturn.left" : "checkmark")
@@ -814,18 +828,26 @@ struct PlanView: View {
                         .frame(width: 34, height: 34)
                         .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
                     VStack(alignment: .leading, spacing: 2) {
-                        if let kind = sessionKindLabel(session) {
+                        let kind = sessionKindLabel(session)
+                        if let kind {
                             Text(kind)
                                 .font(.rounded(9, weight: .black)).tracking(1)
                                 .foregroundStyle(Theme.inkTertiary)
                         }
-                        Text(PlanCoaching.brief(for: session, distanceUnit: distanceUnit))
+                        // The eyebrow already names the kind, so the line drops it ("4 mi ~8:05 /mi",
+                        // not "Tempo 4 mi…" under "TEMPO RUN").
+                        Text(PlanCoaching.brief(for: session, distanceUnit: distanceUnit,
+                                                dropLeadingType: kind != nil))
                             .font(.rounded(Theme.FontSize.body, weight: .semibold))
                             .foregroundStyle(done ? Theme.inkTertiary : Theme.ink)
                             .strikethrough(done, color: Theme.inkTertiary)
                             .lineLimit(1).minimumScaleFactor(0.85)
                             .multilineTextAlignment(.leading)
-                        if session.status == .moved, let why = session.rationale {
+                        // ANY session with a why explains itself on the board — eased, deload,
+                        // rebuild-week, and injury-converted sessions carry rationales while still
+                        // `.planned`; showing them only when `.moved` left a mystery "Ride 40m"
+                        // with its explanation written but never rendered.
+                        if !done, let why = session.rationale, !why.isEmpty {
                             Text(why).font(.rounded(Theme.FontSize.caption, weight: .regular))
                                 .foregroundStyle(Theme.inkTertiary)
                                 .lineLimit(2).multilineTextAlignment(.leading)
@@ -889,13 +911,27 @@ struct PlanView: View {
         .accessibilityLabel("Rest day — tap to add a session")
     }
 
+    /// Never a dead end: the tab's whole job is the plan, so the empty state carries the way to one.
+    /// (The old copy said "finish onboarding" — wrong for anyone who wiped data or hit an edge case
+    /// post-onboarding — and the header's "Start a new plan" menu doesn't render in this branch.)
     private var emptyState: some View {
         VStack(spacing: Theme.Space.lg) {
             BrandMark(size: 72)
             Text("No plan yet").font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
-            Text("Finish onboarding to get a unified weekly plan.")
+            Text("Tell us your goal and we'll build a week that fits — race or no race.")
                 .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
+            if profiles.first != nil {
+                Button { Haptics.light(); showNewPlan = true } label: {
+                    Text("Build my plan")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
+                        .padding(.horizontal, Theme.Space.xl).padding(.vertical, 14)
+                        .background(Capsule().fill(Theme.ink))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, Theme.Space.sm)
+                .accessibilityLabel("Build my plan")
+            }
         }
         .padding(Theme.Space.xl).frame(maxWidth: .infinity, maxHeight: .infinity)
     }

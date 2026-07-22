@@ -31,6 +31,11 @@ struct CardioSummaryContent: View {
     @State private var hits: [CardioAchievements.Hit] = []
     /// What this run MEANT, when it didn't set a record. Runs that did are carried by the badges.
     @State private var verdict: RunVerdict.Verdict?
+    /// The run's relationship to the plan — credited a session, or left one honestly open.
+    /// Post-run only (`showsVerdict`): "stays on the board" is true the moment you finish and
+    /// nonsense on a run from six months ago.
+    @State private var planLine: PlanConnection?
+    private struct PlanConnection { let text: String; let credited: Bool }
     // The splits' cumulative-distance walk (a haversine per accepted sample) cached once — the
     // splits section re-ran it on every body pass through the reveal cascade.
     @State private var samplePts: [CardioMetrics.SamplePoint] = []
@@ -52,6 +57,15 @@ struct CardioSummaryContent: View {
             VStack(spacing: Theme.Space.lg) {
                 if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
                 headline(workout, gps)   // staggers its own children; no outer reveal
+                // The plan connection, at the payoff moment: "Today's tempo run — checked off your
+                // plan" when this run credited a session, or the honest partial when it didn't
+                // ("Saturday's long run stays on the board — this covered about 40% of it").
+                // The summary used to say nothing either way, so crediting felt like a coin flip.
+                if let line = planLine {
+                    EarnedLine(text: line.text, systemImage: line.credited ? "calendar.badge.checkmark" : "calendar",
+                               earned: line.credited)
+                        .reveal(revealDelay + 0.08)
+                }
                 if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.10) }
                 // Sharing is not gated on a record. It used to sit inside the achievements branch, so
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
@@ -79,6 +93,7 @@ struct CardioSummaryContent: View {
                 // the same run stacked on each other is noise, not generosity. The extra fetch is
                 // skipped entirely in history, where the line isn't shown.
                 if showsVerdict, hits.isEmpty { verdict = computeVerdict(gps) }
+                if showsVerdict { planLine = computePlanConnection(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
                 if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
@@ -170,6 +185,51 @@ struct CardioSummaryContent: View {
                 PRBadge(text: "\(hit.label) · \(hit.detail)", celebrate: true)
             }
         }
+    }
+
+    /// The plan connection for this run. Crediting already happened in `WorkoutRunner.finish`
+    /// (before this view presents), so `workout.plannedSession` is authoritative: set → say which
+    /// session got checked off; nil with an open same-discipline prescription today → say honestly
+    /// how much of it this run covered and that it stays on the board. Plain words, never a
+    /// failure state — the open session simply rolls forward as it always did.
+    private func computePlanConnection(_ gps: GPSDetail) -> PlanConnection? {
+        if let s = workout.plannedSession {
+            return PlanConnection(text: "\(dayPrefix(s.date)) \(sessionKindText(s)) — checked off your plan.",
+                                  credited: true)
+        }
+        var descriptor = FetchDescriptor<UserProfile>()
+        descriptor.fetchLimit = 1
+        guard let plan = (try? context.fetch(descriptor))?.first?.plan else { return nil }
+        let open = PlanCoaching.todaySessions(plan, on: workout.startedAt).filter {
+            ($0.status == .planned || $0.status == .moved)
+                && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
+        }
+        // The closest miss: the open session this run came nearest to fulfilling.
+        let best = open.compactMap { s -> (PlannedSession, Double)? in
+            let c = PlanCredit.Candidate(targetDistanceM: s.targetDistanceM, targetDurationS: s.targetDurationS)
+            guard let f = PlanCredit.fulfillment(of: c, distanceM: gps.distanceM, durationS: workout.durationS),
+                  f < PlanCredit.minFulfillment else { return nil }
+            return (s, f)
+        }.max { $0.1 < $1.1 }
+        guard let (session, f) = best else { return nil }
+        return PlanConnection(text: "\(dayPrefix(session.date)) \(sessionKindText(session)) stays on the board — this covered about \(Int((f * 100).rounded()))% of it.",
+                              credited: false)
+    }
+
+    private func dayPrefix(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date) ? "Today’s" : "\(date.formatted(.dateTime.weekday(.wide)))’s"
+    }
+
+    private func sessionKindText(_ s: PlannedSession) -> String {
+        if let wt = s.workoutType, wt != .run { return wt.title.lowercased() }
+        if let rt = s.runType {
+            switch rt {
+            case .intervals: return "intervals"
+            case .race: return "race"
+            default: return "\(rt.rawValue) run"
+            }
+        }
+        return "session"
     }
 
     private var titleHeader: some View {

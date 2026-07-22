@@ -17,6 +17,10 @@ struct CardioTrackingView: View {
     var guideRoute: [GeoPoint] = []
     /// An optional guided structured session (warm-up → reps → cool-down) to coach through in real time.
     var structured: StructuredWorkout? = nil
+    /// The plan's prescribed pace for a *non-structured* planned run (easy/long) — shown as a quiet
+    /// target on the goal bar so "run easy at ~9:40" lives on the screen, not in the athlete's
+    /// memory. Structured sessions carry their own per-step targets and ignore this.
+    var targetPaceSPerKm: Double? = nil
     var onFinish: (UUID?) -> Void
 
     enum Phase { case acquiring, countdown, tracking }
@@ -704,7 +708,7 @@ struct CardioTrackingView: View {
                 }
             }
             .frame(height: 6)
-            Text("\(distanceNumber(forMeters: distance)) / \(goalNum) \(unitLabel)\(guideRoute.count > 1 ? " · your loop" : "")")
+            Text("\(distanceNumber(forMeters: distance)) / \(goalNum) \(unitLabel)\(targetPaceSuffix)\(guideRoute.count > 1 ? " · your loop" : "")")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
         }
         .padding(.horizontal, Theme.Space.lg)
@@ -713,7 +717,13 @@ struct CardioTrackingView: View {
         // iridescent "reached" state is never the sole signal (PRD §13.4).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(goalReached ? "Goal reached" : "Goal progress")
-        .accessibilityValue("\(distanceNumber(forMeters: distance)) of \(goalNum) \(unitLabel), \(Int((progress * 100).rounded())) percent")
+        .accessibilityValue("\(distanceNumber(forMeters: distance)) of \(goalNum) \(unitLabel), \(Int((progress * 100).rounded())) percent"
+                            + (targetPaceSPerKm.map { ", target pace \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? ""))
+    }
+
+    /// " · target ~9:40 /mi" when the plan prescribed a pace for this (non-structured) run.
+    private var targetPaceSuffix: String {
+        targetPaceSPerKm.map { " · target ~\(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? ""
     }
 
     private func stat(_ value: String, _ label: String) -> some View {
