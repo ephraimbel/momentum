@@ -199,8 +199,9 @@ final class FuelFlowUITests: XCTestCase {
         shot(app, "8a-fuel-free-paywall")
 
         // Dismiss the paywall (soft — it carries a Close affordance), then prove a toolbar entry that
-        // used to be HIDDEN is now visible and also reaches the wall.
-        app.buttons["Close"].tap()
+        // used to be HIDDEN is now visible and also reaches the wall. firstMatch: more than one
+        // "Close" can legitimately coexist in the sheet stack — the topmost is the paywall's.
+        app.buttons["Close"].firstMatch.tap()
         XCTAssertTrue(app.buttons["Fueling goals"].waitForExistence(timeout: 6),
                       "Fueling goals button should be visible on the free tier (it gates on tap now).")
         XCTAssertTrue(app.buttons["Meal history"].exists,
@@ -213,7 +214,7 @@ final class FuelFlowUITests: XCTestCase {
         // FuelHistoryView, or set showingHistory = true unconditionally, would leak full history to a
         // free athlete while the .exists check above stayed green; tapping it and asserting the
         // paywall fires is what actually pins the gate.
-        app.buttons["Close"].tap()
+        app.buttons["Close"].firstMatch.tap()
         app.buttons["Meal history"].tap()
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 8), "Meal history didn't reach the paywall for a free athlete.")
     }

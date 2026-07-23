@@ -39,8 +39,10 @@ final class TodayHeaderUITests: XCTestCase {
         let avatar = app.buttons["Your profile"].firstMatch
         XCTAssertTrue(avatar.waitForExistence(timeout: 15), "Avatar missing from header.")
         avatar.tap()
-        // The profile sheet hosts the full ProfileScreen (media grid) — give it room to appear.
-        let opened = app.buttons["Done"].waitForExistence(timeout: 30)
+        // The avatar PUSHES the full ProfileScreen (user call 2026-07-16 — a push with a back
+        // chevron, not a sheet; the old "Done" wait asserted the retired design). The header's
+        // Edit button is the profile's unambiguous landing marker.
+        let opened = app.buttons["Edit"].waitForExistence(timeout: 30)
         if !opened {
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.lifetime = .keepAlways
