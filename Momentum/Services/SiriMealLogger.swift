@@ -149,7 +149,7 @@ enum SiriMealLogger {
             if let sodium = meal.sodiumMg, sodium > 0 { parts.append("\(sodium)mg sodium") }
             let carbsSpoken = meal.carbsG.map { ", \($0) grams of carbs" } ?? ""
             return Receipt(mealID: meal.id,
-                           title: "Logged to Fuel",
+                           title: "Logged to Momentum",
                            body: "\(display) · \(parts.joined(separator: " · "))",
                            resolved: true,
                            dialog: "Logged — about \(kcal) calories\(carbsSpoken).")
@@ -159,10 +159,10 @@ enum SiriMealLogger {
         // receipt). Numbers join quietly once a rung lands them; the journal shows the pending
         // state honestly in the meantime.
         return Receipt(mealID: meal.id,
-                       title: "Logged to Fuel",
+                       title: "Logged to Momentum",
                        body: display,
                        resolved: resolved,
-                       dialog: "Logged to Fuel.")
+                       dialog: "Logged to Momentum.")
     }
 
     /// Post the receipt notification (with Undo). If the athlete never answered the notification
