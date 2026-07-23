@@ -53,6 +53,26 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         }
     }
 
+    /// Siri meal receipts start life under PROVISIONAL authorization (granted silently mid-Siri,
+    /// delivered quietly to Notification Center — no banner). The athlete who logs by voice wants
+    /// to SEE the receipt land, so the app's next open asks properly, once: the full system
+    /// prompt, only when a receipt has actually been posted and delivery isn't full yet. The
+    /// flag clears after one ask — never a nag, whatever they choose.
+    static func promoteReceiptAuthorizationIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: SiriMealLogger.receiptPostedKey) else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .provisional, .notDetermined:
+                defaults.set(false, forKey: SiriMealLogger.receiptPostedKey)
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            default:
+                defaults.set(false, forKey: SiriMealLogger.receiptPostedKey)
+            }
+        }
+    }
+
     func requestAuthorization() {
         // Re-acquire the (non-Sendable) center inside the closure rather than capturing it.
         UNUserNotificationCenter.current().getNotificationSettings { settings in

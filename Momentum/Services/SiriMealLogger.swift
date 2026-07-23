@@ -146,7 +146,13 @@ enum SiriMealLogger {
         }
     }
 
+    /// Set once a receipt has been posted — the app's next open promotes provisional (quiet)
+    /// notification delivery to full banners via the real system prompt (see
+    /// `NotificationService.promoteReceiptAuthorizationIfNeeded`).
+    nonisolated static let receiptPostedKey = "com.momentum.siri.receiptPosted"
+
     private nonisolated static func deliver(_ receipt: Receipt, to center: UNUserNotificationCenter) {
+        UserDefaults.standard.set(true, forKey: receiptPostedKey)
         let content = UNMutableNotificationContent()
         content.title = receipt.title
         content.body = receipt.body

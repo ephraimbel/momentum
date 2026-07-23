@@ -223,6 +223,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
         .onAppear {
+            // A Siri receipt posted under quiet provisional delivery → ask properly (once) so
+            // the next "Logged to Fuel" actually banners.
+            NotificationService.promoteReceiptAuthorizationIfNeeded()
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
             // One check per cold launch (onAppear re-fires on cover dismissals, when the marker may
             // belong to a legitimately live workout), and never over the sign-in/onboarding gates —
