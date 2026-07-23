@@ -77,11 +77,12 @@ final class CoachChatViewModel {
 
     /// Follow-up chips under the latest coach reply — the conversation keeps going instead of
     /// ending. Deterministic, keyed off the last card's kind; empty mid-response.
-    var followUps: [String] {
-        guard !isResponding,
-              let last = (try? context.fetch(FetchDescriptor<ChatMessage>(
-                  sortBy: [SortDescriptor(\.createdAt, order: .reverse)])))?.first,
-              last.role == .coach else { return [] }
+    /// Follow-up chips for the latest coach turn. Takes the last message from the CALLER (the view
+    /// already holds the sorted @Query) — the previous computed-var form re-fetched and re-sorted
+    /// the entire ChatMessage table on every body pass, several times per keystroke and per
+    /// streamed delta (the exact heavy-work-in-body pattern `suggestions` was fixed away from).
+    func followUps(last: ChatMessage?) -> [String] {
+        guard !isResponding, let last, last.role == .coach else { return [] }
         switch (last.card?.kind, last.cardState) {
         case (.explainPlan, _): return ["How should I run my race?", "What could I race right now?"]
         case (.weekRecap, _): return ["Why is my plan built this way?", "Brief me on today"]

@@ -123,8 +123,9 @@ struct StrengthSaveView: View {
             PersonalRecord.persist(hits.compactMap { hit in
                 hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
             }, workout: workout, in: reader.context)
-            // Session count, tonnage, and streak awards move with every kept session.
-            AwardsBook.sync(in: reader.context)
+            // Session count, tonnage, and streak awards move with every kept session (deferred —
+            // the snapshot walk must never sit between the Save tap and dismissal).
+            AwardsBook.syncSoon()
         }
         if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
         // No celebration here any more — it played on arrival, where the moment actually is.

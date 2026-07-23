@@ -15,9 +15,40 @@ struct LogWorkoutView: View {
     @State private var showTypePicker = false
 
     /// Open pre-set to the activity the athlete is currently looking at (Today's sport), so a lifter
-    /// lands on the strength form and a runner on the run form.
-    init(initialType: WorkoutType = .run) {
-        _type = State(initialValue: initialType)
+    /// lands on the strength form and a runner on the run form. With a `prefill` (the log composer's
+    /// "Adjust details"), every field opens holding the parse — this form is the receipt's editor.
+    init(initialType: WorkoutType = .run, prefill: LogWorkoutPrefill? = nil) {
+        _type = State(initialValue: prefill?.type ?? initialType)
+        guard let p = prefill else { return }
+        _date = State(initialValue: p.date)
+        _hours = State(initialValue: Int(p.durationS) / 3600)
+        _minutes = State(initialValue: (Int(p.durationS) % 3600) / 60)
+        _indoor = State(initialValue: p.indoor)
+        _effort = State(initialValue: p.effort)
+        if p.distanceM > 0 {
+            let unit = DistanceUnit.auto.resolved()
+            let v = unit == .imperial ? p.distanceM / Formatters.metersPerMile : p.distanceM / 1000
+            _distanceText = State(initialValue: String(format: v.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.2f", v))
+        }
+        if !p.exercises.isEmpty {
+            let unit = WeightUnit.default()
+            _exercises = State(initialValue: p.exercises.map { line in
+                var draft = DraftExercise()
+                draft.name = line.name
+                draft.sets = (0..<max(1, line.sets)).map { _ in
+                    var set = DraftSet()
+                    set.reps = line.reps
+                    if let kg = line.weightKg {
+                        // Snap to the nearest half — real plates come in halves, and unit
+                        // round-trips otherwise leave "185.0" / "225.1" in the field.
+                        let w = ((unit == .lb ? kg / Formatters.kgPerLb : kg) * 2).rounded() / 2
+                        set.weightText = String(format: w.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", w)
+                    }
+                    return set
+                }
+                return draft
+            })
+        }
     }
 
     @State private var date = Date()
@@ -28,6 +59,7 @@ struct LogWorkoutView: View {
     @State private var exercises: [DraftExercise] = [DraftExercise()]
     @State private var effort: Int?
     @State private var notes = ""
+    @State private var saveFailed = false
 
     private var distanceUnit: DistanceUnit { DistanceUnit.auto.resolved() }
     private var weightUnit: WeightUnit { .default() }
@@ -70,6 +102,11 @@ struct LogWorkoutView: View {
             }
             .sheet(isPresented: $showTypePicker) {
                 SportPicker(selection: $type) { showTypePicker = false }
+            }
+            .alert("Couldn't save your workout", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong writing to storage. Everything you entered is still here — try Save again.")
             }
         }
     }
@@ -264,8 +301,16 @@ struct LogWorkoutView: View {
         // to move the plan's fitness model.
         w.calories = CalorieEstimator.kcal(for: w, bodyMassKg: profiles.first?.bodyMassKg)
         context.insert(w)
-        try? context.save()
+        // Never report success on a write that didn't land (the finish-flow save screens'
+        // rule) — the hand-typed workout would vanish while the screen buzzed "saved".
+        do { try context.save() } catch {
+            context.delete(w)   // roll back the orphaned insert so a retry can't double-log
+            saveFailed = true
+            return
+        }
         PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
+        // A logged workout moves streak/session/distance awards like a tracked one (deferred).
+        AwardsBook.syncSoon()
         Haptics.success()
         dismiss()
     }
@@ -353,7 +398,10 @@ enum LogWorkoutBuilder {
             }
             s.totalSets = totalSets
             s.totalVolumeKg = totalVol
-            w.strength = s
+            // A duration-only lift ("lifted for an hour", no sets given) matches the HealthKit
+            // import shape — type .strength, no StrengthSession — which every surface already
+            // handles. An empty session object would be a third shape for nothing.
+            if !s.exercises.isEmpty { w.strength = s }
         }
         return w
     }

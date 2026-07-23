@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import UserNotifications
 
 /// Local notifications (PRD §24) — the "updates" half of the adaptive coach. Two kinds:
@@ -15,9 +16,41 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     private let reminderHour = 7
     private let reminderMinute = 30
 
+    /// Siri meal receipts: the category carries the Undo action (see `SiriMealLogger.postReceipt`).
+    /// nonisolated: referenced from the nonisolated delegate callback.
+    nonisolated static let mealReceiptCategory = "momentum.meal.receipt"
+    nonisolated static let mealUndoAction = "momentum.meal.undo"
+
     override init() {
         super.init()
         center.delegate = self
+        // The app's one notification category set — replace-not-merge semantics, so every
+        // category the app uses must be registered here together.
+        let undo = UNNotificationAction(identifier: Self.mealUndoAction, title: "Undo",
+                                        options: [.destructive])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.mealReceiptCategory, actions: [undo],
+                                   intentIdentifiers: [], options: []),
+        ])
+    }
+
+    /// Notification actions land here — currently just the meal receipt's Undo, which removes
+    /// the Siri-logged meal (safe if it's already gone).
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        let info = response.notification.request.content.userInfo
+        guard action == Self.mealUndoAction,
+              let idString = info["mealID"] as? String,
+              let id = UUID(uuidString: idString) else {
+            completionHandler()
+            return
+        }
+        Task { @MainActor in
+            SiriMealLogger.undoMeal(id: id, in: PersistenceController.shared.container.mainContext)
+            completionHandler()
+        }
     }
 
     func requestAuthorization() {

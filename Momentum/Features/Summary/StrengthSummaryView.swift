@@ -84,8 +84,12 @@ struct StrengthSummaryContent: View {
 
     private func stat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
+            // Scale, never wrap — the 4-up row ("EXERCISES" et al.) breaks baseline alignment on
+            // an SE otherwise (mirrors CardioSummaryContent's stat).
             Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.7)
             Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
     }
 

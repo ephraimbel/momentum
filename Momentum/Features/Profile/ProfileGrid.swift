@@ -58,6 +58,9 @@ struct ProfileGrid: View {
     let stats: ProfileStats
     /// The award shelf (recent wins + the closest next-ups) — the Highlights trophy case.
     let awardsShelf: AwardsShelf
+    /// Content signature from the parent — invalidates the month/day memos on equal-count edits
+    /// (a workout's sport or date changing), not just count changes.
+    var dataKey: Int = 0
     var weightUnit: WeightUnit = .default()
     var distanceUnit: DistanceUnit = .auto
     let tab: ProfileGridTab
@@ -94,7 +97,7 @@ struct ProfileGrid: View {
     private final class MonthsMemo { var count = -1; var value: [MonthGroup] = [] }
     @State private var monthsMemo = MonthsMemo()
     private var monthGroups: [MonthGroup] {
-        if monthsMemo.count != workouts.count {
+        if monthsMemo.count != dataKey {
             let cal = Calendar.current
             let grouped = Dictionary(grouping: workouts) {
                 cal.dateInterval(of: .month, for: $0.startedAt)?.start ?? $0.startedAt
@@ -106,7 +109,7 @@ struct ProfileGrid: View {
                 return MonthGroup(id: start, title: Self.monthTitle(start, calendar: cal),
                                   workouts: rows, tileOffset: offset)
             }
-            monthsMemo.count = workouts.count
+            monthsMemo.count = dataKey
         }
         return monthsMemo.value
     }
@@ -120,6 +123,12 @@ struct ProfileGrid: View {
 
     private var gridContent: some View {
         LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
+            Color.clear.frame(height: 0)
+                .task {
+                    // Retire the entrance once it has played (stagger + fade ≈ 0.9s).
+                    try? await Task.sleep(for: .seconds(1.2))
+                    didEntrance = true
+                }
             ForEach(monthGroups) { group in
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     sectionRule(group.title, meta: "\(group.workouts.count)")
@@ -136,7 +145,10 @@ struct ProfileGrid: View {
     }
 
     /// The first screenful settles in with a quiet stagger; everything below appears instantly
-    /// (an entrance fade on every scrolled-in row reads as lag, not polish).
+    /// (an entrance fade on every scrolled-in row reads as lag, not polish). One-shot: after the
+    /// entrance has played, recycled top cells scrolled back into view appear instantly too —
+    /// `.reveal`'s per-cell @State resets on recycle and the top row re-fading read as a flash.
+    @State private var didEntrance = false
     @ViewBuilder
     private func tileCell(_ workout: Workout, globalIndex: Int) -> some View {
         let tile = WorkoutTile(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
@@ -144,7 +156,7 @@ struct ProfileGrid: View {
             onOpen(workout.id)
         }
         if globalIndex < 9 {
-            tile.reveal(Double(globalIndex) * 0.035)
+            tile.modifier(TileEntrance(delay: Double(globalIndex) * 0.035, enabled: !didEntrance))
         } else {
             tile
         }
@@ -229,12 +241,12 @@ struct ProfileGrid: View {
     private final class DayMinutesMemo { var count = -1; var value: [Int: Double] = [:] }
     @State private var dayMinutesMemo = DayMinutesMemo()
     private var dayMinutes: [Int: Double] {
-        if dayMinutesMemo.count != workouts.count {
+        if dayMinutesMemo.count != dataKey {
             var out: [Int: Double] = [:]
             for w in workouts {
                 out[StreakCalculator.localDay(w.startedAt), default: 0] += w.durationS / 60
             }
-            dayMinutesMemo.count = workouts.count
+            dayMinutesMemo.count = dataKey
             dayMinutesMemo.value = out
         }
         return dayMinutesMemo.value
@@ -374,6 +386,25 @@ private struct PenRule: View {
                 withAnimation(Motion.pen(0.7).delay(delay)) { drawn = true }
             }
             .accessibilityHidden(true)
+    }
+}
+
+/// The grid's one-shot entrance: fade + lift while `enabled`, instant forever after — a recycled
+/// lazy cell must not replay its entrance when scrolled back into view.
+private struct TileEntrance: ViewModifier {
+    let delay: Double
+    let enabled: Bool
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || !enabled || reduceMotion ? 1 : 0)
+            .offset(y: shown || !enabled || reduceMotion ? 0 : 14)
+            .onAppear {
+                guard enabled, !reduceMotion else { return }
+                withAnimation(.easeOut(duration: 0.5).delay(delay)) { shown = true }
+            }
     }
 }
 

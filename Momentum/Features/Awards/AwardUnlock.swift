@@ -142,6 +142,10 @@ struct AwardUnlockView: View {
 /// them seen. Attach once near the app root — awards land from any path (save flows, Health
 /// import, a plan week completing) and the celebration meets the athlete wherever they are.
 private struct AwardUnlockPresenter: ViewModifier {
+    /// True while a root-level cover (paywall, coach, onboarding, recovery) owns the screen —
+    /// the celebration is an overlay UNDER those covers, so presenting now would play the whole
+    /// moment invisibly behind them. Deferred until the cover clears.
+    var paused: Bool = false
     @Query(filter: #Predicate<EarnedAward> { $0.seen == false }) private var unseen: [EarnedAward]
     @Environment(\.modelContext) private var context
     @State private var queue: [Award] = []
@@ -157,6 +161,7 @@ private struct AwardUnlockPresenter: ViewModifier {
                 }
             }
             .onChange(of: unseen.count) { maybePresent() }
+            .onChange(of: paused) { maybePresent() }
             .task {
                 #if DEBUG
                 // --award-unlock: play the unlock moment on demand for sim verification.
@@ -173,7 +178,7 @@ private struct AwardUnlockPresenter: ViewModifier {
     }
 
     private func maybePresent() {
-        guard !presented, !unseen.isEmpty else { return }
+        guard !presented, !paused, !unseen.isEmpty else { return }
         // Present in the order they were earned; ties break by catalog order so a single run's
         // haul (say, The 5K + First Fifty) reads smallest-to-summit.
         let awards = unseen
@@ -189,7 +194,7 @@ private struct AwardUnlockPresenter: ViewModifier {
         Task { @MainActor in
             // A breath after the triggering screen settles (save hand-off, tab landing).
             try? await Task.sleep(for: .seconds(0.7))
-            guard !presented, !unseen.isEmpty else { return }
+            guard !presented, !paused, !unseen.isEmpty else { return }
             withAnimation(.easeOut(duration: 0.3)) { presented = true }
         }
     }
@@ -199,7 +204,10 @@ private struct AwardUnlockPresenter: ViewModifier {
     }
 
     private func dismiss() {
-        for a in unseen { a.seen = true }
+        // Only the awards that actually played get retired — one earned DURING the celebration
+        // (a background import) stays unseen and gets its own moment right after.
+        let shown = Set(queue.map(\.id))
+        for a in unseen where shown.contains(a.awardID) { a.seen = true }
         try? context.save()
         withAnimation(.easeIn(duration: 0.25)) { presented = false }
     }
@@ -207,5 +215,8 @@ private struct AwardUnlockPresenter: ViewModifier {
 
 extension View {
     /// Present unlock celebrations for newly-earned awards over this view. Attach once, app-root.
-    func awardUnlocks() -> some View { modifier(AwardUnlockPresenter()) }
+    /// Pass `paused: true` while a root cover owns the screen — presentation defers until clear.
+    func awardUnlocks(paused: Bool = false) -> some View {
+        modifier(AwardUnlockPresenter(paused: paused))
+    }
 }

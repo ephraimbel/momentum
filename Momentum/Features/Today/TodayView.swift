@@ -13,9 +13,23 @@ struct TodayView: View {
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router   // morning readout → Progress · Health
     @Query private var profiles: [UserProfile]
-    @Query private var chatMessages: [ChatMessage]   // coach-button badge (threads stay small)
+    // Coach-button badge: only the newest coach message matters, so fetch exactly that instead of
+    // materializing the whole thread on Today (the map re-evaluates this body constantly).
+    @Query(TodayView.latestCoachMessage) private var latestCoachMessage: [ChatMessage]
     @Query private var workouts: [Workout]
-    @Query private var appNotifications: [AppNotification]
+    // Bell badge: the unread filter lives in the query (live, updated on read-flips) — filtering
+    // the full inbox per body pass was a per-frame walk while the map panned.
+    @Query(filter: #Predicate<AppNotification> { $0.read == false })
+    private var unreadNotifications: [AppNotification]
+
+    private static var latestCoachMessage: FetchDescriptor<ChatMessage> {
+        let coachRaw = ChatMessage.Role.coach.rawValue
+        var d = FetchDescriptor<ChatMessage>(
+            predicate: #Predicate { $0.roleRaw == coachRaw },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        d.fetchLimit = 1
+        return d
+    }
     @Query private var checkins: [DailyCheckin]
     // Reactive read of today's adaptation receipt (ease/cutback) — the morning readout's footer
     // appears the moment the bootstrap's recovery pass records one (RECOVERY-HUB-PLAN §2 entry 2).
@@ -61,6 +75,13 @@ struct TodayView: View {
     @State private var showNotifications = false
     @State private var showProfile = false
     @State private var showLogWorkout = false
+    /// The offline-log composer (say/type what you did → receipt → confirm).
+    @State private var showLogActivity = false
+    /// The composer's "Adjust details" hand-off — set after its sheet dismisses, presents the
+    /// full manual form pre-filled with the parse.
+    @State private var manualPrefill: LogWorkoutPrefill?
+    /// DEBUG deep link only (`--log-activity-draft`): opens the composer holding this text.
+    @State private var logActivityDraft: String?
     @State private var showInjuryReport = false
     @State private var showCheckin = false
     /// The morning readout for the deck's utility line — one honest 0–100, computed off-render.
@@ -328,6 +349,14 @@ struct TodayView: View {
         }
         .sheet(isPresented: $showNotifications) { NotificationsView() }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
+        .sheet(isPresented: $showLogActivity) {
+            LogActivityView(initialDraft: logActivityDraft ?? "") { prefill in
+                // Sheet swap: let the composer finish dismissing before the editor presents
+                // (the same beat the deep links use — same-tick presentation misbehaves).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { manualPrefill = prefill }
+            }
+        }
+        .sheet(item: $manualPrefill) { LogWorkoutView(prefill: $0) }
         .sheet(isPresented: $showInjuryReport) { InjuryReportSheet(profile: profiles.first) }
         .sheet(isPresented: $showCheckin) {
             CheckinSheet(profile: profiles.first) {
@@ -475,6 +504,16 @@ struct TodayView: View {
         }
         if ProcessInfo.processInfo.arguments.contains("--log-workout") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogWorkout = true }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--log-activity") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogActivity = true }
+        }
+        // --log-activity-draft "<text>": open the composer pre-filled — the only way a screenshot
+        // run can exercise the live receipt (simctl can't type).
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "--log-activity-draft"), i + 1 < args.count {
+            logActivityDraft = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLogActivity = true }
         }
         if ProcessInfo.processInfo.arguments.contains("--injury-report") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showInjuryReport = true }
@@ -932,10 +971,10 @@ struct TodayView: View {
 
     /// A coach message landed after the chat was last on screen (proactive seeds arrive closed).
     private var hasUnseenCoachNews: Bool {
-        chatMessages.contains { $0.role == .coach && $0.createdAt > coach.lastSeenAt }
+        (latestCoachMessage.first?.createdAt ?? .distantPast) > coach.lastSeenAt
     }
 
-    private var unreadCount: Int { appNotifications.filter { !$0.read }.count }
+    private var unreadCount: Int { unreadNotifications.count }
 
     private var bellButton: some View {
         Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
@@ -1028,7 +1067,10 @@ struct TodayView: View {
             }
             VStack(spacing: Theme.Space.md) {
                 if isCardio && pendingToday == nil { goalControl }
-                OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+                HStack(spacing: Theme.Space.sm) {
+                    logButton
+                    OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+                }
                 utilityLine
                 // Discovery chips (Suggest a loop / Spots) are HIDDEN for now — the loop quality isn't
                 // good enough yet (lopsided, backtracking) and Spots is parked. All the code stays
@@ -1071,17 +1113,33 @@ struct TodayView: View {
         router.pendingTab = .progress
     }
 
-    /// Quiet secondary actions beneath Start — log a forgotten workout, or tell the coach something
-    /// hurts (the injury loop, ENDURANCE-FOCUS §8.2). Neither competes with the hero.
+    /// The offline half of the action row — for the workout that already happened (a lift, a
+    /// treadmill run, anything untracked). Hairline-quiet by design: Start stays the deck's only
+    /// filled element, so the hierarchy never competes.
+    private var logButton: some View {
+        Button {
+            Haptics.light()
+            showLogActivity = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.pencil").font(.system(size: 15, weight: .semibold))
+                Text("Log").font(.rounded(Theme.FontSize.body, weight: .semibold))
+            }
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 20)
+            .frame(height: 56)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.inkTertiary.opacity(0.45), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Log a workout you already did")
+    }
+
+    /// The one quiet action beneath Start — tell the coach something hurts (the injury loop,
+    /// ENDURANCE-FOCUS §8.2). Logging moved up beside Start as the deck's second action.
     private var quietActionsRow: some View {
-        HStack(spacing: 0) {
-            quietAction("square.and.pencil", "Add a past workout", a11y: "Add a workout you forgot to track") {
-                showLogWorkout = true
-            }
-            Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
-            quietAction("bandage.fill", "Something hurts?", a11y: "Report a pain or injury — your plan adjusts") {
-                showInjuryReport = true
-            }
+        quietAction("bandage.fill", "Something hurts?", a11y: "Report a pain or injury — your plan adjusts") {
+            showInjuryReport = true
         }
     }
 

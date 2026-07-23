@@ -149,7 +149,11 @@ struct PlanView: View {
         }
         .workoutRunner(launch: $launch)
         .sheet(isPresented: $showSettings, onDismiss: rebuildDerived) {
-            if let p = profiles.first { PlanSettingsSheet(profile: p) { showSettings = false } }
+            // No plan yet → the sheet must open in CREATE mode, or Save quietly rebuilds nothing
+            // and dismisses with a success buzz (the coach's "set up your plan" card hit this).
+            if let p = profiles.first {
+                PlanSettingsSheet(profile: p, mode: p.plan == nil ? .create : .adjust) { showSettings = false }
+            }
         }
         // "Start a new plan" — the same complete form, framed as a beginning: blank name, always
         // rebuilds, honest about replacing the current block (completed work + calibration carry).
@@ -352,8 +356,10 @@ struct PlanView: View {
             let days = cal.dateComponents([.day], from: cal.startOfDay(for: Date()),
                                           to: cal.startOfDay(for: raceDate)).day ?? 0
             let day = raceDate.formatted(.dateTime.month(.abbreviated).day())
-            return days <= 7 ? "\(label) · \(day) — race week"
-                             : "\(label) · \(day) · \(Int(ceil(Double(days) / 7.0))) weeks to go"
+            // One countdown grammar everywhere (Formatters.raceCountdown) — this header and the
+            // race-projection card lower on the SAME page must never disagree about the distance
+            // to the race ("2 weeks" vs "9 days").
+            return "\(label) · \(day) · \(Formatters.raceCountdown(days: days))"
         }
         // The strip and this counter read the same array by construction — `rebuildDerived` starts
         // the strip at the block, so carried history can't inflate "of N" or offset a chip.
@@ -405,7 +411,16 @@ struct PlanView: View {
     }
 
     private var addButton: some View {
-        Button { presentAdd(for: isCurrentWeek ? Date() : weekStart) } label: {
+        Button {
+            // A free athlete viewing a Pro-locked future week: adding would drop the session
+            // behind the frosted board where they can't see it land — route to the paywall
+            // instead, the same boundary the board itself draws.
+            if isFutureWeek && !paywall.isEntitled(to: .fullPlan) {
+                paywall.present(for: .fullPlan)
+                return
+            }
+            presentAdd(for: isCurrentWeek ? Date() : weekStart)
+        } label: {
             Image(systemName: "plus").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.background)
                 .frame(width: 40, height: 40).background(Circle().fill(Theme.ink))
                 .contentShape(Circle())

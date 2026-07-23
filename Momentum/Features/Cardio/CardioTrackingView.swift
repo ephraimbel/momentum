@@ -532,6 +532,9 @@ struct CardioTrackingView: View {
                 .font(.display(96, weight: .black)).foregroundStyle(.white)
                 .id(countdown).transition(.scale.combined(with: .opacity))
         }
+        // Purely visual — the dimmer must not eat taps, or the X behind it can't abort the
+        // countdown and an accidental start arms no matter what the athlete does.
+        .allowsHitTesting(false)
     }
 
     private func trackingPanel(_ vm: CardioViewModel) -> some View {

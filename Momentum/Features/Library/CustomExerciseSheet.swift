@@ -14,6 +14,7 @@ struct CustomExerciseSheet: View {
     @State private var equipment: EquipmentType = .barbell
     @State private var category: ExerciseCategory = .compound
     @State private var trackingMode: TrackingMode = .weightReps
+    @State private var saveFailed = false
 
     var body: some View {
         NavigationStack {
@@ -45,6 +46,11 @@ struct CustomExerciseSheet: View {
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .alert("Couldn't create the exercise", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong writing to storage. Your details are still here — try Add again.")
+            }
         }
     }
 
@@ -53,7 +59,14 @@ struct CustomExerciseSheet: View {
                           primaryMuscles: [primary], equipment: equipment,
                           category: category, trackingMode: trackingMode, isCustom: true)
         context.insert(ex)
-        try? context.save()
+        // Handing back an unsaved exercise would let the athlete log sets against a row that
+        // vanishes on next launch — fail loudly and keep the form.
+        do { try context.save() } catch {
+            context.delete(ex)
+            saveFailed = true
+            return
+        }
+        Haptics.success()
         onCreate(ex)
         dismiss()
     }

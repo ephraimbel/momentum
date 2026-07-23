@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppIntents
 
 /// FUEL — the fueling readout + meal journal (pillar decision 2026-07-16; canonical flow in
 /// docs/FUEL-FLOW.md). One page that answers "am I fueled for the work?": the deterministic
@@ -63,6 +64,8 @@ struct FuelView: View {
     @State private var showingHistory = false
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
+    /// The "Hey Siri, log a meal in Momentum" tip row — shown until the athlete dismisses it.
+    @AppStorage("com.momentum.fuel.siriTip") private var siriTipVisible = true
     @FocusState private var composing: Bool
     @Environment(PaywallController.self) private var paywall
     @Environment(\.scenePhase) private var scenePhase
@@ -109,6 +112,12 @@ struct FuelView: View {
                     ringsRow.reveal(0.10)
                     composer.reveal(0.16)
                     usualsRow.reveal(0.20)
+                    // Discoverability for hands-free logging ("Hey Siri, log a meal in Momentum").
+                    // Apple's own tip row; dismissible once, forever.
+                    if siriTipVisible {
+                        SiriTipView(intent: LogMealIntent(), isVisible: $siriTipVisible)
+                            .reveal(0.22)
+                    }
                     todaysMeals.reveal(0.24)
                 }
                 .padding(Theme.Space.lg)

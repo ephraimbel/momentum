@@ -11,10 +11,21 @@ struct AwardsGalleryView: View {
     @Environment(\.dismiss) private var dismiss
 
     /// Built once per data change in `.task` — snapshot assembly walks the full history and must
-    /// never run in `body` (page-load rule).
+    /// never run in `body` (page-load rule). Locked-cell progress is precomputed into a dictionary
+    /// here too: `AwardsEngine.progress` re-walks the activity list, and calling it per cell per
+    /// render made the trophy-room scroll cost O(history × cells).
     @State private var snapshot: AwardsEngine.Snapshot?
-    @State private var builtForCount = -1
+    @State private var progressByID: [String: Double] = [:]
+    @State private var builtForKey = -1
     @State private var detail: Award?
+
+    /// Invalidation covers everything the snapshot reads: workouts, records (a new PR moves speed
+    /// progress with no new workout), and earned rows (plan-based awards land without either).
+    private var dataKey: Int {
+        var h = Hasher()
+        h.combine(workouts.count); h.combine(records.count); h.combine(earned.count)
+        return h.finalize()
+    }
 
     private var earnedByID: [String: EarnedAward] {
         Dictionary(earned.map { ($0.awardID, $0) }, uniquingKeysWith: { a, _ in a })
@@ -35,11 +46,18 @@ struct AwardsGalleryView: View {
         .background(Theme.background)
         .navigationBarHidden(true)
         .safeAreaInset(edge: .top) { header }
-        .task(id: workouts.count) {
-            guard builtForCount != workouts.count else { return }
-            snapshot = AwardsBook.snapshot(workouts: workouts, records: records,
+        .task(id: dataKey) {
+            guard builtForKey != dataKey else { return }
+            let snap = AwardsBook.snapshot(workouts: workouts, records: records,
                                            plan: profiles.first?.plan)
-            builtForCount = workouts.count
+            let earnedIDs = Set(earned.map(\.awardID))
+            var map: [String: Double] = [:]
+            for award in AwardsCatalog.all where !earnedIDs.contains(award.id) {
+                map[award.id] = AwardsEngine.progress(toward: award, in: snap)?.fraction
+            }
+            snapshot = snap
+            progressByID = map
+            builtForKey = dataKey
         }
         .sheet(item: $detail) { award in
             AwardDetailSheet(award: award, earnedRow: earnedByID[award.id],
@@ -134,8 +152,7 @@ struct AwardsGalleryView: View {
     }
 
     private func lockedProgress(_ award: Award) -> Double? {
-        guard let snapshot else { return nil }
-        return AwardsEngine.progress(toward: award, in: snapshot)?.fraction
+        progressByID[award.id]
     }
 }
 

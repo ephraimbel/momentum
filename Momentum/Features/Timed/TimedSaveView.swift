@@ -50,6 +50,7 @@ struct TimedSaveView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save() }.fontWeight(.bold)
+                        .disabled(workout == nil)   // mirrors StrengthSaveView — no confirming a ghost
                 }
             }
         }
@@ -146,17 +147,17 @@ struct TimedSaveView: View {
     private func save() {
         focus = nil
         // Never celebrate a write that didn't land — the title, notes and effort live only in these
-        // fields, and dismissing over a failed save discards what the athlete just typed.
-        if let workout {
-            workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-            workout.perceivedEffort = effort
-            do { try context.save() } catch { saveFailed = true; return }
-            let saved = workout
-            Task { await services.health.save(saved) }   // mirror to Apple Health
-            // Timed sessions move the streak, session-count, and time-of-day awards.
-            AwardsBook.sync(in: context)
-        }
+        // fields, and dismissing over a failed save discards what the athlete just typed. A nil
+        // workout (query miss) must fail loudly too, not fall through to the success haptic.
+        guard let workout else { saveFailed = true; return }
+        workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+        workout.perceivedEffort = effort
+        do { try context.save() } catch { saveFailed = true; return }
+        let saved = workout
+        Task { await services.health.save(saved) }   // mirror to Apple Health
+        // Timed sessions move the streak, session-count, and time-of-day awards (deferred).
+        AwardsBook.syncSoon()
         // No celebration here any more — it played on arrival, where the moment actually is.
         Haptics.success()
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)

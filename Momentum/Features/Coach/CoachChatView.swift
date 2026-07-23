@@ -80,6 +80,14 @@ struct CoachChatView: View {
                 }
             }
             .sheet(isPresented: $showCapabilities) { CoachCapabilitiesSheet() }
+            // The coach itself is a fullScreenCover — RootView's app-level paywall cover cannot
+            // present on top of it (same limitation CardioSaveView documents), so the "paywall on
+            // send" gate needs its own host here or a free athlete's Send does nothing at all.
+            .fullScreenCover(item: Binding(
+                get: { paywall.presentedFeature },
+                set: { paywall.presentedFeature = $0 })) { feature in
+                PaywallView(feature: feature)
+            }
             // Clearing wipes the whole thread — receipts, undo snapshots, everything. Confirm first.
             .confirmationDialog("Clear this conversation?", isPresented: $confirmClear, titleVisibility: .visible) {
                 Button("Clear everything", role: .destructive) { vm?.clear() }
@@ -223,7 +231,7 @@ struct CoachChatView: View {
                     }
                     if messages.count <= 1 { suggestionChips(vm).padding(.top, Theme.Space.sm) }
                     // Follow-ups: the conversation offers its own next question.
-                    if messages.count > 1, !vm.followUps.isEmpty, !vm.isResponding {
+                    if messages.count > 1, !vm.followUps(last: messages.last).isEmpty, !vm.isResponding {
                         followUpChips(vm)
                             .id("followups")
                             .transition(.opacity)
@@ -261,8 +269,16 @@ struct CoachChatView: View {
                 }
             }
             .animation(reduceMotion ? nil : Motion.standard, value: nearBottom)
-            .onChange(of: messages.count) { scrollToEnd(proxy, vm) }
-            .onChange(of: vm.isResponding) { scrollToEnd(proxy, vm) }
+            // Respect the reader's place: force the jump only when they're already at the bottom
+            // or the new message is their own send — completing a reply while they've scrolled up
+            // to re-read must not yank them back down (the streaming handler below already
+            // honors `nearBottom`; these two were the yank).
+            .onChange(of: messages.count) {
+                if nearBottom || messages.last?.role == .user { scrollToEnd(proxy, vm) }
+            }
+            .onChange(of: vm.isResponding) {
+                if nearBottom { scrollToEnd(proxy, vm) }
+            }
             .onChange(of: inputFocused) { _, focused in if focused { scrollToEnd(proxy, vm) } }
             // Streaming: follow the reply as it grows (unanimated — deltas land many times a second).
             .onChange(of: messages.last?.text) {
@@ -276,7 +292,7 @@ struct CoachChatView: View {
     /// Small trailing chips under the latest reply — tap to keep the thread moving.
     private func followUpChips(_ vm: CoachChatViewModel) -> some View {
         HStack(spacing: Theme.Space.sm) {
-            ForEach(vm.followUps, id: \.self) { text in
+            ForEach(vm.followUps(last: messages.last), id: \.self) { text in
                 Button { attemptSend(vm, text) } label: {
                     Text(text)
                         .font(.rounded(Theme.FontSize.label, weight: .bold))
@@ -306,7 +322,7 @@ struct CoachChatView: View {
     private func scrollToEnd(_ proxy: ScrollViewProxy, _ vm: CoachChatViewModel) {
         withAnimation(.easeOut(duration: 0.25)) {
             if vm.isResponding { proxy.scrollTo("typing", anchor: .bottom) }
-            else if !vm.followUps.isEmpty { proxy.scrollTo("followups", anchor: .bottom) }
+            else if !vm.followUps(last: messages.last).isEmpty { proxy.scrollTo("followups", anchor: .bottom) }
             else { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
         }
     }

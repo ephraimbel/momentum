@@ -26,6 +26,8 @@ struct OnboardingFlow: View {
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
+    @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
+    @State private var remindersAdvanced = false      // same for the reminders primer
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var healthImport: HealthImportState = .idle   // calibration: the Health baseline card
@@ -620,6 +622,10 @@ struct OnboardingFlow: View {
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.sm) {
                 OversizedButton(title: "Connect Apple Health") {
+                    // One-shot: when permission is already determined the awaits return instantly
+                    // with no system sheet to swallow taps, and a double-tap advanced two steps.
+                    guard !healthRequestInFlight else { return }
+                    healthRequestInFlight = true
                     Task {
                         _ = await services.health.requestAuthorization()
                         // Grab resting HR (and body mass, if the athlete skipped it) while we have
@@ -628,6 +634,9 @@ struct OnboardingFlow: View {
                         if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
                         if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
                         goNext()
+                        // Re-arm AFTER the step transition settles (in case the athlete comes
+                        // back) — an immediate reset would re-open the double-tap window.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { healthRequestInFlight = false }
                     }
                 }
                 Button { Haptics.light(); goNext() } label: {
@@ -1098,8 +1107,12 @@ struct OnboardingFlow: View {
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.sm) {
                 OversizedButton(title: "Turn on reminders") {
+                    // One-shot — a fast double-tap called goNext() twice and skipped a step.
+                    guard !remindersAdvanced else { return }
+                    remindersAdvanced = true
                     services.notifications.requestAuthorization()
                     goNext()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
                 }
                 Button { Haptics.light(); goNext() } label: {
                     Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)

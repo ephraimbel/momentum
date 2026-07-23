@@ -67,7 +67,16 @@ struct CardioSaveView: View {
                     }
                     .padding(Theme.Space.md)
                 } else if reader != nil {
-                    ContentUnavailableView("Workout not found", systemImage: "questionmark")
+                    // A dead-end error screen on a fullScreenCover is a trap — Done/Discard both
+                    // only raise alerts here, so this state needs its own way out (mirrors
+                    // StrengthSaveView's Close).
+                    ContentUnavailableView {
+                        Label("Workout not found", systemImage: "questionmark")
+                    } description: {
+                        Text("This session couldn't be loaded.")
+                    } actions: {
+                        Button("Close") { onDone() }
+                    }
                 } else {
                     ProgressView().padding(.top, Theme.Space.xxl)
                 }
@@ -336,9 +345,9 @@ struct CardioSaveView: View {
                 .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
         }
         PersonalRecord.persist(records, workout: workout, in: recordsContext)
-        // Awards read the whole ledger (distance totals, streak, records) — sync after the PRs
-        // land so a run that breaks a barrier earns the coin in the same save.
-        AwardsBook.sync(in: recordsContext)
+        // Awards read the whole ledger (distance totals, streak, records) — deferred so the
+        // walk never delays this dismissal, and the unlock presents on the destination screen.
+        AwardsBook.syncSoon()
         // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
         // (a never-locked GPS run finished by accident has nothing worth exporting).
         if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {

@@ -60,9 +60,25 @@ struct ProfileScreen: View {
         var shelf: AwardsShelf?
     }
     @State private var memo = FallbackMemo()
+    /// Cheap content signature over already-materialized scalars. Keying the caches on COUNT
+    /// alone missed equal-count changes (edit a saved workout's sport on the save screen, or
+    /// delete one + import another): lifetime totals, discipline mix, and month grouping stayed
+    /// stale until the count next moved. Scalars only — no relationship faulting.
+    private var workoutsSignature: Int {
+        var h = Hasher()
+        h.combine(workouts.count)
+        for w in workouts {
+            h.combine(w.startedAt)
+            h.combine(w.type.rawValue)
+            h.combine(w.durationS)
+        }
+        return h.finalize()
+    }
+
     private var stats: ProfileStats {
         if let cachedStats { return cachedStats }
-        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.shelf = nil }
+        let sig = workoutsSignature
+        if memo.count != sig { memo.count = sig; memo.stats = nil; memo.shelf = nil }
         if let s = memo.stats { return s }
         let s = ProfileStats(workouts: workouts, plan: profile?.plan)
         memo.stats = s
@@ -70,7 +86,8 @@ struct ProfileScreen: View {
     }
     private var awardsShelf: AwardsShelf {
         if let cachedShelf { return cachedShelf }
-        if memo.count != workouts.count { memo.count = workouts.count; memo.stats = nil; memo.shelf = nil }
+        let sig = workoutsSignature
+        if memo.count != sig { memo.count = sig; memo.stats = nil; memo.shelf = nil }
         if let s = memo.shelf { return s }
         let s = AwardsShelf(earned: earnedAwards,
                             snapshot: AwardsBook.snapshot(workouts: workouts, records: records,
@@ -84,7 +101,10 @@ struct ProfileScreen: View {
 
     private func refreshAggregates() {
         cachedStats = ProfileStats(workouts: workouts, plan: profile?.plan)
-        cachedShelf = AwardsShelf(earned: earnedAwards,
+        // Fetch the earned rows directly — when this runs right after a sync, the @Query array
+        // can still be the pre-sync capture and the just-earned coin would miss the shelf.
+        let earnedRows = (try? context.fetch(FetchDescriptor<EarnedAward>())) ?? Array(earnedAwards)
+        cachedShelf = AwardsShelf(earned: earnedRows,
                                   snapshot: AwardsBook.snapshot(workouts: workouts, records: records,
                                                                 plan: profile?.plan))
     }
@@ -120,7 +140,7 @@ struct ProfileScreen: View {
                     // toggle and grid are plain siblings (no Section header) so the bar scrolls with
                     // the tiles instead of pinning.
                     ProfileGridTabBar(tab: gridTab)
-                    ProfileGrid(workouts: workouts, stats: stats, awardsShelf: awardsShelf,
+                    ProfileGrid(workouts: workouts, stats: stats, awardsShelf: awardsShelf, dataKey: workoutsSignature,
                                 weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
                                 prWorkoutIds: Set(records.compactMap { $0.workout?.id }),
                                 onOpen: { id in immersive = ImmersiveStart(id: id) },
@@ -188,17 +208,23 @@ struct ProfileScreen: View {
             }
         }
         #endif
-        .task(id: workouts.count) {
+        .task(id: workoutsSignature) {
             // Award sync first, every visit: new awards can land without a new workout (a plan
             // week checked off, a Health import elsewhere). No-ops when nothing changed.
             AwardsBook.sync(in: context)
+            // The @Query array was captured BEFORE the sync above — an award earned by this very
+            // visit wouldn't be in `earnedAwards.count` yet, and the shelf would miss it until
+            // the next visit. Count the store directly instead.
+            let earnedCount = (try? context.fetchCount(FetchDescriptor<EarnedAward>()))
+                ?? earnedAwards.count
             // .task(id:) re-fires on every tab visit; the stats walk only needs to re-run
             // when the data actually moved — re-walking per switch read as tab-change jank.
-            guard aggregatedForCount != workouts.count || shelfForAwardCount != earnedAwards.count
+            let sig = workoutsSignature
+            guard aggregatedForCount != sig || shelfForAwardCount != earnedCount
             else { return }
             refreshAggregates()
-            aggregatedForCount = workouts.count
-            shelfForAwardCount = earnedAwards.count
+            aggregatedForCount = sig
+            shelfForAwardCount = earnedCount
         }
         .navigationDestination(isPresented: $showingAwards) { AwardsGalleryView() }
         .fullScreenCover(item: $immersive) { start in

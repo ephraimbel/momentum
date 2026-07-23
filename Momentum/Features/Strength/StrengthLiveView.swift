@@ -15,6 +15,7 @@ struct StrengthLiveView: View {
     @State private var showingLibrary = false
     @State private var showingPlates = false
     @State private var confirmExit = false
+    @State private var confirmFinishWithDrafts = false
 
     var body: some View {
         ZStack {
@@ -70,6 +71,9 @@ struct StrengthLiveView: View {
                     .padding(.bottom, 120)
                     .animation(Motion.standard, value: vm.exercises.count)
                 }
+                // Number pads have no Return key — without this, the keyboard can only be
+                // dismissed by logging a set or focusing elsewhere, and it buries the Finish bar.
+                .scrollDismissesKeyboard(.interactively)
             }
         }
         .safeAreaInset(edge: .bottom) { bottomBar(vm) }
@@ -154,14 +158,39 @@ struct StrengthLiveView: View {
 
     private func bottomBar(_ vm: StrengthViewModel) -> some View {
         OversizedButton(title: "Finish", isEnabled: vm.completedSetCount > 0) {
-            Task {
-                let id = await vm.finish()
-                onFinish(id)
+            // A filled-in set that was never ✓-logged would silently vanish from the summary —
+            // the most natural end-of-workout gesture (type last set → Finish) must not lose it.
+            if pendingDraftSets(vm).isEmpty {
+                Task { onFinish(await vm.finish()) }
+            } else {
+                confirmFinishWithDrafts = true
             }
+        }
+        .confirmationDialog("Some filled-in sets aren't logged yet",
+                            isPresented: $confirmFinishWithDrafts, titleVisibility: .visible) {
+            Button("Log them and finish") {
+                Task {
+                    for p in pendingDraftSets(vm) { await vm.completeSet(rowId: p.rowId, setId: p.setId) }
+                    onFinish(await vm.finish())
+                }
+            }
+            Button("Finish without them") {
+                Task { onFinish(await vm.finish()) }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.bottom, Theme.Space.sm)
         .momentumGlass(in: Rectangle(), stroke: false)
+    }
+
+    /// Sets with a reps value typed (or prefilled) but never logged — what Finish would drop.
+    private func pendingDraftSets(_ vm: StrengthViewModel) -> [(rowId: UUID, setId: UUID)] {
+        vm.exercises.flatMap { ex in
+            ex.sets
+                .filter { !$0.isComplete && !(vm.drafts[$0.id]?.reps ?? "").isEmpty }
+                .map { (rowId: ex.id, setId: $0.id) }
+        }
     }
 }
 

@@ -17,6 +17,27 @@ struct SessionDetailSheet: View {
     @State private var adjusting = false
     @State private var confirmRemove = false
 
+    /// The structured-workout expansion, memoized per input change — `body` needed it in two
+    /// places, and every distance-stepper tap re-rendered the whole sheet, so the builder was
+    /// running two to three times per render (heavy-work-in-body rule). A plain reference box
+    /// (fields unobserved), so filling it mid-body is invisible to SwiftUI.
+    private final class StructuredMemo { var key = "\u{0}"; var value: StructuredWorkout? }
+    @State private var structuredMemo = StructuredMemo()
+    private var structured: StructuredWorkout? {
+        let key = """
+        \(session.runType?.rawValue ?? "-")|\(session.intervals ?? "-")|\
+        \(session.targetDistanceM ?? -1)|\(session.targetDurationS ?? -1)|\
+        \(session.targetPaceSPerKm ?? -1)|\(profile?.plan?.p5kSPerKm ?? -1)|\(profile?.raceDistanceM ?? -1)
+        """
+        if structuredMemo.key != key {
+            structuredMemo.key = key
+            structuredMemo.value = StructuredWorkoutBuilder.build(
+                from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
+                raceDistanceM: profile?.raceDistanceM)
+        }
+        return structuredMemo.value
+    }
+
     /// Key off the precise sport when set (discipline buckets swim/row under running).
     private var isGPS: Bool { session.workoutType?.isGPS ?? (session.discipline != .strength) }
     private var isStrength: Bool { session.workoutType?.isStrengthStyle ?? (session.discipline == .strength) }
@@ -53,7 +74,7 @@ struct SessionDetailSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
         .confirmationDialog("Remove this session?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove", role: .destructive) { onRemove(); dismiss() }
+            Button("Remove", role: .destructive) { Haptics.medium(); onRemove(); dismiss() }
             Button("Cancel", role: .cancel) {}
         }
     }
@@ -124,8 +145,7 @@ struct SessionDetailSheet: View {
             }
             // Guided quality sessions (intervals/tempo/run-walk) expand into a step breakdown so the
             // athlete sees the shape of the session before starting the guided run.
-            if let workout = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
-                                                            raceDistanceM: profile?.raceDistanceM) {
+            if let workout = structured {
                 structuredSection(workout)
             }
         }
@@ -191,8 +211,7 @@ struct SessionDetailSheet: View {
         }
         // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
         // for guided sessions; only show it as a chip when no structured breakdown will render.
-        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
-                                                                      raceDistanceM: profile?.raceDistanceM) == nil { out.append(iv) }
+        if let iv = session.intervals, structured == nil { out.append(iv) }
         return out
     }
 

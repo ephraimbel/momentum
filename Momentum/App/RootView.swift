@@ -75,8 +75,11 @@ struct RootView: View {
                 }
                 // Award unlocks meet the athlete wherever they land — awards can arrive from any
                 // path (save flows, Health import, a plan week completing), so the presenter sits
-                // once at the root rather than on each surface.
-                .awardUnlocks()
+                // once at the root rather than on each surface. Paused while a root cover owns the
+                // screen (the overlay renders UNDER covers — presenting then would play the whole
+                // celebration invisibly behind them).
+                .awardUnlocks(paused: paywall.presentedFeature != nil || coach.isPresented
+                              || showOnboarding || showRecoveryPrompt || recoverySave != nil)
                 // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
                 // Full screen (not a sheet): the paywall is a considered, premium moment — it owns
                 // the whole canvas, like onboarding.
@@ -256,6 +259,15 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettingsDeepLink = true }
+            }
+            // --siri-log: exercise the Siri logging path end-to-end (meal + receipt notification)
+            // without Siri — the intent's perform() runs this exact code.
+            if ProcessInfo.processInfo.arguments.contains("--siri-log") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    if let receipt = SiriMealLogger.log(text: "energy gel and a banana", in: context) {
+                        SiriMealLogger.postReceipt(receipt)
+                    }
+                }
             }
             #endif
         }

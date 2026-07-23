@@ -16,6 +16,7 @@ struct EditProfileView: View {
     @Environment(\.modelContext) private var context
 
     @State private var pickedAvatar: PhotosPickerItem?
+    @State private var saveFailed = false
     // The staged copies — seeded from the profile once per presentation (the sheet view is
     // created fresh each time it's shown, so State(initialValue:) is the right seed point).
     @State private var name: String
@@ -52,6 +53,11 @@ struct EditProfileView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { save() }.fontWeight(.semibold) }
+            }
+            .alert("Couldn't save your profile", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong writing to storage. Your edits are still here — try Done again.")
             }
             .onChange(of: pickedAvatar) { _, item in Task { await loadAvatar(item) } }
         }
@@ -206,7 +212,14 @@ struct EditProfileView: View {
         profile.heightCm = heightCm
         profile.bodyMassKg = bodyMassKg
         profile.avatarData = avatarData
-        try? context.save()
+        // A failed write must not dismiss as if it saved — the staged edits would silently
+        // revert on next launch while the sheet closed looking done.
+        do { try context.save() } catch {
+            context.rollback()
+            saveFailed = true
+            return
+        }
+        Haptics.success()
         dismiss()
     }
 }

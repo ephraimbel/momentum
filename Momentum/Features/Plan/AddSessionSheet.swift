@@ -19,6 +19,7 @@ struct AddSessionSheet: View {
     @State private var goalValue = 5.0          // km/mi for distance
     @State private var goalMinutes = 30.0       // minutes for timed sports
     @State private var showSportPicker = false
+    @State private var saveFailed = false
 
     enum GoalKind: Hashable { case open, distance }
     /// The athlete's chosen unit. This was pinned to `.auto`, which resolves off LOCALE — so a US
@@ -58,6 +59,11 @@ struct AddSessionSheet: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+        .alert("Couldn't add the session", isPresented: $saveFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Something went wrong writing to storage. Your choices are still here — try Add again.")
+        }
         .sheet(isPresented: $showSportPicker) {
             SportPicker(selection: $sport) { showSportPicker = false }
         }
@@ -290,7 +296,14 @@ struct AddSessionSheet: View {
         }
         plan.sessions.append(s)
         context.insert(s)
-        try? context.save()
+        // Never confirm a session that didn't land — a silent failure here means the athlete
+        // watches the board and their session simply isn't there.
+        do { try context.save() } catch {
+            plan.sessions.removeAll { $0.id == s.id }
+            context.delete(s)
+            saveFailed = true
+            return
+        }
         Haptics.success()
         onDone()
     }

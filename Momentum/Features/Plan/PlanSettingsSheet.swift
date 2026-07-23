@@ -33,6 +33,7 @@ struct PlanSettingsSheet: View {
     @State private var minutes: Int
     @State private var equipment: Equipment
     @State private var showRacePicker = false
+    @State private var saveFailed = false
 
     init(profile: UserProfile, mode: Mode = .adjust, onDone: @escaping () -> Void) {
         self.profile = profile
@@ -136,6 +137,11 @@ struct PlanSettingsSheet: View {
             }
             // Hosted at stack level so the catalog can open from ANY state — picking a race is
             // allowed to be the thing that switches the plan's focus to racing.
+            .alert("Couldn't save your plan", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong writing to storage. Your settings are still here — try Save again.")
+            }
             .sheet(isPresented: $showRacePicker) {
                 RacePickerSheet { race, pickedDistance, date in
                     withAnimation(Motion.standard) {
@@ -438,7 +444,13 @@ struct PlanSettingsSheet: View {
             PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
         }
         profile.plan?.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        try? context.save()
+        // A structural rebuild that silently fails to persist is the worst kind of ghost — the
+        // athlete saw "success", and their plan reverts on next launch. Keep the sheet open.
+        do { try context.save() } catch {
+            context.rollback()
+            saveFailed = true
+            return
+        }
         Haptics.success()
         onDone()
     }

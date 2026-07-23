@@ -44,6 +44,10 @@ struct ImmersiveWorkoutPager: View {
                 // Open on the tapped workout (`.scrollPosition`'s initial value isn't honored for a lazy
                 // paging stack, so jump explicitly once the content exists).
                 .onAppear {
+                    // If the tapped workout vanished between tap and present (concurrent delete/
+                    // sync), scrollTo would silently no-op and the pager would open on the newest
+                    // workout instead — close rather than show the wrong one.
+                    guard workouts.contains(where: { $0.id == startID }) else { dismiss(); return }
                     var tx = Transaction(); tx.disablesAnimations = true
                     withTransaction(tx) { proxy.scrollTo(startID, anchor: .top) }
                 }

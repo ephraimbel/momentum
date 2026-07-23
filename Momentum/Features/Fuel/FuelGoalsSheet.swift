@@ -24,6 +24,7 @@ struct FuelGoalsSheet: View {
     @State private var customCarbs = ""
     @State private var customFat = ""
     @State private var customSodium = ""
+    @State private var saveFailed = false
     @State private var loaded = false
 
     private var usesPounds: Bool { profiles.first?.weightUnit == "lb" }
@@ -56,6 +57,11 @@ struct FuelGoalsSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
             .onAppear(perform: load)
+            .alert("Couldn't save your goals", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong writing to storage. Your choices are still here — try Save again.")
+            }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -350,7 +356,13 @@ struct FuelGoalsSheet: View {
         p.fuelCustomCarbsG = kind == .custom ? Int(customCarbs) : p.fuelCustomCarbsG
         p.fuelCustomFatG = kind == .custom ? Int(customFat) : p.fuelCustomFatG
         p.fuelCustomSodiumMg = kind == .custom ? Int(customSodium) : p.fuelCustomSodiumMg
-        try? context.save()
+        // Fuel targets drive every ring on the dashboard — a silently-failed save with a success
+        // buzz means the athlete eats to goals that revert on next launch.
+        do { try context.save() } catch {
+            context.rollback()
+            saveFailed = true
+            return
+        }
         Haptics.success()
         dismiss()
     }

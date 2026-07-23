@@ -14,6 +14,17 @@ enum AwardsBook {
     /// for every milestone they crossed months ago. Anything fresher celebrates normally.
     static let celebrationWindowS: TimeInterval = 48 * 3600
 
+    /// Deferred sync for the save flows: runs after the save cover has dismissed, so the
+    /// history-sized snapshot walk never sits between the athlete's Save tap and the screen
+    /// closing — and an unlock celebration presents over the destination screen instead of
+    /// playing hidden behind the dismissing cover.
+    static func syncSoon(delay: TimeInterval = 1.0) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(delay))
+            sync(in: PersistenceController.shared.container.mainContext)
+        }
+    }
+
     /// Recompute and persist newly-earned awards. Safe to call often — no-ops when nothing new.
     static func sync(in context: ModelContext, now: Date = Date()) {
         let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
@@ -48,19 +59,7 @@ enum AwardsBook {
             if StreakCalculator.workoutQualifies(type: w.type, distanceM: dist, activeSeconds: w.durationS) {
                 counting.insert(StreakCalculator.localDay(w.startedAt, calendar: calendar))
             }
-            var workingSets = 0
-            var buckets = Set<AwardsEngine.MuscleBucket>()
-            if let session = w.strength {
-                for row in session.exercises {
-                    let completed = row.sets.count { $0.isComplete && $0.type == .working }
-                    workingSets += completed
-                    guard completed > 0, let exercise = row.exercise else { continue }
-                    for raw in exercise.primaryMuscles {
-                        guard let group = MuscleGroup(rawValue: raw) else { continue }
-                        buckets.formUnion(AwardsEngine.MuscleBucket.buckets(for: group))
-                    }
-                }
-            }
+            let strength = strengthFacts(for: w)
             return AwardsEngine.Activity(
                 id: w.id, date: w.startedAt, type: w.type,
                 distanceM: dist,
@@ -68,11 +67,12 @@ enum AwardsBook {
                 durationS: w.durationS,
                 volumeKg: w.strength?.totalVolumeKg ?? 0,
                 startHour: calendar.component(.hour, from: w.startedAt),
-                workingSets: workingSets,
-                muscleBuckets: buckets,
+                workingSets: strength.sets,
+                muscleBuckets: strength.buckets,
                 startLat: coords[w.id]?.lat,
                 startLon: coords[w.id]?.lon)
         }
+        pruneStrengthMemo(live: workouts)
 
         // Streak days = qualifying days ∪ planned rest days — mirrors ProfileStats, so the streak
         // awards agree with the flame on the profile.
@@ -100,6 +100,43 @@ enum AwardsBook {
             },
             streakDays: streakDays,
             now: now)
+    }
+
+    // MARK: Strength-facts memo
+
+    /// Per-workout working-set count + muscle buckets — the expensive half of the snapshot
+    /// (faulting every session's exercises and sets). Cached for the process, keyed by the
+    /// session's own scalars (`totalSets`/`totalVolumeKg`), so an edited session re-walks and
+    /// everything else is a dictionary hit. Without this, every save tap and profile visit
+    /// re-faulted the athlete's entire lifting history on the main actor.
+    private struct StrengthFacts { let sets: Int; let buckets: Set<AwardsEngine.MuscleBucket> }
+    private static var strengthMemo: [UUID: (key: Double, facts: StrengthFacts)] = [:]
+
+    private static func strengthFacts(for w: Workout) -> (sets: Int, buckets: Set<AwardsEngine.MuscleBucket>) {
+        guard let session = w.strength else { return (0, []) }
+        let key = session.totalVolumeKg * 10_000 + Double(session.totalSets)
+        if let cached = strengthMemo[w.id], cached.key == key {
+            return (cached.facts.sets, cached.facts.buckets)
+        }
+        var workingSets = 0
+        var buckets = Set<AwardsEngine.MuscleBucket>()
+        for row in session.exercises {
+            let completed = row.sets.count { $0.isComplete && $0.type == .working }
+            workingSets += completed
+            guard completed > 0, let exercise = row.exercise else { continue }
+            for raw in exercise.primaryMuscles {
+                guard let group = MuscleGroup(rawValue: raw) else { continue }
+                buckets.formUnion(AwardsEngine.MuscleBucket.buckets(for: group))
+            }
+        }
+        strengthMemo[w.id] = (key, StrengthFacts(sets: workingSets, buckets: buckets))
+        return (workingSets, buckets)
+    }
+
+    private static func pruneStrengthMemo(live workouts: [Workout]) {
+        guard strengthMemo.count > workouts.count else { return }
+        let ids = Set(workouts.map(\.id))
+        strengthMemo = strengthMemo.filter { ids.contains($0.key) }
     }
 
     // MARK: Start-coordinate memo (Wanderer)
