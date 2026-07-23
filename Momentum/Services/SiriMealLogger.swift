@@ -31,13 +31,26 @@ enum SiriMealLogger {
         let dialog: String
     }
 
+    /// A repeated ask within this window is a RETRY, not a second meal — "did that work?"
+    /// re-invocations are how people talk to assistants, and each duplicate would be a phantom
+    /// journal row AND a second billed estimate. The second ask gets the first meal's receipt
+    /// (same mealID ⇒ the notification replaces rather than stacks). Siri-path only: the in-app
+    /// composer is deliberate typing and stays un-deduped.
+    static let duplicateWindowS: TimeInterval = 120
+
     /// Log dictated text exactly like the composer's local rungs. The meal is saved before
     /// anything else (offline-first, zero lost meals); numbers fill in when a rung hits.
     /// Returns nil only when the WRITE fails — the caller must not claim success then.
     @discardableResult
-    static func log(text: String, in context: ModelContext) -> Receipt? {
+    static func log(text: String, in context: ModelContext, now: Date = Date()) -> Receipt? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+
+        // Idempotency: an identical meal (same canonical key) logged moments ago answers this
+        // ask — no duplicate row, no duplicate estimate.
+        if let recent = recentDuplicate(of: trimmed, in: context, now: now) {
+            return receipt(for: recent, resolved: recent.kcal != nil)
+        }
 
         // Resolved BEFORE the insert so the meal being logged can't be its own candidate
         // (mirrors FuelView.log).
@@ -76,6 +89,11 @@ enum SiriMealLogger {
         let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.id == id })
         guard let meal = (try? context.fetch(descriptor))?.first else { return base }
 
+        // The journal's bounded-retry cap governs here too (a deduped retry of a meal the model
+        // has already declined three times must rest, not bill forever). 3 mirrors
+        // FuelView.maxEstimateAttempts.
+        guard meal.needsEstimate(maxAttempts: 3) else { return base }
+
         meal.estimateAttempts += 1
         try? context.save()
         let run = estimate ?? { text in
@@ -96,6 +114,17 @@ enum SiriMealLogger {
             break
         }
         return receipt(for: meal, resolved: false)
+    }
+
+    /// The meal that makes a fresh ask a duplicate: same canonical text key, eaten inside the
+    /// window. Junk text (unmatchable keys) never dedupes — two mumbles are two meals.
+    private static func recentDuplicate(of text: String, in context: ModelContext, now: Date) -> Meal? {
+        let key = MealTextKey.normalized(text)
+        guard MealTextKey.isMatchable(key) else { return nil }
+        let cutoff = now.addingTimeInterval(-duplicateWindowS)
+        let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.eatenAt >= cutoff },
+                                               sortBy: [SortDescriptor(\.eatenAt, order: .reverse)])
+        return (try? context.fetch(descriptor))?.first { MealTextKey.normalized($0.text) == key }
     }
 
     /// Remove a meal by id — the notification receipt's Undo. Safe against double-taps and
@@ -165,6 +194,8 @@ enum SiriMealLogger {
         content.body = receipt.body
         content.sound = .default
         content.categoryIdentifier = NotificationService.mealReceiptCategory
+        // One thread: a day of voice-logged meals stacks as a tidy group, not a scattered pile.
+        content.threadIdentifier = "momentum.meal.receipts"
         content.userInfo = ["mealID": receipt.mealID.uuidString]
         center.add(UNNotificationRequest(
             identifier: "momentum.meal.receipt.\(receipt.mealID.uuidString)",

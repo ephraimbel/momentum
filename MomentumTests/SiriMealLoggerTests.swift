@@ -124,6 +124,46 @@ struct SiriMealLoggerTests {
         #expect(receipt.resolved)
     }
 
+    @Test func repeatedAskWithinWindowIsARetryNotASecondMeal() throws {
+        let (pc, context) = fresh(); _ = pc
+        let t0 = Date()
+        let first = try #require(SiriMealLogger.log(text: "energy gel", in: context, now: t0))
+        // "Did that work?" — the identical ask 30s later answers with the SAME meal.
+        let retry = try #require(SiriMealLogger.log(text: "Energy Gel", in: context,
+                                                    now: t0.addingTimeInterval(30)))
+        #expect(retry.mealID == first.mealID)
+        #expect(try context.fetch(FetchDescriptor<Meal>()).count == 1)
+        // Past the window it's a real second gel.
+        let later = try #require(SiriMealLogger.log(text: "energy gel", in: context,
+                                                    now: t0.addingTimeInterval(200)))
+        #expect(later.mealID != first.mealID)
+        #expect(try context.fetch(FetchDescriptor<Meal>()).count == 2)
+        // Different food inside the window is never deduped.
+        let banana = try #require(SiriMealLogger.log(text: "banana", in: context,
+                                                     now: t0.addingTimeInterval(40)))
+        #expect(banana.mealID != first.mealID)
+    }
+
+    @Test func dedupedRetryOfARestingMealNeverRebills() async throws {
+        let (pc, context) = fresh(); _ = pc
+        // A pending meal the model has already declined three times — resting on its words.
+        let first = try #require(await SiriMealLogger.logAndEstimate(
+            text: "grandma's mystery casserole", in: context, entitled: true,
+            estimate: { _ in .declined }))
+        let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
+        meal.estimateAttempts = 3
+        try context.save()
+
+        let retry = try #require(await SiriMealLogger.logAndEstimate(
+            text: "grandma's mystery casserole", in: context, entitled: true,
+            estimate: { _ in
+                Issue.record("a maxed-out meal must rest, not bill a fourth attempt")
+                return .declined
+            }))
+        #expect(retry.mealID == first.mealID)
+        #expect(meal.estimateAttempts == 3)
+    }
+
     @Test func storedEntitlementHonorsBothKeys() throws {
         // Suite-scoped defaults — never touch the test host's real entitlement state.
         let suite = "siri-entitlement-\(UUID().uuidString)"
