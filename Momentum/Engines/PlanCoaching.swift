@@ -75,24 +75,50 @@ enum PlanCoaching {
         return credit(among: adjacentLongs, workout: workout, in: context)
     }
 
+    /// The log composer's receipt line: which open session WOULD this workout credit — the exact
+    /// matching `creditWorkout` runs (same-day best match, then the long run's ±1-day grace), with
+    /// zero mutation, so the athlete sees "checks off today's planned session" before confirming.
+    static func creditCandidate(type: WorkoutType, distanceM: Double, durationS: Double, on date: Date,
+                                plan: TrainingPlan?, calendar: Calendar = .current) -> PlannedSession? {
+        guard let plan else { return nil }
+        if let hit = match(among: todaySessions(plan, on: date, calendar: calendar),
+                           type: type, distanceM: distanceM, durationS: durationS) {
+            return hit
+        }
+        let adjacentLongs = [-1, 1].flatMap { delta -> [PlannedSession] in
+            guard let day = calendar.date(byAdding: .day, value: delta, to: date) else { return [] }
+            return todaySessions(plan, on: day, calendar: calendar).filter { $0.runType == .long }
+        }
+        return match(among: adjacentLongs, type: type, distanceM: distanceM, durationS: durationS)
+    }
+
     /// The shared matching pass: filter to open sessions of the workout's discipline, then let
     /// `PlanCredit` pick the best fulfilled prescription. `.moved` counts as open: reconcileMissed
     /// rolls every past-due session forward as .moved (routine after any slipped day), and the
     /// athlete who then does the work must get the credit — markComplete already accepts moved.
     private static func credit(among sessions: [PlannedSession], workout: Workout,
                                in context: ModelContext) -> PlannedSession? {
+        guard let hit = match(among: sessions, type: workout.type,
+                              distanceM: workout.gps?.distanceM ?? 0, durationS: workout.durationS)
+        else { return nil }
+        markComplete(hit, with: workout, in: context)
+        return hit
+    }
+
+    /// Pure selection — shared by the crediting write path and the receipt preview so the two can
+    /// never disagree about which session a workout fulfills.
+    private static func match(among sessions: [PlannedSession], type: WorkoutType,
+                              distanceM: Double, durationS: Double) -> PlannedSession? {
         let open = sessions.filter {
             ($0.status == .planned || $0.status == .moved)
-                && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
+                && $0.completedWorkout == nil && $0.discipline == type.discipline
         }
         guard !open.isEmpty else { return nil }
         let candidates = open.map {
             PlanCredit.Candidate(targetDistanceM: $0.targetDistanceM, targetDurationS: $0.targetDurationS)
         }
-        guard let idx = PlanCredit.bestMatch(distanceM: workout.gps?.distanceM ?? 0,
-                                             durationS: workout.durationS,
+        guard let idx = PlanCredit.bestMatch(distanceM: distanceM, durationS: durationS,
                                              candidates: candidates) else { return nil }
-        markComplete(open[idx], with: workout, in: context)
         return open[idx]
     }
 
