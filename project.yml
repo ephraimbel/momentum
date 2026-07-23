@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "7"   # build 7: offline log composer (voice receipts, multi-workout, coach parse), premium dictation, readiness unification
+    CURRENT_PROJECT_VERSION: "8"   # build 8: fuel goals-sheet today-number preview on top of build 7
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
