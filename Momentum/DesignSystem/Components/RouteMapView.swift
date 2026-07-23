@@ -105,8 +105,11 @@ struct RouteMapView: View {
             if let c = coordinates.first { return .camera(center: c, zoom: 14) }
             return .idle
         }
+        // maxZoom: a tiny route (a 100 m test lap, a track repeat) otherwise fits to
+        // building-level zoom where the line is a scribble on one rooftop — clamp to street level.
         return .overview(geometry: LineString(coordinates),
                          geometryPadding: EdgeInsets(top: padding, leading: padding,
-                                                     bottom: padding, trailing: padding))
+                                                     bottom: padding, trailing: padding),
+                         maxZoom: 17)
     }
 }

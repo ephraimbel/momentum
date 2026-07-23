@@ -162,12 +162,17 @@ struct RouteSilhouette: Shape {
         guard coords.count > 1 else { return Path() }
         let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
         let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
-        let spanLon = max(maxLon - minLon, 1e-6), spanLat = max(maxLat - minLat, 1e-6)
+        // A degree of longitude spans cos(latitude) of a degree of latitude on the ground —
+        // without the correction every silhouette renders stretched wide (~16% at Austin's
+        // latitude): a square loop drew as a rectangle. Same equirectangular projection
+        // RouteSmoothing uses.
+        let cosLat = max(cos((minLat + maxLat) / 2 * .pi / 180), 0.01)
+        let spanLon = max((maxLon - minLon) * cosLat, 1e-6), spanLat = max(maxLat - minLat, 1e-6)
         let scale = min(rect.width / spanLon, rect.height / spanLat) * 0.92
         let midLon = (minLon + maxLon) / 2, midLat = (minLat + maxLat) / 2
         var path = Path()
         for (i, c) in coords.enumerated() {
-            let p = CGPoint(x: rect.midX + (c.longitude - midLon) * scale,
+            let p = CGPoint(x: rect.midX + (c.longitude - midLon) * cosLat * scale,
                             y: rect.midY - (c.latitude - midLat) * scale)
             if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
         }

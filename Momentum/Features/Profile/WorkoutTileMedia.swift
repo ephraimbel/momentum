@@ -74,8 +74,10 @@ struct WorkoutTileMedia: View {
         }
         if workout.type.isGPS {
             // Immersive prefers the live, framed Mapbox route over the small pre-rendered PNG.
+            // Splined like the summary map (RouteSmoothing at its call site) — full-bleed is
+            // where angular segments read worst.
             if style == .immersive {
-                let coords = await routeCoordsOffMain()
+                let coords = await routeCoordsOffMain(smoothed: true)
                 if coords.count > 1 { return .route(coords) }
             }
             // Prefer the cached snapshot PNG — only fall back to Kalman-smoothing all samples when
@@ -95,17 +97,19 @@ struct WorkoutTileMedia: View {
     /// fresh background context instead (the HeatmapSource pattern: only the container and the
     /// detail's persistent id cross the hop — SwiftData models aren't Sendable), handing back
     /// plain coordinates. Transient/preview objects (no container) fall back inline.
-    private func routeCoordsOffMain() async -> [CLLocationCoordinate2D] {
+    private func routeCoordsOffMain(smoothed: Bool = false) async -> [CLLocationCoordinate2D] {
         guard let gps = workout.gps else { return [] }
         guard let container = gps.modelContext?.container else {
-            return gps.routeCoordinates(type: workout.type)
+            let raw = gps.routeCoordinates(type: workout.type)
+            return smoothed ? RouteSmoothing.smooth(raw) : raw
         }
         let id = gps.persistentModelID
         let type = workout.type
         return await Task.detached(priority: .userInitiated) {
             let context = ModelContext(container)
             guard let detail = context.model(for: id) as? GPSDetail else { return [] }
-            return detail.routeCoordinates(type: type)
+            let raw = detail.routeCoordinates(type: type)
+            return smoothed ? RouteSmoothing.smooth(raw) : raw
         }.value
     }
 
