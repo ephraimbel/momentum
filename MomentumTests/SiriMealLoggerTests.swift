@@ -127,21 +127,74 @@ struct SiriMealLoggerTests {
     @Test func repeatedAskWithinWindowIsARetryNotASecondMeal() throws {
         let (pc, context) = fresh(); _ = pc
         let t0 = Date()
-        let first = try #require(SiriMealLogger.log(text: "energy gel", in: context, now: t0))
-        // "Did that work?" — the identical ask 30s later answers with the SAME meal.
-        let retry = try #require(SiriMealLogger.log(text: "Energy Gel", in: context,
-                                                    now: t0.addingTimeInterval(30)))
+        // Unresolved meal (no numbers spoken back) → the identical ask 30s later is a
+        // "did that work?" retry and answers with the SAME meal.
+        let first = try #require(SiriMealLogger.log(text: "grandma's mystery casserole",
+                                                    in: context, now: t0))
+        let retry = try #require(SiriMealLogger.log(text: "Grandma's Mystery Casserole",
+                                                    in: context, now: t0.addingTimeInterval(30)))
         #expect(retry.mealID == first.mealID)
         #expect(try context.fetch(FetchDescriptor<Meal>()).count == 1)
-        // Past the window it's a real second gel.
-        let later = try #require(SiriMealLogger.log(text: "energy gel", in: context,
-                                                    now: t0.addingTimeInterval(200)))
+        // Past the window it's a real second serving.
+        let later = try #require(SiriMealLogger.log(text: "grandma's mystery casserole",
+                                                    in: context, now: t0.addingTimeInterval(200)))
         #expect(later.mealID != first.mealID)
+    }
+
+    @Test func resolvedMealRepeatIsRealIntakeNotARetry() throws {
+        let (pc, context) = fresh(); _ = pc
+        let t0 = Date()
+        // A staple resolves instantly and Siri SPOKE its numbers — a second identical ask two
+        // minutes into an aid station is a second gel, and it must count.
+        let first = try #require(SiriMealLogger.log(text: "energy gel", in: context, now: t0))
+        #expect(first.resolved)
+        let second = try #require(SiriMealLogger.log(text: "energy gel", in: context,
+                                                     now: t0.addingTimeInterval(60)))
+        #expect(second.mealID != first.mealID)
         #expect(try context.fetch(FetchDescriptor<Meal>()).count == 2)
-        // Different food inside the window is never deduped.
-        let banana = try #require(SiriMealLogger.log(text: "banana", in: context,
-                                                     now: t0.addingTimeInterval(40)))
-        #expect(banana.mealID != first.mealID)
+    }
+
+    @Test func estimateGateBlocksConcurrentDoubleBilling() async throws {
+        let (pc, context) = fresh(); _ = pc
+        // First ask parks mid-estimate; the retry arrives while it's in flight.
+        let firstStarted = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        let slowFirst = Task { @MainActor in
+            await SiriMealLogger.logAndEstimate(
+                text: "grandma's mystery casserole", in: context, entitled: true,
+                estimate: { _ in
+                    firstStarted.continuation.yield()
+                    for await _ in release.stream { break }
+                    return .declined
+                })
+        }
+        for await _ in firstStarted.stream { break }   // first estimate is now in flight
+
+        // The deduped retry maps to the SAME meal — the gate must refuse a second billed call.
+        let retry = try #require(await SiriMealLogger.logAndEstimate(
+            text: "grandma's mystery casserole", in: context, entitled: true,
+            estimate: { _ in
+                Issue.record("second concurrent estimate for the same meal — double billing")
+                return .declined
+            }))
+        #expect(!retry.resolved)
+
+        release.continuation.yield()
+        _ = await slowFirst.value
+        // The gate released after completion — a later retry may estimate again.
+        let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
+        #expect(EstimateGate.isEstimating(meal.id) == false)
+    }
+
+    @Test func estimateGateTokenSemantics() throws {
+        let id = UUID()
+        let t1 = try #require(EstimateGate.begin(id))
+        #expect(EstimateGate.begin(id) == nil)          // held — a second claim is refused
+        let t2 = EstimateGate.take(id)                  // owner restart force-claims
+        EstimateGate.end(id, token: t1)                 // stale owner's release is a no-op
+        #expect(EstimateGate.isEstimating(id))
+        EstimateGate.end(id, token: t2)
+        #expect(!EstimateGate.isEstimating(id))
     }
 
     @Test func dedupedRetryOfARestingMealNeverRebills() async throws {

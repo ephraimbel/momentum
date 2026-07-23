@@ -31,11 +31,12 @@ enum SiriMealLogger {
         let dialog: String
     }
 
-    /// A repeated ask within this window is a RETRY, not a second meal — "did that work?"
-    /// re-invocations are how people talk to assistants, and each duplicate would be a phantom
-    /// journal row AND a second billed estimate. The second ask gets the first meal's receipt
-    /// (same mealID ⇒ the notification replaces rather than stacks). Siri-path only: the in-app
-    /// composer is deliberate typing and stays un-deduped.
+    /// A repeated ask within this window for a meal that has NO numbers yet is a RETRY, not a
+    /// second meal — "did that work?" re-invocations are how people talk to assistants when
+    /// nothing confirmed the first ask. A RESOLVED prior meal never dedupes: Siri already spoke
+    /// its numbers back, so a same-text repeat is real intake — a second gel two minutes into an
+    /// aid station is exactly this app's audience. Siri-path only: the in-app composer is
+    /// deliberate typing and stays un-deduped.
     static let duplicateWindowS: TimeInterval = 120
 
     /// Log dictated text exactly like the composer's local rungs. The meal is saved before
@@ -94,6 +95,11 @@ enum SiriMealLogger {
         // FuelView.maxEstimateAttempts.
         guard meal.needsEstimate(maxAttempts: 3) else { return base }
 
+        // One bill per meal across ALL paths — if the Fuel page (or a racing invocation) is
+        // already estimating this meal, its result lands the same way; don't pay twice.
+        guard let gateToken = EstimateGate.begin(id) else { return base }
+        defer { EstimateGate.end(id, token: gateToken) }
+
         meal.estimateAttempts += 1
         try? context.save()
         let run = estimate ?? { text in
@@ -117,14 +123,19 @@ enum SiriMealLogger {
     }
 
     /// The meal that makes a fresh ask a duplicate: same canonical text key, eaten inside the
-    /// window. Junk text (unmatchable keys) never dedupes — two mumbles are two meals.
+    /// window, and still UNRESOLVED (see `duplicateWindowS` — a resolved prior meal was
+    /// confirmed aloud, so a repeat is real intake). Junk text (unmatchable keys) never
+    /// dedupes — two mumbles are two meals.
     private static func recentDuplicate(of text: String, in context: ModelContext, now: Date) -> Meal? {
         let key = MealTextKey.normalized(text)
         guard MealTextKey.isMatchable(key) else { return nil }
         let cutoff = now.addingTimeInterval(-duplicateWindowS)
         let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.eatenAt >= cutoff },
                                                sortBy: [SortDescriptor(\.eatenAt, order: .reverse)])
-        return (try? context.fetch(descriptor))?.first { MealTextKey.normalized($0.text) == key }
+        guard let candidate = (try? context.fetch(descriptor))?
+            .first(where: { MealTextKey.normalized($0.text) == key }),
+              candidate.kcal == nil else { return nil }
+        return candidate
     }
 
     /// Remove a meal by id — the notification receipt's Undo. Safe against double-taps and

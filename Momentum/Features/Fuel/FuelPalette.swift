@@ -29,15 +29,19 @@ extension Meal {
     private func sep() -> Text { Text(" · ").foregroundColor(Theme.inkTertiary) }
 
     /// "≈150 g carbs · 685 kcal · 49 g protein · 9 g fat · 564 mg sodium" — each metric in its
-    /// ring's ink; energy stays neutral (it's the headline number, not a ring).
+    /// ring's ink; energy stays neutral (it's the headline number, not a ring). Present when the
+    /// meal has ANY headline number (mirrors `FuelReadiness.hasNumbers`) — a kcal-only manual
+    /// meal counts toward the day and must not read "Couldn't estimate" in its own row.
     var journalNumbersText: Text? {
-        guard let carbs = carbsG else { return nil }
-        var t = Text("≈\(carbs) g carbs").foregroundColor(Theme.Fuel.carbs)
-        if let kcal { t = t + sep() + Text("\(kcal) kcal").foregroundColor(Theme.inkSecondary) }
-        if let p = proteinG { t = t + sep() + Text("\(p) g protein").foregroundColor(Theme.Fuel.protein) }
-        if let f = fatG { t = t + sep() + Text("\(f) g fat").foregroundColor(Theme.Fuel.fat) }
-        if let s = sodiumMg { t = t + sep() + Text("\(s) mg sodium").foregroundColor(Theme.Fuel.sodium) }
-        return t
+        guard carbsG != nil || kcal != nil else { return nil }
+        var pieces: [Text] = []
+        if let carbs = carbsG { pieces.append(Text("≈\(carbs) g carbs").foregroundColor(Theme.Fuel.carbs)) }
+        if let kcal { pieces.append(Text("\(kcal) kcal").foregroundColor(Theme.inkSecondary)) }
+        if let p = proteinG { pieces.append(Text("\(p) g protein").foregroundColor(Theme.Fuel.protein)) }
+        if let f = fatG { pieces.append(Text("\(f) g fat").foregroundColor(Theme.Fuel.fat)) }
+        if let s = sodiumMg { pieces.append(Text("\(s) mg sodium").foregroundColor(Theme.Fuel.sodium)) }
+        guard let first = pieces.first else { return nil }
+        return pieces.dropFirst().reduce(first) { $0 + sep() + $1 }
     }
 
 }
