@@ -36,13 +36,28 @@ struct LogActivityView: View {
     @State private var saveFailed = false
     @FocusState private var composing: Bool
 
+    // The server rung (`workout-parse`): fires on its own when the text plainly says more than
+    // the grammar read. Its result is pinned to the exact text it read — one more keystroke and
+    // the receipt honestly falls back to the grammar until the coach re-reads.
+    @State private var aiResult: WorkoutLogParser.Result?
+    @State private var aiReadText = ""
+    @State private var aiReading = false
+    @State private var aiFailed = false
+    @State private var aiTask: Task<Void, Never>?
+
     // MARK: Parse (live)
 
     private var parsed: WorkoutLogParser.Result {
         var p = WorkoutLogParser.parse(draft, weightUnit: .default())
+        if let ai = aiResult, aiReadText == draft {
+            p = WorkoutParseService.merge(ai: ai, grammar: p)
+        }
         if let t = typeOverride { p.type = t }   // an explicit pick always beats the words
         return p
     }
+
+    /// The coach's read is on the current receipt (drives the eyebrow sparkle).
+    private var coachRead: Bool { aiResult != nil && aiReadText == draft }
 
     private var resolvedDate: Date {
         WorkoutLogParser.resolveDate(dayOffset: parsed.dayOffset, timeHint: parsed.timeHint)
@@ -74,6 +89,7 @@ struct LogActivityView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
                         header
                         composer
+                        if aiReading || aiFailed { coachReadLine }
                         if parsed.isEmpty {
                             examples
                         } else {
@@ -113,6 +129,15 @@ struct LogActivityView: View {
                 guard !spoken.isEmpty else { return }
                 draft = voiceBase.isEmpty ? spoken : voiceBase + " " + spoken
             }
+            .onChange(of: draft) {
+                aiFailed = false
+                scheduleCoachRead()
+            }
+            // Dictation streams the transcript continuously — hold the coach's read until the
+            // mic stops, then read the settled sentence once.
+            .onChange(of: voice.isRecording) { _, recording in
+                if !recording { scheduleCoachRead() }
+            }
             .alert("Microphone access needed", isPresented: Bindable(voice).showPermissionAlert) {
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
@@ -129,7 +154,13 @@ struct LogActivityView: View {
             // Deliberately NO auto-focus: the mic must be one tap with no keyboard in the way
             // (dictation is the headline path), and the receipt builds in full view. Typers tap
             // the field — the standard beat.
-            .onDisappear { if voice.isRecording { voice.stop() } }
+            // A sheet that OPENS holding text (the deep-link draft) never fires onChange —
+            // give the coach's read the same chance a keystroke would.
+            .onAppear { if !draft.isEmpty { scheduleCoachRead() } }
+            .onDisappear {
+                aiTask?.cancel()
+                if voice.isRecording { voice.stop() }
+            }
         }
     }
 
@@ -184,6 +215,62 @@ struct LogActivityView: View {
 
     private var composerGlow: Bool { composing || !draft.isEmpty || voice.isRecording }
 
+    /// Debounced server read — fires only when the grammar's receipt is plainly thinner than the
+    /// text ("worked up to 225 on bench for 3…"), never while dictating, and pins its result to
+    /// the exact text it read. `force` is the failed-state retry tap.
+    private func scheduleCoachRead(force: Bool = false) {
+        aiTask?.cancel()
+        let snapshot = draft
+        let text = snapshot.trimmingCharacters(in: .whitespacesAndNewlines)
+        if aiResult != nil, aiReadText != snapshot { aiResult = nil }   // stale read — text moved on
+        guard !text.isEmpty, !voice.isRecording else { return }
+        guard force || aiReadText != snapshot else { return }
+        if !force {
+            let grammar = WorkoutLogParser.parse(text, weightUnit: .default())
+            guard WorkoutLogParser.looksRicher(text, than: grammar) else { return }
+        }
+        aiTask = Task {
+            if !force { try? await Task.sleep(for: .seconds(1.1)) }
+            guard !Task.isCancelled else { return }
+            aiReading = true
+            let outcome = await WorkoutParseService().parse(text: text, weightUnit: .default(),
+                                                            distanceUnit: distanceUnit)
+            aiReading = false
+            guard !Task.isCancelled, draft == snapshot else { return }
+            switch outcome {
+            case .parsed(let r):
+                aiResult = r
+                aiReadText = snapshot
+                Haptics.light()
+            case .unavailable:
+                aiFailed = true
+            }
+        }
+    }
+
+    /// One quiet line while (or after) the server rung runs — never a blocker, never a modal.
+    @ViewBuilder
+    private var coachReadLine: some View {
+        if aiReading {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Your coach is reading it…")
+            }
+            .font(.rounded(Theme.FontSize.caption, weight: .medium))
+            .foregroundStyle(Theme.inkTertiary)
+        } else if aiFailed {
+            Button {
+                aiFailed = false
+                scheduleCoachRead(force: true)
+            } label: {
+                Label("Couldn't read it all — tap to retry", systemImage: "arrow.clockwise")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private var micButton: some View {
         Button {
             if !voice.isRecording { voiceBase = draft.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -237,11 +324,17 @@ struct LogActivityView: View {
 
     private var receipt: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("RECEIPT")
-                .font(.rounded(Theme.FontSize.label, weight: .bold))
-                .tracking(2.2)
-                .foregroundStyle(Theme.inkTertiary)
-                .padding(.bottom, Theme.Space.sm)
+            HStack(spacing: 5) {
+                Text("RECEIPT")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold))
+                    .tracking(2.2)
+                if coachRead {
+                    Image(systemName: "sparkles").font(.system(size: 9, weight: .semibold))
+                        .accessibilityLabel("Read by your coach")
+                }
+            }
+            .foregroundStyle(Theme.inkTertiary)
+            .padding(.bottom, Theme.Space.sm)
 
             sportRow
                 .padding(.bottom, Theme.Space.sm)
@@ -370,9 +463,9 @@ struct LogActivityView: View {
     private func setLine(_ ex: WorkoutLogParser.ParsedExercise) -> String {
         guard let kg = ex.weightKg else { return "\(ex.sets)×\(ex.reps)" }
         let unit = WeightUnit.default()
-        // Round to a tenth BEFORE the whole-number check — the lb→kg→lb round-trip leaves
-        // 185.00000000000003, which would otherwise print as "185.0 lb".
-        let v = ((unit == .lb ? kg / Formatters.kgPerLb : kg) * 10).rounded() / 10
+        // Snap display to the nearest half — real plates come in halves, and the server's
+        // kg-rounding round-trip otherwise prints "225.1 lb" for a 225 bench.
+        let v = ((unit == .lb ? kg / Formatters.kgPerLb : kg) * 2).rounded() / 2
         let w = v.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", v) : String(format: "%.1f", v)
         return "\(ex.sets)×\(ex.reps) · \(w) \(unit.rawValue)"
     }
@@ -458,6 +551,7 @@ struct LogActivityView: View {
     // MARK: Actions
 
     private func close() {
+        aiTask?.cancel()
         if voice.isRecording { voice.stop() }
         dismiss()
     }
@@ -466,6 +560,7 @@ struct LogActivityView: View {
     /// save-or-roll-back → plan credit → awards. A spoken workout is a real workout.
     private func save() {
         guard canSave, let type = parsed.type, let dur = parsed.durationS else { return }
+        aiTask?.cancel()   // the receipt is frozen the moment they confirm — no late read may land
         if voice.isRecording { voice.stop() }
         let inputs = parsed.exercises.map { ex in
             LogWorkoutBuilder.ExerciseInput(

@@ -60,6 +60,23 @@ enum WorkoutLogParser {
         return r
     }
 
+    /// Does the text plainly say more than this parse captured? The composer's cue to send the
+    /// whole sentence to the server rung (`workout-parse`). A heuristic, so it errs toward asking:
+    /// any digit-bearing clause that produced no field, no discernible sport, or long prose with a
+    /// thin receipt all count as "richer".
+    static func looksRicher(_ text: String, than r: Result) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.count >= 24 else { return false }
+        if r.type == nil { return true }
+        let numericClauses = clauses(t.lowercased())
+            .filter { $0.rangeOfCharacter(from: .decimalDigits) != nil }.count
+        var fieldsRead = r.exercises.count
+        if r.durationS != nil { fieldsRead += 1 }
+        if r.distanceM != nil { fieldsRead += 1 }
+        if numericClauses > fieldsRead { return true }
+        return t.count >= 90 && fieldsRead < 2
+    }
+
     /// Resolve the parsed day/time words to a concrete start date — never in the future (you can
     /// only log what already happened), and "this morning" pins to 7:00 while a plain "yesterday"
     /// keeps the current clock time a day back.
@@ -241,14 +258,7 @@ enum WorkoutLogParser {
     ///   C  "curls 3 sets of 12"        name · sets of reps · weight
     /// Weight units: explicit lbs/kg win; a bare number uses the athlete's display unit.
     private static func parseExercises(_ text: String, weightUnit: WeightUnit) -> [ParsedExercise] {
-        let clauses = text
-            .replacingOccurrences(of: " and then ", with: ",")
-            .replacingOccurrences(of: " then ", with: ",")
-            .replacingOccurrences(of: " and ", with: ",")
-            .replacingOccurrences(of: ". ", with: ",")   // sentence break — a bare "." stays ("22.5 kg")
-            .components(separatedBy: CharacterSet(charactersIn: ",;\n"))
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        let clauses = clauses(text)
 
         let name = #"([a-z][a-z\s\-']*?)"#
         let weightTail = #"(?:\s*(?:at|@)?\s*(\d{1,4}(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?)?)?"#
@@ -282,6 +292,19 @@ enum WorkoutLogParser {
             }
         }
         return out
+    }
+
+    /// Comma/"then"/"and"/sentence splitting — shared by the exercise grammar and `looksRicher`.
+    /// ". " is a break but a bare "." is not ("22.5 kg" must survive).
+    private static func clauses(_ text: String) -> [String] {
+        text
+            .replacingOccurrences(of: " and then ", with: ",")
+            .replacingOccurrences(of: " then ", with: ",")
+            .replacingOccurrences(of: " and ", with: ",")
+            .replacingOccurrences(of: ". ", with: ",")
+            .components(separatedBy: CharacterSet(charactersIn: ",;\n"))
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     /// Words that mean the clause was cardio or bookkeeping, not an exercise name.
