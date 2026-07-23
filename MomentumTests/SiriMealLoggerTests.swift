@@ -124,6 +124,23 @@ struct SiriMealLoggerTests {
         #expect(receipt.resolved)
     }
 
+    @Test func storedEntitlementHonorsBothKeys() throws {
+        // Suite-scoped defaults — never touch the test host's real entitlement state.
+        let suite = "siri-entitlement-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        #expect(!SiriMealLogger.storedEntitlement(defaults: defaults))
+        // A real (RevenueCat-owned) entitlement unlocks the estimator…
+        defaults.set(true, forKey: PaywallController.entitlementKey)
+        #expect(SiriMealLogger.storedEntitlement(defaults: defaults))
+        // …and so does the DEBUG dev unlock alone — a dev-unlocked phone must get the same
+        // Siri experience as a subscriber (this exact gap shipped as "Siri can't estimate").
+        defaults.set(false, forKey: PaywallController.entitlementKey)
+        defaults.set(true, forKey: PaywallController.devUnlockKey)
+        #expect(SiriMealLogger.storedEntitlement(defaults: defaults))
+    }
+
     @Test func undoRemovesTheMealAndIsIdempotent() throws {
         let (pc, context) = fresh(); _ = pc
         let receipt = try #require(SiriMealLogger.log(text: "energy gel", in: context))

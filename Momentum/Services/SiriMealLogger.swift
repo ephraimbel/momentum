@@ -2,17 +2,25 @@ import Foundation
 import SwiftData
 import UserNotifications
 
-/// The Siri logging core — `LogMealIntent` stays thin and calls this. Runs the SAME local
-/// resolution ladder as the Fuel composer's first two rungs (remembered meals → the staples
-/// table), saves, and builds the receipt Siri speaks and the notification shows.
-///
-/// Deliberately does NOT fire the AI estimator: that call is billed and Pro-walled, and every
-/// caller routes through the one audited boundary in FuelView. A meal Siri can't resolve locally
-/// lands as `pending` with zero attempts spent, and the journal's existing bounded retry tallies
-/// it on the next Fuel visit — so a free athlete's gel still logs instantly and costs nothing,
-/// and Siri answers in well under a second with no network dependency.
+/// The Siri logging core — `LogMealIntent` stays thin and calls this. The full ladder mirrors
+/// the Fuel composer: remembered meals → the staples table (free, local, instant), then the AI
+/// estimator — but the billed call fires ONLY for entitled installs (`storedEntitlement`, the
+/// same boundary FuelView walls). A free athlete's gel logs instantly and costs nothing; a meal
+/// nobody could resolve lands `pending` for the journal's bounded retry. The meal is ALWAYS
+/// saved first (offline-first, zero lost meals) — estimation only ever adds numbers.
 @MainActor
 enum SiriMealLogger {
+
+    /// The persisted Pro entitlement, readable without a `PaywallController` (the intent runs in
+    /// a bare background launch). Honors BOTH keys: the RevenueCat-owned entitlement, and — in
+    /// DEBUG only — the dev unlock, so a dev-unlocked phone gets the same Siri experience as a
+    /// subscriber (it didn't, and the gap read as "Siri can't estimate").
+    nonisolated static func storedEntitlement(defaults: UserDefaults = .standard) -> Bool {
+        #if DEBUG
+        if defaults.bool(forKey: PaywallController.devUnlockKey) { return true }
+        #endif
+        return defaults.bool(forKey: PaywallController.entitlementKey)
+    }
 
     struct Receipt: Equatable, Sendable {
         let mealID: UUID
@@ -55,12 +63,11 @@ enum SiriMealLogger {
 
     /// The full Siri ladder: local rungs, then — for entitled installs only — the AI estimator,
     /// awaited so Siri can SPEAK the real numbers ("a Fairlife 40g protein shake" reads perfectly).
-    /// The entitlement is the persisted Pro key (the intent process has no PaywallController);
-    /// free installs never reach the billed call — same boundary as FuelView's walls. Attempt
+    /// Free installs never reach the billed call — same boundary as FuelView's walls. Attempt
     /// accounting mirrors FuelView.estimate exactly: count at fire, refund on `.unavailable`
     /// (never sent ⇒ never owed), stand on `.declined`.
     static func logAndEstimate(text: String, in context: ModelContext,
-                               entitled: Bool = UserDefaults.standard.bool(forKey: PaywallController.entitlementKey),
+                               entitled: Bool = SiriMealLogger.storedEntitlement(),
                                estimate: ((String) async -> FuelEstimator.Outcome)? = nil) async -> Receipt? {
         guard let base = log(text: text, in: context) else { return nil }
         guard !base.resolved, entitled else { return base }
