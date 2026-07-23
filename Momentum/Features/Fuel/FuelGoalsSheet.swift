@@ -13,6 +13,16 @@ struct FuelGoalsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
+    /// Today's training burn, for the preview — "TODAY THAT MEANS" must equal the dashboard's
+    /// headline exactly. It used to preview the BASE target (workouts excluded), so switching
+    /// goals showed a number the Fuel page then contradicted by the day's burn — reads as a bug
+    /// no footnote can save. Newest-first + capped to mirror the page's builder input.
+    @Query(FuelGoalsSheet.recentWorkouts) private var todaysWorkouts: [Workout]
+    private static var recentWorkouts: FetchDescriptor<Workout> {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        d.fetchLimit = 20
+        return d
+    }
 
     @State private var kind: FuelReadiness.GoalInput.Kind = .fuel
     @State private var massKg: Double = FuelReadiness.fallbackMassKg
@@ -261,9 +271,20 @@ struct FuelGoalsSheet: View {
 
     // MARK: Live preview — the same engine the page runs
 
-    /// Zero meals + zero workouts in → the BASE targets for a day like today (training burn adds
-    /// on top in real life; the footnote says so).
+    /// The SAME inputs the Fuel page's headline runs (plan + today's workouts) — the preview and
+    /// the dashboard must never disagree about today's number. Meals stay out: they drive
+    /// consumed totals, not targets.
     private var previewReadout: FuelReadiness.DayReadout {
+        FuelReadoutBuilder.readout(meals: [], plan: profiles.first?.plan,
+                                   workouts: Array(todaysWorkouts),
+                                   profile: profiles.first,
+                                   goalOverride: stagedGoal, massOverride: massKg)
+    }
+
+    /// BASE targets (no training burn) — what a custom goal should prefill from: custom numbers
+    /// are an every-day base, and burn adds on top later. Prefilling from the burn-inclusive
+    /// preview would bake today's workout into every future day.
+    private var basePrefillReadout: FuelReadiness.DayReadout {
         FuelReadoutBuilder.readout(meals: [], plan: profiles.first?.plan, workouts: [],
                                    profile: profiles.first,
                                    goalOverride: stagedGoal, massOverride: massKg)
@@ -296,8 +317,8 @@ struct FuelGoalsSheet: View {
                 .foregroundStyle(Theme.inkSecondary)
                 .contentTransition(.numericText())
             Text(kind == .custom && Int(customCarbs) != nil
-                 ? "Training burn still adds to the day's energy."
-                 : "Carbs stay keyed to your training — big sessions raise them, your goal tunes the lighter days. Training burn adds to the day's energy.")
+                 ? "Includes today's training — your custom base rises on days you train."
+                 : "Carbs stay keyed to your training — big sessions raise them, your goal tunes the lighter days. Today's training is already counted above.")
                 .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             if let note = r.goalNote {
@@ -336,7 +357,7 @@ struct FuelGoalsSheet: View {
     private func select(_ k: FuelReadiness.GoalInput.Kind) {
         kind = k
         guard k == .custom, customKcal.isEmpty else { return }
-        let r = previewReadout
+        let r = basePrefillReadout
         customKcal = String(r.kcalFloor)
         customProtein = String(r.proteinFloorG)
         customCarbs = String(r.carbsFloorG)
