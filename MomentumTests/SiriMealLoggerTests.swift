@@ -42,8 +42,10 @@ struct SiriMealLoggerTests {
         #expect(meal.source == "pending")
         #expect(meal.kcal == nil)
         #expect(!receipt.resolved)
-        // Honest about when the numbers land — never a made-up total.
-        #expect(receipt.body.contains("open Fuel"))
+        // The notification IS the confirmation: it echoes the athlete's words, and never
+        // points them at the app ("open Momentum to verify" is homework, not a receipt).
+        #expect(receipt.body == "grandma's mystery casserole")
+        #expect(!receipt.body.lowercased().contains("open"))
         #expect(!receipt.dialog.contains("calories"))
         // Pending with zero attempts spent: the journal's bounded retry owns the AI rung.
         #expect(meal.estimateAttempts == 0)
@@ -84,7 +86,7 @@ struct SiriMealLoggerTests {
                 return .declined
             }))
         #expect(!receipt.resolved)
-        #expect(receipt.body.contains("add the numbers"))   // honest free wording — no false promise
+        #expect(receipt.body == "fairlife 40g protein shake")   // the echo IS the receipt
         let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
         #expect(meal.estimateAttempts == 0)
     }
@@ -95,7 +97,7 @@ struct SiriMealLoggerTests {
             text: "fairlife 40g protein shake", in: context, entitled: true,
             estimate: { _ in .unavailable }))
         #expect(!receipt.resolved)
-        #expect(receipt.body.contains("open Fuel"))
+        #expect(receipt.body == "fairlife 40g protein shake")
         let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
         // Never sent ⇒ never owed: still due when the journal's retry has a network.
         #expect(meal.estimateAttempts == 0)

@@ -63,8 +63,7 @@ enum SiriMealLogger {
                                entitled: Bool = UserDefaults.standard.bool(forKey: PaywallController.entitlementKey),
                                estimate: ((String) async -> FuelEstimator.Outcome)? = nil) async -> Receipt? {
         guard let base = log(text: text, in: context) else { return nil }
-        guard !base.resolved else { return base }
-        guard entitled else { return unresolvedReceipt(base, entitled: false) }
+        guard !base.resolved, entitled else { return base }
 
         let id = base.mealID
         let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.id == id })
@@ -89,19 +88,7 @@ enum SiriMealLogger {
         case .declined:
             break
         }
-        return unresolvedReceipt(receipt(for: meal, resolved: false), entitled: true)
-    }
-
-    /// Rewords an unresolved receipt honestly per tier: Pro's journal auto-retries (the numbers
-    /// really do land on the next Fuel visit); free installs enter numbers by hand.
-    private static func unresolvedReceipt(_ r: Receipt, entitled: Bool) -> Receipt {
-        guard !r.resolved else { return r }
-        let display = r.body.components(separatedBy: " — ").first ?? "Meal"
-        return entitled ? r : Receipt(
-            mealID: r.mealID, title: r.title,
-            body: "\(display) — open Fuel to add the numbers.",
-            resolved: false,
-            dialog: "Logged to Fuel. Add the numbers anytime in the app.")
+        return receipt(for: meal, resolved: false)
     }
 
     /// Remove a meal by id — the notification receipt's Undo. Safe against double-taps and
@@ -131,13 +118,15 @@ enum SiriMealLogger {
                            resolved: true,
                            dialog: "Logged — about \(kcal) calories\(carbsSpoken).")
         }
-        // Unresolved locally: honest about when the numbers land (the journal's retry, or the
-        // athlete's own manual entry — floors, never shame).
+        // Unresolved: the notification IS the confirmation — it echoes the athlete's own words
+        // and never points them at the app ("open Momentum to verify" is homework, not a
+        // receipt). Numbers join quietly once a rung lands them; the journal shows the pending
+        // state honestly in the meantime.
         return Receipt(mealID: meal.id,
                        title: "Logged to Fuel",
-                       body: "\(display) — totals land next time you open Fuel.",
+                       body: display,
                        resolved: resolved,
-                       dialog: "Logged to Fuel. I'll tally the numbers when you open the app.")
+                       dialog: "Logged to Fuel.")
     }
 
     /// Post the receipt notification (with Undo). If the athlete never answered the notification
