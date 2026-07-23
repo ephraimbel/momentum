@@ -32,6 +32,11 @@ struct GPSProcessor {
         var autoPauseSecs: Double
         /// Kalman process-noise (σ_a) for the real-time position filter (see `GPSKalmanFilter`).
         var accelNoiseMS2 = 0.6
+        /// GPS altitude wobbles ±3–5 m even standing still — accruing every positive tick
+        /// over-counted a flat run's climb badly (caught on-device 2026-07-23). Gain now accrues
+        /// only once a climb clears this threshold from its valley anchor; real rolling hills
+        /// (each ≥ this) still count in full.
+        var elevationGainThresholdM = 3.0
 
         /// Discipline-specific accept-gate + auto-pause thresholds (§8.3).
         static func forType(_ type: WorkoutType) -> Config {
@@ -56,6 +61,13 @@ struct GPSProcessor {
 
     let config: Config
     private(set) var anchor: Fix?
+    /// Altitude of the current climb's base (the last valley, or where the last counted climb
+    /// topped out). Elevation hysteresis measures every ascent from here — see Config.
+    private var climbAnchorAltM: Double?
+    /// EMA-smoothed altitude — the hysteresis runs on THIS, not raw altitude. Alternating GPS
+    /// jitter spans up to twice its amplitude trough-to-peak, which beats any sane threshold;
+    /// smoothing first collapses it to a fraction while a real climb passes through in full.
+    private var smoothedAltM: Double?
     /// The most recent ACCEPTED fix, including micro-moves that never advance `anchor`. This is the
     /// accept gate's time reference: `anchor` freezes while the athlete stands still (its timestamp
     /// goes stale), and a stale reference dilutes the implied-speed test — after a 60 s traffic
@@ -124,10 +136,21 @@ struct GPSProcessor {
         filteredLat = f.lat
         filteredLon = f.lon
 
-        if paused {
+        // Doppler stationary guard (caught on-device 2026-07-23): standing at a light, position
+        // wander routinely clears the 2 m movement gate — meters accrue while the athlete covers
+        // none. Doppler speed is independent of position error and reads ~0 when genuinely
+        // stopped, so a valid below-auto-pause reading means "not covering ground": rebase the
+        // anchors and accrue nothing. Runs at real paces never read this low mid-stride.
+        let dopplerStationary = fix.speedMS >= 0 && fix.speedMS < config.autoPauseSpeedMS
+
+        if paused || dopplerStationary {
             anchor = fix
             distAnchorLat = f.lat
             distAnchorLon = f.lon
+            if paused {   // manual pause: the detour's altitude is not ours
+                climbAnchorAltM = nil
+                smoothedAltM = nil
+            }
             return .accepted(distanceAddedM: 0)
         }
 
@@ -135,6 +158,7 @@ struct GPSProcessor {
             anchor = fix
             distAnchorLat = f.lat
             distAnchorLon = f.lon
+            accrueClimb(fix.altitudeM)   // seeds the smoother + climb anchor, accrues nothing
             return .accepted(distanceAddedM: 0)
         }
 
@@ -144,9 +168,7 @@ struct GPSProcessor {
         }
 
         distanceM += d
-        if fix.altitudeM > prev.altitudeM {
-            elevationGainM += fix.altitudeM - prev.altitudeM
-        }
+        accrueClimb(fix.altitudeM)
         let dt = fix.t.timeIntervalSince(prev.t)
         if dt > 0 {
             let instPaceSPerKm = (dt / d) * 1000
@@ -158,6 +180,26 @@ struct GPSProcessor {
         distAnchorLat = f.lat
         distAnchorLon = f.lon
         return .accepted(distanceAddedM: d)
+    }
+
+    /// Smoothed hysteresis elevation gain: altitude is EMA-smoothed, then ascents count once the
+    /// smoothed track clears the threshold from the valley anchor; descents pull the anchor down
+    /// so the NEXT climb measures from its true base. Flat-run jitter accrues zero (the fix for
+    /// phantom climb); real climbs pass through the EMA at full magnitude, just a few fixes late.
+    private mutating func accrueClimb(_ altitudeM: Double) {
+        let alpha = 0.3
+        let smoothed = smoothedAltM.map { $0 + alpha * (altitudeM - $0) } ?? altitudeM
+        smoothedAltM = smoothed
+        guard let base = climbAnchorAltM else {
+            climbAnchorAltM = smoothed
+            return
+        }
+        if smoothed >= base + config.elevationGainThresholdM {
+            elevationGainM += smoothed - base
+            climbAnchorAltM = smoothed
+        } else if smoothed < base {
+            climbAnchorAltM = smoothed
+        }
     }
 
     /// Returns true once speed has stayed below the threshold for `autoPauseSecs`. Resume is

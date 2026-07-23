@@ -121,7 +121,10 @@ actor GPSTrackingEngine {
         // too. Resume ≤100m away draws a clean chord; farther splits the trace (LiveSmoother's gap
         // split) — both exactly Strava's pause behavior.
         let manuallyPaused = state == .paused
-        let result = processor.ingest(fix, paused: manuallyPaused)
+        // Auto-pause accrues nothing either (caught on-device 2026-07-23): the clock was frozen
+        // but position wander kept adding meters — inflating distance while time stood still, so
+        // pace read fast. The processor stays warm exactly like a manual pause.
+        let result = processor.ingest(fix, paused: manuallyPaused || state == .autoPaused)
         let accepted = result != .rejected
         // Build the route from the Kalman-corrected position (not the raw fix): the first accepted
         // fix (anchor) plus every real move.

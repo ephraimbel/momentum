@@ -127,19 +127,15 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     static let classicSet: [MapStyleOption] = [.standard, .streets, .outdoors, .dark, .satellite]
     static let pickable: [MapStyleOption] = realisticSet + classicSet
 
-    /// The style to RENDER on the LIVE-tracking map. The 3D looks — the Mapbox Standard family
-    /// (Realistic/Dusk/Night) and 3D Satellite — re-rasterize buildings, terrain, and lighting on
-    /// every camera frame, which is brutal for a follow-camera and the source of run-screen jank.
-    /// Live tracking drops each to its flat 2D equivalent so the map glides; the saved run still
-    /// snapshots in the athlete's chosen style, so only the live follow is lightened (like Strava).
-    var liveTrackingStyle: MapStyleOption {
-        switch self {
-        case .realistic, .dusk: .standard          // Standard 3D day/dusk → flat Light
-        case .night: .dark                          // Standard 3D night → flat Dark
-        case .standardSatellite: .satellite         // 3D-draped imagery → flat satellite imagery
-        case .standard, .streets, .outdoors, .dark, .satellite: self   // already flat 2D
-        }
-    }
+    /// The style to RENDER on the LIVE-tracking map: **the athlete's choice, unchanged.**
+    ///
+    /// This used to silently downgrade the 3D looks (Realistic/Dusk/Night/3D Satellite) to their
+    /// flat 2D equivalents for follow-camera performance — but on a real device that reads as a
+    /// bug: you picked Realistic and the run showed Light (caught on the 2026-07-23 demo-video
+    /// recording). The original jank was since fixed at the source (the per-fix `PuckFeed` — the
+    /// camera moves once per GPS fix, not per frame), so the downgrade's reason is gone. The
+    /// property remains as the single seam if a specific style ever needs a live variant again.
+    var liveTrackingStyle: MapStyleOption { self }
 
     /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
     /// than over the non-imagery basemaps.
