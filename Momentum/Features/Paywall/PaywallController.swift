@@ -99,8 +99,17 @@ final class PaywallController: PaywallServing {
         if let override { isPro = override; return }
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("--debug-free") { isPro = false; return }   // QA the free tier with seeded data
-        if args.contains("--debug-pro") { isPro = true; return }     // durable dev unlock (sim daily-driving)
+        // The dev flags PERSIST (one flagged launch flips the stored entitlement, then normal
+        // launches keep it) — a dev-build phone granted Pro must not revert to free the first
+        // time it's opened from the Home Screen. --debug-free flips it back the same way.
+        if args.contains("--debug-free") {
+            UserDefaults.standard.set(false, forKey: Self.entitlementKey)
+            isPro = false; return
+        }
+        if args.contains("--debug-pro") {
+            UserDefaults.standard.set(true, forKey: Self.entitlementKey)
+            isPro = true; return
+        }
         let demo = args.contains("--seed-demo")
         #else
         let demo = false
