@@ -294,15 +294,16 @@ struct TodayView: View {
         .onChange(of: currentPendingToken) { refreshPendingToday() }
         // The morning readout's number, computed off the render path (page-load-perf rule — the
         // Health reads are async and `RecoveryModel` folds a month of workouts). Recomputes when a
-        // workout lands or today's check-in is answered. Banded `HealthBaselines` + the learned
-        // sleep need/debt thread in with the Health-segment integration; until then the engine's
-        // ratio fallbacks and defaults carry the score honestly (same banding either way).
+        // workout lands or today's check-in is answered. `ReadinessToday` is the ONE full-blend
+        // recipe (banded baselines + learned sleep need/debt) shared with the Health hub — the
+        // deck's ring and the hub's hero can never read different numbers. Publishing keeps the
+        // Trends strip on the same score before the hub's first visit.
         .task(id: "\(workouts.count)-\(checkins.count)") {
             await Task.yield()   // let the first frame paint before any engine work
-            let signals = await services.health.recoverySignals()
-            morningReadiness = MorningReadiness(load: RecoveryModel(workouts: workouts),
-                                                signals: signals,
-                                                checkin: DailyCheckin.today(in: checkins))
+            let r = await ReadinessToday.compute(health: services.health,
+                                                 workouts: workouts, checkins: checkins)
+            morningReadiness = r
+            if let r { ReadinessToday.publish(r) }
         }
         .onChange(of: activity) { if isCardio { mapWasShown = true } }
         // Follow the athlete's puck the moment a fix lands — but never while zoomed out to the globe,

@@ -421,17 +421,13 @@ extension HealthSegmentView {
             let ctlToday = ff.last?.ctl ?? 0
             let ctlDelta7 = ctlToday - (day(7).flatMap { ctlByDay[$0] } ?? 0)
 
-            // ── Today's headline score: the live signals (illness-watch fields included), banded
-            // baselines, and the learned sleep context — the fullest honest compute.
+            // ── Today's headline score — through `ReadinessToday.build`, the ONE recipe every
+            // surface shares (the Today deck computes this same call), so the hub and the deck
+            // can never disagree on the number.
             let loadToday = RecoveryModel(workouts: workouts, now: now, calendar: calendar)
-            let todayCtx = sleepContext(asOf: now)
-            let readiness = MorningReadiness(load: loadToday,
-                                             signals: signals,
-                                             hrvBaseline: hrvBase,
-                                             restingHRBaseline: rhrBase,
-                                             sleepNeedH: todayCtx.need,
-                                             sleepDebt14H: todayCtx.debt,
-                                             checkin: DailyCheckin.today(in: checkins, calendar: calendar, now: now))
+            let readiness = ReadinessToday.build(workouts: workouts, checkins: checkins,
+                                                 signals: signals, hrvHist: hrvHist, rhrHist: rhrHist,
+                                                 nights: nights, now: now, calendar: calendar)
 
             // ── Plan risk #3 (RECOVERY-HUB-PLAN §10): the per-day pipeline below — 30 mornings
             // of readiness recomputes + ambient reads + strain runs — is the historical-recompute

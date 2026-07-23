@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Today's hub-computed readiness, cached so every OTHER surface (the Trends strip, the athlete
-/// panel rail) shows the SAME number the Health hero shows. The hub's `Model.build` computes the
-/// richest blend (banded baselines + sleep need/debt); the light `MorningReadiness(load:signals:)`
-/// fallback the strip can compute alone overshoots it (83 vs 75, screenshot-verified) — so the
-/// cache wins whenever it's from today, and the fallback only covers the pre-first-visit gap.
+/// Today's readiness, cached so every surface (the Today deck's morning readout, the Trends
+/// strip, the Health hero) shows the SAME number. Since 2026-07-22 every writer computes the one
+/// full-blend recipe (`ReadinessToday` — banded baselines + learned sleep need/debt); whichever
+/// surface computed most recently publishes here, and nothing renders a light blend anymore (the
+/// old deck/strip fallback read 83 where the full blend read 75 — that class of mismatch is gone).
 enum ReadinessTodayCache {
     private static let key = "health.readiness.today"
 

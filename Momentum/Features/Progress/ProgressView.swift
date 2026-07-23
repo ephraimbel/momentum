@@ -34,6 +34,9 @@ struct ProgressScreen: View {
     @State private var showVO2Info = false
     @State private var showLogWorkout = false
     @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
+    /// The strip's cold-path full-blend result (same `ReadinessToday` recipe as deck + hub) —
+    /// only consulted when today's cache is empty.
+    @State private var stripReadiness: (score: Int, band: String, driver: String)?
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
     @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
@@ -562,6 +565,17 @@ struct ProgressScreen: View {
                 signals = await s
                 measuredVO2 = await v
             }
+            // The strip's own full-blend compute — covers the cold path (straight to Progress
+            // before Today or the hub ran today) through the same ReadinessToday recipe, and
+            // publishes so every sibling surface shows this exact number.
+            .task(id: "\(workouts.count)-\(checkins.count)") {
+                guard ReadinessTodayCache.today() == nil else { return }
+                if let r = await ReadinessToday.compute(health: services.health,
+                                                        workouts: workouts, checkins: checkins) {
+                    ReadinessToday.publish(r)
+                    stripReadiness = (r.score, r.band.rawValue, r.displayDriverLine)
+                }
+            }
         }
     }
 
@@ -898,14 +912,12 @@ struct ProgressScreen: View {
         }
     }
 
-    /// One number everywhere: prefer the Health hub's cached full-blend score (banded baselines +
-    /// sleep need/debt); the light `MorningReadiness(load:signals:)` covers only the gap before the
-    /// hub has computed today (the light blend read 83 where the hub read 75 — never show both).
+    /// One number everywhere: the cache (whichever surface computed the full blend most recently
+    /// — deck, hub, or this page's own task) or nothing yet ("Learning you" for a beat). The old
+    /// light fallback is GONE — it read 83 where the full blend read 75, and a briefly-wrong
+    /// number is worse than a briefly-quiet strip.
     private func todaysReadinessDisplay() -> (score: Int, band: String, driver: String)? {
-        if let cached = ReadinessTodayCache.today() { return cached }
-        let todayCheckin = checkins.first.flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
-        guard let r = MorningReadiness(load: recovery, signals: signals, checkin: todayCheckin) else { return nil }
-        return (r.score, r.band.rawValue, r.displayDriverLine)
+        ReadinessTodayCache.today() ?? stripReadiness
     }
 
     /// RETIRED by the Health segment (2026-07-15): formCard/recoveryCard/signalsRow/readinessRing/
