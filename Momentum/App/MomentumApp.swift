@@ -44,6 +44,10 @@ struct MomentumApp: App {
         authController.refresh()   // sign out if the Apple credential was revoked
         _auth = State(initialValue: authController)
         MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
+        // Wrist sync (Watch Slice 4): readiness/session/race push out, the morning check-in
+        // comes back. Best-effort — no paired watch means these are no-ops.
+        PhoneWatchSync.shared.health = services.health
+        PhoneWatchSync.shared.activate()
         // A force-quit mid-workout strands its Live Activity — end leftovers before anything can
         // start a new one (the workout itself is recovered separately via WorkoutRecovery).
         CardioActivityController.endOrphans()

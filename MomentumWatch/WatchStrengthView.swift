@@ -1,10 +1,13 @@
 import SwiftUI
 
-/// On-wrist strength logger (PRD §4.10): weight/reps steppers + a one-tap "Log set" that fires a
-/// haptic and starts the rest countdown. The rest ring takes over the screen until it elapses or is
-/// skipped, mirroring the phone's rest timer.
+/// On-wrist strength logger (PRD §4.10): the Digital Crown lands the weight (haptic detent per
+/// plate step — the fiddly number gets the precise input), buttons cover reps, one tap logs the
+/// set and starts the rest countdown. The rest ring owns the screen until it elapses or is
+/// skipped, and its last three seconds tick on the wrist so eyes stay on the bar.
 struct WatchStrengthView: View {
     @State private var model = WatchStrengthModel()
+    @State private var crownWeight: Double = 0
+    @State private var crownSynced = false
 
     var body: some View {
         ZStack {
@@ -18,6 +21,8 @@ struct WatchStrengthView: View {
             #if DEBUG
             model.seedDemoIfRequested()
             #endif
+            crownWeight = model.weightDisplayValue
+            crownSynced = true
         }
     }
 
@@ -34,8 +39,19 @@ struct WatchStrengthView: View {
                         .animation(.spring(response: 0.35, dampingFraction: 0.6), value: model.completedSets)
                     Spacer()
                 }
-                stepperCard(value: model.weightText, label: "Weight",
-                            onMinus: { model.addWeight(-1) }, onPlus: { model.addWeight(1) })
+                stepperCard(value: model.weightText, label: "Weight · crown",
+                            onMinus: { bumpWeight(-1) }, onPlus: { bumpWeight(1) })
+                    .focusable(true)
+                    .digitalCrownRotation($crownWeight,
+                                          from: 0, through: 1500,
+                                          by: model.weightStepDisplay,
+                                          sensitivity: .medium,
+                                          isContinuous: false,
+                                          isHapticFeedbackEnabled: true)
+                    .onChange(of: crownWeight) { _, value in
+                        guard crownSynced else { return }
+                        model.setWeightDisplay(value)
+                    }
                 stepperCard(value: "\(model.reps)", label: "Reps",
                             onMinus: { model.addReps(-1) }, onPlus: { model.addReps(1) })
                 Button(action: model.logSet) {
@@ -85,6 +101,13 @@ struct WatchStrengthView: View {
         .foregroundStyle(WatchTheme.ink)
     }
 
+    private func bumpWeight(_ direction: Double) {
+        model.addWeight(direction)
+        crownSynced = false
+        crownWeight = model.weightDisplayValue
+        crownSynced = true
+    }
+
     private var restOverlay: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { ctx in
             let remaining = model.restRemaining(at: ctx.date)
@@ -113,7 +136,17 @@ struct WatchStrengthView: View {
                 }
                 .padding(26)
             }
-            .onChange(of: remaining <= 0) { _, done in if done { model.skipRest() } }
+            // The endgame ticks on the wrist (3·2·1) and rest closes with the GO tap — eyes stay
+            // on the bar, not the dial.
+            .onChange(of: Int(remaining.rounded(.up))) { _, second in
+                if (1...3).contains(second) { WatchHaptics.tick() }
+            }
+            .onChange(of: remaining <= 0) { _, done in
+                if done {
+                    WatchHaptics.go()
+                    model.skipRest()
+                }
+            }
         }
     }
 }

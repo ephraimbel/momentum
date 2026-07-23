@@ -164,6 +164,27 @@ targets:
           - SpaceGrotesk-Medium.ttf
           - SpaceGrotesk-Bold.ttf
 
+  # watchOS complications + Smart Stack (readiness ring · today's plan). Reads ONLY the app-group
+  # defaults the watch app caches from WatchConnectivity pushes — no HealthKit, no sessions.
+  MomentumWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: MomentumWatchWidgets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.watchkitapp.widgets
+        CODE_SIGN_ENTITLEMENTS: MomentumWatchWidgets/MomentumWatchWidgets.entitlements
+    info:
+      path: MomentumWatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
   # watchOS app (PRD §8.10 / §4.10) — on-wrist GPS cardio + strength logging. Shares only
   # platform-agnostic logic from the phone (enums, formatters, pure math); its views are watch-native.
   # Regenerate with `xcodegen generate` after adding watch files.
@@ -178,6 +199,9 @@ targets:
       - path: Momentum/Engines/HRZones.swift        # shared: Karvonen zone model for the live zone gauge
       - path: Momentum/Engines/RouteSmoothing.swift # shared: spline smoothing for the summary route trace
       - path: Momentum/Engines/Geo.swift            # shared: haversine (RouteSmoothing dependency)
+      - path: Momentum/Engines/WorkoutLogParser.swift # shared: the voice-log grammar (pure Swift — receipts on the wrist)
+    dependencies:
+      - target: MomentumWatchWidgets   # embeds the complications extension into the watch app
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.watchkitapp
@@ -237,6 +261,7 @@ schemes:
         Momentum: all
         MomentumWidgets: all
         MomentumWatch: all
+        MomentumWatchWidgets: all
         MomentumTests: [test]
         MomentumUITests: [test]
     test:

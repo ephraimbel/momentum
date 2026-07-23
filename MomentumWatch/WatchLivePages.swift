@@ -11,6 +11,8 @@ import WatchKit
 
 struct MetricsPage: View {
     @Bindable var model: WatchCardioModel
+    @Environment(\.isLuminanceReduced) private var dimmed
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let unit: DistanceUnit = .auto
 
     var body: some View {
@@ -25,7 +27,11 @@ struct MetricsPage: View {
                         .contentTransition(.numericText(countsDown: false))
                         .opacity(model.paused ? 0.55 : 1)
 
-                    metric(heroLabel, heroValue, WatchTheme.accent, size: 30, caption: lastLapCaption)
+                    if model.paceBandSPerKm != nil, model.type.discipline == .running {
+                        paceHalo
+                    } else {
+                        metric(heroLabel, heroValue, WatchTheme.accent, size: 30, caption: lastLapCaption)
+                    }
                     heartMetric
                     HStack(alignment: .top, spacing: 12) {
                         metric("Distance", Formatters.distance(meters: model.distanceM, unit: unit),
@@ -37,6 +43,67 @@ struct MetricsPage: View {
                 .padding(.bottom, 4)
             }
         }
+        // Always-on display: everything stays readable, nothing performs — no pulse, no breath.
+        .opacity(dimmed ? 0.8 : 1)
+    }
+
+    // MARK: The pace halo — the band answers "am I where I should be?" without reading a number.
+    // In band the ring is iridescent and breathes with a slow ~3 s cycle; off band it drops to a
+    // hairline with a quiet direction cue. No color means adjust; color means keep doing this.
+
+    private var paceHalo: some View {
+        let state = model.paceState
+        let pace = model.rollingPaceSPerKm > 0
+            ? Formatters.pace(secPerKm: model.rollingPaceSPerKm, unit: unit)
+            : heroValue
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("PACE")
+                    .font(.system(size: 11, weight: .semibold)).tracking(0.5)
+                    .foregroundStyle(WatchTheme.inkSecondary)
+                if let caption = lastLapCaption {
+                    Text(caption)
+                        .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(WatchTheme.inkTertiary)
+                }
+            }
+            HStack(spacing: 7) {
+                Text(pace)
+                    .font(.system(size: 30, weight: .bold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(state == .inBand ? WatchTheme.accent : WatchTheme.ink)
+                    .minimumScaleFactor(0.7).lineLimit(1)
+                if state == .fast || state == .slow {
+                    VStack(spacing: -1) {
+                        Image(systemName: state == .fast ? "arrowtriangle.down.fill" : "arrowtriangle.up.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(state == .fast ? "EASE" : "LIFT")
+                            .font(.system(size: 8, weight: .bold)).tracking(0.6)
+                    }
+                    .foregroundStyle(WatchTheme.inkSecondary)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background {
+                if state == .inBand, !dimmed, !reduceMotion {
+                    TimelineView(.animation(minimumInterval: 1 / 20)) { ctx in
+                        Capsule()
+                            .strokeBorder(WatchTheme.iridescent, lineWidth: 1.6)
+                            .opacity(0.55 + 0.35 * sin(ctx.date.timeIntervalSinceReferenceDate * 2.1))
+                    }
+                } else {
+                    Capsule()
+                        .strokeBorder(state == .inBand ? AnyShapeStyle(WatchTheme.iridescent)
+                                                       : AnyShapeStyle(WatchTheme.surfaceStrong),
+                                      lineWidth: state == .inBand ? 1.6 : 1)
+                }
+            }
+            .animation(.smooth(duration: 0.5), value: state)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Pace")
+        .accessibilityValue(state == .inBand ? "\(pace), on target"
+                            : state == .fast ? "\(pace), faster than target"
+                            : state == .slow ? "\(pace), slower than target" : pace)
     }
 
     private var pausedChip: some View {

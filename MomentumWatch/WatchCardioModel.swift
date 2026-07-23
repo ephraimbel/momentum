@@ -59,6 +59,24 @@ final class WatchCardioModel: NSObject {
     private var lapStartElapsed: TimeInterval = 0
     private var lapStartDistance: Double = 0
 
+    // MARK: Pace halo — the target band from today's synced session, judged on ROLLING pace
+
+    /// Today's prescribed easy/target window (s/km), synced from the phone. nil = no plan today
+    /// → the halo never renders and the wrist never judges a free run.
+    private(set) var paceBandSPerKm: ClosedRange<Double>?
+    /// Where the athlete sits against the band right now (driven by the 1 Hz metronome).
+    enum PaceState { case none, inBand, fast, slow }
+    private(set) var paceState: PaceState = .none
+    /// Rolling ~30 s pace — what "current pace" honestly means on the wrist (whole-run average
+    /// hides every surge; instant GPS pace is noise).
+    private(set) var rollingPaceSPerKm: Double = 0
+    private var paceSamples: [(t: TimeInterval, d: Double)] = []
+    /// Haptic discipline: a state must HOLD for 8 s before it speaks, and pace haptics never
+    /// fire more than once per 25 s — guidance, not nagging.
+    private var pendingPaceState: PaceState = .none
+    private var pendingSince: TimeInterval = 0
+    private var lastPaceHapticAt: TimeInterval = -60
+
     // HR aggregates for the summary.
     private var hrSum = 0.0
     private var hrTicks = 0.0
@@ -111,6 +129,7 @@ final class WatchCardioModel: NSObject {
     /// Request authorization, then start the session + live collection + the route stream.
     func start() async {
         zones = HRZones.zones(maxHR: 190) ?? []          // placeholder until DOB resolves
+        resolvePaceBand()
         #if DEBUG
         if demo { startDemo(); return }
         #endif
@@ -156,6 +175,21 @@ final class WatchCardioModel: NSObject {
         startMetronome()
     }
 
+    /// Today's pace window, if the phone synced a running session with one. Foot sports only —
+    /// a ride's band would be speed, a different instrument.
+    private func resolvePaceBand() {
+        guard type.discipline == .running else { return }
+        if let s = WatchSyncStore.shared.todaySession,
+           let lo = s.paceLoSPerKm, let hi = s.paceHiSPerKm, hi > lo {
+            paceBandSPerKm = lo...hi
+        }
+        #if DEBUG
+        // The demo run oscillates 2.6–3.5 m/s (~286–385 s/km); this band makes the halo breathe
+        // through in-band ↔ fast ↔ slow deterministically on the sim.
+        if demo, paceBandSPerKm == nil { paceBandSPerKm = 300...345 }
+        #endif
+    }
+
     /// Personalize the five zones from Health's date of birth (Tanaka max HR); keep 190 otherwise.
     private func resolveZones() {
         guard let dob = try? healthStore.dateOfBirthComponents(),
@@ -182,10 +216,10 @@ final class WatchCardioModel: NSObject {
     }
 
     /// Manual lap (Garmin-style): close the current lap now and restart the counter.
+    /// (recordSplit speaks the haptic — the split double-tap, or the surge on a new fastest.)
     func lap() {
         guard running, !hasEnded else { return }
         recordSplit()
-        WKInterfaceDevice.current().play(.directionUp)
     }
 
     // MARK: 1 Hz metronome — zone accrual + auto-lap (and, in demo, synthetic sensors)
@@ -217,19 +251,52 @@ final class WatchCardioModel: NSObject {
             let z = currentZone
             if z >= 1 { timeInZone[z - 1] += delta }
         }
+        advancePace()
         if distanceM - lapStartDistance >= splitLengthM {
             recordSplit()
-            WKInterfaceDevice.current().play(.notification)
+        }
+    }
+
+    /// Rolling pace + the halo's state machine. States must hold 8 s to speak; haptics are
+    /// throttled to one per 25 s (guidance, not nagging) via the shared `WatchHaptics` vocabulary.
+    private func advancePace() {
+        paceSamples.append((elapsed, distanceM))
+        paceSamples.removeAll { elapsed - $0.t > 32 }
+        guard let oldest = paceSamples.first, elapsed - oldest.t >= 8 else { return }
+        let dt = elapsed - oldest.t
+        let dd = distanceM - oldest.d
+        rollingPaceSPerKm = dd > 1 ? dt / (dd / 1000) : 0
+
+        guard let band = paceBandSPerKm, rollingPaceSPerKm > 0 else { return }
+        let state: PaceState = band.contains(rollingPaceSPerKm) ? .inBand
+            : rollingPaceSPerKm < band.lowerBound ? .fast : .slow
+        if state != pendingPaceState {
+            pendingPaceState = state
+            pendingSince = elapsed
+        }
+        guard state != paceState, elapsed - pendingSince >= 8 else { return }
+        let previous = paceState
+        paceState = state
+        guard previous != .none, elapsed - lastPaceHapticAt >= 25 else { return }
+        lastPaceHapticAt = elapsed
+        switch state {
+        case .inBand: WatchHaptics.inBand()
+        case .fast:   WatchHaptics.easeOff()
+        case .slow:   WatchHaptics.pickUp()
+        case .none:   break
         }
     }
 
     private func recordSplit() {
         let lapS = elapsed - lapStartElapsed
         guard lapS > 1 else { return }
+        let wasFastest = splits.count >= 1 && lapS < (splits.min() ?? .infinity)
         splits.append(lapS)
         lastSplitS = lapS
         lapStartElapsed = elapsed
         lapStartDistance = distanceM
+        // The split speaks in the shared vocabulary — and a new fastest lap earns the surge.
+        if wasFastest { WatchHaptics.surge() } else { WatchHaptics.split() }
     }
 
     #if DEBUG
@@ -245,7 +312,8 @@ final class WatchCardioModel: NSObject {
     private func demoAdvance() {
         guard !paused else { return }
         demoTick += 1
-        distanceM += 3.2
+        // Speed oscillates 2.6–3.5 m/s so the pace halo breathes through its three states.
+        distanceM += 3.05 + 0.45 * sin(Double(demoTick) / 40)
         activeEnergyKcal += 0.19
         heartRateBPM = 132 + Int((34 * sin(Double(demoTick) / 60)).rounded())
         route.append(Self.demoCoordinate(tick: demoTick))

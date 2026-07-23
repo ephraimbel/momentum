@@ -66,7 +66,10 @@ enum ReadinessToday {
 
     /// Publish today's number for the sibling surfaces (`ReadinessTodayCache` — the strip's
     /// cache-first read), so whichever surface computed most recently is what everyone shows.
+    /// The wrist counts as a sibling surface: every publish also schedules a WatchConnectivity
+    /// push, so the watch's ring and complications carry this same number.
     static func publish(_ r: MorningReadiness) {
         ReadinessTodayCache.store(score: r.score, band: r.band.rawValue, driver: r.displayDriverLine)
+        PhoneWatchSync.shared.scheduleRefresh()
     }
 }

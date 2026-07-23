@@ -149,11 +149,15 @@ struct WatchSummaryView: View {
 }
 
 /// The finished route on real tiles — camera fitted to the whole run, spline-smoothed polyline in
-/// the brand accent, start dot (white) and finish dot (accent). Static: the crown keeps scrolling
-/// the summary. (MapKit — Mapbox has no watchOS SDK.)
+/// the brand accent, start dot (white) and finish dot (accent). The trace DRAWS ITSELF over ~1.6 s
+/// when the summary lands (the onboarding's self-drawing-route motion, brought to the finish
+/// line); Reduce Motion shows it complete. Static camera: the crown keeps scrolling the summary.
+/// (MapKit — Mapbox has no watchOS SDK.)
 private struct SummaryMap: View {
     let line: [CLLocationCoordinate2D]
     let region: MKCoordinateRegion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drawnCount = 2
 
     init(route: [CLLocationCoordinate2D]) {
         // Smoothing multiplies point count ~6× — skip it for very long routes; raw is fine there.
@@ -168,12 +172,16 @@ private struct SummaryMap: View {
                                    longitudeDelta: max((maxLon - minLon) * 1.4, 0.003)))
     }
 
+    private var drawnLine: [CLLocationCoordinate2D] {
+        Array(line.prefix(max(2, min(drawnCount, line.count))))
+    }
+
     var body: some View {
         Map(initialPosition: .region(region), interactionModes: []) {
-            if line.count > 1 {
-                MapPolyline(coordinates: line)
+            if drawnLine.count > 1 {
+                MapPolyline(coordinates: drawnLine)
                     .stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 5.5, lineCap: .round, lineJoin: .round))
-                MapPolyline(coordinates: line)
+                MapPolyline(coordinates: drawnLine)
                     .stroke(WatchTheme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
             }
             if let start = line.first {
@@ -182,7 +190,7 @@ private struct SummaryMap: View {
                         .overlay(Circle().stroke(.black.opacity(0.5), lineWidth: 1.5))
                 }
             }
-            if let end = line.last, line.count > 1 {
+            if let end = line.last, drawnCount >= line.count {
                 Annotation("", coordinate: end) {
                     Circle().fill(WatchTheme.accent).frame(width: 9, height: 9)
                         .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
@@ -191,5 +199,18 @@ private struct SummaryMap: View {
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
         .accessibilityLabel("Route map")
+        .task {
+            guard !reduceMotion, line.count > 2 else { drawnCount = line.count; return }
+            // ~1.6 s draw at 25 fps, eased by stepping more points per frame toward the end.
+            let frames = 40
+            for f in 1...frames {
+                let t = Double(f) / Double(frames)
+                let eased = 1 - pow(1 - t, 2.2)
+                drawnCount = max(2, Int(eased * Double(line.count)))
+                try? await Task.sleep(for: .milliseconds(40))
+                if Task.isCancelled { return }
+            }
+            drawnCount = line.count
+        }
     }
 }

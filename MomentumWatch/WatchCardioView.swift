@@ -147,6 +147,18 @@ private struct CountdownView: View {
             .id(count)
             .scaleEffect(landed || reduceMotion ? 1 : 1.35)
             .opacity(landed ? 1 : 0)
+            // The morning's number sees the athlete off — the whole story in one chip.
+            if let r = WatchSyncStore.shared.todayReadiness {
+                VStack {
+                    Spacer()
+                    Text("\(bandWord(r.band).uppercased()) · \(r.score)")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.8).monospacedDigit()
+                        .foregroundStyle(WatchTheme.inkSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(Capsule().fill(WatchTheme.surface))
+                        .padding(.bottom, 2)
+                }
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onDone)   // impatient? tap to start now

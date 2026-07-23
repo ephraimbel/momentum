@@ -22,6 +22,18 @@ final class WatchStrengthModel {
     func addWeight(_ direction: Double) { weightKg = max(0, weightKg + direction * weightStepKg) }
     func addReps(_ delta: Int) { reps = max(0, reps + delta) }
 
+    // MARK: Crown control — the premium way to land on a plate weight
+
+    /// Weight in the athlete's display unit, for the crown binding.
+    var weightDisplayValue: Double { unit == .lb ? weightKg / Formatters.kgPerLb : weightKg }
+    /// One crown detent = one plate step (5 lb / 2.5 kg) — the same step the buttons take.
+    var weightStepDisplay: Double { unit == .lb ? 5 : 2.5 }
+
+    func setWeightDisplay(_ value: Double) {
+        let kg = unit == .lb ? value * Formatters.kgPerLb : value
+        weightKg = max(0, kg)
+    }
+
     /// Log the current set: success haptic + start the rest countdown (fires on the wrist).
     func logSet() {
         completedSets += 1
