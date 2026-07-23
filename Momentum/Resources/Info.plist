@@ -46,11 +46,11 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>momentum uses the microphone so you can speak a meal or a workout instead of typing it.</string>
+	<string>momentum uses the microphone so you can speak instead of typing — a meal, a workout, a question for your coach.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>momentum uses motion data to measure cadence and steps.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>momentum uses speech recognition to turn what you say — a meal, a workout — into text.</string>
+	<string>momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>RevenueCatAPIKey</key>
