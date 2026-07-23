@@ -60,7 +60,7 @@ export default function Cinema({
           alt={alt}
           fill
           sizes="100vw"
-          quality={82}
+          quality={90}
           placeholder={blur ? "blur" : undefined}
           blurDataURL={blur}
           style={{ objectFit: "cover", objectPosition: anchor === "bottom" ? "center 78%" : "center" }}

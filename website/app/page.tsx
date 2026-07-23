@@ -37,14 +37,14 @@ export default function Home() {
 function CinemaStandard() {
   return (
     <Cinema
-      src="/athletes/athlete-pack.jpg"
-      blur={athleteBlur["athlete-pack.jpg"]}
+      src="/athletes/cinema-pack.jpg"
+      blur={athleteBlur["cinema-pack.jpg"]}
       alt="A pack of marathoners emerging from morning fog"
     >
       <Reveal>
         <p className="eyebrow eyebrow-light">The long game</p>
         <h2 className="display cinema-title">
-          The work <span className="iri-text">compounds.</span>
+          The work compounds.
         </h2>
         <p className="lede cinema-lede">
           Every run measured. Every signal read. Every week adapted. momentum turns consistency
@@ -78,25 +78,25 @@ function DistanceMarquee() {
 function Seasons() {
   const cards = [
     {
-      src: "/athletes/athlete-uphill.jpg",
-      blur: athleteBlur["athlete-uphill.jpg"],
-      alt: "A runner silhouetted against the sky, climbing at dusk",
+      src: "/athletes/season-base.jpg",
+      blur: athleteBlur["season-base.jpg"],
+      alt: "A lone runner on a misty forest road",
       n: "01",
       h: "Base",
       p: "Where the engine is built. Easy volume, laid down patiently.",
     },
     {
-      src: "/athletes/athlete-focus.jpg",
-      blur: athleteBlur["athlete-focus.jpg"],
-      alt: "A focused racer mid-stride on an empty road",
+      src: "/athletes/season-build.jpg",
+      blur: athleteBlur["season-build.jpg"],
+      alt: "An athlete driving hard up a tree-lined road",
       n: "02",
       h: "Build",
       p: "Where the work sharpens. Threshold, intervals, race-pace rehearsal.",
     },
     {
-      src: "/athletes/athlete-leaders.jpg",
-      blur: athleteBlur["athlete-leaders.jpg"],
-      alt: "Two leaders alone on the road in morning fog",
+      src: "/athletes/season-peak.jpg",
+      blur: athleteBlur["season-peak.jpg"],
+      alt: "Sprinters at full flight on an indoor track",
       n: "03",
       h: "Peak",
       p: "Where it all shows up. Fresh legs, honest paces, race day.",
@@ -124,7 +124,7 @@ function Seasons() {
                     alt={c.alt}
                     fill
                     sizes="(max-width: 760px) 92vw, 30vw"
-                    quality={80}
+                    quality={88}
                     placeholder="blur"
                     blurDataURL={c.blur}
                     style={{ objectFit: "cover" }}
@@ -592,20 +592,20 @@ function Manifesto() {
         <div className="manifesto manifesto-photo">
           <div className="manifesto-media" aria-hidden>
             <Image
-              src="/athletes/athlete-leaders.jpg"
+              src="/athletes/cinema-leaders.jpg"
               alt=""
               fill
               sizes="(max-width: 1100px) 96vw, 1100px"
-              quality={80}
+              quality={88}
               placeholder="blur"
-              blurDataURL={athleteBlur["athlete-leaders.jpg"]}
+              blurDataURL={athleteBlur["cinema-leaders.jpg"]}
               style={{ objectFit: "cover", objectPosition: "center 30%" }}
             />
           </div>
           <div className="manifesto-shade" aria-hidden />
           <p className="eyebrow eyebrow-light">The method</p>
           <h2 className="display">
-            No red days. No guilt loops. <span className="iri-text-dark">Only momentum.</span>
+            No red days. No guilt loops. Only momentum.
           </h2>
           <div className="manifesto-grid">
             <div>
@@ -735,8 +735,8 @@ function FinalCTA() {
   return (
     <div id="download">
       <Cinema
-        src="/athletes/athlete-dusk.jpg"
-        blur={athleteBlur["athlete-dusk.jpg"]}
+        src="/athletes/cinema-dusk.jpg"
+        blur={athleteBlur["cinema-dusk.jpg"]}
         alt="A lone runner silhouetted at dusk, reflected in still water"
         tall
         anchor="bottom"
@@ -744,7 +744,7 @@ function FinalCTA() {
         <Reveal>
           <div className="cta-cinema">
             <h2 className="display cinema-title">
-              keep <span className="iri-text">moving.</span>
+              keep moving.
             </h2>
             <p className="lede cinema-lede">
               Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
