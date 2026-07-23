@@ -77,6 +77,8 @@ enum BillingKeys {
 @Observable
 final class PaywallController: PaywallServing {
     static let entitlementKey = "com.momentum.pro.entitled"
+    /// DEBUG-only dev unlock (see init) — never read in Release.
+    static let devUnlockKey = "com.momentum.pro.devUnlock"
     static let entitlementID = "pro"            // RevenueCat entitlement identifier (PRD §10)
     static let onboardingGateKey = "com.momentum.pro.onboardingGatePending"
 
@@ -99,17 +101,22 @@ final class PaywallController: PaywallServing {
         if let override { isPro = override; return }
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
-        // The dev flags PERSIST (one flagged launch flips the stored entitlement, then normal
-        // launches keep it) — a dev-build phone granted Pro must not revert to free the first
-        // time it's opened from the Home Screen. --debug-free flips it back the same way.
+        // The dev flags PERSIST via their own key (one --debug-pro launch unlocks the install for
+        // good; --debug-free clears it). A separate key, deliberately: the REAL entitlement key
+        // belongs to RevenueCat reconciliation, which on every plain launch applies the sandbox
+        // account's (un-entitled) truth — writing the real key here lasted exactly one launch
+        // before the SDK stomped it back to free. The dev key also short-circuits `configure()`,
+        // so the billing SDK never runs on a dev-unlocked install.
         if args.contains("--debug-free") {
+            UserDefaults.standard.set(false, forKey: Self.devUnlockKey)
             UserDefaults.standard.set(false, forKey: Self.entitlementKey)
             isPro = false; return
         }
         if args.contains("--debug-pro") {
-            UserDefaults.standard.set(true, forKey: Self.entitlementKey)
+            UserDefaults.standard.set(true, forKey: Self.devUnlockKey)
             isPro = true; return
         }
+        if UserDefaults.standard.bool(forKey: Self.devUnlockKey) { isPro = true; return }
         let demo = args.contains("--seed-demo")
         #else
         let demo = false
@@ -126,6 +133,10 @@ final class PaywallController: PaywallServing {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--seed-demo") || args.contains("--debug-pro")
             || args.contains("--ui-test-route") { return }   // no billing network → no sandbox stomp
+        // A dev-unlocked install (persisted --debug-pro) is hermetic on EVERY launch, not just
+        // flagged ones — otherwise the first plain launch reconciles the sandbox account's
+        // un-entitled truth over the deliberate dev grant.
+        if UserDefaults.standard.bool(forKey: Self.devUnlockKey) { return }
         #endif
         #if canImport(RevenueCat)
         Purchases.logLevel = .warn
