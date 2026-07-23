@@ -173,6 +173,16 @@ struct ProfileScreen: View {
                 Self.didAutoOpenAwards = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showingAwards = true }
             }
+            // --profile-open-run: open the immersive pager on the first GPS workout — the
+            // route-fit camera can only be verified inside the real pager (its lazy sizing is
+            // exactly what the initialViewport race needed).
+            if ProcessInfo.processInfo.arguments.contains("--profile-open-run") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    if let run = workouts.first(where: { $0.type.isGPS && ($0.gps?.distanceM ?? 0) > 0 }) {
+                        immersive = ImmersiveStart(id: run.id)
+                    }
+                }
+            }
             if ProcessInfo.processInfo.arguments.contains("--profile-scroll-consistency") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                     withAnimation { scroll.scrollTo("profile-consistency", anchor: .bottom) }

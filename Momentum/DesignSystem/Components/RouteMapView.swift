@@ -13,10 +13,26 @@ struct RouteMapView: View {
     var interactive: Bool = false
     var padding: CGFloat = 28
     @Environment(\.colorScheme) private var colorScheme
+    /// A live viewport BINDING, not `initialViewport`: the initial form is applied exactly once,
+    /// at whatever size the map happens to have at creation — inside a lazy container (the
+    /// profile's immersive pager) that's a placeholder-sized frame, so the "fit the whole route"
+    /// camera was computed for the wrong canvas and stuck zoomed-in (caught on device
+    /// 2026-07-24). The `.overview` viewport STATE re-fits whenever the map's real size lands —
+    /// the whole route, every time, on every surface.
+    @State private var viewport: Viewport
+
+    init(coordinates: [CLLocationCoordinate2D], style: MapStyleOption = .persisted,
+         interactive: Bool = false, padding: CGFloat = 28) {
+        self.coordinates = coordinates
+        self.style = style
+        self.interactive = interactive
+        self.padding = padding
+        _viewport = State(initialValue: Self.fit(coordinates, padding: padding))
+    }
 
     var body: some View {
         MapReader { proxy in
-            Map(initialViewport: viewport) {
+            Map(viewport: $viewport) {
                 if let start = coordinates.first, coordinates.count > 1 {
                     MapViewAnnotation(coordinate: start) { startPin }.allowOverlap(true)
                 }
@@ -84,7 +100,7 @@ struct RouteMapView: View {
     }
 
     /// Frame the whole route with padding; fall back to a centered camera for a single point.
-    private var viewport: Viewport {
+    private static func fit(_ coordinates: [CLLocationCoordinate2D], padding: CGFloat) -> Viewport {
         guard coordinates.count > 1 else {
             if let c = coordinates.first { return .camera(center: c, zoom: 14) }
             return .idle
