@@ -14,10 +14,17 @@ struct LogWorkoutView: View {
     @State private var type: WorkoutType
     @State private var showTypePicker = false
 
+    /// Draft-return mode (the log composer's per-card editor): Save hands the form's values BACK
+    /// to the caller instead of writing a workout — the composer folds them into its card and
+    /// nothing saves until the athlete confirms the whole receipt.
+    private let onDraftReturn: ((LogWorkoutPrefill) -> Void)?
+
     /// Open pre-set to the activity the athlete is currently looking at (Today's sport), so a lifter
     /// lands on the strength form and a runner on the run form. With a `prefill` (the log composer's
-    /// "Adjust details"), every field opens holding the parse — this form is the receipt's editor.
-    init(initialType: WorkoutType = .run, prefill: LogWorkoutPrefill? = nil) {
+    /// card editor), every field opens holding the parse — this form is the receipt's editor.
+    init(initialType: WorkoutType = .run, prefill: LogWorkoutPrefill? = nil,
+         onDraftReturn: ((LogWorkoutPrefill) -> Void)? = nil) {
+        self.onDraftReturn = onDraftReturn
         _type = State(initialValue: prefill?.type ?? initialType)
         guard let p = prefill else { return }
         _date = State(initialValue: p.date)
@@ -74,9 +81,14 @@ struct LogWorkoutView: View {
     private var canSave: Bool {
         guard durationS > 0 else { return false }
         if type.isStrengthStyle {
-            return exercises.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && !$0.sets.isEmpty }
+            // Direct saves need at least one named exercise; the composer's card editor doesn't —
+            // a duration-only lift is a real lift there (the receipt's own rule).
+            return onDraftReturn != nil
+                || exercises.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && !$0.sets.isEmpty }
         }
-        if type.isGPS { return distanceMeters > 0 }
+        // Same relaxation for cardio: the composer logs "walked 30 min" without a distance, so
+        // its card editor can't demand one. Direct adds keep the stricter typed-flow rule.
+        if type.isGPS { return onDraftReturn != nil || distanceMeters > 0 }
         return true   // timed sports need only a duration
     }
 
@@ -92,7 +104,7 @@ struct LogWorkoutView: View {
                 }
                 detailsSection
             }
-            .navigationTitle("Add a workout")
+            .navigationTitle(onDraftReturn == nil ? "Add a workout" : "Adjust workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
@@ -277,6 +289,13 @@ struct LogWorkoutView: View {
     // MARK: Save
 
     private func save() {
+        // Card-editor mode: the values go back to the composer's receipt, not to storage.
+        if let onDraftReturn {
+            onDraftReturn(currentDraft())
+            Haptics.success()
+            dismiss()
+            return
+        }
         let inputs = exercises.map { draft in
             LogWorkoutBuilder.ExerciseInput(
                 name: draft.name,
@@ -313,6 +332,34 @@ struct LogWorkoutView: View {
         AwardsBook.syncSoon()
         Haptics.success()
         dismiss()
+    }
+
+    /// The form's current values as a prefill — what draft-return hands back to the composer.
+    /// Consecutive identical sets collapse into one uniform line ("4×8 · 185"); a hand-varied
+    /// set breaks into its own line, so nothing the athlete typed is flattened away.
+    private func currentDraft() -> LogWorkoutPrefill {
+        var lines: [LogWorkoutPrefill.ExerciseLine] = []
+        if type.isStrengthStyle {
+            for ex in exercises {
+                let name = ex.name.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { continue }
+                var runs: [(reps: Int, weightKg: Double?, count: Int)] = []
+                for set in ex.sets {
+                    let kg = set.weightKg(unit: weightUnit)
+                    if let last = runs.last, last.reps == set.reps, last.weightKg == kg {
+                        runs[runs.count - 1].count += 1
+                    } else {
+                        runs.append((set.reps, kg, 1))
+                    }
+                }
+                for r in runs {
+                    lines.append(.init(name: name, sets: r.count, reps: r.reps, weightKg: r.weightKg))
+                }
+            }
+        }
+        return LogWorkoutPrefill(type: type, date: date, durationS: durationS,
+                                 distanceM: type.isGPS ? distanceMeters : 0,
+                                 indoor: indoor, effort: effort, exercises: lines)
     }
 
     /// Find an existing library/custom exercise by name, else create a custom one so the lift is real.

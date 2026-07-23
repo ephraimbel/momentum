@@ -33,11 +33,19 @@ struct LogActivityView: View {
     @State private var draft = ""
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
-    /// Explicit sport picks, per card — an explicit pick always beats the words.
-    @State private var typeOverrides: [Int: WorkoutType] = [:]
-    @State private var sportPicker: SportPickerTarget?
+    /// Per-card manual edits from the card editor (tap a card → full form → Save returns here).
+    /// An edit REPLACES that card's parse; any change to the text clears all edits (the words are
+    /// the source of truth again) and edits freeze the coach's re-reads (the athlete took over).
+    @State private var cardEdits: [Int: LogWorkoutPrefill] = [:]
+    /// The card being edited in the nested form sheet.
+    @State private var editingCard: EditingCard?
     @State private var saveFailed = false
     @FocusState private var composing: Bool
+
+    private struct EditingCard: Identifiable {
+        let id: Int
+        var prefill: LogWorkoutPrefill
+    }
 
     // The server rung (`workout-parse`): fires on its own when the text plainly says more than
     // the grammar read. Its result is pinned to the exact text it read — one more keystroke and
@@ -47,50 +55,68 @@ struct LogActivityView: View {
     @State private var aiReading = false
     @State private var aiFailed = false
     @State private var aiTask: Task<Void, Never>?
-
-    private struct SportPickerTarget: Identifiable { let id: Int }
+    /// Only the newest read may touch `aiReading`/`aiFailed` — a superseded task finishing late
+    /// must not kill the spinner the newer task owns.
+    @State private var aiGeneration = 0
 
     // MARK: Parse (live)
 
-    /// One receipt card per workout in the text — "lifted, then ran 4 miles" is two.
-    private var parsedList: [WorkoutLogParser.Result] {
+    /// Grammar + coach read, before the athlete's explicit sport picks.
+    private var mergedList: [WorkoutLogParser.Result] {
         var list = WorkoutLogParser.parseMulti(draft, weightUnit: .default(), distanceUnit: distanceUnit)
         if let ai = aiResult, aiReadText == draft {
             list = WorkoutParseService.merge(ai: ai, grammar: list)
         }
-        for (i, t) in typeOverrides where i < list.count { list[i].type = t }
         return list
     }
 
-    private var isEmptyParse: Bool { parsedList.allSatisfy(\.isEmpty) }
+    /// One receipt card per workout in the text — "lifted, then ran 4 miles" is two. A card the
+    /// athlete edited by hand shows its edit; the rest show the parse, with shared time contexts
+    /// staggered so the chain reads in the order it happened.
+    private struct Card {
+        var result: WorkoutLogParser.Result
+        var date: Date
+        var edited: Bool
+    }
 
-    /// The coach's read is on the current receipt (drives the eyebrow sparkle).
-    private var coachRead: Bool { aiResult != nil && aiReadText == draft }
+    private var cards: [Card] {
+        let list = mergedList
+        let stacked = WorkoutLogParser.stackedDates(for: list)
+        return list.indices.map { i in
+            guard let e = cardEdits[i] else { return Card(result: list[i], date: stacked[i], edited: false) }
+            var r = WorkoutLogParser.Result()
+            r.type = e.type
+            r.indoor = e.indoor
+            r.durationS = e.durationS > 0 ? e.durationS : nil
+            r.distanceM = e.distanceM > 0 ? e.distanceM : nil
+            r.effort = e.effort
+            r.exercises = e.exercises.map { .init(name: $0.name, sets: $0.sets, reps: $0.reps, weightKg: $0.weightKg) }
+            return Card(result: r, date: e.date, edited: true)
+        }
+    }
+
+    private var isEmptyParse: Bool { mergedList.allSatisfy(\.isEmpty) && cardEdits.isEmpty }
 
     private var distanceUnit: DistanceUnit { DistanceUnit.auto.resolved() }
-
-    private func resolvedDate(_ r: WorkoutLogParser.Result) -> Date {
-        WorkoutLogParser.resolveDate(dayOffset: r.dayOffset, timeHint: r.timeHint)
-    }
 
     private func isBike(_ r: WorkoutLogParser.Result) -> Bool {
         [.ride, .mountainBikeRide, .gravelRide, .eBikeRide].contains(r.type)
     }
 
+    /// A sport and a duration make a loggable workout. Distance is a nudge, never a blocker —
+    /// "walked the dog for 30 min" and "ran for 40 minutes" are real logs exactly as said.
     private func cardSaveable(_ r: WorkoutLogParser.Result) -> Bool {
-        guard let t = r.type, let d = r.durationS, d > 0 else { return false }
-        if t.isGPS { return (r.distanceM ?? 0) > 0 }
-        return true   // timed sports need only a duration; a duration-only lift is a real lift
+        r.type != nil && (r.durationS ?? 0) > 0
     }
 
     /// Every card must be complete — the hints on an incomplete card say what's missing.
-    private var canSave: Bool { !isEmptyParse && parsedList.allSatisfy(cardSaveable) }
+    private var canSave: Bool { !isEmptyParse && cards.allSatisfy { cardSaveable($0.result) } }
 
     /// The receipt's plan line — computed with the same matcher that will credit on save.
-    private func creditSession(_ r: WorkoutLogParser.Result) -> PlannedSession? {
-        guard cardSaveable(r), let t = r.type, let d = r.durationS else { return nil }
-        return PlanCoaching.creditCandidate(type: t, distanceM: r.distanceM ?? 0,
-                                            durationS: d, on: resolvedDate(r),
+    private func creditSession(_ card: Card) -> PlannedSession? {
+        guard cardSaveable(card.result), let t = card.result.type, let d = card.result.durationS else { return nil }
+        return PlanCoaching.creditCandidate(type: t, distanceM: card.result.distanceM ?? 0,
+                                            durationS: d, on: card.date,
                                             plan: profiles.first?.plan)
     }
 
@@ -131,11 +157,11 @@ struct LogActivityView: View {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { close() } }
             }
             .safeAreaInset(edge: .bottom) { confirmBar }
-            .sheet(item: $sportPicker) { target in
-                SportPicker(selection: Binding(
-                    get: { parsedList.indices.contains(target.id) ? (parsedList[target.id].type ?? .run) : .run },
-                    set: { typeOverrides[target.id] = $0 })) {
-                    sportPicker = nil
+            // The per-card editor: the full manual form, nested so the OTHER cards survive.
+            // Save returns the values into the card; nothing writes until Log confirms them all.
+            .sheet(item: $editingCard) { target in
+                LogWorkoutView(prefill: target.prefill) { edited in
+                    cardEdits[target.id] = edited
                 }
             }
             .onChange(of: voice.transcript) { _, spoken in
@@ -144,6 +170,7 @@ struct LogActivityView: View {
             }
             .onChange(of: draft) {
                 aiFailed = false
+                cardEdits = [:]   // the words changed — they're the source of truth again
                 scheduleCoachRead()
             }
             // Dictation streams the transcript continuously — hold the coach's read until the
@@ -236,22 +263,29 @@ struct LogActivityView: View {
         let snapshot = draft
         let text = snapshot.trimmingCharacters(in: .whitespacesAndNewlines)
         if aiResult != nil, aiReadText != snapshot { aiResult = nil }   // stale read — text moved on
+        // Hand edits freeze the ladder: a late-landing read must never overwrite what the
+        // athlete just fixed by hand. Editing the text again unfreezes it.
+        guard cardEdits.isEmpty else { return }
         guard !text.isEmpty, !voice.isRecording else { return }
         guard force || aiReadText != snapshot else { return }
         if !force {
             let grammar = WorkoutLogParser.parseMulti(text, weightUnit: .default(), distanceUnit: distanceUnit)
             guard WorkoutLogParser.looksRicher(text, than: grammar) else { return }
         }
+        aiGeneration += 1
+        let gen = aiGeneration
         aiTask = Task {
             if !force { try? await Task.sleep(for: .seconds(1.1)) }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, gen == aiGeneration else { return }
             aiReading = true
             let outcome = await WorkoutParseService().parse(text: text, weightUnit: .default(),
                                                             distanceUnit: distanceUnit)
+            guard gen == aiGeneration else { return }   // superseded — the newer task owns the UI
             aiReading = false
             guard !Task.isCancelled, draft == snapshot else { return }
             switch outcome {
             case .parsed(let list):
+                guard cardEdits.isEmpty else { return }   // edited mid-flight — their fix wins
                 aiResult = list
                 aiReadText = snapshot
                 Haptics.light()
@@ -333,98 +367,103 @@ struct LogActivityView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Receipts — one card per workout
+    // MARK: Receipt cards — one per workout; tap a card to adjust that workout in the full form
 
     private var receipts: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack(spacing: 5) {
-                Text(parsedList.count > 1 ? "RECEIPT · \(parsedList.count) WORKOUTS" : "RECEIPT")
-                    .font(.rounded(Theme.FontSize.label, weight: .bold))
-                    .tracking(2.2)
-                if coachRead {
-                    Image(systemName: "sparkles").font(.system(size: 9, weight: .semibold))
-                        .accessibilityLabel("Read by your coach")
-                }
-            }
-            .foregroundStyle(Theme.inkTertiary)
-
-            ForEach(Array(parsedList.enumerated()), id: \.offset) { i, r in
-                receiptCard(i, r)
+            ForEach(Array(cards.enumerated()), id: \.offset) { i, card in
+                receiptCard(i, card)
             }
         }
     }
 
-    private func receiptCard(_ index: Int, _ r: WorkoutLogParser.Result) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sportRow(index, r)
-                .padding(.bottom, Theme.Space.sm)
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-                .padding(.bottom, Theme.Space.sm)
-
-            VStack(spacing: 10) {
-                metricRow("Duration", r.durationS.map { Formatters.duration(s: $0) })
-                if r.type?.isGPS ?? false {
-                    metricRow("Distance", r.distanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) })
-                    if let pace = paceLine(r) { metricRow(isBike(r) ? "Avg speed" : "Avg pace", pace) }
-                }
-                if let e = r.effort {
-                    metricRow("Effort", "\(effortWord(e)) · \(e)/10")
-                }
-            }
-
-            if r.type?.isStrengthStyle ?? false {
-                exerciseRows(r)
-            }
-
-            if let hint = missingHint(r) {
-                Text(hint)
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
-                    .padding(.top, Theme.Space.sm)
-            }
-
-            if let credit = creditSession(r) {
-                creditLine(credit, for: r)
-                    .padding(.top, Theme.Space.md)
-            }
-        }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
-    }
-
-    private func sportRow(_ index: Int, _ r: WorkoutLogParser.Result) -> some View {
+    private func receiptCard(_ index: Int, _ card: Card) -> some View {
         Button {
-            sportPicker = SportPickerTarget(id: index)
             Haptics.light()
+            editingCard = EditingCard(id: index, prefill: prefill(for: card))
         } label: {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: r.type?.systemImage ?? "questionmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .frame(width: 36, height: 36)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.background))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(r.type?.title ?? "Choose a sport")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Text(whenLine(r))
+            VStack(alignment: .leading, spacing: 0) {
+                sportRow(card)
+                    .padding(.bottom, Theme.Space.sm)
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                    .padding(.bottom, Theme.Space.sm)
+
+                let r = card.result
+                VStack(spacing: 10) {
+                    metricRow("Duration", r.durationS.map { Formatters.duration(s: $0) })
+                    if r.type?.isGPS ?? false {
+                        metricRow("Distance", r.distanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) })
+                        if let pace = paceLine(r) { metricRow(isBike(r) ? "Avg speed" : "Avg pace", pace) }
+                    }
+                    if let e = r.effort {
+                        metricRow("Effort", "\(effortWord(e)) · \(e)/10")
+                    }
+                }
+
+                if r.type?.isStrengthStyle ?? false {
+                    exerciseRows(r)
+                }
+
+                if let hint = missingHint(r) {
+                    Text(hint)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium))
                         .foregroundStyle(Theme.inkTertiary)
+                        .padding(.top, Theme.Space.sm)
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Theme.inkTertiary)
+
+                if let credit = creditSession(card) {
+                    creditLine(credit, for: card)
+                        .padding(.top, Theme.Space.md)
+                }
             }
-            .contentShape(Rectangle())
+            .padding(Theme.Space.md)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Sport: \(r.type?.title ?? "not set"). Tap to change.")
+        .accessibilityLabel("\(card.result.type?.title ?? "Workout"), tap to adjust details")
     }
 
-    private func whenLine(_ r: WorkoutLogParser.Result) -> String {
-        let date = resolvedDate(r)
+    /// What the card's editor opens holding — the card as it currently reads.
+    private func prefill(for card: Card) -> LogWorkoutPrefill {
+        let r = card.result
+        return LogWorkoutPrefill(
+            type: r.type ?? .run,
+            date: card.date,
+            durationS: r.durationS ?? 45 * 60,
+            distanceM: r.distanceM ?? 0,
+            indoor: r.indoor,
+            effort: r.effort,
+            exercises: r.exercises.map { .init(name: $0.name, sets: $0.sets, reps: $0.reps, weightKg: $0.weightKg) })
+    }
+
+    private func sportRow(_ card: Card) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: card.result.type?.systemImage ?? "questionmark")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+                .frame(width: 36, height: 36)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.background))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(card.result.type?.title ?? "Choose a sport")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                Text(whenLine(card.date))
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer()
+            Text("Edit")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkTertiary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    private func whenLine(_ date: Date) -> String {
         let cal = Calendar.current
         let day = cal.isDateInToday(date) ? "Today"
             : cal.isDateInYesterday(date) ? "Yesterday"
@@ -493,14 +532,14 @@ struct LogActivityView: View {
 
     /// One nudge at a time toward a saveable card — the same order save checks.
     private func missingHint(_ r: WorkoutLogParser.Result) -> String? {
-        if r.type == nil { return "Which sport? Tap the row above to pick." }
-        if r.durationS == nil { return "How long was it? Try “45 minutes”." }
-        if r.type?.isGPS ?? false, (r.distanceM ?? 0) <= 0 { return "How far? Try “5 miles” or “10k”." }
+        if r.type == nil { return "Which sport? Tap the card to set it." }
+        if r.durationS == nil { return "How long was it? Say “45 minutes”, or tap to fill it in." }
+        if r.type?.isGPS ?? false, (r.distanceM ?? 0) <= 0 { return "Add the distance if you know it — say “5 miles”, or tap Edit." }
         return nil
     }
 
     /// The plan line wears the iridescent check — logging this IS today's progress.
-    private func creditLine(_ session: PlannedSession, for r: WorkoutLogParser.Result) -> some View {
+    private func creditLine(_ session: PlannedSession, for card: Card) -> some View {
         HStack(spacing: Theme.Space.sm) {
             Image(systemName: "checkmark")
                 .font(.system(size: 9, weight: .heavy))
@@ -508,16 +547,16 @@ struct LogActivityView: View {
                 .frame(width: 18, height: 18)
                 .background(Circle().fill(LinearGradient(colors: Theme.iridescent,
                                                          startPoint: .topLeading, endPoint: .bottomTrailing)))
-            Text("Checks off \(creditDayWord(session, for: r)) planned \(sessionLabel(session))")
+            Text("Checks off \(creditDayWord(session, cardDate: card.date)) planned \(sessionLabel(session))")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                 .foregroundStyle(Theme.inkSecondary)
         }
         .accessibilityElement(children: .combine)
     }
 
-    private func creditDayWord(_ session: PlannedSession, for r: WorkoutLogParser.Result) -> String {
+    private func creditDayWord(_ session: PlannedSession, cardDate: Date) -> String {
         let cal = Calendar.current
-        if cal.isDate(session.date, inSameDayAs: resolvedDate(r)) {
+        if cal.isDate(session.date, inSameDayAs: cardDate) {
             return cal.isDateInToday(session.date) ? "today's" : "that day's"
         }
         return session.date.formatted(.dateTime.weekday(.wide)) + "'s"
@@ -548,17 +587,17 @@ struct LogActivityView: View {
 
     private var confirmBar: some View {
         VStack(spacing: Theme.Space.sm) {
-            OversizedButton(title: parsedList.count > 1 ? "Log \(parsedList.count) workouts" : "Log workout",
+            OversizedButton(title: cards.count > 1 ? "Log \(cards.count) workouts" : "Log workout",
                             systemImage: "checkmark") { save() }
                 .opacity(canSave ? 1 : 0.35)
                 .disabled(!canSave)
-            // The manual path, always one tap away. With several cards the TEXT is the editor
-            // (a single pre-filled form can't hold two workouts), so the button hides.
-            if parsedList.count <= 1 {
+            // The manual path for a blank slate — with cards on screen, tapping a card IS the
+            // adjust flow, so no second button competes with it.
+            if isEmptyParse {
                 Button {
                     adjust()
                 } label: {
-                    Text(isEmptyParse ? "Log it manually" : "Adjust details")
+                    Text("Log it manually")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                         .foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity).frame(height: 30)
@@ -586,7 +625,7 @@ struct LogActivityView: View {
     /// → insert → save-or-roll-back (all cards, atomically) → plan credit → awards. A spoken
     /// workout is a real workout.
     private func save() {
-        let cards = parsedList
+        let cards = cards
         guard canSave, !cards.isEmpty else { return }
         aiTask?.cancel()   // the receipt is frozen the moment they confirm — no late read may land
         if voice.isRecording { voice.stop() }
@@ -604,16 +643,17 @@ struct LogActivityView: View {
 
         var workouts: [Workout] = []
         for card in cards {
-            guard let type = card.type, let dur = card.durationS else { return }
-            let inputs = card.exercises.map { ex in
+            let r = card.result
+            guard let type = r.type, let dur = r.durationS else { return }
+            let inputs = r.exercises.map { ex in
                 LogWorkoutBuilder.ExerciseInput(
                     name: ex.name,
                     sets: Array(repeating: LogWorkoutBuilder.SetInput(reps: ex.reps, weightKg: ex.weightKg),
                                 count: ex.sets))
             }
-            let w = LogWorkoutBuilder.make(type: type, date: resolvedDate(card), durationS: dur,
-                                           distanceM: card.distanceM ?? 0, indoor: card.indoor,
-                                           effort: card.effort, note: "",
+            let w = LogWorkoutBuilder.make(type: type, date: card.date, durationS: dur,
+                                           distanceM: r.distanceM ?? 0, indoor: r.indoor,
+                                           effort: r.effort, note: "",
                                            exercises: inputs, resolveExercise: cachedRef)
             w.calories = CalorieEstimator.kcal(for: w, bodyMassKg: profiles.first?.bodyMassKg)
             context.insert(w)
@@ -641,16 +681,10 @@ struct LogActivityView: View {
         return e
     }
 
+    /// The empty-state manual path: sheet-swap to the full form in normal save mode.
     private func adjust() {
-        let p = parsedList.first ?? WorkoutLogParser.Result()
-        let prefill = LogWorkoutPrefill(
-            type: p.type ?? .run,
-            date: resolvedDate(p),
-            durationS: p.durationS ?? 45 * 60,
-            distanceM: p.distanceM ?? 0,
-            indoor: p.indoor,
-            effort: p.effort,
-            exercises: p.exercises.map { .init(name: $0.name, sets: $0.sets, reps: $0.reps, weightKg: $0.weightKg) })
+        let prefill = LogWorkoutPrefill(type: .run, date: Date(), durationS: 45 * 60, distanceM: 0,
+                                        indoor: false, effort: nil, exercises: [])
         aiTask?.cancel()
         if voice.isRecording { voice.stop() }
         dismiss()

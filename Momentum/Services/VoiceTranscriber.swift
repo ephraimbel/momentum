@@ -66,30 +66,42 @@ final class VoiceTranscriber {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            // Tap BEFORE prepare/start — the proven order. Starting the engine with no tap on the
+            // input raised an uncatchable AVFAudio NSException (SIGABRT — the "mic quits the app"
+            // crash, DiagnosticReports 2026-07-22).
+            guard beginSegment() else {
+                stop()
+                return
+            }
             audioEngine.prepare()
             try audioEngine.start()
             isRecording = true
-            beginSegment()
         } catch {
             stop()
         }
     }
 
-    /// One recognition segment on the already-running engine. Called at start and again after
-    /// every finalization/failure while recording — this restart chain is what makes dictation
-    /// survive the recognizer's per-utterance silence timeout.
-    private func beginSegment() {
-        guard let recognizer else { return }
+    /// One recognition segment. Called at start (before the engine runs) and again after every
+    /// finalization/failure while recording — this restart chain is what makes dictation survive
+    /// the recognizer's per-utterance silence timeout. Returns false when the input can't record.
+    @discardableResult
+    private func beginSegment() -> Bool {
+        guard let recognizer else { return false }
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        // A 0 Hz/0-channel input (Simulator with no host mic, odd route states) makes installTap
+        // raise an uncatchable NSException. Degrade to the keyboard instead of dying.
+        guard format.sampleRate > 0, format.channelCount > 0 else { return false }
+
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
         self.request = request
 
-        let input = audioEngine.inputNode
         input.removeTap(onBus: 0)
         // The tap fires on the audio thread — it touches ONLY the captured request
         // (buffer appends are what that API is built for), never main-actor state.
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             request.append(buffer)
         }
 
@@ -119,9 +131,10 @@ final class VoiceTranscriber {
                         return
                     }
                 }
-                self.beginSegment()
+                if !self.beginSegment() { self.stop() }
             }
         }
+        return true
     }
 
     /// Stop capturing. The transcript keeps everything banked plus the last partial — review,

@@ -232,6 +232,52 @@ struct WorkoutLogParserTests {
         #expect(list[0].type == .strength)
     }
 
+    @Test func namedLiftAfterCardioSplits() {
+        // "bench"/"squats" aren't sport verbs, but they mean the gym — without hint-splitting the
+        // whole lift silently drowned in the walk card (battery-caught bug).
+        let list = WorkoutLogParser.parseMulti(
+            "walked the dog for 30 min then bench 3x10 at 135 and squats 3x8 at 185",
+            weightUnit: .lb)
+        #expect(list.count == 2)
+        #expect(list[0].type == .walk)
+        #expect(list[0].durationS == 1800)
+        #expect(list[1].type == .strength)
+        #expect(list[1].exercises.count == 2)
+    }
+
+    @Test func andAHalfAndRepIdioms() {
+        let r = WorkoutLogParser.parse("ran four and a half miles easy", distanceUnit: .imperial)
+        #expect(r.distanceM != nil && abs(r.distanceM! - 4.5 * 1609.344) < 0.5)
+        let d = WorkoutLogParser.parse("deadlifted 315 for a triple", weightUnit: .lb)
+        #expect(d.exercises.count == 1)
+        #expect(d.exercises[0].sets == 1 && d.exercises[0].reps == 3)
+        #expect(WorkoutLogParser.parse("quick 20 min core session").type == .strength)
+    }
+
+    @Test func stackedDatesOrderHistory() {
+        let cal = Calendar.current
+        let now = cal.date(bySettingHour: 21, minute: 0, second: 0, of: Date())!
+        var lift = WorkoutLogParser.Result()
+        lift.type = .strength
+        lift.durationS = 3000
+        var run = WorkoutLogParser.Result()
+        run.type = .run
+        run.durationS = 2252
+        // Now-anchored: the run (said last) is most recent; the lift stacks backward before it.
+        let backward = WorkoutLogParser.stackedDates(for: [lift, run], now: now, calendar: cal)
+        #expect(backward[1] == now)
+        #expect(backward[0] < backward[1])
+        #expect(abs(backward[1].timeIntervalSince(backward[0]) - (3000 + 300)) < 1)
+        // Anchored ("this morning" → 7:00): stack forward from the anchor.
+        var liftAM = lift
+        liftAM.timeHint = .morning
+        var runAM = run
+        runAM.timeHint = .morning
+        let forward = WorkoutLogParser.stackedDates(for: [liftAM, runAM], now: now, calendar: cal)
+        #expect(cal.component(.hour, from: forward[0]) == 7)
+        #expect(forward[1] > forward[0])
+    }
+
     @Test func whenWordsCarryAcrossCards() {
         let list = WorkoutLogParser.parseMulti("yesterday morning I lifted for 40 min, then ran 3 miles")
         #expect(list.count == 2)

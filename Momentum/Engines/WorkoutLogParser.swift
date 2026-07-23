@@ -74,7 +74,11 @@ enum WorkoutLogParser {
         // "mountain bike ride" is one cycling mention, not three.
         var hits: [(pos: Int, len: Int, type: WorkoutType)] = []
         let nsRange = NSRange(text.startIndex..., in: text)
-        for s in sports {
+        // Named lifts split too — "walked the dog, then bench 3x10" is a walk AND a gym session;
+        // without the hint entries the whole lift silently drowned in the walk card.
+        let scanEntries: [(phrase: String, type: WorkoutType)] =
+            sports.map { ($0.phrase, $0.type) } + strengthHints.map { ($0, .strength) }
+        for s in scanEntries {
             let pattern = "\\b" + NSRegularExpression.escapedPattern(for: s.phrase) + "\\b"
             guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
             for m in re.matches(in: text, range: nsRange) {
@@ -142,6 +146,32 @@ enum WorkoutLogParser {
         return t.count >= 90 && fieldsRead < 2
     }
 
+    /// Start dates for a multi-card save. When every card resolved to the same instant (one time
+    /// context for the whole chain — "lifted, then ran"), the cards stagger so history reads in
+    /// the order it happened: anchored times ("this morning" → 7:00) stack FORWARD from the
+    /// anchor (lift 7:00, run 7:50); now-anchored logs stack BACKWARD so the last thing they did
+    /// is the most recent. Distinct explicit times are kept as said. 5 min between workouts.
+    static func stackedDates(for results: [Result], now: Date = Date(),
+                             calendar: Calendar = .current) -> [Date] {
+        var dates = results.map {
+            resolveDate(dayOffset: $0.dayOffset, timeHint: $0.timeHint, now: now, calendar: calendar)
+        }
+        guard dates.count > 1,
+              Set(dates.map(\.timeIntervalSinceReferenceDate)).count == 1 else { return dates }
+        let gapS = 300.0
+        let durations = results.map { $0.durationS ?? 0 }
+        if results[0].timeHint != nil {
+            for i in 1..<dates.count {
+                dates[i] = min(dates[i - 1].addingTimeInterval(durations[i - 1] + gapS), now)
+            }
+        } else {
+            for i in stride(from: dates.count - 2, through: 0, by: -1) {
+                dates[i] = dates[i + 1].addingTimeInterval(-(durations[i] + gapS))
+            }
+        }
+        return dates
+    }
+
     /// Resolve the parsed day/time words to a concrete start date — never in the future (you can
     /// only log what already happened), and "this morning" pins to 7:00 while a plain "yesterday"
     /// keeps the current clock time a day back.
@@ -177,9 +207,15 @@ enum WorkoutLogParser {
             units[w] != nil || teens[w] != nil || tens[w] != nil
         }
 
+        // Rep-count idioms first — "for a triple" is lifter for "for 3".
+        let raw = raw
+            .replacingOccurrences(of: "for a single", with: "for 1")
+            .replacingOccurrences(of: "for a double", with: "for 2")
+            .replacingOccurrences(of: "for a triple", with: "for 3")
+
         // Line-by-line so newline clause boundaries survive; hyphens split only between number
         // words ("twenty-five" → 25) so "e-bike" stays whole.
-        return raw.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+        let normalized = raw.split(separator: "\n", omittingEmptySubsequences: false).map { line in
             var tokens: [String] = []
             for rawTok in line.split(separator: " ", omittingEmptySubsequences: true) {
                 let tok = String(rawTok)
@@ -235,6 +271,10 @@ enum WorkoutLogParser {
             }
             return out.joined(separator: " ")
         }.joined(separator: "\n")
+
+        // "four and a half miles" (now "4 and a half miles") → "4.5 miles" — spoken or typed.
+        return normalized.replacingOccurrences(of: #"\b(\d+)\s+and\s+a\s+half\b"#,
+                                               with: "$1.5", options: .regularExpression)
     }
 
     // MARK: When
@@ -292,6 +332,7 @@ enum WorkoutLogParser {
         "pushups", "push-ups", "pullups", "pull-ups", "rows", "lunges",
         "dumbbell", "barbell", "kettlebell",
         "benched", "squatted", "deadlifted", "curled", "pressed",
+        "core", "abs",
     ]
 
     private static func parseSport(_ text: String, into r: inout Result) {
