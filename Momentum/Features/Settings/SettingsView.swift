@@ -348,6 +348,10 @@ struct SettingsView: View {
                             if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
                             if let rhr = metrics.restingHR { profile.restingHR = rhr }
                             try? context.save()
+                            // Connect = filled, not connect-then-find-the-import-button: pull the
+                            // history their devices already mirrored into Health, right now.
+                            let n = await services.health.importExternalWorkouts(into: context, since: nil)
+                            if n > 0 { importMessage = "Imported \(n) workout\(n == 1 ? "" : "s") from Health." }
                         } else if !healthConnected {
                             // HealthKit only shows its sheet while permission is undetermined —
                             // after one decline every later tap is a spinner then nothing, so

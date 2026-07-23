@@ -129,9 +129,12 @@ final class HealthService: HealthServing {
         guard HKHealthStore.isHealthDataAvailable() else { return .empty }
         let ms = HKUnit.secondUnit(with: .milli)
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        async let hrv = latest(.heartRateVariabilitySDNN, unit: ms)
+        // "Today's" vitals must actually be recent — a 2-day bound (overnight readings land the
+        // next morning; one missed sync forgiven) so readiness never scores off a dead device's
+        // last write. Absent-but-recent degrades gracefully: every field is optional by design.
+        async let hrv = latest(.heartRateVariabilitySDNN, unit: ms, within: 2)
         async let hrvBase = average(.heartRateVariabilitySDNN, unit: ms, days: 30)
-        async let rhr = latest(.restingHeartRate, unit: bpm)
+        async let rhr = latest(.restingHeartRate, unit: bpm, within: 2)
         async let rhrBase = average(.restingHeartRate, unit: bpm, days: 30)
         async let sleep = sleepHoursLastNight()
         return RecoverySignals(
@@ -465,10 +468,18 @@ final class HealthService: HealthServing {
         Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
     }
 
-    private func latest(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
+    /// Most recent sample, optionally bounded to the last `within` days. The bound keeps "today's"
+    /// signals honest: without it, the last HRV a since-abandoned device wrote months ago would
+    /// surface as the current reading and skew readiness. Slow-moving measures (body mass, VO₂max)
+    /// pass no bound — their latest value stays meaningful across gaps.
+    private func latest(_ id: HKQuantityTypeIdentifier, unit: HKUnit, within days: Int? = nil) async -> Double? {
         await withCheckedContinuation { continuation in
             let sort = [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
-            let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: nil,
+            let predicate = days.map {
+                HKQuery.predicateForSamples(
+                    withStart: Calendar.current.date(byAdding: .day, value: -$0, to: Date()), end: nil)
+            }
+            let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: predicate,
                                       limit: 1, sortDescriptors: sort) { _, samples, _ in
                 continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
             }

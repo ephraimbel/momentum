@@ -526,6 +526,13 @@ struct OnboardingFlow: View {
                     } else {
                         withAnimation(Motion.standard) { healthImport = .empty }
                     }
+                    // Backfill their real history in the background (UUID-deduped, safe-commit):
+                    // day one opens on THEIR training log — Watch/Garmin/Oura runs via Health —
+                    // not an empty grid. Un-awaited so the step's reveal never waits on it.
+                    // Unconditional: reads may be granted even when write-share (isAuthorized's
+                    // signal) was declined, and without reads this is a free no-op.
+                    let ctx = context
+                    Task { _ = await services.health.importExternalWorkouts(into: ctx, since: nil) }
                 }
             } label: {
                 HStack(spacing: Theme.Space.md) {
