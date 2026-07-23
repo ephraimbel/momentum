@@ -75,6 +75,53 @@ struct SiriMealLoggerTests {
         #expect(try context.fetch(FetchDescriptor<Meal>()).isEmpty)
     }
 
+    @Test func freeInstallNeverFiresTheEstimatorAndSaysSo() async throws {
+        let (pc, context) = fresh(); _ = pc
+        let receipt = try #require(await SiriMealLogger.logAndEstimate(
+            text: "fairlife 40g protein shake", in: context, entitled: false,
+            estimate: { _ in
+                Issue.record("the billed estimator must never fire for a free install")
+                return .declined
+            }))
+        #expect(!receipt.resolved)
+        #expect(receipt.body.contains("add the numbers"))   // honest free wording — no false promise
+        let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
+        #expect(meal.estimateAttempts == 0)
+    }
+
+    @Test func entitledOfflineRefundsTheAttempt() async throws {
+        let (pc, context) = fresh(); _ = pc
+        let receipt = try #require(await SiriMealLogger.logAndEstimate(
+            text: "fairlife 40g protein shake", in: context, entitled: true,
+            estimate: { _ in .unavailable }))
+        #expect(!receipt.resolved)
+        #expect(receipt.body.contains("open Fuel"))
+        let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
+        // Never sent ⇒ never owed: still due when the journal's retry has a network.
+        #expect(meal.estimateAttempts == 0)
+    }
+
+    @Test func entitledDeclinedSpendsTheAttempt() async throws {
+        let (pc, context) = fresh(); _ = pc
+        _ = try #require(await SiriMealLogger.logAndEstimate(
+            text: "fairlife 40g protein shake", in: context, entitled: true,
+            estimate: { _ in .declined }))
+        let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
+        // The model answered and still had no numbers — the attempt stands (bounded retry).
+        #expect(meal.estimateAttempts == 1)
+    }
+
+    @Test func localResolveShortCircuitsTheEstimator() async throws {
+        let (pc, context) = fresh(); _ = pc
+        let receipt = try #require(await SiriMealLogger.logAndEstimate(
+            text: "energy gel", in: context, entitled: true,
+            estimate: { _ in
+                Issue.record("a staple resolve must never also bill an estimate")
+                return .declined
+            }))
+        #expect(receipt.resolved)
+    }
+
     @Test func undoRemovesTheMealAndIsIdempotent() throws {
         let (pc, context) = fresh(); _ = pc
         let receipt = try #require(SiriMealLogger.log(text: "energy gel", in: context))

@@ -53,6 +53,57 @@ enum SiriMealLogger {
         return receipt(for: meal, resolved: resolved)
     }
 
+    /// The full Siri ladder: local rungs, then — for entitled installs only — the AI estimator,
+    /// awaited so Siri can SPEAK the real numbers ("a Fairlife 40g protein shake" reads perfectly).
+    /// The entitlement is the persisted Pro key (the intent process has no PaywallController);
+    /// free installs never reach the billed call — same boundary as FuelView's walls. Attempt
+    /// accounting mirrors FuelView.estimate exactly: count at fire, refund on `.unavailable`
+    /// (never sent ⇒ never owed), stand on `.declined`.
+    static func logAndEstimate(text: String, in context: ModelContext,
+                               entitled: Bool = UserDefaults.standard.bool(forKey: PaywallController.entitlementKey),
+                               estimate: ((String) async -> FuelEstimator.Outcome)? = nil) async -> Receipt? {
+        guard let base = log(text: text, in: context) else { return nil }
+        guard !base.resolved else { return base }
+        guard entitled else { return unresolvedReceipt(base, entitled: false) }
+
+        let id = base.mealID
+        let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.id == id })
+        guard let meal = (try? context.fetch(descriptor))?.first else { return base }
+
+        meal.estimateAttempts += 1
+        try? context.save()
+        let run = estimate ?? { text in
+            await FuelEstimator().estimate(text: text, sessionLabel: nil, durationS: nil)
+        }
+        let outcome = await run(meal.text)
+        guard !meal.isDeleted, meal.modelContext != nil else { return base }
+        switch outcome {
+        case .estimated(let e):
+            FuelEstimator.apply(e, to: meal)
+            meal.estimateAttempts = 0   // it resolved; nothing owed
+            try? context.save()
+            return receipt(for: meal, resolved: true)
+        case .unavailable:
+            meal.estimateAttempts = max(0, meal.estimateAttempts - 1)
+            try? context.save()
+        case .declined:
+            break
+        }
+        return unresolvedReceipt(receipt(for: meal, resolved: false), entitled: true)
+    }
+
+    /// Rewords an unresolved receipt honestly per tier: Pro's journal auto-retries (the numbers
+    /// really do land on the next Fuel visit); free installs enter numbers by hand.
+    private static func unresolvedReceipt(_ r: Receipt, entitled: Bool) -> Receipt {
+        guard !r.resolved else { return r }
+        let display = r.body.components(separatedBy: " — ").first ?? "Meal"
+        return entitled ? r : Receipt(
+            mealID: r.mealID, title: r.title,
+            body: "\(display) — open Fuel to add the numbers.",
+            resolved: false,
+            dialog: "Logged to Fuel. Add the numbers anytime in the app.")
+    }
+
     /// Remove a meal by id — the notification receipt's Undo. Safe against double-taps and
     /// already-deleted meals (both no-op).
     static func undoMeal(id: UUID, in context: ModelContext) {

@@ -30,7 +30,7 @@ struct LogMealIntent: AppIntent {
             throw $food.needsValueError("What did you eat?")
         }
         let context = PersistenceController.shared.container.mainContext
-        guard let receipt = SiriMealLogger.log(text: text, in: context) else {
+        guard let receipt = await SiriMealLogger.logAndEstimate(text: text, in: context) else {
             // The write failed — never claim success (the audit rule, spoken).
             return .result(dialog: "I couldn't save that just now — try again, or log it in Momentum.")
         }

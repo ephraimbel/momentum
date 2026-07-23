@@ -263,8 +263,10 @@ struct RootView: View {
             // --siri-log: exercise the Siri logging path end-to-end (meal + receipt notification)
             // without Siri — the intent's perform() runs this exact code.
             if ProcessInfo.processInfo.arguments.contains("--siri-log") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    if let receipt = SiriMealLogger.log(text: "energy gel and a banana", in: context) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1.5))
+                    if let receipt = await SiriMealLogger.logAndEstimate(
+                        text: "energy gel and a banana", in: context) {
                         SiriMealLogger.postReceipt(receipt)
                     }
                 }
