@@ -219,17 +219,24 @@ struct LogActivityView: View {
     }
 
     /// The same pill grammar as the fuel/coach composers: hairline at rest, soft iridescent ring
-    /// while writing or dictating. One field, one mic — no send button; the parse is live.
+    /// while writing — and while DICTATING the field becomes a live transcript (tail always
+    /// visible), the mic becomes a voice-reactive meter, and the ring breathes with the voice.
     private var composer: some View {
         let fieldShape = RoundedRectangle(cornerRadius: 26, style: .continuous)
         return HStack(alignment: .bottom, spacing: Theme.Space.sm) {
-            TextField("Ran 5 easy miles this morning…", text: $draft, axis: .vertical)
-                .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                .lineLimit(1...5)
-                .focused($composing)
-                .padding(.leading, 4)
-                .padding(.vertical, 8)
-            if voice.isSupported {
+            if dictating {
+                LiveTranscriptView(text: dictationDemo ? Self.demoTranscript : draft)
+                    .padding(.leading, 4)
+                    .padding(.vertical, 8)
+            } else {
+                TextField("Ran 5 easy miles this morning…", text: $draft, axis: .vertical)
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    .lineLimit(1...5)
+                    .focused($composing)
+                    .padding(.leading, 4)
+                    .padding(.vertical, 8)
+            }
+            if voice.isSupported || dictationDemo {
                 micButton
             }
         }
@@ -242,7 +249,7 @@ struct LogActivityView: View {
                     .stroke(LinearGradient(colors: Theme.iridescent,
                                            startPoint: .topLeading, endPoint: .bottomTrailing),
                             lineWidth: 1.5)
-                    .opacity(draft.isEmpty ? 0.65 : 1)
+                    .opacity(ringOpacity)
             } else {
                 fieldShape.stroke(Theme.hairline)
             }
@@ -251,9 +258,31 @@ struct LogActivityView: View {
                 radius: composerGlow ? 9 : 0, y: 2)
         .animation(Motion.reversible, value: composerGlow)
         .animation(Motion.reversible, value: draft.isEmpty)
+        .animation(Motion.standard, value: dictating)
     }
 
-    private var composerGlow: Bool { composing || !draft.isEmpty || voice.isRecording }
+    private var composerGlow: Bool { composing || !draft.isEmpty || dictating }
+    private var dictating: Bool { voice.isRecording || dictationDemo }
+
+    /// While dictating the iridescent ring breathes WITH the voice (opacity rides the live
+    /// level); Reduce Motion keeps it static — the doctrine's no-self-pulsing rule either way.
+    private var ringOpacity: Double {
+        guard dictating, !reduceMotion else { return draft.isEmpty && !dictating ? 0.65 : 1 }
+        return 0.55 + 0.45 * (dictationDemo ? 0.8 : voice.level)
+    }
+
+    /// `--dictation-demo`: renders the recording-state composer with a fixed level so the
+    /// dictation design can be screenshot-verified (the Simulator can't be spoken to).
+    private var dictationDemo: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--dictation-demo")
+        #else
+        false
+        #endif
+    }
+
+    private static let demoTranscript =
+        "Ran 6 easy miles this morning, felt strong on the hills and finished with four strides"
 
     /// Debounced server read — fires only when the grammar's receipt is plainly thinner than the
     /// text ("worked up to 225 on bench for 3…"), never while dictating, and pins its result to
@@ -324,17 +353,21 @@ struct LogActivityView: View {
             voice.toggle()
             Haptics.light()
         } label: {
-            Image(systemName: voice.isRecording ? "waveform" : "mic")
-                .font(.system(size: 15, weight: .semibold))
-                .symbolEffect(.variableColor.iterative, options: .repeating,
-                              isActive: voice.isRecording && !reduceMotion)
-                .foregroundStyle(voice.isRecording ? Theme.background : Theme.inkSecondary)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear)))
-                .animation(Motion.standard, value: voice.isRecording)
+            ZStack {
+                Circle().fill(dictating ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear))
+                if dictating {
+                    VoiceLevelBars(level: dictationDemo ? 0.7 : voice.level, tint: Theme.background)
+                } else {
+                    Image(systemName: "mic")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            .frame(width: 34, height: 34)
+            .animation(Motion.standard, value: dictating)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate workout")
+        .accessibilityLabel(dictating ? "Stop dictation" : "Dictate workout")
     }
 
     /// Teaching by doing: each example is tappable and fills the field, so the first receipt the
@@ -380,6 +413,9 @@ struct LogActivityView: View {
     private func receiptCard(_ index: Int, _ card: Card) -> some View {
         Button {
             Haptics.light()
+            // Editing freezes the words: a mic still streaming would rewrite the draft (and
+            // wipe card edits) while the athlete is inside the form.
+            if voice.isRecording { voice.stop() }
             editingCard = EditingCard(id: index, prefill: prefill(for: card))
         } label: {
             VStack(alignment: .leading, spacing: 0) {

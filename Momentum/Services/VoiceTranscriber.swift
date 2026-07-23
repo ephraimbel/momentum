@@ -22,6 +22,9 @@ final class VoiceTranscriber {
     /// Live recognized text for the current recording — resets on each `start()`.
     private(set) var transcript = ""
     private(set) var isRecording = false
+    /// Live input level, 0–1, smoothed (fast attack, slow release) — drives the reactive
+    /// dictation meter. Moves because the athlete spoke; silence settles it near zero.
+    private(set) var level: Double = 0
     /// Mic or speech permission was refused — the view offers the Settings hand-off once.
     var showPermissionAlert = false
 
@@ -62,6 +65,7 @@ final class VoiceTranscriber {
         transcript = ""
         banked = ""
         quietSegments = 0
+        level = 0
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
@@ -99,10 +103,24 @@ final class VoiceTranscriber {
         self.request = request
 
         input.removeTap(onBus: 0)
-        // The tap fires on the audio thread — it touches ONLY the captured request
-        // (buffer appends are what that API is built for), never main-actor state.
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        // The tap fires on the audio thread — it touches ONLY the captured request plus a cheap
+        // strided RMS for the level meter; the scalar hops to the main actor, nothing else does.
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             request.append(buffer)
+            guard let data = buffer.floatChannelData?[0] else { return }
+            let n = Int(buffer.frameLength)
+            guard n > 0 else { return }
+            var sum: Float = 0
+            var count = 0
+            var i = 0
+            let hop = max(1, n / 64)
+            while i < n {
+                sum += data[i] * data[i]
+                count += 1
+                i += hop
+            }
+            let rms = (sum / Float(max(count, 1))).squareRoot()
+            Task { @MainActor in self?.ingest(rms: rms) }
         }
 
         segmentToken += 1
@@ -149,5 +167,15 @@ final class VoiceTranscriber {
         audioEngine.inputNode.removeTap(onBus: 0)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         isRecording = false
+        level = 0
+    }
+
+    /// Perceptual level mapping (≈ −50…−8 dB onto 0–1) with fast attack / slow release — the
+    /// meter jumps with a word and settles softly after it, so it reads alive, never strobing.
+    private func ingest(rms: Float) {
+        let db = 20 * log10(max(Double(rms), 0.000_01))
+        let target = min(max((db + 50) / 42, 0), 1)
+        level = target > level ? level * 0.4 + target * 0.6
+                               : level * 0.82 + target * 0.18
     }
 }

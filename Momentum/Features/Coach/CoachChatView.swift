@@ -21,6 +21,10 @@ struct CoachChatView: View {
     @State private var confirmClear = false
     @State private var nearBottom = true
     @FocusState private var inputFocused: Bool
+    // Dictation (the shared premium-voice stack — same experience as the log + fuel composers):
+    // words stream into the field live, the mic meters the actual voice, review then send.
+    @State private var voice = VoiceTranscriber()
+    @State private var voiceBase = ""
 
     /// Active notes, pinned first, capped for the card.
     private var activeNotes: [(id: UUID, text: String, pinned: Bool)] {
@@ -418,33 +422,65 @@ struct CoachChatView: View {
         return VStack(spacing: Theme.Space.xs) {
             CoachDisclaimer(alignment: .center)
             HStack(alignment: .bottom, spacing: Theme.Space.sm) {
-                TextField("Ask your coach…", text: $vm.input, axis: .vertical)
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .lineLimit(1...4)
-                    .focused($inputFocused)
-                    .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-                    .background(fieldShape.fill(Theme.surface))
-                    .overlay {
-                        // The field wakes up under your fingers: hairline at rest, a soft iridescent
-                        // ring while typing. Static (no pulsing) — Reduce Motion safe by design.
-                        if glowActive {
-                            fieldShape
-                                .stroke(LinearGradient(colors: Theme.iridescent,
-                                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                                        lineWidth: 1.5)
-                                .opacity(vm.input.isEmpty ? 0.65 : 1)
-                        } else {
-                            fieldShape.stroke(Theme.hairline)
-                        }
+                // The pill holds field + mic together (the fuel/log composer grammar) — while
+                // dictating the field becomes a live transcript with the newest words in view.
+                HStack(alignment: .bottom, spacing: Theme.Space.sm) {
+                    if voice.isRecording {
+                        LiveTranscriptView(text: vm.input, placeholder: "Ask your coach…")
+                            .padding(.vertical, 10)
+                    } else {
+                        TextField("Ask your coach…", text: $vm.input, axis: .vertical)
+                            .font(.rounded(Theme.FontSize.body, weight: .medium))
+                            .lineLimit(1...4)
+                            .focused($inputFocused)
+                            .padding(.vertical, 10)
+                            .onSubmit { attemptSend(vm) }
                     }
-                    .shadow(color: (Theme.iridescent.first ?? .clear).opacity(glowActive ? 0.35 : 0),
-                            radius: glowActive ? 9 : 0, y: 2)
-                    .animation(Motion.reversible, value: glowActive)
-                    .animation(Motion.reversible, value: vm.input.isEmpty)
-                    .onSubmit { attemptSend(vm) }
+                    if voice.isSupported {
+                        micButton(vm)
+                            .padding(.vertical, 5)
+                    }
+                }
+                .padding(.horizontal, Theme.Space.md)
+                .background(fieldShape.fill(Theme.surface))
+                .overlay {
+                    // The field wakes up under your fingers: hairline at rest, a soft iridescent
+                    // ring while typing — and while dictating the ring breathes WITH the voice.
+                    // Never self-pulsing; Reduce Motion keeps it static by design.
+                    if glowActive {
+                        fieldShape
+                            .stroke(LinearGradient(colors: Theme.iridescent,
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                                    lineWidth: 1.5)
+                            .opacity(voice.isRecording && !reduceMotion
+                                     ? 0.55 + 0.45 * voice.level
+                                     : (vm.input.isEmpty ? 0.65 : 1))
+                    } else {
+                        fieldShape.stroke(Theme.hairline)
+                    }
+                }
+                .shadow(color: (Theme.iridescent.first ?? .clear).opacity(glowActive ? 0.35 : 0),
+                        radius: glowActive ? 9 : 0, y: 2)
+                .animation(Motion.reversible, value: glowActive)
+                .animation(Motion.reversible, value: vm.input.isEmpty)
+                .animation(Motion.standard, value: voice.isRecording)
                 sendButton(vm)
             }
         }
+        // Dictation streams into the same field as typing — everything downstream is identical.
+        .onChange(of: voice.transcript) { _, spoken in
+            guard !spoken.isEmpty else { return }
+            vm.input = voiceBase.isEmpty ? spoken : voiceBase + " " + spoken
+        }
+        .alert("Microphone access needed", isPresented: Bindable(voice).showPermissionAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Turn on Microphone and Speech Recognition for momentum to hear you.")
+        }
+        .onDisappear { if voice.isRecording { voice.stop() } }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
         .padding(.bottom, Theme.Space.xs)
@@ -468,12 +504,39 @@ struct CoachChatView: View {
         }
     }
 
-    private var glowActive: Bool { inputFocused || !(vm?.input.isEmpty ?? true) }
+    private var glowActive: Bool { inputFocused || !(vm?.input.isEmpty ?? true) || voice.isRecording }
+
+    /// Tap to talk, tap to stop — the shared premium-dictation meter (level bars riding the
+    /// athlete's actual voice) in the coach's pill.
+    private func micButton(_ vm: CoachChatViewModel) -> some View {
+        Button {
+            if !voice.isRecording { voiceBase = vm.input.trimmingCharacters(in: .whitespacesAndNewlines) }
+            voice.toggle()
+            Haptics.light()
+        } label: {
+            ZStack {
+                Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear))
+                if voice.isRecording {
+                    VoiceLevelBars(level: voice.level, tint: Theme.background)
+                } else {
+                    Image(systemName: "mic")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            .frame(width: 30, height: 30)
+            .animation(Motion.standard, value: voice.isRecording)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate to your coach")
+    }
 
     /// The coach is a Pro feature. Free athletes can OPEN it and read (greeting, capabilities, starter
     /// chips), but SENDING is the gate ("see it, paywall on send") — a free send opens the paywall
     /// instead of hitting the network or the offline responder. Every user-initiated send routes here.
     private func attemptSend(_ vm: CoachChatViewModel, _ text: String? = nil) {
+        if voice.isRecording { voice.stop() }   // review's over — the send freezes the words
+        voiceBase = ""
         guard paywall.isEntitled(to: .aiCoach) else { paywall.present(for: .aiCoach); return }
         vm.send(text)
     }

@@ -519,14 +519,21 @@ struct FuelView: View {
             // "2 eggs, t…" on every device width once the mic + send buttons took their room,
             // which taught nothing and read broken. The usuals chips and the journal itself are
             // the teaching-by-example surface now.
-            TextField("What did you eat?", text: $draft, axis: .vertical)
-                .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                .lineLimit(1...4)
-                .focused($composing)
-                .submitLabel(.send)
-                .onSubmit(attemptLog)
-                .padding(.leading, 4)
-                .padding(.vertical, 8)
+            if voice.isRecording {
+                // Dictating: the field becomes the live transcript, tail always in view.
+                LiveTranscriptView(text: draft)
+                    .padding(.leading, 4)
+                    .padding(.vertical, 8)
+            } else {
+                TextField("What did you eat?", text: $draft, axis: .vertical)
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    .lineLimit(1...4)
+                    .focused($composing)
+                    .submitLabel(.send)
+                    .onSubmit(attemptLog)
+                    .padding(.leading, 4)
+                    .padding(.vertical, 8)
+            }
             if voice.isSupported {
                 micButton
             }
@@ -551,7 +558,9 @@ struct FuelView: View {
                     .stroke(LinearGradient(colors: Theme.iridescent,
                                            startPoint: .topLeading, endPoint: .bottomTrailing),
                             lineWidth: 1.5)
-                    .opacity(draft.isEmpty ? 0.65 : 1)
+                    .opacity(voice.isRecording && !reduceMotion
+                             ? 0.55 + 0.45 * voice.level          // the ring breathes WITH the voice
+                             : (draft.isEmpty ? 0.65 : 1))
             } else {
                 fieldShape.stroke(Theme.hairline)
             }
@@ -560,27 +569,33 @@ struct FuelView: View {
                 radius: composerGlow ? 9 : 0, y: 2)
         .animation(Motion.reversible, value: composerGlow)
         .animation(Motion.reversible, value: draft.isEmpty)
+        .animation(Motion.standard, value: voice.isRecording)
     }
 
     /// Awake while writing or dictating — focused, holding text, or the mic running.
     private var composerGlow: Bool { composing || !draft.isEmpty || voice.isRecording }
 
     /// Tap to talk, tap to stop — words stream into the field live; review, then send.
-    /// Bare glyph at rest (the ChatGPT read); a filled ink circle with a live waveform while hot.
+    /// Bare glyph at rest (the ChatGPT read); a filled ink circle whose level bars ride the
+    /// athlete's actual voice while hot (the shared premium-dictation meter).
     private var micButton: some View {
         Button {
             if !voice.isRecording { voiceBase = draft.trimmingCharacters(in: .whitespacesAndNewlines) }
             voice.toggle()
             Haptics.light()
         } label: {
-            Image(systemName: voice.isRecording ? "waveform" : "mic")
-                .font(.system(size: 15, weight: .semibold))
-                .symbolEffect(.variableColor.iterative, options: .repeating,
-                              isActive: voice.isRecording && !reduceMotion)
-                .foregroundStyle(voice.isRecording ? Theme.background : Theme.inkSecondary)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear)))
-                .animation(Motion.standard, value: voice.isRecording)
+            ZStack {
+                Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear))
+                if voice.isRecording {
+                    VoiceLevelBars(level: voice.level, tint: Theme.background)
+                } else {
+                    Image(systemName: "mic")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            .frame(width: 34, height: 34)
+            .animation(Motion.standard, value: voice.isRecording)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate meal")
@@ -660,10 +675,16 @@ struct FuelView: View {
     /// cap on calls that were never made, and landing never brought the estimate back.
     private func estimate(_ meal: Meal, sessionLabel: String?) {
         let id = meal.id
+        // One bill per meal across ALL paths: if the Siri intent is mid-estimate on this meal
+        // (its in-flight state lives in EstimateGate, not our task map), a second concurrent
+        // call would double-bill and race the writes. Restarting OUR OWN task stays allowed.
+        if estimateTasks[id] == nil, EstimateGate.isEstimating(id) { return }
         estimateTasks[id]?.cancel()
+        let gateToken = EstimateGate.take(id)
         meal.estimateAttempts += 1
         try? context.save()
         let task = Task { @MainActor in
+            defer { EstimateGate.end(id, token: gateToken) }
             let outcome = await estimator.estimate(text: meal.text, sessionLabel: sessionLabel, durationS: nil)
             // Cancellation normally gets here first, but a delete landing during the final
             // suspension point wouldn't be seen by it — `isDeleted` flips the moment
@@ -706,6 +727,7 @@ struct FuelView: View {
         let label = readout.drivingSession
         let due = todayMeals.filter {
             $0.needsEstimate(maxAttempts: Self.maxEstimateAttempts) && estimateTasks[$0.id] == nil
+                && !EstimateGate.isEstimating($0.id)   // a Siri estimate in flight is not "due"
         }
         for meal in due.prefix(5) {
             estimate(meal, sessionLabel: label)
@@ -924,7 +946,10 @@ struct FuelView: View {
     }
 
     private func mealRow(_ meal: Meal) -> some View {
-        let isEstimating = estimateTasks[meal.id] != nil
+        // The gate covers Siri-path estimates too — without it, a meal Siri was actively
+        // estimating rendered as "Couldn't estimate" and was editable mid-flight (opening the
+        // sheet then saving wiped the just-landed numbers).
+        let isEstimating = estimateTasks[meal.id] != nil || EstimateGate.isEstimating(meal.id)
         // Once resolved, the title is the AI's clean item list ("Eggs ×2 · Toast · Coffee") —
         // the athlete's raw words stay on the model and in the detail sheet.
         return Button {
@@ -1508,7 +1533,13 @@ struct MealDetailSheet: View {
     }
 
     private func save() {
-        if totalsMode {
+        // ALL-blank totals mean "no numbers entered", never "erase the numbers": a sheet opened
+        // while an estimate was in flight snapshots empty fields, and saving a time-only edit
+        // was wiping the just-landed (paid) estimate to an all-nil manual meal that could never
+        // re-estimate.
+        let totalsBlank = carbs.isEmpty && kcal.isEmpty && protein.isEmpty
+            && fat.isEmpty && sodium.isEmpty
+        if totalsMode, !totalsBlank {
             let changed = numbersDirty || fieldsChanged
             meal.itemsData = nil
             meal.carbsG = Int(carbs)
@@ -1517,7 +1548,7 @@ struct MealDetailSheet: View {
             meal.fatG = Int(fat)
             meal.sodiumMg = Int(sodium)
             if changed { meal.source = "manual" }
-        } else if numbersDirty {
+        } else if !totalsMode, numbersDirty {
             meal.items = items   // totals recompute as Σ items
             meal.source = "manual"
         }
