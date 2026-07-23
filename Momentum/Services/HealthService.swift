@@ -628,6 +628,58 @@ final class HealthService: HealthServing {
         return (steps, kcal)
     }
 
+    /// Daily step totals for the Trends "Daily movement" card. A STATISTICS query, deliberately —
+    /// HealthKit's cumulative-sum statistics de-duplicate overlapping Watch + iPhone samples by
+    /// source priority; summing raw samples would double-count every stepped-through run. Days
+    /// with no samples come back as 0 (an honest gap), the whole array comes back empty when
+    /// Health is unavailable or unauthorized.
+    func dailySteps(daysBack: Int) async -> [(day: Date, steps: Double)] {
+        #if DEBUG
+        // Demo/sim runs: a deterministic, plausible fortnight-to-year of movement so the card can
+        // be screenshotted (the simulator's Health store is empty). Same gate family as the
+        // recovery demo data above.
+        if Self.demoRecoveryScenario != nil
+            || ProcessInfo.processInfo.arguments.contains("--seed-demo") {
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            return (0..<max(1, daysBack)).reversed().compactMap { back in
+                guard let day = cal.date(byAdding: .day, value: -back, to: today) else { return nil }
+                // Gentle weekly rhythm: bigger weekend days, one low day — deterministic by index.
+                let i = Double(back)
+                let steps = 8200 + 2600 * sin(i * 0.9) + (back % 7 == 2 ? -3400 : 0) + Double((back * 37) % 900)
+                return (day: day, steps: max(1800, steps))
+            }
+        }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard let start = cal.date(byAdding: .day, value: -(max(1, daysBack) - 1), to: today),
+              let end = cal.date(byAdding: .day, value: 1, to: today) else { return [] }
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: HKQuantityType(.stepCount),
+                quantitySamplePredicate: HKQuery.predicateForSamples(withStart: start, end: end),
+                options: .cumulativeSum,
+                anchorDate: start,
+                intervalComponents: DateComponents(day: 1))
+            query.initialResultsHandler = { _, collection, _ in
+                guard let collection else { continuation.resume(returning: []); return }
+                var out: [(day: Date, steps: Double)] = []
+                var sawAny = false
+                collection.enumerateStatistics(from: start, to: today) { stats, _ in
+                    let value = stats.sumQuantity()?.doubleValue(for: .count()) ?? 0
+                    if value > 0 { sawAny = true }
+                    out.append((day: stats.startDate, steps: value))
+                }
+                // No steps at all across the whole window = no data source (or no read grant) —
+                // report "nothing", not a flatline of zeros pretending to be a sedentary year.
+                continuation.resume(returning: sawAny ? out : [])
+            }
+            store.execute(query)
+        }
+    }
+
     /// All samples of a quantity in a window, tagged with their writing source — the raw feed for
     /// the day-bucketed reductions above.
     private func quantitySamples(_ id: HKQuantityTypeIdentifier, unit: HKUnit,
@@ -953,20 +1005,27 @@ final class HealthService: HealthServing {
                                             now: Date = Date(),
                                             calendar: Calendar = .current) -> [SleepNight] {
         let today = calendar.startOfDay(for: now)
-        return (0..<min(max(days, 0), 14)).reversed().compactMap { ago in
+        return (0..<max(days, 0)).reversed().compactMap { ago in
             guard ago != 9 else { return nil }   // one missing night — a watch left on the charger
+            guard ago < 14 || ago % 29 != 21 else { return nil }   // the deep past skips nights too
             guard let morning = calendar.date(byAdding: .day, value: -ago, to: today) else { return nil }
             let asleepH: Double
-            switch scenario {
-            case .rested:    // gently improving nights (older ≈ 7.7 h → recent ≈ 8.3 h) with one
-                             // 6.8 h dip — the 14-day debt reads ~2 h and "being paid down", not
-                             // the 5.4 h "building" wall the first screenshots showed.
-                asleepH = ago == 0 ? 7.33 : ago == 4 ? 6.8
-                    : 7.72 + Double(13 - ago) * 0.05 + demoWobble(ago, 0.4)
-            case .strained:  // a week of short nights sliding into last night's 5.4
-                asleepH = ago == 0 ? 5.4
-                    : ago < 5 ? 5.7 + demoWobble(ago, 0.4)
-                    : 6.6 + demoWobble(ago, 0.6)
+            if ago >= 14 {
+                // Beyond the scripted fortnight (the sheet's month-to-year windows): a steady
+                // ~7.5 h base with believable texture and the occasional genuinely short night.
+                asleepH = 7.45 + demoWobble(ago, 0.55) + (ago % 11 == 3 ? -1.1 : 0)
+            } else {
+                switch scenario {
+                case .rested:    // gently improving nights (older ≈ 7.7 h → recent ≈ 8.3 h) with one
+                                 // 6.8 h dip — the 14-day debt reads ~2 h and "being paid down", not
+                                 // the 5.4 h "building" wall the first screenshots showed.
+                    asleepH = ago == 0 ? 7.33 : ago == 4 ? 6.8
+                        : 7.72 + Double(13 - ago) * 0.05 + demoWobble(ago, 0.4)
+                case .strained:  // a week of short nights sliding into last night's 5.4
+                    asleepH = ago == 0 ? 5.4
+                        : ago < 5 ? 5.7 + demoWobble(ago, 0.4)
+                        : 6.6 + demoWobble(ago, 0.6)
+                }
             }
             let asleepS = asleepH * 3600
             let awakeF = 0.05

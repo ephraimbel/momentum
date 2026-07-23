@@ -124,6 +124,10 @@ protocol HealthServing: AnyObject {
     func runningBaseline() async -> BaselineEstimator.RunningBaseline?
     /// The full heart-rate series for a workout window (Watch/Garmin runs carry one) — time-in-zones.
     func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)]
+    /// Daily step totals for the trailing window (oldest → newest, one point per day, zeros kept so
+    /// gaps read honestly). Empty when Health is unavailable/unauthorized — the Trends steps card
+    /// shows its quiet connect line instead of a fabricated flatline.
+    func dailySteps(daysBack: Int) async -> [(day: Date, steps: Double)]
 }
 @MainActor
 protocol SyncServing: AnyObject {

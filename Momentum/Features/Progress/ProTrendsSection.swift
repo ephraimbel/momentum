@@ -1,12 +1,16 @@
 import SwiftUI
 import Charts
 
-/// The premium analytics layer for the Trends tab. Self-contained: hand it the workouts + units
-/// and it renders an at-a-glance vitals strip, the full Fitness & Freshness PMC (CTL·ATL + the
-/// diverging Form strip), and cadence/climb/efficiency — each in its own honest form (dots vs a
-/// target zone, a mountain silhouette, a line against the efficient zone) and its domain ink,
-/// iridescence staying the earned "you are here" pop. Everything here is data the app already
-/// captures; gate the whole section with `.proLocked(.advancedAnalytics)` at the call site.
+/// The Fitness & Freshness curve — the one deep-analytics chart that earned its place in the
+/// 2026-07-22 Trends redesign. Self-contained: hand it the workouts and it computes the PMC
+/// (CTL·ATL + the diverging Form strip) off the render path and renders the card.
+///
+/// What this section USED to also hold, and why it doesn't: the vitals sparkline strip (resting
+/// HR/HRV/sleep live on the Health page — duplicating them here was the wall's worst offender),
+/// and the cadence/climb/efficiency trio (exotic mechanics that read as noise next to the numbers
+/// endurance athletes actually track; `TrendAnalytics` still computes them, tests intact, if a
+/// dedicated mechanics surface ever earns them back). `TrendChartCard`/`Sparkline` below are kept
+/// — the Strength section and the Health page's VitalsBoard render through them.
 struct ProTrendsSection: View {
     let workouts: [Workout]
     var distanceUnit: DistanceUnit = .auto
@@ -19,24 +23,16 @@ struct ProTrendsSection: View {
 
     private var imperial: Bool { distanceUnit.resolved() == .imperial }
 
-    /// The whole section's data, computed once off the render path (the engines fault thousands of
-    /// GPS/HR samples and were previously re-run inside `body` on every re-render).
+    /// The section's data, computed once off the render path (the F&F pipeline walks every
+    /// workout's load history; it was previously re-run inside `body` on every re-render).
+    /// Slimmed with the 2026-07-22 redesign: only the PMC points — the retired cards' pipelines
+    /// (summary/cadence/climb/decoupling) no longer run at all, which also makes this build
+    /// several times cheaper.
     struct Model {
-        var metrics: [TrendAnalytics.SummaryMetric]
         var ffPoints: [TrendAnalytics.DayPoint]
-        var cadence: [TrendAnalytics.WeekValue]
-        var climbMeters: [TrendAnalytics.WeekValue]
-        var efficiency: [TrendAnalytics.WeekValue]
 
         static func build(_ workouts: [Workout]) -> Model {
-            // Decoupling is the heaviest walk here (every run's full HR+GPS series) — compute it
-            // once and share it with `summary()` instead of paying it twice per build.
-            let efficiency = TrendAnalytics.recentDecoupling(workouts: workouts)
-            return Model(metrics: TrendAnalytics.summary(workouts: workouts, decoupling: efficiency),
-                         ffPoints: TrendAnalytics.fitnessFreshness(workouts: workouts),
-                         cadence: TrendAnalytics.weeklyCadence(workouts: workouts).filter { $0.value > 0 },
-                         climbMeters: TrendAnalytics.weeklyClimb(workouts: workouts),
-                         efficiency: efficiency)
+            Model(ffPoints: TrendAnalytics.fitnessFreshness(workouts: workouts))
         }
     }
 
@@ -49,12 +45,8 @@ struct ProTrendsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             if let model {
-                TrendVitalsStrip(metrics: model.metrics, imperial: imperial)
                 FitnessFreshnessCard(points: model.ffPoints, animate: appeared)
                     .id("ffCard")   // --progress-scroll-ff sim-verification anchor
-                cadenceCard(model)
-                climbCard(model)
-                efficiencyCard(model)
             } else {
                 // Placeholder while the pipeline resolves (one hop) or when locked (never computed).
                 skeleton
@@ -88,158 +80,8 @@ struct ProTrendsSection: View {
         .redacted(reason: .placeholder)
     }
 
-    // MARK: Cadence · Climb · Efficiency (weekly)
-
-    /// Cadence — a dot plot: weekly samples read against the 174–186 target zone (180 is the
-    /// classic efficient turnover). Monochrome — mechanics differentiate by form, not colour.
-    private func cadenceCard(_ model: Model) -> some View {
-        TrendChartCard(title: "Cadence", subtitle: "Weekly average · the band is the efficient zone",
-                       series: model.cadence, animate: appeared,
-                       reference: 180, referenceLabel: "180",
-                       explainer: MetricExplainers.cadence, tint: Theme.ink,
-                       form: .dots, band: 174...186, bandLabel: "TARGET",
-                       headline: true, headlineUnit: "spm",
-                       format: { "\(Int($0.rounded()))" })
-    }
-
-    /// Climb — a mountain silhouette: sharp linear peaks on a zero baseline, terrain rather than
-    /// a smoothed trend.
-    private func climbCard(_ model: Model) -> some View {
-        let series = model.climbMeters.map { TrendAnalytics.WeekValue(weekStart: $0.weekStart,
-                                                                      value: imperial ? $0.value * 3.28084 : $0.value) }
-        return TrendChartCard(title: "Climb", subtitle: "Elevation gained per week · your training terrain",
-                              series: series, animate: appeared,
-                              explainer: MetricExplainers.climb, tint: Theme.ink,
-                              form: .mountain,
-                              headline: true, headlineUnit: imperial ? "ft" : "m",
-                              format: { Formatters.compact($0) })
-    }
-
-    /// Aerobic efficiency — HR drift in the ice ink, read against the mint "efficient" zone
-    /// (under 5% drift on steady runs is the aerobically-fit read).
-    private func efficiencyCard(_ model: Model) -> some View {
-        TrendChartCard(title: "Aerobic efficiency",
-                       subtitle: "Heart-rate drift on steady runs · lower is fitter",
-                       series: model.efficiency, animate: appeared, lowerIsBetter: true,
-                       explainer: MetricExplainers.aerobicEfficiency, tint: MetricColor.pace,
-                       form: .line, band: 0...5, bandLabel: "EFFICIENT", bandTint: MetricColor.fresh,
-                       headline: true,
-                       format: { String(format: "%.1f%%", $0) })
-    }
 }
 
-// MARK: - Vitals strip (the at-a-glance grid)
-
-/// A two-column grid of compact metric tiles — current value, a factual trend chip, and a
-/// sparkline. The dense, scannable "everything at once" read; each tile's full chart lives below.
-struct TrendVitalsStrip: View {
-    let metrics: [TrendAnalytics.SummaryMetric]
-    var imperial: Bool = false
-
-    private let columns = [GridItem(.flexible(), spacing: Theme.Space.sm),
-                           GridItem(.flexible(), spacing: Theme.Space.sm)]
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: Theme.Space.sm) {
-            ForEach(metrics) { m in VitalTile(metric: m, imperial: imperial) }
-        }
-    }
-}
-
-private struct VitalTile: View {
-    let metric: TrendAnalytics.SummaryMetric
-    var imperial: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                Text(label).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
-                    .foregroundStyle(Theme.inkTertiary)
-                Spacer(minLength: 4)
-                if metric.available, let t = metric.trendPct, abs(t) >= 1 { trendChip(t) }
-            }
-            if metric.available {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(valueText).font(.display(26, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                    if let u = unit {
-                        Text(u).font(.rounded(Theme.FontSize.label, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                    }
-                }
-                Sparkline(values: metric.spark, tint: MetricColor.of(metric.kind))
-                    .frame(height: 26).frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text("—").font(.display(26, weight: .heavy)).foregroundStyle(Theme.inkTertiary)
-                Text(emptyHint).font(.rounded(Theme.FontSize.label, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary).lineLimit(1).minimumScaleFactor(0.7)
-                    .frame(height: 26, alignment: .leading)
-            }
-        }
-        .padding(Theme.Space.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue(metric.available ? "\(valueText) \(unit ?? "")" : "no data yet")
-    }
-
-    /// The trend chip: a good-direction move reads green, the wrong direction reads red, in a soft
-    /// tinted pill so it's legible off the card (the pale iridescent it replaced washed out here).
-    private func trendChip(_ t: Double) -> some View {
-        // Up is green, down is red — read the arrow, read the trend, no second-guessing.
-        let tint = t >= 0 ? MetricColor.positive : MetricColor.negative
-        // Clamp the shown magnitude — a cold-start ramp (fitness climbing from zero) produces
-        // arithmetically-huge but meaningless percentages; "99%+" reads honestly without shouting.
-        let mag = Int(abs(t).rounded())
-        return HStack(spacing: 1) {
-            Image(systemName: t >= 0 ? "arrow.up.right" : "arrow.down.right")
-                .font(.system(size: 9, weight: .black))
-            Text(mag > 99 ? "99%+" : "\(mag)%").font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 5).padding(.vertical, 2)
-        .background(Capsule().fill(tint.opacity(0.12)))
-    }
-
-    private var label: String {
-        switch metric.kind {
-        case .fitness: "FITNESS"
-        case .form: "FORM"
-        case .load: "LOAD"
-        case .cadence: "CADENCE"
-        case .climb: "CLIMB"
-        case .efficiency: "EFFICIENCY"
-        }
-    }
-
-    private var valueText: String {
-        switch metric.kind {
-        case .fitness, .load: "\(Int(metric.value.rounded()))"
-        case .form: "\(metric.value >= 0 ? "+" : "")\(Int(metric.value.rounded()))"
-        case .cadence: "\(Int(metric.value.rounded()))"
-        case .climb: Formatters.compact(imperial ? metric.value * 3.28084 : metric.value)
-        case .efficiency: String(format: "%.1f", metric.value)
-        }
-    }
-
-    private var unit: String? {
-        switch metric.kind {
-        case .cadence: "spm"
-        case .climb: imperial ? "ft" : "m"
-        case .efficiency: "%"
-        default: nil
-        }
-    }
-
-    private var emptyHint: String {
-        switch metric.kind {
-        case .cadence: "needs cadence"
-        case .efficiency: "needs HR runs"
-        default: "keep training"
-        }
-    }
-}
 
 /// A tiny normalized line for a tile — tinted stroke over a soft same-hue fill, the latest point
 /// an iridescent dot. The tint carries the metric's identity so each tile reads at a glance.
@@ -477,6 +319,8 @@ struct TrendChartCard: View {
     /// Lead the card with the latest value in the display face + a direction-aware trend chip.
     var headline: Bool = false
     var headlineUnit: String? = nil
+    /// The Oura tap-through — non-nil adds the quiet chevron and opens the metric's detail.
+    var onOpen: (() -> Void)? = nil
     let format: (Double) -> String
 
     @State private var scrub = ChartScrubState()   // tap-to-inspect any week (shared Trends mechanic)
@@ -495,6 +339,11 @@ struct TrendChartCard: View {
                 }
                 Spacer(minLength: Theme.Space.sm)
                 if let explainer { MetricInfoButton(explainer: explainer) }
+                if onOpen != nil {
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
             }
             if headline {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -522,9 +371,14 @@ struct TrendChartCard: View {
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        // Tap-through anywhere off the plot (the chart's scrub gesture wins inside it).
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .onTapGesture { onOpen?() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .accessibilityValue(series.last.map { "latest \(format($0.value))" } ?? subtitle)
+        .accessibilityAddTraits(onOpen != nil ? .isButton : [])
+        .accessibilityHint(onOpen != nil ? "Shows the full trend" : "")
     }
 
     /// Latest week vs the average of the prior (up to) three — the headline's factual chip.

@@ -41,6 +41,8 @@ struct HealthSegmentView: View {
     @State private var showCheckin = false
     @State private var showInjuryReport = false
     @State private var refresh = 0
+    /// The sleep nights section's tap-through (the vitals board hosts its own).
+    @State private var sleepDetail: TrendDetail?
     /// Session cache: Progress's `switch segment` destroys this view — and its `@State model` —
     /// on every segment flip, so each re-entry re-paid the skeleton + the full HealthKit + per-day
     /// engine pipeline. A same-key hit remounts instantly; HK data that syncs in late (sleep, HRV)
@@ -139,6 +141,7 @@ struct HealthSegmentView: View {
         .sheet(isPresented: $showInjuryReport) {
             InjuryReportSheet(profile: profile)
         }
+        .sheet(item: $sleepDetail) { TrendDetailSheet(detail: $0) }
     }
 
     // MARK: Layout (§5 order, 70ms reveal cascade)
@@ -179,7 +182,8 @@ struct HealthSegmentView: View {
                     isPro: pro,
                     // The segment-level ConnectRow above owns the connect ask — one connect
                     // affordance, never two, so the board never shows its own.
-                    onConnect: nil)
+                    onConnect: nil,
+                    history: vitalHistory)
             .id(Anchor.vitals)
             .reveal(model.healthAuthorized ? 0.21 : 0.28)
 
@@ -225,10 +229,60 @@ struct HealthSegmentView: View {
     @ViewBuilder
     private func sleepSection(_ model: Model) -> some View {
         if let report = model.sleepReport {
-            SleepCard(report: report, nights: model.sleepNights, debt: model.sleepDebt, isPro: pro)
+            SleepCard(report: report, nights: model.sleepNights, debt: model.sleepDebt, isPro: pro,
+                      onOpenNights: { sleepDetail = sleepTrendDetail })
         } else if let demo = Specimen.sleep {
+            // Specimen nights are canned — no tap-through into a window that would come back empty.
             SleepCard(report: demo.report, nights: demo.nights, debt: demo.debt, isPro: pro)
                 .specimen("Sleep lands here through Apple Health — a watch worn overnight adds the stage breakdown.")
+        }
+    }
+
+    /// The nights section's tap-through: nightly hours over month-to-year windows, straight from
+    /// the service (weekly means beyond ~5 weeks so a year never becomes 365 slivers). The axis
+    /// floor mirrors the card's own rule — never below 8h, so a short stretch doesn't dramatize.
+    private var sleepTrendDetail: TrendDetail {
+        let health = services.health
+        return TrendDetail(
+            id: "sleep-duration",
+            title: "Sleep duration",
+            unit: "h",
+            stats: [.average, .best, .latest],
+            minimumYTop: 8,
+            tint: Theme.Health.sleepInk,
+            explainer: MetricExplainers.sleepDuration,
+            format: { String(format: "%.1f", $0) },
+            series: { weeks in
+                guard let concrete = health as? HealthService else { return [] }
+                let calendar = Calendar.current
+                // Two records on one morning: keep the longer night (the card's merge rule).
+                var byDay: [Date: Double] = [:]
+                for night in await concrete.sleepNights(days: weeks * 7) {
+                    let key = calendar.startOfDay(for: night.date)
+                    byDay[key] = max(byDay[key] ?? 0, night.asleepH)
+                }
+                let points = byDay.map { TrendDetail.Point(date: $0.key, value: $0.value) }
+                    .sorted { $0.date < $1.date }
+                return weeks <= 5 ? points : TrendDetail.weeklyAverages(points, calendar: calendar)
+            })
+    }
+
+    /// Day-bucketed long-window history per vital — the board's tap-through fetcher. Stubbed
+    /// services (previews, tests) return nothing; the board falls back to the tile's spark.
+    private func vitalHistory(_ kind: VitalTileModel.Kind, days: Int) async -> [(day: Date, value: Double)] {
+        guard let concrete = services.health as? HealthService else { return [] }
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        switch kind {
+        case .hrv:
+            return await concrete.hrvDailyHistory(days: days)
+        case .restingHR:
+            return await concrete.dailyHistory(.restingHeartRate, unit: bpm, days: days)
+        case .respiratory:
+            return await concrete.dailyHistory(.respiratoryRate, unit: bpm, days: days)
+        case .wristTemp:
+            return await concrete.dailyHistory(.appleSleepingWristTemperature, unit: .degreeCelsius(), days: days)
+        case .walkingHR:
+            return await concrete.dailyHistory(.walkingHeartRateAverage, unit: bpm, days: days)
         }
     }
 

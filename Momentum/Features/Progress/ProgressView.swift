@@ -19,8 +19,10 @@ struct ProgressScreen: View {
     @State private var adjustedPlan = false
     // Tap-to-inspect cursors, one per Trends chart (shared mechanic in ChartScrub.swift).
     @State private var scrubDistance = ChartScrubState()
-    @State private var scrubLoad = ChartScrubState()
     @State private var scrubPace = ChartScrubState()
+    /// The Oura tap-through (2026-07-23): whichever card was tapped, presented as the one shared
+    /// `TrendDetailSheet` — bigger chart, year-long ranges, window stats, the ⓘ's prose beneath.
+    @State private var trendDetail: TrendDetail?
     @State private var scrubSeason = ChartScrubState()
     @State private var segment: Segment = {
         #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
@@ -186,6 +188,13 @@ struct ProgressScreen: View {
     /// Whether any lifting history exists — gates the MUSCLE FOCUS rail target (running lights
     /// leg muscles too, but the strength section only mounts with actual strength workouts).
     @State private var cachedHasStrength = false
+    /// The Essentials layer (2026-07-22 Trends redesign): this week vs last, the odometer totals —
+    /// the numbers every endurance athlete actually quotes, computed in the same cache pass as
+    /// everything else. Steps arrive async from Health (nil = loading, [] = not connected).
+    @State private var cachedWeekNow: TrendsEssentials.WeekStat?
+    @State private var cachedWeekPrev: TrendsEssentials.WeekStat?
+    @State private var cachedTotals: TrendsEssentials.Totals?
+    @State private var stepDays: [TrendsEssentials.StepPoint]?
 
     private var aggregatesReady: Bool { cachedInsights != nil }
 
@@ -250,6 +259,66 @@ struct ProgressScreen: View {
         cachedWeekVolumes = computeWeekVolumes()
         cachedIntensityMix = computeIntensityMix()
         cachedHasStrength = workouts.contains { $0.type.isStrengthStyle && $0.strength != nil }
+        cachedWeekNow = TrendsEssentials.weekStat(workouts: workouts, weeksAgo: 0)
+        cachedWeekPrev = TrendsEssentials.weekStat(workouts: workouts, weeksAgo: 1)
+        cachedTotals = TrendsEssentials.totals(workouts: workouts)
+    }
+
+    // MARK: Tap-through details (the Oura move, 2026-07-23) — each card's full story, built lazily
+    // at tap time. Series closures capture VALUE snapshots (weekVolumes' tuples, the workouts
+    // array) and run inside the sheet's own task, so opening a detail costs nothing until a
+    // window is actually requested.
+
+    private var distanceDetail: TrendDetail {
+        let unit = distanceUnit.resolved() == .imperial ? "mi" : "km"
+        let all = weekVolumes
+        let du = distanceUnit
+        return TrendDetail(
+            id: "distance", title: "Weekly distance", unit: unit,
+            stats: [.average, .best, .total],
+            explainer: MetricExplainers.weeklyDistance,
+            format: { m in
+                let v = du.resolved() == .imperial ? m / Formatters.metersPerMile : m / 1000
+                return v >= 100 ? Formatters.compact(v) : (v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v))
+            },
+            series: { weeks in
+                let cutoff = Calendar.current.date(byAdding: .day, value: -weeks * 7, to: Date()) ?? .distantPast
+                return all.filter { $0.week >= cutoff }.map { .init(date: $0.week, value: $0.meters) }
+            })
+    }
+
+    private var paceDetail: TrendDetail {
+        let du = distanceUnit
+        let workouts = self.workouts
+        return TrendDetail(
+            id: "pace", title: "Average pace", unit: du.resolved() == .imperial ? "/mi" : "/km",
+            form: .line, lowerIsBetter: true, stats: [.best, .latest],
+            explainer: MetricExplainers.weeklyPace,
+            format: { secPerKm in
+                let s = du.resolved() == .imperial ? secPerKm * (Formatters.metersPerMile / 1000) : secPerKm
+                let t = Int(s.rounded())
+                return "\(t / 60):\(String(format: "%02d", t % 60))"
+            },
+            series: { weeks in
+                ProgressInsights(workouts: workouts, weeksBack: weeks).weeks
+                    .map { .init(date: $0.weekStart, value: $0.avgPaceSPerKm) }
+            })
+    }
+
+    private var stepsDetail: TrendDetail {
+        let health = services.health
+        return TrendDetail(
+            id: "steps", title: "Daily movement", unit: "steps",
+            stats: [.average, .best],
+            minimumYTop: 20_000,
+            explainer: MetricExplainers.dailySteps,
+            format: { Formatters.compact($0) },
+            series: { weeks in
+                let days = await health.dailySteps(daysBack: weeks * 7)
+                    .map { TrendsEssentials.StepPoint(date: $0.day, steps: $0.steps) }
+                let pts = weeks <= 5 ? days : TrendsEssentials.weeklyStepAverages(days)
+                return pts.map { .init(date: $0.date, value: $0.steps) }
+            })
     }
 
     /// The Athlete Panel's window-dependent facts — muscle activation, total distance, and session
@@ -298,6 +367,7 @@ struct ProgressScreen: View {
                     .presentationDetents([.medium])
             }
         }
+        .sheet(item: $trendDetail) { TrendDetailSheet(detail: $0) }
         // A range flip re-windows the weekly series AND the Athlete Panel (its body activation +
         // distance/sessions callouts read the selected window). The ACWR/status verdict and the
         // current-physiology rail readings are point-in-time, so those stay put.
@@ -307,7 +377,7 @@ struct ProgressScreen: View {
                 refreshWindowed()
             }
             // A pinned day/week from the old window means nothing in the new one.
-            scrubDistance = .init(); scrubLoad = .init(); scrubPace = .init()
+            scrubDistance = .init(); scrubPace = .init()
         }
         .task(id: aggregateKey) {
             if aggregatedForKey != aggregateKey {
@@ -451,22 +521,42 @@ struct ProgressScreen: View {
                     // The page reads as a structured report — Endurance / Strength / Coach —
                     // each chapter opened by an editorial masthead, so the two disciplines
                     // never blur into one stream of look-alike cards.
-                    // FREE — distance is the one chart everyone gets; the window picker sits
-                    // with the chapter it governs.
+                    // FREE — the ESSENTIALS (2026-07-22 redesign): the numbers every endurance
+                    // athlete actually quotes. This week vs last, distance over time, daily
+                    // movement, the odometer — Bevel/Oura discipline, few cards with one clear
+                    // answer each. The deep analytics below stay Pro.
                     trendsSectionHeader("01", "Endurance", "Volume · speed · engine · racing")
                         .reveal(0.02)
                     HStack { Spacer(); trendRangePicker }
                         .reveal(0.02)
+                    if let weekNow = cachedWeekNow, let weekPrev = cachedWeekPrev {
+                        WeekStatStrip(now: weekNow, prev: weekPrev, distanceUnit: distanceUnit)
+                            .reveal(0.025)
+                            .id("weekStrip")
+                    }
                     distanceChart(insights).reveal(0.03).id("distanceChart")
-                    // PRO — the fitness read (VO₂max), heart-rate zones, load/pace/intensity, the
-                    // deep-dive analytics, and the coaching. One unlock opens the whole premium page.
+                    StepsCard(days: stepDays, isDaily: trendIsDaily,
+                              windowPhrase: trendRange.windowPhrase, animate: animateCharts,
+                              onOpen: { trendDetail = stepsDetail })
+                        .reveal(0.04)
+                        .id("steps")
+                    if let totals = cachedTotals {
+                        TrendTotalsCard(totals: totals, distanceUnit: distanceUnit)
+                            .reveal(0.05)
+                            .id("totals")
+                    }
+                    // PRO — the fitness read (VO₂max), heart-rate zones, pace/intensity, the
+                    // Fitness & Freshness curve, and the coaching. One unlock opens the whole
+                    // premium page. (The 2026-07-22 redesign retired the standalone training-load
+                    // bars — F&F's fatigue line tells that story — and the vitals/cadence/climb/
+                    // efficiency deep-dive wall: vitals live on the Health page, and the exotic
+                    // mechanics read as noise next to the numbers athletes actually track.)
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
-                        loadChart(insights)
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
                         fitnessHero().id("fitness")
                         hrZonesCard.id("hrZones")
-                        // The engine deep-dive: vitals strip, fitness/freshness, cadence, climb, efficiency.
+                        // The marquee endurance curve — fitness, fatigue, and form (CTL·ATL·TSB).
                         ProTrendsSection(workouts: workouts, distanceUnit: distanceUnit, pro: isAnalyticsPro).id("proTrends")
                         raceOutlook()
                         // STRENGTH — its own chapter, deliberately monochrome (the strength family's
@@ -507,7 +597,6 @@ struct ProgressScreen: View {
                         if pts.count > 2 { scrubDistance.pinned = pts[pts.count / 2].date }
                         let paced = pts.filter { $0.avgPaceSPerKm > 0 }
                         if paced.count > 1 { scrubPace.pinned = paced[paced.count / 2].date }
-                        if pts.count > 2 { scrubLoad.pinned = pts[pts.count / 2].date }
                     }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-zones") {
@@ -564,6 +653,12 @@ struct ProgressScreen: View {
                 async let v = services.health.measuredVO2Max()
                 signals = await s
                 measuredVO2 = await v
+            }
+            // Daily movement for the steps card — refetched per window (a cheap statistics query).
+            // Week fetches 14 days: the headline's vs-last-week delta needs the prior seven.
+            .task(id: "steps-\(trendRange.rawValue)") {
+                let days = await services.health.dailySteps(daysBack: trendIsDaily ? 14 : trendRange.weeks * 7)
+                stepDays = days.map { TrendsEssentials.StepPoint(date: $0.day, steps: $0.steps) }
             }
             // The strip's own full-blend compute — covers the cold path (straight to Progress
             // before Today or the hub ran today) through the same ReadinessToday recipe, and
@@ -1507,7 +1602,8 @@ struct ProgressScreen: View {
             : nil
         return chartSection(trendIsDaily ? "Daily pace" : "Weekly pace", subtitle: subtitle,
                             headline: latest, headlineUnit: "/\(unit)",
-                            delta: delta, explainer: MetricExplainers.weeklyPace) {
+                            delta: delta, explainer: MetricExplainers.weeklyPace,
+                            onOpen: { trendDetail = paceDetail }) {
             if paced.count < 2 { notEnoughData } else {
                 Chart {
                     ForEach(paced) { p in
@@ -1531,70 +1627,6 @@ struct ProgressScreen: View {
                 .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
                 .chartXAxis { trendAxis(insights.weeks.count) }
                 .chartYAxis { paceAxis }
-                .frame(height: 172)
-            }
-        }
-    }
-
-    /// TRAINING LOAD — the strain instrument (Whoop's job, our doctrine): peach strain-ink bars
-    /// read against your steady zone, the ACWR sweet spot (0.8–1.3× your 4-week norm) drawn as a
-    /// soft wash band. Every bar answers "was that week productive or a spike?" at a glance.
-    private func loadChart(_ insights: ProgressInsights) -> some View {
-        let pts = trendPoints(insights)
-        let maxLoad = pts.map(\.load).max() ?? 0
-        let last = pts.last?.date
-        // Daily view headlines the week-to-date total (same honesty rule as distance).
-        let latest = trendIsDaily ? pts.reduce(0) { $0 + $1.load } : pts.last?.load ?? 0
-        // The zone is a WEEKLY norm — meaningless against daily bars, so it's hidden in the Week
-        // view (a daily load sits far below a weekly average and would float off the top).
-        let usual = trendIsDaily ? 0 : insights.chronic   // 4-week average weekly load = own baseline
-        let barW: CGFloat = trendIsDaily ? 24 : loadBarWidth(insights.weeks.count)
-        let subtitle = trendIsDaily
-            ? "This week so far · effort × time, every sport"
-            : "This week · the band is your steady zone (0.8–1.3× your norm)"
-        // Load has no "good" direction — the chip states the move, the zone judges it.
-        let delta: ChartDelta? = (!trendIsDaily && abs(insights.loadTrendPct) >= 1)
-            ? ChartDelta(text: "\(insights.loadTrendPct >= 0 ? "↑" : "↓")\(Int(abs(insights.loadTrendPct).rounded()))%", good: false)
-            : nil
-        return chartSection(trendIsDaily ? "Daily training load" : "Weekly training load", subtitle: subtitle,
-                            headline: maxLoad > 0 ? Formatters.compact(latest) : nil, headlineUnit: "load",
-                            delta: delta, explainer: MetricExplainers.trainingLoad) {
-            if maxLoad <= 0 { notEnoughData } else {
-                Chart {
-                    // The steady zone first, so bars draw over it.
-                    if usual > 0, animateCharts {
-                        RectangleMark(yStart: .value("Zone low", usual * 0.8),
-                                      yEnd: .value("Zone high", usual * 1.3))
-                            // The pastel wash needs less presence on charcoal to stay a whisper.
-                            .foregroundStyle(MetricColor.loadWash.opacity(colorScheme == .dark ? 0.18 : 0.28))
-                        RuleMark(y: .value("Usual", usual))
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            .foregroundStyle(MetricColor.load.opacity(0.45))
-                            .annotation(position: .top, alignment: .leading, spacing: 1) {
-                                Text("usual").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                            }
-                    }
-                    ForEach(pts) { p in
-                        // Bars slim down as the window widens so 13 or 26 weeks never collide;
-                        // earned-iridescent only on the current bar.
-                        BarMark(x: .value("Date", p.date, unit: trendUnit),
-                                y: .value("Load", animateCharts ? p.load : 0),
-                                width: .fixed(barW))
-                            .foregroundStyle(p.date == last
-                                             ? AnyShapeStyle(IridescentMaterial())
-                                             : AnyShapeStyle(MetricColor.load.opacity(0.85)))
-                            .cornerRadius(3)
-                    }
-                    if let sel = scrubLoad.pinned, let p = pts.first(where: { $0.date == sel }) {
-                        TrendScrub.mark(at: sel, unit: trendUnit,
-                                        value: Formatters.compact(p.load), label: scrubDateLabel(sel))
-                    }
-                }
-                .chartXSelection(value: $scrubLoad.selection(dates: pts.map(\.date)))
-                .chartXScale(domain: paddedDomain(pts.map(\.date)))
-                .chartYScale(domain: 0...max(1, maxLoad * 1.18, usual * 1.4))
-                .chartXAxis { trendAxis(insights.weeks.count) }
-                .chartYAxis { valueAxis }
                 .frame(height: 172)
             }
         }
@@ -1624,7 +1656,8 @@ struct ProgressScreen: View {
             : nil
         return chartSection(title, subtitle: subtitle,
                             headline: maxDist > 0 ? short(latest) : nil, headlineUnit: unit,
-                            delta: delta, explainer: MetricExplainers.weeklyDistance) {
+                            delta: delta, explainer: MetricExplainers.weeklyDistance,
+                            onOpen: { trendDetail = distanceDetail }) {
             if maxDist <= 0 { notEnoughData } else {
                 Chart {
                     ForEach(pts) { p in
@@ -1810,6 +1843,7 @@ struct ProgressScreen: View {
                                        headline: String? = nil, headlineUnit: String? = nil,
                                        delta: ChartDelta? = nil,
                                        explainer: MetricExplainer? = nil,
+                                       onOpen: (() -> Void)? = nil,
                                        @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
@@ -1824,6 +1858,15 @@ struct ProgressScreen: View {
                 if let explainer {
                     Spacer(minLength: Theme.Space.sm)
                     MetricInfoButton(explainer: explainer)
+                }
+                // Depth is a promise, not a mystery (the meal-row rule): the quiet chevron says
+                // "tap for the full trend" without shouting it. The card-wide tap lives on the
+                // container below; the chart plot's own scrub gesture still wins inside the plot.
+                if onOpen != nil {
+                    if explainer == nil { Spacer(minLength: Theme.Space.sm) }
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.inkTertiary)
                 }
             }
             if let headline {
@@ -1844,6 +1887,10 @@ struct ProgressScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
         .background(card)
+        // The Oura tap-through: anywhere on the card that ISN'T the chart plot opens the detail
+        // (the plot's own selection gesture takes precedence inside it, so scrubbing survives).
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen?() }
         // Collapse the chart into one clean spoken summary (the plot itself is hard to navigate aurally).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
@@ -1851,6 +1898,8 @@ struct ProgressScreen: View {
             .replacingOccurrences(of: "↑", with: "up ")
             .replacingOccurrences(of: "↓", with: "down ")
             .replacingOccurrences(of: " · ", with: ", "))
+        .accessibilityAddTraits(onOpen != nil ? .isButton : [])
+        .accessibilityHint(onOpen != nil ? "Shows the full trend" : "")
     }
 
     // MARK: Weekly muscle coverage

@@ -77,6 +77,10 @@ struct VitalsBoard: View {
     /// When every vital is empty and this is provided, the board collapses to one elegant
     /// `ConnectRow` (§5) instead of a grid of dashes.
     var onConnect: (() -> Void)? = nil
+    /// Long-window history for the tap-through detail — day-bucketed values for the last `days`
+    /// days, per kind (the segment wires this to `HealthService`). nil (previews, stubs) falls
+    /// back to the tile's own 30-day spark, so the sheet still opens — just without the year.
+    var history: ((VitalTileModel.Kind, _ days: Int) async -> [(day: Date, value: Double)])? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
@@ -117,14 +121,48 @@ struct VitalsBoard: View {
             }
         }
         .sheet(item: $selected) { model in
-            VitalDetailSheet(model: model)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            TrendDetailSheet(detail: detail(for: model))
         }
         .onAppear {
             if reduceMotion { appeared = true }
             else { withAnimation(Motion.entrance) { appeared = true } }
         }
+    }
+
+    /// The tap-through detail (the Trends `TrendDetailSheet`, one level deeper): month-to-year
+    /// windows fetched live from Health, the line in the vital's domain ink over the personal-band
+    /// ribbon, and the same ⓘ prose beneath. Without a fetcher the series falls back to the
+    /// tile's 30-day spark re-anchored on real dates ending today.
+    private func detail(for model: VitalTileModel) -> TrendDetail {
+        let fetch = history
+        return TrendDetail(
+            id: "vital-\(model.kind.rawValue)",
+            title: model.title,
+            unit: model.unit,
+            form: .line,
+            stats: [.average, .latest],
+            hugsY: true,
+            tint: model.ink,
+            band: model.band,
+            bandTint: model.wash,
+            bandNote: model.band != nil ? "mean ± 1 SD · \(model.baselineDayCount) days" : nil,
+            explainer: model.explainer,
+            format: { model.format($0) },
+            series: { weeks in
+                if let fetch {
+                    let fetched = await fetch(model.kind, weeks * 7)
+                    if !fetched.isEmpty {
+                        return fetched.map { .init(date: $0.day, value: $0.value) }
+                    }
+                }
+                let calendar = Calendar.current
+                let today = calendar.startOfDay(for: Date())
+                let count = model.spark.count
+                return model.spark.enumerated().compactMap { index, value in
+                    calendar.date(byAdding: .day, value: -(count - 1 - index), to: today)
+                        .map { .init(date: $0, value: value) }
+                }
+            })
     }
 
     /// §11.2.3 slotting: HRV, RHR, respiratory always; the 4th tile is wrist temperature unless
@@ -188,7 +226,7 @@ private struct VitalTileView: View {
                 .accessibilityLabel(model.title)
                 .accessibilityValue(accessibilityValue)
                 .accessibilityAddTraits(chartable ? .isButton : [])
-                .accessibilityHint(chartable ? "Shows the 30-day trend" : "")
+                .accessibilityHint(chartable ? "Shows the full trend" : "")
         }
         .healthCard()
         .contentShape(Rectangle())
@@ -369,69 +407,6 @@ private struct VitalTileView: View {
             parts.append(model.inBand)
         }
         return parts.joined(separator: ", ")
-    }
-}
-
-// MARK: - Full 30-day sheet
-
-/// Tap-through from a tile: the full 30-day chart with axes, reusing the shared `TrendChartCard`
-/// so the Health segment charts speak the same language as Trends.
-private struct VitalDetailSheet: View {
-    let model: VitalTileModel
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Space.md) {
-                    TrendChartCard(title: model.title,
-                                   subtitle: "Last 30 days · against your personal band",
-                                   series: series,
-                                   animate: true,
-                                   filled: true,
-                                   explainer: model.explainer,
-                                   tint: model.ink,
-                                   format: { model.format($0) })
-                    if let band = model.band {
-                        HStack(spacing: Theme.Space.sm) {
-                            Text("YOUR NORMAL")
-                                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
-                                .foregroundStyle(Theme.inkTertiary)
-                            Text("\(model.format(band.lower))–\(model.format(band.upper)) \(model.unit)")
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                                .foregroundStyle(Theme.inkSecondary)
-                            Spacer(minLength: 0)
-                            Text("mean ± 1 SD · \(model.baselineDayCount) days")
-                                .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
-                                .foregroundStyle(Theme.inkTertiary)
-                        }
-                        .healthCard()
-                    }
-                }
-                .padding(Theme.Space.md)
-            }
-            .background(Theme.background)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold).foregroundStyle(Theme.ink)
-                }
-            }
-        }
-    }
-
-    /// The tile's value-only spark, re-anchored on real dates ending today so the shared card's
-    /// date axis reads correctly.
-    private var series: [TrendAnalytics.WeekValue] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let count = model.spark.count
-        return model.spark.enumerated().compactMap { index, value in
-            guard let day = calendar.date(byAdding: .day, value: -(count - 1 - index), to: today)
-            else { return nil }
-            return TrendAnalytics.WeekValue(weekStart: day, value: value)
-        }
     }
 }
 

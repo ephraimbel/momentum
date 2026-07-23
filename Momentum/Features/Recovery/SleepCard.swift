@@ -21,6 +21,9 @@ struct SleepCard: View {
     /// §8 free/Pro split: free keeps last night (duration hero + stage bar + its footer);
     /// the 7-night columns, debt chart, and consistency row are the Pro depth layer.
     var isPro: Bool = true
+    /// Tap-through on the nights section (the Trends detail pattern): month-to-year duration
+    /// windows. nil (specimen data, previews) renders no affordance.
+    var onOpenNights: (() -> Void)? = nil
 
     /// One day of the running 14-day sleep-debt series.
     struct DebtPoint: Identifiable, Equatable {
@@ -189,7 +192,16 @@ struct SleepCard: View {
 
     private var nightsSection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            sectionLabel("LAST 7 NIGHTS")
+            HStack(spacing: Theme.Space.sm) {
+                sectionLabel("LAST 7 NIGHTS")
+                Spacer(minLength: 0)
+                if onOpenNights != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .accessibilityHidden(true)
+                }
+            }
             VStack(spacing: 4) {
                 ZStack(alignment: .bottom) {
                     gridlines
@@ -215,7 +227,11 @@ struct SleepCard: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Last 7 nights")
             .accessibilityValue(nightsAccessibilityValue)
+            .accessibilityAddTraits(onOpenNights != nil ? .isButton : [])
+            .accessibilityHint(onOpenNights != nil ? "Shows the full trend" : "")
         }
+        .contentShape(Rectangle())
+        .onTapGesture { onOpenNights?() }
     }
 
     private struct NightEntry {

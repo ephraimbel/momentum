@@ -246,6 +246,17 @@ enum MetricExplainers {
         ],
         footnote: healthFootnote)
 
+    static let sleepDuration = E(
+        id: "sleepDuration",
+        title: "Sleep duration",
+        tagline: "Hours actually asleep each night — the single biggest lever on how you absorb training.",
+        sections: [
+            S(heading: "What it is", body: "Time actually asleep each night, read from Apple Health — every source merged so each asleep minute counts once. Time in bed awake doesn't count."),
+            S(heading: "Why it matters", body: "Sleep is where training converts to fitness: muscle repair, glycogen restocking, and skill consolidation all happen there. Across weeks, the trend matters more than any single night — a run of short nights quietly raises injury risk and flattens hard sessions before you feel tired."),
+            S(heading: "How to read it", body: "Look for your steady level and how it holds through hard training blocks. One short night is noise; a drifting average is a signal worth acting on. Longer windows average by week, so the value keeps its per-night meaning."),
+        ],
+        footnote: healthFootnote)
+
     static let sleepDebt = E(
         id: "sleepDebt",
         title: "Sleep debt",
@@ -312,13 +323,27 @@ enum MetricExplainers {
         ],
         footnote: healthFootnote)
 
+    static let dailySteps = E(
+        id: "dailySteps",
+        title: "Daily movement",
+        tagline: "The floor your training stands on — everything you walk between the workouts.",
+        sections: [
+            S(heading: "What it is",
+              body: "Total steps per day, read from Apple Health — phone and watch combined, de-duplicated. Training shows up as peaks; this is the base underneath them."),
+            S(heading: "Why it matters for endurance",
+              body: "Easy, frequent movement builds the aerobic base and speeds recovery without adding training stress. A sustained drop in daily movement during hard training weeks is often the first quiet sign of accumulating fatigue."),
+            S(heading: "How to read it",
+              body: "Watch the 7-day average rather than any single day — travel days and rest days are supposed to dip. Consistency beats hero days."),
+        ],
+        footnote: "Steps come from Apple Health. No step goals here — the targets that matter live in your plan.")
+
     /// Every explainer, for tests + lookup by id.
     static let all: [MetricExplainer] = [
         fitnessFreshness, trainingLoad, cadence, climb, aerobicEfficiency, vo2max,
         intensityMix, hrZones, liftProgression, trainingVolume, muscleBalance,
-        weeklyDistance, weeklyPace, recoveryForm,
+        weeklyDistance, weeklyPace, recoveryForm, dailySteps,
         readiness, hrv, restingHR, respiratoryRate, wristTemperature, walkingHR,
-        sleepStages, sleepDebt, sleepConsistency, strain, strainRecoveryBalance,
+        sleepStages, sleepDuration, sleepDebt, sleepConsistency, strain, strainRecoveryBalance,
         restDays, whereDataComesFrom,
     ]
 }

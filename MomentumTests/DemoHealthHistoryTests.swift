@@ -81,9 +81,13 @@ struct DemoHealthHistoryTests {
 
     @Test func sleepNightsMatchTheRealQueryShapes() {
         let nights = HealthService.demoSleepNights(days: 60, scenario: .rested, now: now, calendar: cal)
-        #expect(nights.count == 13)                    // 14 mornings, one missing (hollow column)
+        // 60 mornings honored in full (the detail sheet's month-to-year windows need the span):
+        // ago 9 missing (watch on the charger) plus two deep-past skips (ago 21, 50).
+        #expect(nights.count == 57)
         #expect(nights.map(\.date) == nights.map(\.date).sorted())
-        #expect(nights.filter { $0.asleepH < 7.0 }.count == 1)   // exactly one dip night (6.8 h — retuned so 14-day debt reads "being paid down", not a 5 h wall)
+        // The scripted fortnight keeps exactly one dip night (6.8 h — retuned so 14-day debt
+        // reads "being paid down"); the long tail adds occasional short nights of its own.
+        #expect(nights.suffix(13).filter { $0.asleepH < 7.0 }.count == 1)
         for night in nights {
             // The three asleep stages sum exactly to the union duration — the invariant the real
             // single-best-source assembly guarantees; awake rides on top (~5% of the night).

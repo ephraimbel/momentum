@@ -16,6 +16,16 @@ struct StrengthProgressSection: View {
     @State private var appeared = false
     @State private var model: Model?
     @State private var scrubE1RM = ChartScrubState()   // tap-to-inspect (shared Trends mechanic)
+    /// The Oura tap-throughs (2026-07-23): volume opens the shared TrendDetailSheet; the lift
+    /// progression card opens the full per-exercise history (`ExerciseDetailView` — built long
+    /// ago, reachable at last).
+    @State private var volumeDetail: TrendDetail?
+    @State private var liftDetail: LiftDetailItem?
+
+    struct LiftDetailItem: Identifiable {
+        let name: String
+        var id: String { name }
+    }
 
     private var hasStrength: Bool { workouts.contains { $0.type.isStrengthStyle && $0.strength != nil } }
 
@@ -75,6 +85,21 @@ struct StrengthProgressSection: View {
                 if reduceMotion { appeared = true }
                 else { withAnimation(.easeOut(duration: 0.6)) { appeared = true } }
             }
+            .sheet(item: $volumeDetail) { TrendDetailSheet(detail: $0) }
+            // The per-lift deep dive — full e1RM history, heaviest sets, the whole story.
+            .sheet(item: $liftDetail) { lift in
+                NavigationStack {
+                    ExerciseDetailView(exerciseName: lift.name, weightUnit: weightUnit)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { liftDetail = nil }.fontWeight(.semibold).foregroundStyle(Theme.ink)
+                            }
+                        }
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
         }
     }
 
@@ -100,6 +125,9 @@ struct StrengthProgressSection: View {
                     .foregroundStyle(Theme.inkTertiary)
                 Spacer(minLength: Theme.Space.sm)
                 MetricInfoButton(explainer: MetricExplainers.liftProgression)
+                Image(systemName: "chevron.forward")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.inkTertiary)
             }
             // The headline answers for the selected lift — it re-reads as you flip chips.
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -125,6 +153,12 @@ struct StrengthProgressSection: View {
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        // Tap-through to the selected lift's full history (every set, the PR line, the story).
+        // The lift chips and the ⓘ keep their own taps; the plot keeps its scrub; everywhere
+        // else on the card opens the detail.
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .onTapGesture { if !lift.isEmpty { liftDetail = LiftDetailItem(name: lift) } }
+        .accessibilityHint("Shows the full history for \(lift)")
     }
 
     private func liftChip(_ name: String, selected: String) -> some View {
@@ -240,7 +274,24 @@ struct StrengthProgressSection: View {
                               explainer: MetricExplainers.trainingVolume, tint: Theme.ink,
                               form: .bars,
                               headline: true, headlineUnit: unit,
+                              onOpen: { volumeDetail = volumeDetailPayload },
                               format: { Formatters.compact($0) })
+    }
+
+    /// The volume card's tap-through: the same weekly-volume pipeline over the sheet's own
+    /// windows (up to a year), in the athlete's weight unit.
+    private var volumeDetailPayload: TrendDetail {
+        let toLb = weightUnit == .lb
+        let workouts = self.workouts
+        return TrendDetail(
+            id: "strengthVolume", title: "Training volume", unit: toLb ? "lb" : "kg",
+            stats: [.average, .best, .total],
+            explainer: MetricExplainers.trainingVolume,
+            format: { Formatters.compact(toLb ? $0 * Formatters.lbPerKg : $0) },
+            series: { weeks in
+                StrengthTrends.weeklyVolume(in: workouts, weeks: weeks)
+                    .map { .init(date: $0.weekStart, value: $0.value) }
+            })
     }
 
     // MARK: Muscle balance

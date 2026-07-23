@@ -47,12 +47,61 @@ final class ProgressChartsUITests: XCTestCase {
         // is ONE accessibility element (children ignored) whose label is the card title — match the
         // element's label type-agnostically (the visible title is now an uppercase eyebrow, so a
         // StaticText query on the title-case string no longer applies).
+        // The 2026-07-22 Essentials redesign: the week strip leads, distance stays the flagship,
+        // steps and totals join the free tier. (The standalone training-load chart retired — its
+        // story lives in the Fitness & Freshness curve and the athlete panel's ACWR readout.)
+        let thisWeek = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label ==[c] %@", "This week")).firstMatch
+        XCTAssertTrue(swipeUntilFound(thisWeek, in: app), "This-week strip not found.")
         let distance = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label ENDSWITH %@", "distance")).firstMatch
         XCTAssertTrue(swipeUntilFound(distance, in: app), "Distance chart not found.")
-        let load = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label ENDSWITH %@", "training load")).firstMatch
-        XCTAssertTrue(swipeUntilFound(load, in: app), "Training-load chart not found.")
+        let steps = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label ==[c] %@", "Daily steps")).firstMatch
+        XCTAssertTrue(swipeUntilFound(steps, in: app), "Steps card not found.")
+        let totals = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label ==[c] %@", "Totals")).firstMatch
+        XCTAssertTrue(swipeUntilFound(totals, in: app), "Totals card not found.")
+
+        // The Oura tap-through (2026-07-23): tapping a card opens its detail — bigger chart,
+        // year-long windows, stats, the explainer prose. Tap the DISTANCE card's header strip:
+        // the plot area keeps its scrub gesture, so a dead-center tap could pin a bar instead.
+        XCTAssertTrue(swipeUntilFound(distance, in: app), "Distance chart lost after scrolling.")
+        distance.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+        XCTAssertTrue(app.navigationBars["Weekly distance"].waitForExistence(timeout: 6),
+                      "Distance card tap didn't open its detail sheet.")
+        XCTAssertTrue(app.buttons["past year"].waitForExistence(timeout: 4),
+                      "Detail sheet's 1Y range missing.")
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "trend-detail-sheet"
+        shot.lifetime = .keepAlways
+        add(shot)
+        // The year window actually loads (the detail's differentiator over the page picker).
+        app.buttons["past year"].tap()
+        XCTAssertTrue(app.staticTexts["Latest · past year"].waitForExistence(timeout: 6),
+                      "1Y window didn't load in the detail sheet.")
+        app.buttons["Done"].tap()
+        // The page's elements report `exists` even under a mid-dismiss sheet — wait for the
+        // sheet itself to leave before tapping anything beneath it.
+        XCTAssertTrue(app.navigationBars["Weekly distance"].waitForNonExistence(timeout: 4),
+                      "Distance detail sheet didn't dismiss.")
+        XCTAssertTrue(distance.waitForExistence(timeout: 4), "Didn't return to Trends after Done.")
+
+        // Steps reads against a ~20k axis ceiling (an ordinary day sits mid-chart, never
+        // towering to full height) — open its detail and capture it for the eyeball check.
+        XCTAssertTrue(swipeUntilFound(steps, in: app), "Steps card lost after returning.")
+        if !steps.isHittable { app.swipeUp() }
+        steps.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+        if !app.navigationBars["Daily movement"].waitForExistence(timeout: 4) {
+            steps.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+        }
+        XCTAssertTrue(app.navigationBars["Daily movement"].waitForExistence(timeout: 6),
+                      "Steps card tap didn't open its detail sheet.")
+        let stepsShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        stepsShot.name = "steps-detail-sheet"
+        stepsShot.lifetime = .keepAlways
+        add(stepsShot)
+        app.buttons["Done"].tap()
     }
 
     /// The consistency heatmap collapses its 112 color-only cells into ONE VoiceOver element with an
