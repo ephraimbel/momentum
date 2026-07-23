@@ -377,7 +377,9 @@ enum WorkoutLogParser {
             r.durationS = h * 3600 + extra * 60
             return
         }
-        if let c = captures(#"\b(\d{1,3})\s*(?:minutes?|mins?|min)(?![a-z])"#, in: text),
+        // The lookahead skips pace-speak: in "8 minute miles for 40 minutes", the first
+        // "minute" is a pace's unit, not a duration — without it the run logged as 8 minutes.
+        if let c = captures(#"\b(\d{1,3})\s*(?:minutes?|mins?|min)(?![a-z])(?!\s+(?:miles?|mi|kilometers?|kilometres?|km|ks?)\b)"#, in: text),
            let m = Double(c[0] ?? "") {
             r.durationS = m * 60
             return
@@ -385,6 +387,13 @@ enum WorkoutLogParser {
         // The spoken forms with no digits at all.
         if contains(text, "hour and a half") { r.durationS = 90 * 60; return }
         if contains(text, "half an hour") || contains(text, "half hour") { r.durationS = 30 * 60; return }
+        // "an hour and 15" — dictation drops the "minutes"; the bare an-hour fallback was
+        // swallowing the trailing minutes and under-logging to exactly 60.
+        if let c = captures(#"\ban hour\s+(?:and\s+)?(\d{1,2})(?![a-z0-9:])"#, in: text),
+           let extra = Double(c[0] ?? "") {
+            r.durationS = 3600 + extra * 60
+            return
+        }
         if contains(text, "an hour") { r.durationS = 60 * 60 }
     }
 
@@ -392,14 +401,16 @@ enum WorkoutLogParser {
 
     private static func parseDistance(_ text: String, into r: inout Result) {
         // One adjective may sit between number and unit — "5 easy miles" is how people talk.
-        if let c = captures(#"\b(\d+(?:\.\d+)?)\s*(?:[a-z]+\s+)?(?:miles?|mi)(?![a-z])"#, in: text),
+        // The adjective must NOT be a time word: "8 minute miles" is pace-speak, and reading it
+        // as an 8-mile run logged a phantom distance the athlete never stated.
+        if let c = captures(#"\b(\d+(?:\.\d+)?)\s*(?:(?!min|sec|hour)[a-z]+\s+)?(?:miles?|mi)(?![a-z])"#, in: text),
            let v = Double(c[0] ?? "") {
             r.distanceM = v * Formatters.metersPerMile
             return
         }
         // "10k", "8 km" — meters are deliberately not parsed ("4x400m" is interval noise, not a
         // 400 m workout). The lookbehind keeps "5 x 1k" repeats from reading as a 1 km run.
-        if let c = captures(#"(?<![x×])(?<![x×] )\b(\d+(?:\.\d+)?)\s*(?:[a-z]+\s+)?(?:kilometers?|kilometres?|km|k)(?![a-z0-9])"#, in: text),
+        if let c = captures(#"(?<![x×])(?<![x×] )\b(\d+(?:\.\d+)?)\s*(?:(?!min|sec|hour)[a-z]+\s+)?(?:kilometers?|kilometres?|km|k)(?![a-z0-9])"#, in: text),
            let v = Double(c[0] ?? "") {
             r.distanceM = v * 1000
             return
@@ -422,7 +433,16 @@ enum WorkoutLogParser {
     private static func parsePace(_ text: String, into r: inout Result, distanceUnit: DistanceUnit) {
         guard r.durationS == nil, let dist = r.distanceM else { return }
         var perS: Double?
+        // The pace's implicit unit follows the unit the athlete just SAID for the distance —
+        // "4 miles at 8:00 pace" is 8:00/mi even on a metric display (defaulting to the display
+        // unit computed a duration off by the km/mi ratio). An explicit "/km" or "per mile"
+        // below still wins.
         var perMile = distanceUnit == .imperial
+        if captures(#"\b\d+(?:\.\d+)?\s*(?:(?!min|sec|hour)[a-z]+\s+)?(?:miles?|mi)(?![a-z])"#, in: text) != nil {
+            perMile = true
+        } else if captures(#"(?<![x×])(?<![x×] )\b\d+(?:\.\d+)?\s*(?:(?!min|sec|hour)[a-z]+\s+)?(?:kilometers?|kilometres?|km|k)(?![a-z0-9])"#, in: text) != nil {
+            perMile = false
+        }
         if let c = captures(#"\b(\d{1,2}):([0-5]\d)\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?(mi(?:le)?s?|km|kilometers?)?\s*pace"#, in: text),
            let m = Double(c[0] ?? ""), let s = Double(c[1] ?? "") {
             perS = m * 60 + s

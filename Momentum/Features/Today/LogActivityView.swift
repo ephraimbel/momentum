@@ -61,13 +61,25 @@ struct LogActivityView: View {
 
     // MARK: Parse (live)
 
-    /// Grammar + coach read, before the athlete's explicit sport picks.
+    /// Grammar + coach read, before the athlete's explicit sport picks. Memoized per
+    /// (draft, AI-merge) change: `parseMulti` compiles the full regex grammar per call, and the
+    /// body reads this ~6× per render — every keystroke and every live-dictation tick was
+    /// re-running the grammar a dozen times exactly during the streaming moment the feature is
+    /// built around. A reference box (fields unobserved), the codebase's standard memo idiom.
+    private final class ParseMemo { var key = "\u{0}"; var value: [WorkoutLogParser.Result] = [] }
+    @State private var parseMemo = ParseMemo()
     private var mergedList: [WorkoutLogParser.Result] {
-        var list = WorkoutLogParser.parseMulti(draft, weightUnit: .default(), distanceUnit: distanceUnit)
-        if let ai = aiResult, aiReadText == draft {
-            list = WorkoutParseService.merge(ai: ai, grammar: list)
+        let aiApplies = aiResult != nil && aiReadText == draft
+        let key = "\(aiApplies)|\(aiGeneration)|\(draft)"
+        if parseMemo.key != key {
+            var list = WorkoutLogParser.parseMulti(draft, weightUnit: .default(), distanceUnit: distanceUnit)
+            if aiApplies, let ai = aiResult {
+                list = WorkoutParseService.merge(ai: ai, grammar: list)
+            }
+            parseMemo.key = key
+            parseMemo.value = list
         }
-        return list
+        return parseMemo.value
     }
 
     /// One receipt card per workout in the text — "lifted, then ran 4 miles" is two. A card the

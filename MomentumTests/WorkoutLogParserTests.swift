@@ -9,6 +9,34 @@ struct WorkoutLogParserTests {
 
     // MARK: Cardio sentences
 
+    @Test func paceSpeakIsNeverAPhantomDistance() {
+        // "8 minute miles" is pace vernacular — reading it as an 8-mile run logged a distance
+        // the athlete never stated (2026-07-23 audit).
+        let r = WorkoutLogParser.parse("ran at 8 minute miles for 40 minutes")
+        #expect(r.distanceM == nil)
+        #expect(r.durationS.map { Int($0.rounded()) } == 40 * 60)
+        let k = WorkoutLogParser.parse("held 5 minute ks for half an hour")
+        #expect(k.distanceM == nil)
+        #expect(k.durationS.map { Int($0.rounded()) } == 30 * 60)
+    }
+
+    @Test func paceUnitFollowsTheStatedDistanceUnit() {
+        // "4 miles at 8:00 pace" is 8:00/mi even on a metric display — defaulting to the
+        // display unit computed a duration off by the km/mi ratio.
+        let r = WorkoutLogParser.parse("4 miles at 8:00 pace", distanceUnit: .metric)
+        #expect(r.durationS.map { Int($0.rounded()) } == 4 * 8 * 60)
+        let k = WorkoutLogParser.parse("10 km at 5:00 pace", distanceUnit: .imperial)
+        #expect(k.durationS.map { Int($0.rounded()) } == 10 * 5 * 60)
+    }
+
+    @Test func anHourAndFifteenKeepsTheFifteen() {
+        // Dictation drops the trailing "minutes" — the bare an-hour fallback swallowed the 15.
+        let r = WorkoutLogParser.parse("ran for an hour and 15")
+        #expect(r.durationS.map { Int($0.rounded()) } == 75 * 60)
+        let plain = WorkoutLogParser.parse("ran for an hour")
+        #expect(plain.durationS.map { Int($0.rounded()) } == 60 * 60)
+    }
+
     @Test func easyMilesThisMorning() {
         let r = WorkoutLogParser.parse("Ran 5 easy miles this morning")
         #expect(r.type == .run)

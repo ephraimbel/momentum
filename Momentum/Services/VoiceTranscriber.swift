@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Speech
+import UIKit
 
 /// On-device dictation for the fuel + workout-log composers: tap to talk, words stream into
 /// `transcript` as they're recognized, tap to stop. Voice is input-only sugar — the text lands in
@@ -42,13 +43,49 @@ final class VoiceTranscriber {
     /// Segments that ended with no fresh words — two in a row means nobody's talking anymore;
     /// stop rather than spin the recognizer forever.
     private var quietSegments = 0
+    /// Claimed synchronously at the top of `start()` — `isRecording` only flips at the END, after
+    /// two permission awaits, so a double-tap through the first-run mic dialog used to run
+    /// `start()` twice (the second tore down the first's engine → dictation silently dead).
+    private var starting = false
+
+    /// The mic must NEVER outlive the screen: backgrounding mid-dictation kept the session
+    /// active (other apps stayed ducked, mic hot), and a phone call left `isRecording` true over
+    /// a dead engine. `onDisappear` does not fire on backgrounding — these observers do.
+    /// nonisolated(unsafe): written once in init, read once in deinit — never concurrently.
+    nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.stopIfRecording() }
+        })
+        lifecycleObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt)
+                .flatMap(AVAudioSession.InterruptionType.init) == .began
+            guard began else { return }
+            Task { @MainActor in self?.stopIfRecording() }
+        })
+    }
+
+    deinit {
+        for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    private func stopIfRecording() {
+        guard isRecording || starting else { return }
+        stop()
+    }
 
     func toggle() {
         if isRecording { stop() } else { Task { await start() } }
     }
 
     func start() async {
-        guard !isRecording, let recognizer, recognizer.isAvailable else { return }
+        guard !isRecording, !starting, let recognizer, recognizer.isAvailable else { return }
+        starting = true
+        defer { starting = false }
         // Both gates up front (speech, then mic) — the composer keyboard stays usable throughout.
         let speech = await withCheckedContinuation { cont in
             SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }

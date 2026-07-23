@@ -298,7 +298,11 @@ struct TodayView: View {
         // recipe (banded baselines + learned sleep need/debt) shared with the Health hub — the
         // deck's ring and the hub's hero can never read different numbers. Publishing keeps the
         // Trends strip on the same score before the hub's first visit.
-        .task(id: "\(workouts.count)-\(checkins.count)") {
+        // The published cache score joins the id: when another surface (the Health hub, after a
+        // late sleep/HRV backfill) recomputes and republishes a DIFFERENT number, this task
+        // re-fires and the deck re-reads the fresh signals — otherwise Today held its 7am score
+        // while Progress showed the 9am one, the exact split-number the one-recipe work killed.
+        .task(id: "\(workouts.count)-\(checkins.count)-\(ReadinessTodayCache.today()?.score ?? -1)") {
             await Task.yield()   // let the first frame paint before any engine work
             let r = await ReadinessToday.compute(health: services.health,
                                                  workouts: workouts, checkins: checkins)
@@ -1869,23 +1873,10 @@ struct MorningReadinessLine: View {
             .rotationEffect(.degrees(-90))
     }
 
-    /// The single biggest driver in plain words — the pillar with the largest |points| (the pillar
-    /// points sum to `blend − 50`, so the max is honestly "what moved the score most"). No-shame
-    /// voice: states the signal, never scolds.
-    private var driver: String {
-        guard let top = readiness.pillars.max(by: { abs($0.points) < abs($1.points) }),
-              abs(top.points) >= 1 else {
-            return "Signals steady — an ordinary day"
-        }
-        let up = top.points >= 0
-        return switch top.kind {
-        case .load:      up ? "Training load well absorbed" : "The last few days are still in your legs"
-        case .hrv:       up ? "HRV above your norm" : "HRV below your norm"
-        case .sleep:     up ? "A solid night's sleep" : "A short night"
-        case .restingHR: up ? "Resting HR right at its norm" : "Resting HR above your norm"
-        case .checkin:   up ? "You're feeling good today" : "You said today feels heavy"
-        }
-    }
+    /// ONE phrasing for every surface — `displayDriverLine` is what the strip and the hub speak;
+    /// a second hand-maintained copy here drifted into different words (and a different
+    /// threshold) for the same pillar, visibly contradicting the "one number" story.
+    private var driver: String { readiness.displayDriverLine }
 
     private var a11yLabel: String {
         var label = "Readiness \(readiness.score), \(readiness.band.rawValue). \(driver)."
