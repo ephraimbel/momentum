@@ -39,15 +39,17 @@ enum WorkoutLogParser {
 
     // MARK: Parse
 
-    static func parse(_ raw: String, weightUnit: WeightUnit = .kg) -> Result {
+    static func parse(_ raw: String, weightUnit: WeightUnit = .kg,
+                      distanceUnit: DistanceUnit = .metric) -> Result {
         var r = Result()
-        let text = raw.lowercased()
+        let text = normalizeSpokenNumbers(raw.lowercased())
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return r }
 
         parseWhen(text, into: &r)
         parseSport(text, into: &r)
         parseDuration(text, into: &r)
         parseDistance(text, into: &r)
+        parsePace(text, into: &r, distanceUnit: distanceUnit)
         parseEffort(text, into: &r)
         r.exercises = parseExercises(text, weightUnit: weightUnit)
 
@@ -60,19 +62,82 @@ enum WorkoutLogParser {
         return r
     }
 
+    /// One utterance can hold several workouts — "45 min upper body, bench 4x8 at 185, then ran
+    /// 4 miles at 9:23 pace" is a lift AND a run. Split at each sport mention that changes
+    /// discipline and parse each segment on its own; a trailing mention with no numbers of its own
+    /// ("then a short bike") stays a footnote, not a card. When-words carry forward ("yesterday I
+    /// lifted, then ran" — both were yesterday). Capped at 3 — nobody logs four in a breath.
+    static func parseMulti(_ raw: String, weightUnit: WeightUnit = .kg,
+                           distanceUnit: DistanceUnit = .metric) -> [Result] {
+        let text = normalizeSpokenNumbers(raw.lowercased())
+        // Every sport-keyword hit, position-sorted, longest-wins, non-overlapping — so
+        // "mountain bike ride" is one cycling mention, not three.
+        var hits: [(pos: Int, len: Int, type: WorkoutType)] = []
+        let nsRange = NSRange(text.startIndex..., in: text)
+        for s in sports {
+            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: s.phrase) + "\\b"
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            for m in re.matches(in: text, range: nsRange) {
+                guard let r = Range(m.range, in: text) else { continue }
+                hits.append((text.distance(from: text.startIndex, to: r.lowerBound), s.phrase.count, s.type))
+            }
+        }
+        hits.sort { $0.pos != $1.pos ? $0.pos < $1.pos : $0.len > $1.len }
+        var kept: [(pos: Int, len: Int, type: WorkoutType)] = []
+        for h in hits where kept.last.map({ h.pos >= $0.pos + $0.len }) ?? true { kept.append(h) }
+
+        var boundaries: [Int] = []
+        var discipline: Discipline?
+        for h in kept {
+            let d = h.type.discipline
+            if let current = discipline, d != current { boundaries.append(h.pos) }
+            discipline = d
+        }
+        guard !boundaries.isEmpty else {
+            return [parse(text, weightUnit: weightUnit, distanceUnit: distanceUnit)]
+        }
+
+        let cuts = [0] + Array(boundaries.prefix(2))   // ≤3 segments
+        var results: [Result] = []
+        for (i, start) in cuts.enumerated() {
+            let end = i + 1 < cuts.count ? cuts[i + 1] : text.count
+            let seg = String(text[text.index(text.startIndex, offsetBy: start)
+                                  ..< text.index(text.startIndex, offsetBy: end)])
+            let r = parse(seg, weightUnit: weightUnit, distanceUnit: distanceUnit)
+            // The primary always stands; later segments must bring their own numbers.
+            if i == 0 || r.durationS != nil || r.distanceM != nil || !r.exercises.isEmpty {
+                results.append(r)
+            }
+        }
+        for i in 1..<results.count {
+            if results[i].dayOffset == 0 { results[i].dayOffset = results[0].dayOffset }
+            if results[i].timeHint == nil { results[i].timeHint = results[0].timeHint }
+        }
+        return results
+    }
+
     /// Does the text plainly say more than this parse captured? The composer's cue to send the
     /// whole sentence to the server rung (`workout-parse`). A heuristic, so it errs toward asking:
     /// any digit-bearing clause that produced no field, no discernible sport, or long prose with a
     /// thin receipt all count as "richer".
     static func looksRicher(_ text: String, than r: Result) -> Bool {
+        looksRicher(text, than: [r])
+    }
+
+    /// Multi-workout form: fields read are summed across every card before comparing against the
+    /// digit-bearing clauses — two fully-read cards need no server help.
+    static func looksRicher(_ text: String, than results: [Result]) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard t.count >= 24 else { return false }
-        if r.type == nil { return true }
-        let numericClauses = clauses(t.lowercased())
+        if results.contains(where: { $0.type == nil }) { return true }
+        let numericClauses = clauses(normalizeSpokenNumbers(t.lowercased()))
             .filter { $0.rangeOfCharacter(from: .decimalDigits) != nil }.count
-        var fieldsRead = r.exercises.count
-        if r.durationS != nil { fieldsRead += 1 }
-        if r.distanceM != nil { fieldsRead += 1 }
+        var fieldsRead = 0
+        for r in results {
+            fieldsRead += r.exercises.count
+            if r.durationS != nil { fieldsRead += 1 }
+            if r.distanceM != nil { fieldsRead += 1 }
+        }
         if numericClauses > fieldsRead { return true }
         return t.count >= 90 && fieldsRead < 2
     }
@@ -92,6 +157,84 @@ enum WorkoutLogParser {
             base = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: base) ?? base
         }
         return min(base, now)
+    }
+
+    // MARK: Spoken numbers
+
+    /// Dictation doesn't always render digits — gym lingo comes out as words: "one eighty five
+    /// for ten reps with five sets", "a nine twenty three pace". Deterministic word→digit rewrite
+    /// before any grammar runs, including the compound idioms lifters actually use:
+    /// unit+tens(+unit) = digit concat ("one eighty five" → 185, "two twenty five" → 225),
+    /// unit+teen ("three fifteen" → 315), and plain "X hundred (and) Y".
+    static func normalizeSpokenNumbers(_ raw: String) -> String {
+        let units = ["one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                     "six": 6, "seven": 7, "eight": 8, "nine": 9]
+        let teens = ["ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+                     "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19]
+        let tens = ["twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+                    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90]
+        func isNumberWord(_ w: String) -> Bool {
+            units[w] != nil || teens[w] != nil || tens[w] != nil
+        }
+
+        // Line-by-line so newline clause boundaries survive; hyphens split only between number
+        // words ("twenty-five" → 25) so "e-bike" stays whole.
+        return raw.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            var tokens: [String] = []
+            for rawTok in line.split(separator: " ", omittingEmptySubsequences: true) {
+                let tok = String(rawTok)
+                if tok.contains("-") {
+                    let parts = tok.split(separator: "-").map(String.init)
+                    if parts.count > 1, parts.allSatisfy(isNumberWord) {
+                        tokens.append(contentsOf: parts)
+                        continue
+                    }
+                }
+                tokens.append(tok)
+            }
+
+            var out: [String] = []
+            var i = 0
+            while i < tokens.count {
+                let t = tokens[i]
+                func peek(_ n: Int) -> String? { i + n < tokens.count ? tokens[i + n] : nil }
+                if let u = units[t], peek(1) == "hundred" {
+                    var value = u * 100, consumed = 2
+                    var j = i + 2
+                    if peek(2) == "and" { consumed += 1; j += 1 }
+                    if j < tokens.count {
+                        let next = tokens[j]
+                        if let tv = tens[next] {
+                            value += tv; consumed += 1
+                            if j + 1 < tokens.count, let uv = units[tokens[j + 1]] { value += uv; consumed += 1 }
+                        } else if let te = teens[next] {
+                            value += te; consumed += 1
+                        } else if let uv = units[next] {
+                            value += uv; consumed += 1
+                        }
+                    }
+                    out.append(String(value)); i += consumed; continue
+                }
+                if let u = units[t], let next = peek(1), let tv = tens[next] {
+                    // "one eighty five" — the gym idiom: digit concatenation, not addition.
+                    var value = u * 100 + tv, consumed = 2
+                    if let last = peek(2), let uv = units[last] { value += uv; consumed += 1 }
+                    out.append(String(value)); i += consumed; continue
+                }
+                if let u = units[t], let next = peek(1), let te = teens[next] {
+                    out.append(String(u * 100 + te)); i += 2; continue   // "three fifteen" → 315
+                }
+                if let tv = tens[t] {
+                    if let next = peek(1), let uv = units[next] { out.append(String(tv + uv)); i += 2 }
+                    else { out.append(String(tv)); i += 1 }
+                    continue
+                }
+                if let te = teens[t] { out.append(String(te)); i += 1; continue }
+                if let u = units[t] { out.append(String(u)); i += 1; continue }
+                out.append(t); i += 1
+            }
+            return out.joined(separator: " ")
+        }.joined(separator: "\n")
     }
 
     // MARK: When
@@ -142,12 +285,13 @@ enum WorkoutLogParser {
         ("basketball", .basketball, false), ("golf", .golf, false),
     ]
 
-    /// Lift words that imply the gym when no sport verb was said ("bench and squats for an hour").
-    /// Hints only — they never override an explicit sport.
+    /// Lift words that imply the gym when no sport verb was said ("bench and squats for an hour",
+    /// "squatted 225 for 5"). Hints only — they never override an explicit sport.
     private static let strengthHints = [
         "bench", "squat", "squats", "deadlift", "deadlifts", "curls", "press",
         "pushups", "push-ups", "pullups", "pull-ups", "rows", "lunges",
         "dumbbell", "barbell", "kettlebell",
+        "benched", "squatted", "deadlifted", "curled", "pressed",
     ]
 
     private static func parseSport(_ text: String, into r: inout Result) {
@@ -228,6 +372,34 @@ enum WorkoutLogParser {
         }
     }
 
+    // MARK: Pace
+
+    /// "4 miles at 9:23 pace" (or, spoken, "at a nine twenty three pace" → "923 pace") states the
+    /// run's time as pace × distance — arithmetic on stated facts, not invention. Runs only when
+    /// no explicit duration was said; the pace's unit defaults to the athlete's display unit and
+    /// an explicit "/km" or "per mile" wins.
+    private static func parsePace(_ text: String, into r: inout Result, distanceUnit: DistanceUnit) {
+        guard r.durationS == nil, let dist = r.distanceM else { return }
+        var perS: Double?
+        var perMile = distanceUnit == .imperial
+        if let c = captures(#"\b(\d{1,2}):([0-5]\d)\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?(mi(?:le)?s?|km|kilometers?)?\s*pace"#, in: text),
+           let m = Double(c[0] ?? ""), let s = Double(c[1] ?? "") {
+            perS = m * 60 + s
+            if let unit = c[2] { perMile = unit.hasPrefix("mi") }
+        } else if let c = captures(#"\b(\d{3,4})\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?(mi(?:le)?s?|km|kilometers?)?\s*pace"#, in: text),
+                  let v = Double(c[0] ?? "") {
+            let m = (v / 100).rounded(.down), s = v.truncatingRemainder(dividingBy: 100)
+            if s < 60 {
+                perS = m * 60 + s
+                if let unit = c[1] { perMile = unit.hasPrefix("mi") }
+            }
+        }
+        // 2:30–20:00 per unit — outside that it's a mis-read, not a pace.
+        guard let perS, perS >= 150, perS <= 1200 else { return }
+        let unitCount = perMile ? dist / Formatters.metersPerMile : dist / 1000
+        r.durationS = (perS * unitCount).rounded()
+    }
+
     // MARK: Effort
 
     /// Longest phrase first so "really hard" never reads as just "hard". Values sit on
@@ -271,8 +443,22 @@ enum WorkoutLogParser {
         ]
         let nameFirst = [true, false, false, true]
 
+        // Weight-first gym lingo — how lifters actually talk: "bench pressed 185 for 10 reps with
+        // 5 sets", "squatted 225 for 5" (the top-set idiom → 1×5), "bench 185 for 5 sets of 10".
+        let weightHead = #"\s+(\d{1,4}(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?)?\s+for\s+"#
+        let patternE2 = lead + name + weightHead + #"(\d{1,2})\s*sets?(?:\s*(?:of)?\s*(\d{1,3})\s*(?:reps?)?)?$"#
+        let patternE1 = lead + name + weightHead + #"(\d{1,3})\s*(?:reps?)?(?:\s*(?:with|for|,)?\s*(\d{1,2})\s*sets?)?$"#
+
+        func toKg(_ w: Double, unit: String) -> Double? {
+            let kg = unit.hasPrefix("lb") || unit.hasPrefix("pound") ? w * Formatters.kgPerLb
+                : unit.isEmpty ? (weightUnit == .lb ? w * Formatters.kgPerLb : w)
+                : w
+            return kg <= 600 ? kg : nil   // nobody logs a 600 kg lift; that's a mis-parse
+        }
+
         var out: [ParsedExercise] = []
         for clause in clauses {
+            var matched = false
             for (i, pattern) in patterns.enumerated() {
                 guard let c = captures(pattern, in: clause) else { continue }
                 let rawName = (nameFirst[i] ? c[0] : c[2]) ?? ""
@@ -280,15 +466,30 @@ enum WorkoutLogParser {
                 let reps = Int((nameFirst[i] ? c[2] : c[1]) ?? "") ?? 0
                 guard let cleaned = cleanName(rawName), (1...20).contains(sets), (1...100).contains(reps) else { continue }
                 var weightKg: Double?
-                if let w = Double(c[3] ?? ""), w > 0 {
-                    let unit = c[4] ?? ""
-                    let kg = unit.hasPrefix("lb") || unit.hasPrefix("pound") ? w * Formatters.kgPerLb
-                        : unit.isEmpty ? (weightUnit == .lb ? w * Formatters.kgPerLb : w)
-                        : w
-                    if kg <= 600 { weightKg = kg }   // nobody logs a 600 kg lift; that's a mis-parse
-                }
+                if let w = Double(c[3] ?? ""), w > 0 { weightKg = toKg(w, unit: c[4] ?? "") }
                 out.append(ParsedExercise(name: cleaned, sets: sets, reps: reps, weightKg: weightKg))
+                matched = true
                 break
+            }
+            guard !matched else { continue }
+            // E2: "… 185 for 5 sets (of 10)" — reps required for a set line (no invented numbers).
+            if let c = captures(patternE2, in: clause) {
+                guard let cleaned = cleanName(c[0] ?? ""),
+                      let w = Double(c[1] ?? ""), let kg = toKg(w, unit: c[2] ?? ""),
+                      let sets = Int(c[3] ?? ""), (1...20).contains(sets),
+                      let reps = Int(c[4] ?? ""), (1...100).contains(reps) else { continue }
+                out.append(ParsedExercise(name: cleaned, sets: sets, reps: reps, weightKg: kg))
+                continue
+            }
+            // E1: "… 185 for 10 (reps) (with 5 sets)" — no sets said means ONE set of 10 (the
+            // "worked up to X for N" top-set idiom).
+            if let c = captures(patternE1, in: clause) {
+                guard let cleaned = cleanName(c[0] ?? ""),
+                      let w = Double(c[1] ?? ""), let kg = toKg(w, unit: c[2] ?? ""),
+                      let reps = Int(c[3] ?? ""), (1...100).contains(reps) else { continue }
+                let sets = Int(c[4] ?? "") ?? 1
+                guard (1...20).contains(sets) else { continue }
+                out.append(ParsedExercise(name: cleaned, sets: sets, reps: reps, weightKg: kg))
             }
         }
         return out
@@ -314,9 +515,16 @@ enum WorkoutLogParser {
         "x", "at", "for", "of",
     ]
 
+    /// Spoken past-tense → the exercise's canonical name ("bench pressed 185" is a Bench Press).
+    private static let verbCanonical: [String: String] = [
+        "benched": "bench", "pressed": "press", "squatted": "squat", "deadlifted": "deadlift",
+        "curled": "curl", "rowed": "row", "lunged": "lunge", "shrugged": "shrug", "dipped": "dip",
+    ]
+
     private static func cleanName(_ raw: String) -> String? {
         var words = raw.split(separator: " ").map(String.init)
         while let first = words.first, ["the", "a", "my", "some"].contains(first) { words.removeFirst() }
+        words = words.map { verbCanonical[$0] ?? $0 }
         guard !words.isEmpty, !words.contains(where: { nameRejects.contains($0) }) else { return nil }
         return words.joined(separator: " ").capitalized
     }

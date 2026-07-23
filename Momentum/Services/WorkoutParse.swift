@@ -10,25 +10,30 @@ import Foundation
 @MainActor
 struct WorkoutParseService {
     struct Response: Decodable, Sendable {
-        struct Exercise: Decodable, Sendable {
-            let name: String
-            let sets: Int
-            let reps: Int
-            let weight_kg: Double
+        struct WorkoutPayload: Decodable, Sendable {
+            struct Exercise: Decodable, Sendable {
+                let name: String
+                let sets: Int
+                let reps: Int
+                let weight_kg: Double
+            }
+            let type: String
+            let indoor: Bool
+            let duration_s: Double
+            let distance_m: Double
+            let effort: Int
+            let day_offset: Int
+            let time_of_day: String
+            let exercises: [Exercise]
         }
-        let type: String
-        let indoor: Bool
-        let duration_s: Double
-        let distance_m: Double
-        let effort: Int
-        let day_offset: Int
-        let time_of_day: String
-        let exercises: [Exercise]
+        /// One entry per distinct workout in the athlete's account — "lifted, then ran 4 miles"
+        /// comes back as two.
+        let workouts: [WorkoutPayload]
         let confidence: Double
     }
 
     enum Outcome: Sendable {
-        case parsed(WorkoutLogParser.Result)
+        case parsed([WorkoutLogParser.Result])
         /// Offline, unconfigured, rate-limited, or the function failed — all one answer for the
         /// composer: the grammar receipt stands, a quiet retry is offered.
         case unavailable
@@ -56,7 +61,8 @@ struct WorkoutParseService {
             let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return .unavailable }
             let decoded = try JSONDecoder().decode(Response.self, from: data)
-            return .parsed(Self.result(from: decoded))
+            let list = Self.results(from: decoded)
+            return list.isEmpty ? .unavailable : .parsed(list)
         } catch {
             return .unavailable
         }
@@ -64,9 +70,14 @@ struct WorkoutParseService {
 
     // MARK: Deterministic mapping — the model proposes, these clamps dispose
 
-    /// Server response → parser-result shape. Every number passes a sanity clamp here so a model
-    /// hallucination can never put an absurd figure on the receipt (let alone in SwiftData).
-    static func result(from r: Response) -> WorkoutLogParser.Result {
+    /// Server response → parser-result cards, empties dropped, capped at 3 like the grammar.
+    static func results(from r: Response) -> [WorkoutLogParser.Result] {
+        r.workouts.prefix(3).map(result(from:)).filter { !$0.isEmpty }
+    }
+
+    /// One workout payload → parser-result shape. Every number passes a sanity clamp here so a
+    /// model hallucination can never put an absurd figure on the receipt (let alone in SwiftData).
+    static func result(from r: Response.WorkoutPayload) -> WorkoutLogParser.Result {
         var out = WorkoutLogParser.Result()
         out.type = WorkoutType(rawValue: r.type)
         out.indoor = r.indoor
@@ -98,7 +109,17 @@ struct WorkoutParseService {
         return out
     }
 
-    /// Field-wise merge for the receipt: the server read the WHOLE text, so its fields win where
+    /// Card-list merge: the server read the whole text, so its card COUNT stands (it may have
+    /// split a lift-then-run the grammar read as one); the grammar's primary read backfills the
+    /// first card's gaps. Grammar-only when the server returned nothing.
+    static func merge(ai: [WorkoutLogParser.Result], grammar: [WorkoutLogParser.Result]) -> [WorkoutLogParser.Result] {
+        guard !ai.isEmpty else { return grammar }
+        var out = ai
+        if let g = grammar.first { out[0] = merge(ai: out[0], grammar: g) }
+        return out
+    }
+
+    /// Field-wise merge for one card: the server read the WHOLE text, so its fields win where
     /// present; the grammar keeps anything the server left empty (it may have read "45 min" that
     /// the model dropped). The athlete's explicit sport pick is applied above both, in the view.
     static func merge(ai: WorkoutLogParser.Result, grammar: WorkoutLogParser.Result) -> WorkoutLogParser.Result {

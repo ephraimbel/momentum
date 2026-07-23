@@ -58,13 +58,22 @@ const SPORTS = [
   "yoga", "pilates", "swimming", "rowing", "other",
 ];
 
-const SYSTEM = `You read an endurance athlete's own plain-English account of ONE workout they \
-already finished and extract its structured fields. EXTRACTION ONLY: never invent a number the \
-athlete did not say or clearly imply. Use empty string / 0 for anything not stated.
+const SYSTEM = `You read an endurance athlete's own plain-English account of what they already \
+did and extract structured workouts. EXTRACTION ONLY: never invent a number the athlete did not \
+say or clearly imply. Use empty string / 0 for anything not stated.
 
-Fields:
-- type: the sport, one of exactly: ${SPORTS.join(", ")}. The FIRST workout described is the one \
-being logged (a "then a quick bike" after a lift is a footnote, not the workout). Gym/weights/named \
+Return WORKOUTS as an array — one entry per DISTINCT workout, in the order described. "45 min \
+upper body, bench 4x8, then ran 4 miles" is TWO workouts (a lift and a run). A passing mention \
+with no numbers of its own ("then a quick bike") is a footnote, not a workout — leave it out. \
+Never more than 3.
+
+You MAY do arithmetic on stated facts: "4 miles at 9:23 pace" states the run's duration \
+(9:23 × 4 = 2252 s). Spoken numbers are lifter idiom: "one eighty five" = 185, "two twenty \
+five" = 225. "Worked up to 225 for 3" = one top set of 3. "185 for 10 with 5 sets" = 5 sets \
+of 10 at 185.
+
+Per-workout fields:
+- type: the sport, one of exactly: ${SPORTS.join(", ")}. Gym/weights/named \
 lifts mean "strength". Empty string only if no sport is discernible.
 - indoor: true for treadmill, trainer, spin/peloton, indoor pool.
 - duration_s: total duration in SECONDS ("45 min" = 2700, "about an hour and a half" = 5400). \
@@ -88,35 +97,48 @@ distance_unit ("mi" or "km"). An explicit unit in the text always wins over the 
 
 Output STRICT JSON matching the schema.`;
 
+const WORKOUT_PROPS = {
+  type: { type: "string" },
+  indoor: { type: "boolean" },
+  duration_s: { type: "number" },
+  distance_m: { type: "number" },
+  effort: { type: "integer" },
+  day_offset: { type: "integer" },
+  time_of_day: { type: "string" },
+  exercises: {
+    type: "array",
+    items: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string" },
+        sets: { type: "integer" },
+        reps: { type: "integer" },
+        weight_kg: { type: "number" },
+      },
+      required: ["name", "sets", "reps", "weight_kg"],
+    },
+  },
+};
+const WORKOUT_REQUIRED = ["type", "indoor", "duration_s", "distance_m", "effort", "day_offset",
+                          "time_of_day", "exercises"];
+
 const ANTHROPIC_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    type: { type: "string" },
-    indoor: { type: "boolean" },
-    duration_s: { type: "number" },
-    distance_m: { type: "number" },
-    effort: { type: "integer" },
-    day_offset: { type: "integer" },
-    time_of_day: { type: "string" },
-    exercises: {
+    workouts: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        properties: {
-          name: { type: "string" },
-          sets: { type: "integer" },
-          reps: { type: "integer" },
-          weight_kg: { type: "number" },
-        },
-        required: ["name", "sets", "reps", "weight_kg"],
+        properties: WORKOUT_PROPS,
+        required: WORKOUT_REQUIRED,
       },
     },
     confidence: { type: "number" },
   },
-  required: ["type", "indoor", "duration_s", "distance_m", "effort", "day_offset", "time_of_day",
-             "exercises", "confidence"],
+  required: ["workouts", "confidence"],
 };
 
 async function parseWithGemini(userJSON: string): Promise<unknown> {
@@ -134,30 +156,17 @@ async function parseWithGemini(userJSON: string): Promise<unknown> {
         responseJsonSchema: {
           type: "object",
           properties: {
-            type: { type: "string" },
-            indoor: { type: "boolean" },
-            duration_s: { type: "number" },
-            distance_m: { type: "number" },
-            effort: { type: "integer" },
-            day_offset: { type: "integer" },
-            time_of_day: { type: "string" },
-            exercises: {
+            workouts: {
               type: "array",
               items: {
                 type: "object",
-                properties: {
-                  name: { type: "string" },
-                  sets: { type: "integer" },
-                  reps: { type: "integer" },
-                  weight_kg: { type: "number" },
-                },
-                required: ["name", "sets", "reps", "weight_kg"],
+                properties: WORKOUT_PROPS,
+                required: WORKOUT_REQUIRED,
               },
             },
             confidence: { type: "number" },
           },
-          required: ["type", "indoor", "duration_s", "distance_m", "effort", "day_offset",
-                     "time_of_day", "exercises", "confidence"],
+          required: ["workouts", "confidence"],
         },
       },
     }),

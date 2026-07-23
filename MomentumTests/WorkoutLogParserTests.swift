@@ -156,6 +156,89 @@ struct WorkoutLogParserTests {
         #expect(r.count == 1 && r[0].weightKg == nil)
     }
 
+    // MARK: Spoken numbers + gym lingo
+
+    @Test func spokenNumbersNormalize() {
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("one eighty five") == "185")
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("two twenty five for five") == "225 for 5")
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("three fifteen") == "315")
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("forty five minutes") == "45 minutes")
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("twenty-five reps") == "25 reps")
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("two hundred and ten") == "210")
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("ten reps with five sets") == "10 reps with 5 sets")
+        // Non-number hyphens survive.
+        #expect(WorkoutLogParser.normalizeSpokenNumbers("rode the e-bike") == "rode the e-bike")
+    }
+
+    @Test func weightFirstLingo() {
+        // "one eighty five for ten reps with five sets" — the sentence the feature was asked for.
+        let r = WorkoutLogParser.parse("bench pressed one eighty five for ten reps with five sets", weightUnit: .lb)
+        #expect(r.type == .strength)
+        #expect(r.exercises.count == 1)
+        let e = r.exercises[0]
+        #expect(e.name == "Bench Press")
+        #expect(e.sets == 5 && e.reps == 10)
+        #expect(e.weightKg != nil && abs(e.weightKg! - 185 * 0.45359237) < 0.01)
+    }
+
+    @Test func topSetIdiom() {
+        // No set count said → ONE top set, never an invented scheme.
+        let r = WorkoutLogParser.parse("squatted 225 for 5", weightUnit: .lb)
+        #expect(r.type == .strength)
+        #expect(r.exercises.count == 1)
+        #expect(r.exercises[0].name == "Squat")
+        #expect(r.exercises[0].sets == 1 && r.exercises[0].reps == 5)
+    }
+
+    @Test func weightFirstSetsOf() {
+        let r = WorkoutLogParser.parse("bench 185 for 5 sets of 10", weightUnit: .lb).exercises
+        #expect(r.count == 1 && r[0].sets == 5 && r[0].reps == 10)
+        // "for 5 sets" with no reps stated → no invented set line.
+        #expect(WorkoutLogParser.parse("bench 185 for 5 sets", weightUnit: .lb).exercises.isEmpty)
+    }
+
+    // MARK: Pace + multi-workout
+
+    @Test func paceDerivesDuration() {
+        let r = WorkoutLogParser.parse("ran 4 miles at 9:23 pace", distanceUnit: .imperial)
+        let expected: Double = (9 * 60 + 23) * 4
+        #expect(r.type == .run)
+        #expect(r.durationS == expected)
+        // Spoken: "a nine twenty three pace" normalizes to "923 pace" — same read.
+        let s = WorkoutLogParser.parse("ran 4 miles at around a nine twenty three pace", distanceUnit: .imperial)
+        #expect(s.durationS == expected)
+        // An explicit duration always beats a derived one.
+        let d = WorkoutLogParser.parse("ran 4 miles in 40:00 at 9:23 pace", distanceUnit: .imperial)
+        #expect(d.durationS == 2400)
+    }
+
+    @Test func multiWorkoutSplits() {
+        let list = WorkoutLogParser.parseMulti(
+            "45 min upper body, bench 4x8 at 185, then ran 4 miles at 9:23 pace",
+            weightUnit: .lb, distanceUnit: .imperial)
+        #expect(list.count == 2)
+        #expect(list[0].type == .strength)
+        #expect(list[0].durationS == 2700)
+        #expect(list[0].exercises.count == 1)
+        #expect(list[1].type == .run)
+        #expect(list[1].distanceM != nil && abs(list[1].distanceM! - 4 * 1609.344) < 0.5)
+        #expect(list[1].durationS != nil)   // pace × distance
+    }
+
+    @Test func footnoteMentionDoesNotSplit() {
+        // "then a short bike" brings no numbers — it's a footnote, not a second card.
+        let list = WorkoutLogParser.parseMulti("lifted for 45 min then a short bike")
+        #expect(list.count == 1)
+        #expect(list[0].type == .strength)
+    }
+
+    @Test func whenWordsCarryAcrossCards() {
+        let list = WorkoutLogParser.parseMulti("yesterday morning I lifted for 40 min, then ran 3 miles")
+        #expect(list.count == 2)
+        #expect(list[1].dayOffset == -1)
+        #expect(list[1].timeHint == .morning)
+    }
+
     // MARK: Effort + when
 
     @Test func effortWords() {

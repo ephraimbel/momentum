@@ -7,19 +7,27 @@ import Foundation
 /// the field-wise merge with the local grammar, and the `looksRicher` trigger heuristic.
 struct WorkoutParseTests {
 
-    private func response(type: String = "strength", indoor: Bool = false, durationS: Double = 2700,
-                          distanceM: Double = 0, effort: Int = 0, dayOffset: Int = 0,
-                          timeOfDay: String = "", exercises: [WorkoutParseService.Response.Exercise] = [],
-                          confidence: Double = 0.9) -> WorkoutParseService.Response {
+    private func payloadJSON(type: String = "strength", indoor: Bool = false, durationS: Double = 2700,
+                             distanceM: Double = 0, effort: Int = 0, dayOffset: Int = 0,
+                             timeOfDay: String = "",
+                             exercises: [WorkoutParseService.Response.WorkoutPayload.Exercise] = []) -> String {
         let ex = exercises.map {
             "{\"name\":\"\($0.name)\",\"sets\":\($0.sets),\"reps\":\($0.reps),\"weight_kg\":\($0.weight_kg)}"
         }.joined(separator: ",")
-        let json = """
+        return """
         {"type":"\(type)","indoor":\(indoor),"duration_s":\(durationS),"distance_m":\(distanceM),
          "effort":\(effort),"day_offset":\(dayOffset),"time_of_day":"\(timeOfDay)",
-         "exercises":[\(ex)],"confidence":\(confidence)}
+         "exercises":[\(ex)]}
         """
-        return try! JSONDecoder().decode(WorkoutParseService.Response.self, from: Data(json.utf8))
+    }
+
+    private func response(type: String = "strength", indoor: Bool = false, durationS: Double = 2700,
+                          distanceM: Double = 0, effort: Int = 0, dayOffset: Int = 0,
+                          timeOfDay: String = "",
+                          exercises: [WorkoutParseService.Response.WorkoutPayload.Exercise] = []) -> WorkoutParseService.Response.WorkoutPayload {
+        let json = payloadJSON(type: type, indoor: indoor, durationS: durationS, distanceM: distanceM,
+                               effort: effort, dayOffset: dayOffset, timeOfDay: timeOfDay, exercises: exercises)
+        return try! JSONDecoder().decode(WorkoutParseService.Response.WorkoutPayload.self, from: Data(json.utf8))
     }
 
     // MARK: Mapping + clamps
@@ -67,6 +75,39 @@ struct WorkoutParseTests {
         #expect(r.type == .run)
         #expect(r.distanceM == 8000)
         #expect(r.durationS == nil)
+    }
+
+    @Test @MainActor func multiWorkoutResponseMapsToCards() {
+        let json = """
+        {"workouts":[\(payloadJSON(type: "strength", durationS: 2700,
+                                   exercises: [.init(name: "Bench Press", sets: 4, reps: 8, weight_kg: 84)])),
+                     \(payloadJSON(type: "run", durationS: 2252, distanceM: 6437))],
+         "confidence":0.9}
+        """
+        let r = try! JSONDecoder().decode(WorkoutParseService.Response.self, from: Data(json.utf8))
+        let cards = WorkoutParseService.results(from: r)
+        #expect(cards.count == 2)
+        #expect(cards[0].type == .strength)
+        #expect(cards[1].type == .run)
+        #expect(cards[1].distanceM == 6437)
+    }
+
+    @Test @MainActor func mergeKeepsAICardCount() {
+        var lift = WorkoutLogParser.Result()
+        lift.type = .strength
+        lift.durationS = 2700
+        var run = WorkoutLogParser.Result()
+        run.type = .run
+        run.durationS = 2252
+        run.distanceM = 6437
+        // Grammar read the whole thing as one thin lift; the server split it properly.
+        var grammar = WorkoutLogParser.Result()
+        grammar.type = .strength
+        grammar.effort = 8
+        let merged = WorkoutParseService.merge(ai: [lift, run], grammar: [grammar])
+        #expect(merged.count == 2)
+        #expect(merged[0].effort == 8)   // grammar backfills the primary card's gaps
+        #expect(merged[1].distanceM == 6437)
     }
 
     // MARK: Merge — the server read the whole text, the grammar keeps what it left empty
