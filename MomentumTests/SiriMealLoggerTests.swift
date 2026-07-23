@@ -1,0 +1,90 @@
+import Foundation
+import Testing
+import SwiftData
+@testable import Momentum
+
+/// The Siri logging core: same local ladder as the composer, honest receipts, safe undo.
+@MainActor
+struct SiriMealLoggerTests {
+
+    /// The controller must outlive the context — returning `mainContext` alone lets the container
+    /// deallocate under it, and the next fetch traps inside SwiftData.
+    private func fresh() -> (keep: PersistenceController, context: ModelContext) {
+        let pc = PersistenceController.inMemory()
+        return (pc, pc.container.mainContext)
+    }
+
+    @Test func stapleResolvesWithFullReceipt() throws {
+        let (pc, context) = fresh(); _ = pc
+        let receipt = try #require(SiriMealLogger.log(text: "energy gel and a banana", in: context))
+
+        // The meal is saved and carries staple numbers (gel + banana are both curated staples).
+        let meals = try context.fetch(FetchDescriptor<Meal>())
+        #expect(meals.count == 1)
+        let meal = try #require(meals.first)
+        #expect(meal.text == "energy gel and a banana")
+        #expect(receipt.resolved)
+        #expect(meal.kcal != nil)
+        #expect((meal.carbsG ?? 0) > 0)   // a gel is carbs by definition
+        // No estimator budget spent — the AI rung is deliberately not fired from Siri.
+        #expect(meal.estimateAttempts == 0)
+
+        // Receipt speaks the numbers.
+        #expect(receipt.body.contains("kcal"))
+        #expect(receipt.dialog.contains("calories"))
+    }
+
+    @Test func unknownFoodLogsPendingWithHonestReceipt() throws {
+        let (pc, context) = fresh(); _ = pc
+        let receipt = try #require(SiriMealLogger.log(text: "grandma's mystery casserole", in: context))
+
+        let meal = try #require(try context.fetch(FetchDescriptor<Meal>()).first)
+        #expect(meal.source == "pending")
+        #expect(meal.kcal == nil)
+        #expect(!receipt.resolved)
+        // Honest about when the numbers land — never a made-up total.
+        #expect(receipt.body.contains("open Fuel"))
+        #expect(!receipt.dialog.contains("calories"))
+        // Pending with zero attempts spent: the journal's bounded retry owns the AI rung.
+        #expect(meal.estimateAttempts == 0)
+    }
+
+    @Test func rememberedMealNumbersAreCopied() throws {
+        let (pc, context) = fresh(); _ = pc
+        // The athlete's own hand-corrected shake, from history.
+        let past = Meal()
+        past.text = "my recovery shake"
+        past.kcal = 320
+        past.carbsG = 40
+        past.proteinG = 30
+        past.source = "manual"
+        context.insert(past)
+        try context.save()
+
+        let receipt = try #require(SiriMealLogger.log(text: "my recovery shake", in: context))
+        #expect(receipt.resolved)
+        let logged = try context.fetch(FetchDescriptor<Meal>()).first { $0.id == receipt.mealID }
+        #expect(logged?.kcal == 320)
+        #expect(logged?.proteinG == 30)
+        #expect(receipt.dialog.contains("320"))
+    }
+
+    @Test func emptyTextRefusesToLog() throws {
+        let (pc, context) = fresh(); _ = pc
+        #expect(SiriMealLogger.log(text: "   ", in: context) == nil)
+        #expect(try context.fetch(FetchDescriptor<Meal>()).isEmpty)
+    }
+
+    @Test func undoRemovesTheMealAndIsIdempotent() throws {
+        let (pc, context) = fresh(); _ = pc
+        let receipt = try #require(SiriMealLogger.log(text: "energy gel", in: context))
+        #expect(try context.fetch(FetchDescriptor<Meal>()).count == 1)
+
+        SiriMealLogger.undoMeal(id: receipt.mealID, in: context)
+        #expect(try context.fetch(FetchDescriptor<Meal>()).isEmpty)
+
+        // A second Undo (double-tap, stale notification) is a quiet no-op.
+        SiriMealLogger.undoMeal(id: receipt.mealID, in: context)
+        #expect(try context.fetch(FetchDescriptor<Meal>()).isEmpty)
+    }
+}
