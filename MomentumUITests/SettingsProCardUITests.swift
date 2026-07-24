@@ -29,4 +29,24 @@ final class SettingsProCardUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 10), "Coach chat didn't open.")
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_coachchat.png"))
     }
+
+    /// Non-US athletes can switch off miles: the Distance/Weight segmented controls select the
+    /// tapped unit and persist through the profile (which the whole app reads).
+    func testUnitSwitchingSelectsKilometersAndKilograms() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--settings"]
+        app.launch()
+
+        let km = app.buttons["Km distance"].firstMatch
+        XCTAssertTrue(km.waitForExistence(timeout: 12), "Distance units control missing from Settings.")
+        XCTAssertFalse(km.isSelected, "Km should start unselected (the demo defaults to Auto).")
+        km.tap()
+        XCTAssertTrue(km.isSelected, "Tapping Km did not select kilometers.")
+        XCTAssertFalse(app.buttons["Auto distance"].isSelected, "Auto should deselect when Km is chosen.")
+
+        let kg = app.buttons["Kg weight"].firstMatch
+        XCTAssertTrue(kg.waitForExistence(timeout: 3), "Weight units control missing.")
+        kg.tap()
+        XCTAssertTrue(kg.isSelected, "Tapping Kg did not select kilograms.")
+    }
 }

@@ -269,6 +269,16 @@ struct SettingsView: View {
             }
             .padding(.vertical, 9)
             inset
+            // Measurement units — so athletes outside the US aren't stuck reading miles. Distance,
+            // pace, and speed everywhere follow this; "Auto" tracks the device region.
+            unitRow(icon: "ruler", label: "Distance", a11yNoun: "distance",
+                    options: [("auto", "Auto"), ("imperial", "Miles"), ("metric", "Km")],
+                    selected: profiles.first?.distanceUnit ?? "auto") { setDistanceUnit($0) }
+            inset
+            unitRow(icon: "scalemass", label: "Weight", a11yNoun: "weight",
+                    options: [("kg", "Kg"), ("lb", "Lb")],
+                    selected: profiles.first?.weightUnit ?? WeightUnit.default().rawValue) { setWeightUnit($0) }
+            inset
             actionRow("Coach chat", icon: "sparkles") { coach.open() }
             // The mute only makes sense once the voice coach exists for this user (it's Pro).
             if services.paywall.isEntitled(to: .voiceCoach) {
@@ -322,6 +332,62 @@ struct SettingsView: View {
             Capsule().fill(Theme.background)
             Capsule().stroke(Theme.hairline)
         }
+    }
+
+    /// A units row: labelled icon + the same compact segmented control as Appearance.
+    private func unitRow(icon: String, label: String, a11yNoun: String,
+                         options: [(value: String, label: String)],
+                         selected: String, onSelect: @escaping (String) -> Void) -> some View {
+        HStack(spacing: Theme.Space.md) {
+            iconChip(icon)
+            Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                .lineLimit(1).fixedSize()
+            Spacer(minLength: Theme.Space.sm)
+            unitPicker(options, selected: selected, a11yNoun: a11yNoun, onSelect: onSelect)
+        }
+        .padding(.vertical, 9)
+    }
+
+    /// The Appearance segmented control, generalized over a list of (stored value, label) options.
+    private func unitPicker(_ options: [(value: String, label: String)], selected: String,
+                            a11yNoun: String, onSelect: @escaping (String) -> Void) -> some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { option in
+                let on = option.value == selected
+                Button {
+                    Haptics.selection()
+                    onSelect(option.value)
+                } label: {
+                    Text(option.label)
+                        .font(.rounded(12, weight: .semibold))
+                        .lineLimit(1).fixedSize()
+                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background { if on { Capsule().fill(Theme.ink) } }
+                        .contentShape(VerticalHitPad(dy: 10))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(option.label) \(a11yNoun)")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background {
+            Capsule().fill(Theme.background)
+            Capsule().stroke(Theme.hairline)
+        }
+    }
+
+    private func setDistanceUnit(_ value: String) {
+        guard let p = profiles.first, p.distanceUnit != value else { return }
+        withAnimation(.easeOut(duration: 0.2)) { p.distanceUnit = value }
+        try? context.save()
+    }
+
+    private func setWeightUnit(_ value: String) {
+        guard let p = profiles.first, p.weightUnit != value else { return }
+        withAnimation(.easeOut(duration: 0.2)) { p.weightUnit = value }
+        try? context.save()
     }
 
     // MARK: Apple Health
