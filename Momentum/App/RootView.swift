@@ -85,7 +85,14 @@ struct RootView: View {
                 // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
                 // Full screen (not a sheet): the paywall is a considered, premium moment — it owns
                 // the whole canvas, like onboarding.
-                .fullScreenCover(item: $paywall.presentedFeature) { feature in
+                // Stand down while the coach chat is up: the coach is itself a fullScreenCover, so
+                // this root cover can't present on top of it — CoachChatView hosts its OWN paywall
+                // cover for the "gate on send" moment. Both binding to `presentedFeature` fired the
+                // paywall TWICE (root + coach) with a dark flash in between; gating on
+                // `coach.isPresented` leaves exactly one host live at a time.
+                .fullScreenCover(item: Binding(
+                    get: { coach.isPresented ? nil : paywall.presentedFeature },
+                    set: { paywall.presentedFeature = $0 })) { feature in
                     PaywallView(feature: feature)
                 }
                 // Freemium (2026-07-14): the onboarding paywall is now SOFT, so new athletes never set

@@ -108,8 +108,12 @@ struct PaywallView: View {
         .background { flowingBackground }
         .overlay(alignment: .topTrailing) { if !hard { closeButton } }
         // The paywall is a dark, cinematic moment regardless of the athlete's appearance setting
-        // (user call 2026-07-10) — the wash reads best over true black.
-        .preferredColorScheme(.dark)
+        // (user call 2026-07-10) — the wash reads best over true black. Use `.environment(\.colorScheme)`,
+        // NOT `.preferredColorScheme`: the latter is a PREFERENCE that flows UP to the hosting window,
+        // so on dismiss it left the presenter (e.g. the coach chat) stuck in dark. Setting the
+        // environment styles only the paywall's own subtree — same dark look, no leak to whoever
+        // presented it.
+        .environment(\.colorScheme, .dark)
         .alert("Nothing to restore", isPresented: $nothingToRestore) {
             Button("OK", role: .cancel) {}
         } message: {
