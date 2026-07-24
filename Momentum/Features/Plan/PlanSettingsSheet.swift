@@ -342,12 +342,24 @@ struct PlanSettingsSheet: View {
     }
 
     /// How hard to push — the athlete's dial (safety caps from injury history still apply).
+    /// The risk note shows here too — changing mid-plan deserves the same honesty as onboarding.
     private var intensitySection: some View {
         section("HOW HARD TO PUSH") {
             VStack(spacing: Theme.Space.sm) {
-                ForEach([PlanIntensity.gentle, .balanced, .aggressive], id: \.self) { level in
-                    SelectionCard(title: level.label, subtitle: level.subtitle,
-                                  isSelected: intensity == level) { intensity = level }
+                ForEach(PlanIntensity.allCases) { level in
+                    SelectionCard(title: level.label, subtitle: level.riskNote ?? level.subtitle,
+                                  isSelected: intensity == level,
+                                  iridescent: level == .podium) {
+                        intensity = level
+                        // Podium's structure needs the week to hold it — lift days to the floor.
+                        if days < level.floorDays { days = level.floorDays }
+                    }
+                }
+                if intensity == .podium {
+                    Text("Podium trains \(PlanIntensity.podium.floorDays)+ days a week — your week is set to \(days). Every recovery guardrail still applies.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

@@ -122,9 +122,16 @@ enum PlanEngine {
             ? profile.intensity.qualityBias
             : min(profile.intensity.qualityBias, PlanIntensity.balanced.qualityBias)
 
+        // Podium activation: the top tier's structural upgrades (higher volume ceiling, longer
+        // long-run cap, the two-hard-days week as standard, rest-day shakeouts) switch on only
+        // when the week can hold them (5+ run days) and the body has no injury history — the same
+        // protective cap as the ramp. Podium on a 3-day week or a hurt body trains like Aggressive.
+        let podiumActive = profile.intensity == .podium && runDays >= 5 && injuryAreas.isEmpty
+
         // Build ceiling: volume grows toward the race distance's readiness peak and then HOLDS —
         // a year-long marathon plan reaches marathon volume; a no-race block never exceeds double
         // its start. Clamped so a very low starting base can't be asked to quadruple in one plan.
+        // Podium raises the readiness peak ~20% — front-of-race preparation runs real volume.
         let startWeeklyM = profile.currentWeeklyVolumeM ?? {
             switch profile.runningExperience { case .new: 14_000; case .some: 26_000; case .experienced: 42_000 }
         }()
@@ -132,6 +139,7 @@ enum PlanEngine {
             guard hasCardio, let raceM = profile.raceDistanceM, startWeeklyM > 0 else { return 2.0 }
             let peakTarget = PlanFeasibility.peakWeeklyVolumeM(distanceM: raceM,
                                                                experience: profile.runningExperience)
+                * (podiumActive ? 1.2 : 1.0)
             return min(3.5, max(1.0, peakTarget / startWeeklyM))
         }()
         // Post-race recovery lead-in (the reverse taper): the block's first weeks are all-easy at a
@@ -183,14 +191,34 @@ enum PlanEngine {
                                  raceDistanceM: profile.raceDistanceM, weekIndex: w,
                                  currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM,
                                  injuryAreas: injuryAreas, phase: phase,
-                                 qualityBias: qualityBias, longWaveMult: longWaveMult)
+                                 qualityBias: qualityBias, longWaveMult: longWaveMult,
+                                 podium: podiumActive)
                 : []
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
                                    catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus))
                 : []
-            let scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
+            var scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
+            // Podium's rest-day shakeout: on training weeks (never deload/taper/lead-in), one of
+            // the remaining rest days — the day after the long run when it's free — carries an
+            // OPTIONAL 3 km jog. "Rest days will just be a slow mile or two" is the tier's promise;
+            // the rationale keeps it honest: skipping it still counts as rest.
+            if podiumActive, hasCardio, !isDeload, !isTaper, !isLeadIn, runDays <= 6 {
+                let used = Set(scheduled.map(\.dayOffset))
+                let afterLong = scheduled.first(where: { $0.runType == .long }).map(\.dayOffset).map { $0 + 1 }
+                let day = (afterLong.flatMap { $0 <= 6 && !used.contains($0) ? $0 : nil })
+                    ?? (0...6).first { !used.contains($0) }
+                if let day {
+                    var jog = GeneratedSession(dayOffset: day, discipline: cardio!)
+                    jog.runType = .recovery
+                    jog.targetDistanceM = 3_000
+                    jog.targetPaceSPerKm = pace(.recovery, p5k: p5k)
+                    jog.rationale = "Optional shakeout — twenty easy minutes keeps the legs turning between hard days. Flat today? Skipping it counts as rest too."
+                    scheduled.append(jog)
+                    scheduled.sort { $0.dayOffset < $1.dayOffset }
+                }
+            }
             weeks.append(GeneratedWeek(index: w, isDeload: isDeload, isTaper: isTaper, phase: phase, sessions: scheduled))
         }
 
@@ -370,7 +398,8 @@ enum PlanEngine {
                                raceDistanceM: Double? = nil, weekIndex: Int = 0,
                                currentWeeklyVolumeM: Double? = nil, longestRunM: Double? = nil,
                                injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build,
-                               qualityBias: Double = 1.0, longWaveMult: Double = 1.0) -> [GeneratedSession] {
+                               qualityBias: Double = 1.0, longWaveMult: Double = 1.0,
+                               podium: Bool = false) -> [GeneratedSession] {
         guard runDays > 0 else { return [] }
         var (easyBase, longBase, qualityBase): (Double, Double, Double)
         // Seed the starting week from the athlete's actual current load when they gave it — so the plan
@@ -399,7 +428,7 @@ enum PlanEngine {
         // gets long). The companion rule — short races sharpen with intervals, long races build
         // threshold with tempo — is applied inside `qualityWorkout` (see its race band), which is
         // where the session menu is actually chosen.
-        let raceCap = raceDistanceM.map { longRunPeak(forRaceM: $0) }
+        let raceCap = raceDistanceM.map { longRunPeak(forRaceM: $0, podium: podium) }
         if let cap = raceCap {
             // Seeded athletes start from their own longest run (never forced up to half-peak); everyone
             // else uses the race-appropriate default. Both cap at the race peak.
@@ -408,7 +437,7 @@ enum PlanEngine {
         // Time-on-feet cap: no long run beyond ~3 h at this athlete's long-run pace (Daniels caps by
         // DURATION, not distance — a 32 km prescription is a 4-hour injury factory for a slower
         // runner, and the aerobic stimulus tops out long before the tissue damage does).
-        let durationCapM = (10_800.0 / pace(.long, p5k: p5k)) * 1000
+        let durationCapM = ((podium ? 12_600.0 : 10_800.0) / pace(.long, p5k: p5k)) * 1000   // podium: 3.5 h
         longBase = min(longBase, durationCapM)
         let longCap: Double? = min(raceCap ?? .infinity, durationCapM)
         var out: [GeneratedSession] = []
@@ -483,7 +512,7 @@ enum PlanEngine {
         // protective cap as the ramp), and never on a deload. The stimulus COMPLEMENTS the primary
         // (`secondQualityWorkout`) — threshold beside a speed day, VO₂ beside a threshold day.
         var secondQualityAdded = false
-        let wantsSecond = (qualityBias > 1.0 || level == .experienced) && weeklyM >= 45_000
+        let wantsSecond = (qualityBias > 1.0 || level == .experienced) && weeklyM >= (podium ? 40_000 : 45_000)
         if isRunning, runDays >= 5, !isDeload, goal != .stayConsistent, injuryAreas.isEmpty,
            level != .new, wantsSecond, phase == .build || phase == .peak, out.count < runDays,
            let primary = primaryQuality {
@@ -671,12 +700,12 @@ enum PlanEngine {
 
     /// The peak weekly long-run distance a race builds toward (meters). Short races multiply up; long
     /// races run a fraction of race distance (you never run a full marathon in training).
-    static func longRunPeak(forRaceM race: Double) -> Double {
+    static func longRunPeak(forRaceM race: Double, podium: Bool = false) -> Double {
         switch race {
         case ..<6_000:    return race * 1.8          // 5K → ~9K long
         case ..<13_000:   return race * 1.5          // 10K → ~15K long
-        case ..<25_000:   return min(20_000, race * 0.9)   // half → ~19K
-        default:          return min(32_000, race * 0.76)  // marathon → ~32K
+        case ..<25_000:   return min(podium ? 22_000 : 20_000, race * (podium ? 0.95 : 0.9))
+        default:          return min(podium ? 35_000 : 32_000, race * (podium ? 0.85 : 0.76))
         }
     }
 

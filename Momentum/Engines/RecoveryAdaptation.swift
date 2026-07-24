@@ -29,14 +29,15 @@ enum RecoveryAdaptation {
         }
 
         // NOTE the trend polarity: `.down` is the "well up" caution (≥4 bpm over baseline); `.up` is
-        // slightly raised (1–4 bpm) — only the aggressive leash reacts to the milder form.
+        // slightly raised (1–4 bpm) — only the tight-leash tiers (aggressive/podium) react to the
+        // milder form.
         if signals.restingHRTrend == .down {
             reasons.append("resting HR elevated")
-        } else if intensity == .aggressive, signals.restingHRTrend == .up {
+        } else if intensity.tightLeash, signals.restingHRTrend == .up {
             reasons.append("resting HR creeping up")
         }
 
-        let sleepCut = intensity == .aggressive ? 6.5 : 6.0
+        let sleepCut = intensity.tightLeash ? 6.5 : 6.0
         if let sleep = signals.sleepHours, sleep < sleepCut {
             reasons.append("a short night (\(String(format: "%.1f", sleep))h)")
         }

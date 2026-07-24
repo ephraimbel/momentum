@@ -703,10 +703,24 @@ struct OnboardingFlow: View {
             ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { i, tier in
                 SelectionCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
                               subtitle: tier.riskNote ?? tier.subtitle,
-                              isSelected: vm.intensity == tier) {
-                    pick { vm.intensity = tier }
+                              isSelected: vm.intensity == tier,
+                              iridescent: tier == .podium) {
+                    pick {
+                        vm.intensity = tier
+                        // Podium's structure needs the week to hold it — lift the day count to the
+                        // tier's floor (the note below says so; the days step can still lower it,
+                        // which drops the pick back to a week Podium can't fill).
+                        if vm.daysPerWeek < tier.floorDays { vm.daysPerWeek = tier.floorDays }
+                    }
                 }
                 .reveal(cascade(i + 1))
+            }
+            if vm.intensity == .podium {
+                Text("Podium trains \(PlanIntensity.podium.floorDays)+ days a week — we've set your week to \(vm.daysPerWeek). Every recovery guardrail still applies.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
             }
         }
         .onAppear { if !touchedSteps.contains(.intensity) { vm.intensity = f.recommended } }

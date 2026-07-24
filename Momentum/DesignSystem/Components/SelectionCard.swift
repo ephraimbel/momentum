@@ -11,6 +11,10 @@ struct SelectionCard: View {
     /// users favorite activities). `onToggleFavorite` fires without selecting the card.
     var isFavorite: Bool? = nil
     var onToggleFavorite: (() -> Void)? = nil
+    /// The iridescent glowing border — a deliberate, sanctioned exception to "iridescence marks
+    /// progress only" (user call 2026-07-23), reserved for the ONE option that IS the earned tier:
+    /// Podium, the train-to-win commitment. Never sprinkle this on ordinary options.
+    var iridescent: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -67,9 +71,18 @@ struct SelectionCard: View {
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card)
                     .fill(isSelected ? Theme.ink : Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card)
-                    .stroke(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
+                if iridescent {
+                    // The glow stays through selection — the ink fill + iridescent ring reads as
+                    // "committed", not a lost highlight. IridescentMaterial is static under
+                    // Reduce Motion by design.
+                    RoundedRectangle(cornerRadius: Theme.Radius.card)
+                        .stroke(IridescentMaterial(), lineWidth: 2)
+                } else {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card)
+                        .stroke(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
+                }
             }
+            .shadow(color: iridescent ? Theme.iridescent[0].opacity(0.35) : .clear, radius: 10)
         }
         .buttonStyle(PressableScaleStyle())
         .animation(.spring(response: 0.34, dampingFraction: 0.7), value: isSelected)

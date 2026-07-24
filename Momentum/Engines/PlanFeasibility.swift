@@ -7,11 +7,21 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
     case gentle       // "Take your time"
     case balanced     // recommended default
     case aggressive
+    /// The tier above Aggressive (user call 2026-07-23): for athletes training to WIN — front of
+    /// the race, not the finish line. Higher volume ceiling, the two-hard-days week as standard,
+    /// recovery jogs where full rest would sit. Never *recommended* by the feasibility engine —
+    /// it's a commitment the athlete makes, not advice we give. Requires a 5+ day week (`floorDays`);
+    /// every safety layer (ACWR governor, recovery tripwires, the injury hold-to-balanced cap)
+    /// still applies — that's what makes it a coach and not a dare.
+    case podium
 
     var id: String { rawValue }
 
     var label: String {
-        switch self { case .gentle: "Take your time"; case .balanced: "Balanced"; case .aggressive: "Aggressive" }
+        switch self {
+        case .gentle: "Take your time"; case .balanced: "Balanced"
+        case .aggressive: "Aggressive"; case .podium: "Podium"
+        }
     }
 
     var subtitle: String {
@@ -19,25 +29,27 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
         case .gentle:     "Gentler ramp, most sustainable"
         case .balanced:   "Steady, sustainable progress"
         case .aggressive: "Faster gains, more demanding"
+        case .podium:     "Train to win — the full commitment"
         }
     }
 
     /// Volume multiplier applied on each build week (the weekly ramp rate).
     var weeklyRamp: Double {
-        switch self { case .gentle: 1.05; case .balanced: 1.08; case .aggressive: 1.11 }
+        switch self { case .gentle: 1.05; case .balanced: 1.08; case .aggressive: 1.11; case .podium: 1.12 }
     }
 
-    /// Build weeks between cutback/down weeks — aggressive stacks a little more before easing.
+    /// Build weeks between cutback/down weeks — aggressive tiers stack a little more before easing.
     var buildWeeksPerDownWeek: Int {
-        switch self { case .gentle: 3; case .balanced: 3; case .aggressive: 4 }
+        switch self { case .gentle: 3; case .balanced: 3; case .aggressive: 4; case .podium: 4 }
     }
 
     /// Bias on quality (hard) sessions per week vs. the balanced baseline. Wired in
-    /// `PlanEngine.cardioSessions`: >1.0 (or experienced) at real volume (≥45 km/wk) unlocks the
-    /// SECOND weekly quality session (build/peak, ≥5 run days, no injury history) — the
-    /// Pfitzinger-style two-hard-days week. ≤1.0 at modest volume keeps the single-quality default.
+    /// `PlanEngine.cardioSessions`: >1.0 (or experienced) at real volume unlocks the SECOND weekly
+    /// quality session (build/peak, ≥5 run days, no injury history) — the Pfitzinger-style
+    /// two-hard-days week. ≤1.0 at modest volume keeps the single-quality default. Podium lowers
+    /// that volume gate too (`PlanEngine.secondQualityGateM`) — two hard days are its standard.
     var qualityBias: Double {
-        switch self { case .gentle: 0.85; case .balanced: 1.0; case .aggressive: 1.2 }
+        switch self { case .gentle: 0.85; case .balanced: 1.0; case .aggressive: 1.2; case .podium: 1.4 }
     }
 
     /// An honest one-liner about the tradeoff (nil when there's nothing to warn about).
@@ -46,7 +58,20 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
         case .gentle:     "Lower injury risk — best if you're new, coming back, or injury-prone."
         case .balanced:   nil
         case .aggressive: "Higher injury and burnout risk — we'll watch your recovery closely and pull back sooner."
+        case .podium:     "Five-plus days, two hard sessions a week, jogs where rest days sat. For athletes chasing the front of the race — we watch recovery closely and pull back the moment your body says so."
         }
+    }
+
+    /// The training-frequency floor for the tier (0 = none). Podium's structure — two quality
+    /// days + a long run + real easy volume — physically doesn't fit in fewer than five days.
+    var floorDays: Int {
+        self == .podium ? 5 : 0
+    }
+
+    /// The demanding tiers run on a tighter recovery leash (`RecoveryAdaptation` reacts to milder
+    /// warning signs, wants more sleep) — the deal that makes them a coach and not a dare.
+    var tightLeash: Bool {
+        self == .aggressive || self == .podium
     }
 }
 

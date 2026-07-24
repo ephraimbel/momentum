@@ -33,6 +33,10 @@ struct PlanEngineInvariantTests {
         let hasRunning = inputs.disciplines.contains(.running)
         let raceWeeks = PlanEngine.weeksToRace(startDate: start, raceDate: inputs.raceDate, calendar: cal)
         let raceInWindow = (raceWeeks ?? .max) <= plan.weeks.count
+        // Mirrors the engine's activation rule: Podium's structural upgrades (incl. the rest-day
+        // shakeout) apply only on a 5+ run-day week with no injury history.
+        let podiumActive = inputs.intensity == .podium && !inputs.disciplines.contains(.strength)
+            && inputs.daysPerWeek >= 5 && inputs.injuryHistory.isEmpty
 
         // Honesty of the macro shape.
         if let rw = raceWeeks {
@@ -77,7 +81,12 @@ struct PlanEngineInvariantTests {
                 #expect(!week.sessions.contains { $0.runType != .race && $0.dayOffset >= raceDay },
                         "\(label) w\(week.index): training scheduled on/after race day")
             } else {
-                #expect(week.sessions.count == min(7, inputs.daysPerWeek), "\(label) w\(week.index): wrong session count")
+                // Podium training weeks carry one extra OPTIONAL shakeout on a rest day (never on
+                // deload/taper/lead-in weeks) — the one sanctioned exception to the exact day budget.
+                let shakeout = podiumActive && !week.isDeload && !week.isTaper
+                    && week.phase != .recovery && inputs.daysPerWeek <= 6 ? 1 : 0
+                #expect(week.sessions.count == min(7, inputs.daysPerWeek) + shakeout,
+                        "\(label) w\(week.index): wrong session count")
             }
             #expect(PlanEngine.scheduleSatisfiesRecovery(week.sessions),
                     "\(label) w\(week.index): hard run the day after a heavy lower lift")
@@ -101,7 +110,7 @@ struct PlanEngineInvariantTests {
                 // since clean-distance snapping can round a capped long run up to the next round
                 // km/mi (e.g. an 18.99 km half-cap reads as a clean "19 km"). Coaching-irrelevant.
                 if let raceM = inputs.raceDistanceM, s.runType == .long || s.runType == .progression {
-                    #expect((s.targetDistanceM ?? 0) <= PlanEngine.longRunPeak(forRaceM: raceM) + 1_000,
+                    #expect((s.targetDistanceM ?? 0) <= PlanEngine.longRunPeak(forRaceM: raceM, podium: podiumActive) + 1_000,
                             "\(label) w\(week.index): long run above cap")
                 }
                 // Injury steering holds in every phase.
@@ -129,11 +138,16 @@ struct PlanEngineInvariantTests {
         // 2× for no-race blocks) and never past it — and never more than 3.5× the start regardless.
         if hasRunning, let seeded = inputs.currentWeeklyVolumeM, seeded > 0 {
             let maxVol = plan.weeks.map(\.runVolumeM).max() ?? 0
+            // Podium raises the readiness peak ~20% and adds a ~3 km optional shakeout per
+            // training week (stacked on the capped volume, plus clean-distance rounding drift
+            // across a 6-session week) — deliberate and bounded, so the tolerance names it.
+            let shakeoutAllowance = podiumActive ? 4_500.0 : 0
             let ceiling = inputs.raceDistanceM.map {
-                max(seeded, PlanFeasibility.peakWeeklyVolumeM(distanceM: $0, experience: inputs.runningExperience))
+                max(seeded, PlanFeasibility.peakWeeklyVolumeM(distanceM: $0, experience: inputs.runningExperience)
+                        * (podiumActive ? 1.2 : 1.0))
             } ?? seeded * 2.0
-            #expect(maxVol <= ceiling + 10, "\(label): volume ceiling breached (\(maxVol) vs \(ceiling))")
-            #expect(maxVol <= seeded * 3.5 + 10, "\(label): asked to more than 3.5× the starting load")
+            #expect(maxVol <= ceiling + shakeoutAllowance + 10, "\(label): volume ceiling breached (\(maxVol) vs \(ceiling))")
+            #expect(maxVol <= seeded * 3.5 + shakeoutAllowance + 10, "\(label): asked to more than 3.5× the starting load")
         }
     }
 
@@ -160,12 +174,13 @@ struct PlanEngineInvariantTests {
 
     @Test func intensityInjuryAgeAndSeedingHoldInvariants() {
         let catalog = catalogFixture()
-        for intensity in [PlanIntensity.gentle, .balanced, .aggressive] {
+        for intensity in PlanIntensity.allCases {
             for injuries in [[], [InjuryArea.shins], [.hamstring], [.knee, .hamstring]] {
                 for age in [nil, 34, 57] as [Int?] {
                     for seeded in [nil, 30_000.0] as [Double?] {
+                      for days in [4, 6] {   // 4 exercises Podium's graceful degradation; 6 its full form
                         var inp = PlanInputs(disciplines: [.running], goal: .raceDistance,
-                                             daysPerWeek: 4, equipment: .fullGym, sessionMinutes: 45,
+                                             daysPerWeek: days, equipment: .fullGym, sessionMinutes: 45,
                                              raceDate: race(weeksOut: 12),
                                              runningExperience: .some, liftingExperience: .some)
                         inp.raceDistanceM = 10_000
@@ -176,7 +191,8 @@ struct PlanEngineInvariantTests {
                         inp.longestRunM = seeded.map { $0 / 3 }
                         let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: start)
                         assertInvariants(plan, inputs: inp,
-                                         label: "\(intensity) inj\(injuries.count) age\(age ?? 0) seed\(Int(seeded ?? 0))")
+                                         label: "\(intensity) inj\(injuries.count) age\(age ?? 0) seed\(Int(seeded ?? 0)) \(days)d")
+                      }
                     }
                 }
             }
