@@ -28,4 +28,26 @@ enum RunRounding {
         let snapped = max(increment, (value / increment).rounded() * increment)
         return snapped * perUnit
     }
+
+    /// Clean prescription paces — a coach writes "8:30/mi", never "8:24/mi". Snaps a raw engine
+    /// pace (stored s/km) to a clean boundary in the athlete's own display unit, because clean is
+    /// unit-relative: 5:15/km is an ugly 8:27/mi and vice versa.
+    ///
+    /// Granularity follows how real the precision is:
+    ///  • **easy-family** paces (easy, long, recovery, free, strides) snap to **:15** — an easy
+    ///    pace is a feel with a number on it, and 8:30 reads like a coach where 8:24 reads like a
+    ///    spreadsheet;
+    ///  • **quality + race** paces snap to **:05** — tempo/interval/race targets are real
+    ///    prescriptions where a 15-second grid would blur distinct zones together.
+    /// The result converts back to s/km for storage (SI everywhere; snapping is a display-unit
+    /// decision made once, at prescription time).
+    static func snapPace(sPerKm: Double, unit: DistanceUnit, type: RunType) -> Double {
+        guard sPerKm.isFinite, sPerKm > 0 else { return sPerKm }
+        let unitFactor = unit.resolved() == .imperial ? Formatters.metersPerMile / 1_000.0 : 1.0
+        let incrementS = type.isQuality ? 5.0 : 15.0   // .race is quality — 5s precision
+        let secPerUnit = sPerKm * unitFactor
+        let snapped = max(incrementS, (secPerUnit / incrementS).rounded() * incrementS)
+        // Never snap through the engine's global pace floor (2:00/km, DanielsPaces).
+        return max(120, snapped / unitFactor)
+    }
 }

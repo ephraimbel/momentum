@@ -251,16 +251,23 @@ enum PlanEngine {
             }
         }
 
-        // Clean prescriptions (RunRounding): snap every running target to the round value a coach
-        // would write in the athlete's unit — the LAST step, so it's what's stored and shown. The
-        // race session snaps to the exact race distance. Perturbs weekly volume by <2% (well inside
-        // the ACWR guardrail's range), so the safety ramp holds.
+        // Clean prescriptions (RunRounding): snap every running target — distance AND pace — to the
+        // round value a coach would write in the athlete's unit, as the LAST step, so it's what's
+        // stored and shown. The race session snaps to the exact race distance; easy-family paces
+        // snap to :15 and quality/race paces to :05 (8:30/mi, never 8:24/mi). Perturbs weekly
+        // volume by <2% and paces by ≤7.5 s/unit (inside SessionPaceReview's tolerance band), so
+        // both the ACWR ramp and the pace-review verdicts hold.
         for w in weeks.indices {
             for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
-                guard let d = weeks[w].sessions[s].targetDistanceM, d > 0 else { continue }
-                let isRace = weeks[w].sessions[s].runType == .race
-                weeks[w].sessions[s].targetDistanceM =
-                    RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: isRace)
+                let runType = weeks[w].sessions[s].runType
+                if let d = weeks[w].sessions[s].targetDistanceM, d > 0 {
+                    weeks[w].sessions[s].targetDistanceM =
+                        RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: runType == .race)
+                }
+                if let p = weeks[w].sessions[s].targetPaceSPerKm, p > 0, let runType {
+                    weeks[w].sessions[s].targetPaceSPerKm =
+                        RunRounding.snapPace(sPerKm: p, unit: profile.distanceUnit, type: runType)
+                }
             }
         }
 

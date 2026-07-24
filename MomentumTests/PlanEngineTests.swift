@@ -216,7 +216,9 @@ struct PlanEngineTests {
         let marathon = buildPaces(42_195)
         #expect(!marathon.isEmpty)
         #expect(!marathon.contains(300))                                          // never raw 5K speed
-        #expect(marathon.contains(PlanEngine.pace(.tempo, p5k: 300)))             // threshold emphasis
+        // Threshold emphasis — stored paces carry the clean-pace snap (5s grid for quality).
+        #expect(marathon.contains(RunRounding.snapPace(sPerKm: PlanEngine.pace(.tempo, p5k: 300),
+                                                       unit: .metric, type: .tempo)))
     }
 
     // MARK: Periodization (base → build → peak → taper)
@@ -492,9 +494,10 @@ struct PlanEngineTests {
         #expect(!sessions.contains { $0.intervals?.contains("@ 5K") == true })
         #expect(!sessions.contains { $0.runType == .strides })
         #expect(sessions.contains { $0.intervals?.contains("threshold") == true })
-        // The swapped-in cruise reps carry the threshold pace, not race pace.
+        // The swapped-in cruise reps carry the threshold pace (snapped to the clean 5s grid), not race pace.
         let cruise = sessions.first { $0.intervals?.contains("threshold") == true && $0.rationale != nil }
-        #expect(cruise?.targetPaceSPerKm == PlanEngine.pace(.tempo, p5k: 300))
+        #expect(cruise?.targetPaceSPerKm == RunRounding.snapPace(sPerKm: PlanEngine.pace(.tempo, p5k: 300),
+                                                                 unit: .metric, type: .intervals))
     }
 
     // MARK: Masters recovery (50+)
@@ -888,6 +891,8 @@ struct PlanEngineTests {
         session.targetPaceSPerKm = 300
         let speed = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: 300)
         let speedRecovery = speed?.steps.first { $0.kind == .recovery }
-        #expect(speedRecovery?.target == .duration(120))
+        // Full recovery on kilometre reps is a real 3:00 (2026-07-24 rest-ladder fix — 2:00 was
+        // quietly collapsing long VO₂ reps into tempo effort).
+        #expect(speedRecovery?.target == .duration(180))
     }
 }

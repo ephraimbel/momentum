@@ -70,7 +70,8 @@ enum InjuryResponse {
                     if let rt = s.runType, rt.isQuality || rt == .long {
                         s.runType = .easy
                         s.intervals = nil
-                        s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                        s.targetPaceSPerKm = RunRounding.snapPace(
+                            sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
                     }
                     if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: unit) }
                     s.rationale = "\(marker) \(areaName) — easy running only while it settles."
@@ -143,12 +144,14 @@ enum InjuryResponse {
                 if i == 0 {
                     s.runType = .recovery
                     s.targetDistanceM = RunRounding.snap(meters: 3_000, unit: unit)   // a short test-the-waters return
-                    s.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
+                    s.targetPaceSPerKm = RunRounding.snapPace(
+                        sPerKm: PlanEngine.pace(.recovery, p5k: p5k), unit: unit, type: .recovery)
                     s.rationale = "Welcome back — a short, gentle return. Stop if anything flares."
                 } else {
                     s.runType = .easy
                     s.targetDistanceM = RunRounding.snap(meters: 5_000, unit: unit)
-                    s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                    s.targetPaceSPerKm = RunRounding.snapPace(
+                        sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
                     s.rationale = "Easy miles while you rebuild — quality work returns next week."
                 }
                 restored += 1
@@ -167,7 +170,8 @@ enum InjuryResponse {
             for s in eager {
                 s.runType = .easy
                 s.intervals = nil
-                s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
                 if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: min(d, 8_000), unit: unit) }
                 s.rationale = "First week back — easy only. Quality returns once you've settled."
             }

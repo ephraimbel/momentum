@@ -112,6 +112,12 @@ struct PlanEngineInvariantTests {
                     #expect(s.runType != .strides, "\(label) w\(week.index): strides despite speed-sensitive history")
                     #expect(s.intervals?.contains("@ 5K") != true, "\(label) w\(week.index): sprint reps despite history")
                 }
+                // Clean prescriptions: every stored pace is already snapped in the athlete's unit
+                // (re-snapping must be a no-op) — no 8:24/mi ever reaches a plan.
+                if s.discipline == .running, let p = s.targetPaceSPerKm, let rt = s.runType {
+                    #expect(abs(RunRounding.snapPace(sPerKm: p, unit: inputs.distanceUnit, type: rt) - p) < 0.001,
+                            "\(label) w\(week.index): unsnapped pace \(p) on \(rt)")
+                }
             }
             // Deload weeks never carry a quality running session.
             if week.isDeload {

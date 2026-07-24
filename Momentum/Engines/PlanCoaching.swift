@@ -197,8 +197,10 @@ enum PlanCoaching {
                 where s.status != .completed && s.completedWorkout == nil
                       && calendar.startOfDay(for: s.date) >= todayStart {
                 guard let rt = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-                s.targetPaceSPerKm = PlanEngine.sessionPace(rt, p5k: plan.p5kSPerKm, intervals: s.intervals,
-                                                            raceDistanceM: goalRaceDistanceM(in: context))
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.sessionPace(rt, p5k: plan.p5kSPerKm, intervals: s.intervals,
+                                                   raceDistanceM: goalRaceDistanceM(in: context)),
+                    unit: unit, type: rt)
             }
             plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
             CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
@@ -251,7 +253,8 @@ enum PlanCoaching {
             if let rt = s.runType, rt.isQuality || rt == .long {
                 s.runType = .easy
                 s.intervals = nil
-                s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
             }
             s.rationale = note
         }
@@ -280,7 +283,8 @@ enum PlanCoaching {
                 next.runType = .recovery
                 next.intervals = nil
                 next.targetDistanceM = RunRounding.snap(meters: min(next.targetDistanceM ?? 3200, 3200), unit: unit)
-                next.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
+                next.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.recovery, p5k: p5k), unit: unit, type: .recovery)
             } else {
                 for pe in next.strengthTargets { pe.targetSets = 2 }
             }
@@ -378,8 +382,10 @@ enum PlanCoaching {
         for s in plan.sessions
             where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
-                                                        raceDistanceM: goalRaceDistanceM(in: context))
+            s.targetPaceSPerKm = RunRounding.snapPace(
+                sPerKm: PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
+                                               raceDistanceM: goalRaceDistanceM(in: context)),
+                unit: displayUnit(in: context), type: runType)
             updated += 1
         }
         try? context.save()
@@ -423,8 +429,10 @@ enum PlanCoaching {
         for s in plan.sessions
             where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
-                                                        raceDistanceM: goalRaceDistanceM(in: context))
+            s.targetPaceSPerKm = RunRounding.snapPace(
+                sPerKm: PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
+                                               raceDistanceM: goalRaceDistanceM(in: context)),
+                unit: displayUnit(in: context), type: runType)
             updated += 1
         }
         guard updated > 0 else { return 0 }   // nothing to change → don't move p5k either
@@ -641,6 +649,13 @@ enum PlanCoaching {
             if let dur = session.targetDurationS, dur > 0 { return "\(wt.title) \(Formatters.duration(s: dur))" }
             return wt.title
         }
+        // A structured quality session headlines its SHAPE — "10 × 400m @ 8:24 /mi" — never the
+        // continuous-run reading. "Intervals 3.73 mi ~8:24 /mi" tells an athlete they're running
+        // 3.7 steady miles at 8:24; the truth is 400 m REPS at 8:24 with jogs between, and the
+        // total includes warm-up and cool-down. The shape is what a coach would say out loud.
+        if let shape = structuredShape(session, unit: distanceUnit, dropLeadingType: dropLeadingType) {
+            return shape
+        }
         // GPS: a run keeps its quality label (Easy/Tempo/Long); ride/walk/etc. use the sport name.
         let label: String = {
             if let wt = session.workoutType, wt != .run { return wt.title }
@@ -653,6 +668,54 @@ enum PlanCoaching {
             return "\(base) ~\(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
         }
         return base
+    }
+
+    /// The shape headline for a structured running session, parsed from the same `intervals`
+    /// grammar the guided-run builder reads — so the words and the workout can never disagree.
+    /// nil for plain runs (no grammar) → the caller's continuous distance/pace form is correct.
+    private static func structuredShape(_ session: PlannedSession, unit: DistanceUnit,
+                                        dropLeadingType: Bool) -> String? {
+        guard session.discipline == .running, let type = session.runType else { return nil }
+        let pace = session.targetPaceSPerKm.flatMap { p in
+            p > 0 ? "@ \(Formatters.pace(secPerKm: p, unit: unit))" : nil
+        }
+        switch type {
+        case .intervals:
+            // Rep pace is the workout's defining number — "10 × 400m @ 8:24 /mi".
+            if let d = StructuredWorkoutBuilder.parseIntervals(session.intervals) {
+                let rep = StructuredWorkoutBuilder.repDistanceLabel(d.distanceM)
+                return ["\(d.reps) × \(rep)", pace].compactMap(\.self).joined(separator: " ")
+            }
+            if let t = StructuredWorkoutBuilder.parseTimeReps(session.intervals) {
+                return ["\(t.reps) × \(StructuredWorkoutBuilder.minLabel(t.seconds))", pace]
+                    .compactMap(\.self).joined(separator: " ")
+            }
+            return nil
+        case .fartlek:
+            // Speed play runs by feel — no pace on the marquee.
+            guard let f = StructuredWorkoutBuilder.parseFartlek(session.intervals) else { return nil }
+            return "\(f.reps) × \(StructuredWorkoutBuilder.secLabel(f.onS)) surges"
+        case .hills:
+            guard let h = StructuredWorkoutBuilder.parseTimedReps(session.intervals, keyword: "hill")
+            else { return nil }
+            return "\(h.reps) × \(StructuredWorkoutBuilder.secLabel(h.seconds)) hills"
+        case .strides:
+            guard let st = StructuredWorkoutBuilder.parseTimedReps(session.intervals, keyword: "stride")
+            else { return nil }
+            let lead = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: unit) + " easy" }
+                ?? "Easy run"
+            return "\(lead) + \(st.reps) strides"
+        case .long:
+            guard let finishM = StructuredWorkoutBuilder.parseRaceFinish(session.intervals),
+                  let total = session.targetDistanceM, total > 0 else { return nil }
+            let lead = dropLeadingType ? "" : "Long "
+            return "\(lead)\(Formatters.distance(meters: total, unit: unit)) · last \(Formatters.distance(meters: finishM, unit: unit)) @ race pace"
+        default:
+            guard let rw = StructuredWorkoutBuilder.parseRunWalk(session.intervals) else { return nil }
+            let ratio = "\(Int(rw.runS / 60)):\(Int(rw.walkS / 60))"
+            let duration = session.targetDurationS.flatMap { $0 > 0 ? " · \(Formatters.duration(s: $0))" : nil } ?? ""
+            return "Run/walk \(ratio)\(duration)"
+        }
     }
 
     /// The SF Symbol for a session — the precise sport when chosen, else the discipline glyph.

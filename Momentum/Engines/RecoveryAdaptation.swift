@@ -103,7 +103,9 @@ enum RecoveryAdaptation {
         let p5k = plan.p5kSPerKm
         session.runType = .easy
         session.intervals = nil
-        session.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+        session.targetPaceSPerKm = RunRounding.snapPace(
+            sPerKm: PlanEngine.pace(.easy, p5k: p5k),
+            unit: PlanCoaching.displayUnit(in: context), type: .easy)
         if let d = session.targetDistanceM {
             session.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: PlanCoaching.displayUnit(in: context))
         }

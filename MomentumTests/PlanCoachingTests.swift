@@ -127,7 +127,9 @@ struct PlanCoachingTests {
         #expect(rec != nil)
         #expect(abs(plan.p5kSPerKm - 320) < 1)                              // lowered to the equivalent
         #expect(rec?.sessionsUpdated == 1)
-        #expect(abs((future.targetPaceSPerKm ?? 0) - PlanEngine.pace(.easy, p5k: 320)) < 1)  // future pace re-derived
+        // Future pace re-derived — and snapped to the clean :15 easy grid on the way in.
+        #expect(abs((future.targetPaceSPerKm ?? 0)
+                    - RunRounding.snapPace(sPerKm: PlanEngine.pace(.easy, p5k: 320), unit: .metric, type: .easy)) < 1)
         #expect(plan.pendingP5kAt == nil)                // evidence consumed
         #expect(plan.lastRecalibratedAt != nil)          // weekly cap armed
     }
