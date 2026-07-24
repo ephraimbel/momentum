@@ -14,11 +14,11 @@ final class TodayMapUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Recenter on my location"].waitForExistence(timeout: 15),
                       "Recenter arrow missing from Today.")
-        // The deck (post-redesign: plan → Start → utility line). With a seeded plan today the hero
-        // is the prescription + its Start CTA; the free-run goal segments only exist on plan-less days.
-        XCTAssertTrue(app.staticTexts["TODAY'S PLAN"].waitForExistence(timeout: 15)
-                      || app.buttons["Distance"].waitForExistence(timeout: 2),
-                      "Today deck missing (no plan hero, no quick-start goals).")
+        // The deck action row (Log + Start) renders in every deck state — plan day or plan-less.
+        // Don't assert on "TODAY'S PLAN": the masthead shows the plan NAME when there is one (the
+        // seed's "Austin Marathon"), so that literal only appears for an unnamed plan.
+        XCTAssertTrue(app.buttons["Log a workout you already did"].waitForExistence(timeout: 15),
+                      "Today deck action row missing (no Log control).")
         XCTAssertTrue(app.buttons["Start run"].waitForExistence(timeout: 5), "Start CTA missing from the deck.")
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "today-start-card"; shot.lifetime = .keepAlways

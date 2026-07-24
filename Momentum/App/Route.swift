@@ -33,13 +33,3 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         }
     }
 }
-
-/// Destinations pushed within a tab's `NavigationStack` (PRD §13.10).
-/// Expanded as features land; Phase 0 declares the shape.
-enum Route: Hashable {
-    case workoutDetail(UUID)
-    case exerciseLibrary
-    case exerciseDetail(UUID)
-    case programs
-    case settings
-}
