@@ -1,8 +1,11 @@
 import SwiftUI
 
-/// The "you did it" beat shown the instant a workout is saved (PRD §4.6, §6.2) — an iridescent
-/// goal ring sweeps to full around a checkmark (the earned accent), a celebration haptic fires,
-/// then it fades to reveal the summary. Plays once; honors Reduce Motion (snaps + brief hold).
+/// The "you did it" beat (PRD §4.6, §6.2) — played when the athlete taps Done on a save screen
+/// (user call 2026-07-23, reversing the earlier play-on-arrival order: the finished, named post is
+/// the moment worth crowning, and arrival now goes straight to the summary with nothing standing
+/// in front of it). The ring sweeps — or the bare track draws itself — while the checkmark strokes
+/// itself through the middle, a celebration haptic fires, then the beat fades and hands back
+/// (dismissing the save screen). Plays once; honors Reduce Motion (snaps + brief hold).
 struct CompletionCelebration: View {
     let title: String
     /// Where the ring starts and where it sweeps to, or nil when there is nothing true to draw.
@@ -30,15 +33,18 @@ struct CompletionCelebration: View {
 
     /// Wall time from appear to `onDone` — the sum of the beats in `run()` below. Callers schedule
     /// work to land *after* the beat rather than stalling the screen before it.
-    static let duration: Double = 0.86
+    static let duration: Double = 0.99
 
     /// When the fade-out starts. Content underneath should begin its own reveal here, so the two
     /// cross-dissolve into one motion instead of playing back to back with a dead gap between.
-    static let handoff: Double = 0.60
+    static let handoff: Double = 0.73
 
-    /// The animated sweep position.
+    /// The animated ring-sweep position (meaningful reading) …
     @State private var swept = 0.0
-    @State private var check = 0.0      // checkmark + title scale/opacity
+    /// … or the bare track drawing itself when there's no reading (trim 0→1 from 12 o'clock).
+    @State private var track = 0.0
+    /// Stroke-draw progress of the checkmark — the check DRAWS (trim), it doesn't pop.
+    @State private var check = 0.0
     @State private var bloom = 0.0
     @State private var fade = 1.0
     /// Guards `onDone` against firing twice when a tap and the timed run race each other.
@@ -56,17 +62,23 @@ struct CompletionCelebration: View {
                         .blur(radius: 24)
                     // Seeded at the week as it stood and swept to where it stands now — the arc it
                     // travels IS this session, expressed as growth rather than as a second colour.
-                    // With no reading, the bare track: a frame for the checkmark that claims nothing.
+                    // With no reading, the track draws itself: a frame for the checkmark that
+                    // claims nothing (never a fake full sweep — see `ring`).
                     if ring != nil {
                         ProgressRing(progress: swept).frame(width: 132, height: 132)
                     } else {
-                        Circle().stroke(Theme.hairline, lineWidth: 12).frame(width: 132, height: 132)
+                        Circle()
+                            .trim(from: 0, to: track)
+                            .stroke(Theme.hairline, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 132, height: 132)
                     }
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 46, weight: .bold))
-                        .foregroundStyle(Theme.ink)
-                        .scaleEffect(0.5 + 0.5 * check)
-                        .opacity(check)
+                    // Drawn tip-to-tail with the same round stroke language as the ring, so circle
+                    // and check read as one gesture rather than a shape with a symbol stamped on it.
+                    CheckmarkShape()
+                        .trim(from: 0, to: check)
+                        .stroke(Theme.ink, style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+                        .frame(width: 52, height: 40)
                 }
                 VStack(spacing: Theme.Space.xs) {
                     Text(title)
@@ -79,13 +91,15 @@ struct CompletionCelebration: View {
                             .foregroundStyle(Theme.inkSecondary)
                     }
                 }
+                // Rises in with the check's draw — one motion, not two queued ones.
                 .opacity(check)
+                .offset(y: 8 * (1 - check))
             }
         }
         .opacity(fade)
         .contentShape(Rectangle())
         // Skippable. An athlete finishing five sessions a week sees this every time, and a beat you
-        // can't get past stops being a reward and becomes a toll. Tapping cuts to the summary.
+        // can't get past stops being a reward and becomes a toll. Tapping cuts straight through.
         .onTapGesture { finish(fadeDuration: 0.12) }
         .task { await run() }
         .accessibilityElement(children: .ignore)
@@ -110,16 +124,32 @@ struct CompletionCelebration: View {
     private func run() async {
         Haptics.celebration()
         if reduceMotion {
-            swept = ring?.to ?? 0; check = 1; bloom = 1
+            swept = ring?.to ?? 0; track = 1; check = 1; bloom = 1
             try? await Task.sleep(for: .seconds(0.5))
         } else {
-            withAnimation(.easeOut(duration: 0.5)) { swept = ring?.to ?? 0; bloom = 1 }
+            // Circle first, check through it while the circle is still finishing — the overlap is
+            // what makes it read as one continuous gesture. The check completes its draw at
+            // ~0.52s, then the finished mark HOLDS for a fifth of a second before the fade — the
+            // hold is what makes it read as done rather than yanked away mid-stroke.
+            withAnimation(.easeOut(duration: 0.45)) { swept = ring?.to ?? 0; track = 1; bloom = 1 }
             try? await Task.sleep(for: .seconds(0.18))
-            withAnimation(.spring(response: 0.36, dampingFraction: 0.6)) { check = 1 }
-            try? await Task.sleep(for: .seconds(0.42))
+            withAnimation(.easeOut(duration: 0.34)) { check = 1 }
+            try? await Task.sleep(for: .seconds(0.55))
         }
         // Routed through the same single exit as a tap, so a skip mid-beat can't be followed by a
         // second hand-off when the timeline catches up.
         finish(fadeDuration: 0.26)
+    }
+}
+
+/// The checkmark as a strokeable path (short arm down, long arm up — one continuous line), so it
+/// can draw itself via `.trim`. Proportions sit the glyph optically centered in the ring.
+private struct CheckmarkShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + 0.04 * rect.width, y: rect.minY + 0.52 * rect.height))
+        p.addLine(to: CGPoint(x: rect.minX + 0.36 * rect.width, y: rect.minY + 0.88 * rect.height))
+        p.addLine(to: CGPoint(x: rect.minX + 0.96 * rect.width, y: rect.minY + 0.10 * rect.height))
+        return p
     }
 }

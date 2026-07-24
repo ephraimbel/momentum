@@ -34,10 +34,10 @@ struct CardioSaveView: View {
     /// The map style THIS run renders with — previewed live on the hero map, persisted on Save.
     @State private var mapStyle: MapStyleOption = .persisted
     @State private var initialMapStyle: MapStyleOption = .persisted
-    /// Plays on ARRIVAL, not on the way out. The beat used to fire after Save, so the reward for a
-    /// run landed a minute later as a dismissal transition, and the moment itself was spent on a
-    /// form. It also covers the reader's first fetch, so the load has somewhere to hide.
-    @State private var celebrating = true
+    /// Plays after SAVE (user call 2026-07-23, reversing the earlier play-on-arrival order):
+    /// arrival goes straight to the summary + editor, and the beat crowns the finished, named
+    /// post on the way out — Done → circle-and-check draw → dismiss.
+    @State private var celebrating = false
     @State private var saveFailed = false
     @State private var discardFailed = false
     @State private var confirmDiscard = false
@@ -55,13 +55,11 @@ struct CardioSaveView: View {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
                     VStack(spacing: Theme.Space.lg) {
-                        // The cascade waits for the celebration's fade to begin, so the two
-                        // cross-dissolve into one motion instead of the summary being fully drawn
-                        // and waiting behind it.
+                        // The cascade plays on arrival now — the celebration moved to Save, so
+                        // nothing covers this screen when it appears.
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
                                              showsHeader: false, canEditPhoto: true,
                                              mapStyleOverride: mapStyle,
-                                             revealDelay: CompletionCelebration.handoff,
                                              showsVerdict: true)
                         editor
                     }
@@ -107,11 +105,12 @@ struct CardioSaveView: View {
         }
         .overlay {
             if celebrating {
-                // Dismisses itself into the summary underneath — it no longer closes the screen.
-                // The ring sweeps across the athlete's week, and the arc it travels is this session.
-                CompletionCelebration(title: "\(workoutType.title) complete",
+                // The ring sweeps across the athlete's week — the arc it travels is this session —
+                // and the beat closes the screen when it's done. `sportType`, not `workoutType`:
+                // the athlete may have just corrected the discipline in the editor.
+                CompletionCelebration(title: "\(sportType.title) complete",
                                       ring: weekRing.map { (from: $0.from, to: $0.to) },
-                                      caption: weekCaption) { celebrating = false }
+                                      caption: weekCaption) { onDone() }
             }
         }
         // The recording itself is already on disk — only these edits failed to write. Say that
@@ -354,10 +353,10 @@ struct CardioSaveView: View {
             let saved = workout
             Task { await services.health.save(saved) }
         }
-        // No celebration here any more — it played on arrival, where the moment actually is.
-        Haptics.success()
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
-        onDone()
+        // The celebration is the exit: it draws over this screen (its own haptic fires — no extra
+        // success buzz here) and calls `onDone` when the beat completes or is tapped through.
+        celebrating = true
     }
 
     /// Throw the recording away (an explicit user action — distinct from the never-destroy-on-edit

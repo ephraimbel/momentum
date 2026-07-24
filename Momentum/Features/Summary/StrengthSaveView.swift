@@ -23,9 +23,9 @@ struct StrengthSaveView: View {
 
     @State private var title = ""
     @State private var desc = ""
-    /// Plays on ARRIVAL, not on the way out — see `CardioSaveView.celebrating`. The reward for the
-    /// session belongs to the moment it ends, not to the dismissal a minute later.
-    @State private var celebrating = true
+    /// Plays after SAVE — see `CardioSaveView.celebrating` (user call 2026-07-23): quiet arrival,
+    /// edit, then Done → the circle-and-check beat draws and dismisses the screen.
+    @State private var celebrating = false
     @State private var saveFailed = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -36,9 +36,9 @@ struct StrengthSaveView: View {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
                     VStack(spacing: Theme.Space.lg) {
+                        // Reveals on arrival — the celebration moved to Save, nothing covers this.
                         StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
-                                               celebratePRs: true, showsHeader: false,
-                                               revealDelay: CompletionCelebration.handoff)
+                                               celebratePRs: true, showsHeader: false)
                         editor
                     }
                     .padding(Theme.Space.md)
@@ -67,8 +67,8 @@ struct StrengthSaveView: View {
         }
         .overlay {
             if celebrating {
-                // Dismisses into the summary underneath — it no longer closes the screen.
-                CompletionCelebration(title: "Workout complete") { celebrating = false }
+                // The beat is the exit: draws over the screen, then dismisses it.
+                CompletionCelebration(title: "Workout complete") { onDone() }
             }
         }
         // The sets are already on disk — only the name and notes failed to write, so say exactly that
@@ -128,10 +128,10 @@ struct StrengthSaveView: View {
             AwardsBook.syncSoon()
         }
         if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
-        // No celebration here any more — it played on arrival, where the moment actually is.
-        Haptics.success()
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
-        onDone()
+        // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
+        // `onDone` when the beat completes or is tapped through.
+        celebrating = true
     }
 
     /// Names the workout by its split ("Push Day", "Leg Day", …); falls back to time-of-day when

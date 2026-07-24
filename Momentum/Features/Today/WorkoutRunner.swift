@@ -99,7 +99,8 @@ struct WorkoutRunner: ViewModifier {
         }
         // Present FIRST. Everything below faults the whole workout history and rewrites the plan;
         // running it here used to stall the app at the exact moment the athlete crossed their finish
-        // line. None of it changes what the summary displays, so it waits for the celebration.
+        // line. None of it changes what the summary displays, so it waits out the present
+        // transition (the celebration itself plays later, when the athlete saves).
         summary = PresentedWorkout(id: id, type: type)
         // Captured HERE, while we're still inside a view update. `plan`/`profiles` read through
         // `@Query`, and reaching for a property wrapper from a detached Task a second later is not

@@ -17,8 +17,8 @@ struct TimedSaveView: View {
     @State private var title = ""
     @State private var desc = ""
     @State private var effort: Int?
-    /// Plays on ARRIVAL — see `CardioSaveView.celebrating`.
-    @State private var celebrating = true
+    /// Plays after SAVE — see `CardioSaveView.celebrating` (user call 2026-07-23).
+    @State private var celebrating = false
     @State private var confirmDiscard = false
     @State private var saveFailed = false
     @State private var discardFailed = false
@@ -56,8 +56,8 @@ struct TimedSaveView: View {
         }
         .overlay {
             if celebrating {
-                // Dismisses into the summary underneath — it no longer closes the screen.
-                CompletionCelebration(title: "\(workout?.type.title ?? "Session") complete") { celebrating = false }
+                // The beat is the exit: draws over the screen, then dismisses it.
+                CompletionCelebration(title: "\(workout?.type.title ?? "Session") complete") { onDone() }
             }
         }
         .alert("Couldn't save your details", isPresented: $saveFailed) {
@@ -158,10 +158,10 @@ struct TimedSaveView: View {
         Task { await services.health.save(saved) }   // mirror to Apple Health
         // Timed sessions move the streak, session-count, and time-of-day awards (deferred).
         AwardsBook.syncSoon()
-        // No celebration here any more — it played on arrival, where the moment actually is.
-        Haptics.success()
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
-        onDone()
+        // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
+        // `onDone` when the beat completes or is tapped through.
+        celebrating = true
     }
 
     private func discard() {
@@ -169,8 +169,14 @@ struct TimedSaveView: View {
         // A silent failure here dismissed anyway, leaving the workout in History for the athlete to
         // discard a second time.
         if let workout {
+            // `finish` may have auto-credited a planned session (yoga/pilates days match by
+            // discipline) — a discard must not leave that phantom completion on the plan board.
+            // Hold the session before the delete (the link won't resolve afterwards), un-credit
+            // only once the delete lands (CardioSaveView's exact ordering rule).
+            let credited = workout.plannedSession
             context.delete(workout)
             do { try context.save() } catch { discardFailed = true; return }
+            if let credited { PlanCoaching.setCompletion(credited, done: false, in: context) }
         }
         Haptics.medium()
         onDone()
