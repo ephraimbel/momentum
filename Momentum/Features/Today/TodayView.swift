@@ -62,6 +62,7 @@ struct TodayView: View {
     }
     @State private var confirmingPlan: PlannedSession?      // plan session awaiting confirmation
     @State private var pendingPlanStart: PlannedSession?    // start after the confirm sheet dismisses
+    @State private var pendingTreadmillLog: PlannedSession? // log indoors after the confirm sheet dismisses
     // The athlete's app-wide base-map choice — persists across launches and stays in sync with every
     // other map surface (run screen, heatmap). Realistic (Mapbox Standard 3D) is the default.
     @AppStorage(MapStyleOption.storageKey) private var mapStyle: MapStyleOption = .realistic
@@ -332,6 +333,9 @@ struct TodayView: View {
         .workoutRunner(launch: $launch)
         .sheet(item: $confirmingPlan, onDismiss: {
             if let session = pendingPlanStart { pendingPlanStart = nil; startPlanned(session) }
+            // Ran it indoors → open the quick log pre-filled with today's prescription (reuses the
+            // manual-log presentation). Sequenced through onDismiss so we never stack two sheets.
+            if let session = pendingTreadmillLog { pendingTreadmillLog = nil; manualPrefill = treadmillPrefill(session) }
         }) { session in
             planConfirmSheet(session)
         }
@@ -580,6 +584,23 @@ struct TodayView: View {
                     pendingPlanStart = session
                     confirmingPlan = nil
                 }
+                // Ran it (or plan to) on a treadmill? Log it instead of tracking a GPS run — the
+                // quick form opens pre-filled with today's distance and expected time, so it's a
+                // confirm-and-save, not a blank form. Runs only (treadmill = a run indoors).
+                if session.discipline == .running {
+                    Button {
+                        pendingTreadmillLog = session
+                        confirmingPlan = nil
+                    } label: {
+                        Label("I ran this on a treadmill", systemImage: "figure.run")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                            .frame(maxWidth: .infinity).frame(height: 50)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+                    }
+                    .buttonStyle(.plain)
+                }
                 Button("Not now") { confirmingPlan = nil }
                     .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
             }
@@ -587,18 +608,31 @@ struct TodayView: View {
         .padding(Theme.Space.lg)
         .frame(maxWidth: .infinity)
         .presentationDetents([.height(confirmSheetHeight(rowCount: exercises.count + structure.count,
-                                                         hasRationale: !(session.rationale ?? "").isEmpty))])
+                                                         hasRationale: !(session.rationale ?? "").isEmpty,
+                                                         hasTreadmill: session.discipline == .running))])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+    }
+
+    /// The planned run, ready to log as a treadmill session: today's date, the prescribed distance,
+    /// marked indoor, with the EXPECTED time pre-filled from the target pace — so the athlete
+    /// confirms or tweaks two numbers rather than facing a blank form. LogWorkoutView's save credits
+    /// the plan, so logging it here closes today's session exactly like a tracked run would.
+    private func treadmillPrefill(_ session: PlannedSession) -> LogWorkoutPrefill {
+        let dist = session.targetDistanceM ?? 0
+        let expectedS: Double = (dist > 0 && (session.targetPaceSPerKm ?? 0) > 0)
+            ? (dist / 1000) * (session.targetPaceSPerKm ?? 0) : 0
+        return LogWorkoutPrefill(type: .run, date: Date(), durationS: expectedS,
+                                 distanceM: dist, indoor: true, effort: nil, exercises: [])
     }
 
     /// 380pt for the calm cardio confirm; prescription rows grow it (~66pt for a tall strength row,
     /// which bounds the run rows too), capped so a big session scrolls inside the sheet instead of
     /// swallowing the screen. A rationale line buys a little extra so it never squeezes the CTA.
-    private func confirmSheetHeight(rowCount: Int, hasRationale: Bool) -> CGFloat {
-        let base: CGFloat = hasRationale ? 420 : 380
+    private func confirmSheetHeight(rowCount: Int, hasRationale: Bool, hasTreadmill: Bool = false) -> CGFloat {
+        let base: CGFloat = (hasRationale ? 420 : 380) + (hasTreadmill ? 62 : 0)   // room for the treadmill option
         guard rowCount > 0 else { return base }
-        return min(700, base + CGFloat(rowCount) * 66)
+        return min(760, base + CGFloat(rowCount) * 66)
     }
 
     /// One structured-run step line — same content as SessionDetailSheet's Workout section rows.

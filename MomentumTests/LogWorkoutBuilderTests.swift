@@ -33,6 +33,34 @@ struct LogWorkoutBuilderTests {
         #expect(ProfileStats(workouts: all).totalWorkouts == 1)   // counted in Progress
     }
 
+    @Test func treadmillLogClosesTodaysPlannedRun() throws {
+        // The Today plan card's "I ran this on a treadmill" flow: logging an indoor run against
+        // today's prescription must credit the plan, exactly like a tracked run — otherwise the
+        // planned session stays open forever for anyone who runs indoors.
+        let container = try makeContainer(); let ctx = container.mainContext
+        let session = PlannedSession()
+        session.date = Calendar.current.startOfDay(for: Date())
+        session.discipline = .running
+        session.status = .planned
+        session.targetDistanceM = 6 * Formatters.metersPerMile      // the prescribed distance
+        let profile = UserProfile(); let plan = TrainingPlan()
+        ctx.insert(profile); ctx.insert(plan); ctx.insert(session)
+        plan.sessions = [session]; profile.plan = plan
+        try ctx.save()
+
+        // Built exactly as the treadmill quick-log builds it: indoor, the planned distance, a time.
+        let run = LogWorkoutBuilder.make(type: .run, date: Date(), durationS: 4320,
+                                         distanceM: session.targetDistanceM ?? 0,
+                                         indoor: true, effort: nil, note: "",
+                                         exercises: [], resolveExercise: { _ in Exercise() })
+        ctx.insert(run); try ctx.save()
+
+        #expect(PlanCoaching.creditWorkout(run, to: plan, in: ctx) != nil)
+        #expect(session.status == .completed)                       // today's plan closes
+        #expect(session.completedWorkout?.id == run.id)
+        #expect(run.note.contains("Treadmill"))                     // logged as the indoor run it was
+    }
+
     @Test func manualStrengthTotalsVolumeAndSets() throws {
         let container = try makeContainer(); let ctx = container.mainContext
         let sets = [LogWorkoutBuilder.SetInput(reps: 5, weightKg: 100),
