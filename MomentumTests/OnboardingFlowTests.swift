@@ -74,6 +74,32 @@ struct OnboardingFlowTests {
         #expect(bare.finish(in: ctx).restingHR == nil)
     }
 
+    @Test func heightPersistsAndSharpensTheFuelBMR() throws {
+        // Height was added to the metrics step (2026-07-24) because the Fuel BMR needs it — the
+        // step promised sharper calorie targets but was skipping the input that matters most.
+        let pc = PersistenceController.inMemory()
+        let ctx = pc.container.mainContext
+        let vm = OnboardingViewModel()
+        vm.activities = [.run]
+        vm.goal = .endurance
+        vm.sex = .male
+        vm.birthYear = Calendar.current.component(.year, from: Date()) - 30
+        vm.bodyMassKg = 70
+        vm.heightCm = 185                         // a tall athlete, far from the 172 cm fallback
+
+        let profile = vm.finish(in: ctx)
+        #expect(profile.heightCm == 185)          // the calorie inputs are now complete
+
+        // Mifflin–St Jeor actually consumes it — the real height shifts BMR off the assumed one.
+        let real = FuelReadiness.bmr(kg: 70, heightCm: 185, age: 30, isMale: true)
+        let assumed = FuelReadiness.bmr(kg: 70, heightCm: FuelReadiness.fallbackHeightCm, age: 30, isMale: true)
+        #expect(abs(real - assumed) > 50)         // 13 cm × 6.25 ≈ 81 kcal — a meaningful target shift
+
+        // Skipping the (optional) step leaves it nil → fueling honestly falls back, never a fabricated height.
+        let bare = OnboardingViewModel(); bare.activities = [.run]
+        #expect(bare.finish(in: ctx).heightCm == nil)
+    }
+
     @Test func progressAdvancesAndSkipsEquipmentForNonLifters() {
         let vm = OnboardingViewModel()
         vm.activities = [.run]                        // no lifting

@@ -920,12 +920,36 @@ struct OnboardingFlow: View {
         questionScaffold("A bit about you", subtitle: "Optional — sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
             sexSelector.reveal(cascade(0))
             metricRow("Age", "\(ageDisplay)", { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
+            // Height feeds the BMR that drives your fuel targets — the same Mifflin–St Jeor the Fuel
+            // page uses; without it that estimate leans on an assumed 172 cm. Weight sits below it,
+            // the two body figures together.
+            metricRow("Height", heightDisplay, { adjustHeight(-1) }, { adjustHeight(1) }).reveal(cascade(2))
             metricRow("Weight", "\(weightDisplayValue) \(useMetricWeight ? "kg" : "lb")",
-                      { adjustWeight(useMetricWeight ? -2 : -5) }, { adjustWeight(useMetricWeight ? 2 : 5) }).reveal(cascade(2))
+                      { adjustWeight(useMetricWeight ? -2 : -5) }, { adjustWeight(useMetricWeight ? 2 : 5) }).reveal(cascade(3))
         }
     }
 
     private func setAge(_ a: Int) { vm.birthYear = currentYear - min(90, max(13, a)) }
+
+    /// Height display + entry, matching the FuelGoalsSheet format exactly (5′8″ imperial / 172 cm
+    /// metric) and unit choice (follows weight). Always STORED in cm (SI); nil until the athlete
+    /// adjusts it, so skipping the step keeps the honest fallback rather than fabricating a height.
+    private var enteredHeightCm: Double { vm.heightCm ?? FuelReadiness.fallbackHeightCm }
+    private var heightDisplay: String {
+        if useMetricWeight { return "\(Int(enteredHeightCm.rounded())) cm" }
+        let inches = Int((enteredHeightCm / 2.54).rounded())
+        return "\(inches / 12)′\(inches % 12)″"
+    }
+    /// Nudge height by `delta` in the DISPLAYED unit (cm metric / inches imperial). Imperial steps
+    /// in whole inches so the shown value never drifts off a clean foot-inch reading.
+    private func adjustHeight(_ delta: Double) {
+        if useMetricWeight {
+            vm.heightCm = min(230, max(120, (enteredHeightCm + delta).rounded()))
+        } else {
+            let inches = min(90, max(48, (enteredHeightCm / 2.54).rounded() + delta))
+            vm.heightCm = inches * 2.54
+        }
+    }
     /// Nudge stored bodyMass by `delta` in the DISPLAYED unit (kg or lb), rounding + clamping in that
     /// unit so the shown number steps cleanly (2 kg / 5 lb); always persists kg.
     private func adjustWeight(_ delta: Double) {
