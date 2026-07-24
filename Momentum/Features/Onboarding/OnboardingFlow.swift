@@ -610,12 +610,12 @@ struct OnboardingFlow: View {
                         let metrics = await services.health.importedBodyMetrics()
                         if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
                         if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
-                        // Backfill their real training history (UUID-deduped, safe-commit) so day one
-                        // opens on THEIR log — Watch/Garmin/Oura runs via Health — not an empty grid.
-                        // This imports actual logged runs (accurate), distinct from the pace-estimate
-                        // path removed from calibration. Un-awaited so the step transition never waits.
-                        let ctx = context
-                        Task { _ = await services.health.importExternalWorkouts(into: ctx, since: nil) }
+                        // We deliberately do NOT import the athlete's Health workout history here
+                        // (user call 2026-07-24): a fresh account starts on an empty grid and fills
+                        // from what they do IN the app. Their back-catalog is available on demand via
+                        // Settings → Import from Apple Health — never auto-populated. Connecting Health
+                        // still earns the non-workout wins above (resting HR + body mass → Karvonen
+                        // zones) and live HR / recovery signals going forward.
                         goNext()
                         // Re-arm AFTER the step transition settles (in case the athlete comes
                         // back) — an immediate reset would re-open the double-tap window.

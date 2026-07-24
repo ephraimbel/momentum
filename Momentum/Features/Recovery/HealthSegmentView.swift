@@ -51,8 +51,6 @@ struct HealthSegmentView: View {
     /// How old the cached model may grow before a re-entry quietly rebuilds behind it. Short
     /// enough that a post-sync visit feels fresh, long enough that segment flicking is free.
     private static let staleAfter: TimeInterval = 180
-    /// Last quiet device-workout sync (hourly throttle) — session-scoped, resets on relaunch.
-    @MainActor private static var lastQuietSync = Date.distantPast
     /// A harness-injected model never recomputes (no Health reads, no SwiftData).
     private var isStatic = false
 
@@ -129,16 +127,9 @@ struct HealthSegmentView: View {
             // ease proposal (deduped upstream; never auto-applies, never stacks with autoAdapt).
             _ = CoachProactive.seedOverreachingEase(state: built.balanceWeek.state,
                                                     plan: plan, in: context)
-            // Quiet device sync (hourly): workouts a Watch/Garmin mirrored into Health since the
-            // last look stream in without the Settings button. Runs AFTER the model is on screen
-            // (never delays first paint); UUID-deduped so a no-op pass is one HK query. New
-            // arrivals re-key this task through the host's @Query and the page rebuilds itself.
-            if services.health.isAuthorized,
-               Date().timeIntervalSince(Self.lastQuietSync) > 3600 {
-                Self.lastQuietSync = Date()
-                let since = Calendar.current.date(byAdding: .day, value: -14, to: Date())
-                _ = await services.health.importExternalWorkouts(into: context, since: since)
-            }
+            // No automatic workout import (user call 2026-07-24): Apple Health workouts never stream
+            // in on their own — the log is only what the athlete does in the app. Their back-catalog
+            // (and any Watch/Garmin runs they want pulled in) is an explicit Settings → Import action.
         }
         .sheet(isPresented: $showCheckin) {
             // The check-in saves through its own model context; the host's @Query then feeds a
@@ -331,12 +322,9 @@ struct HealthSegmentView: View {
         connecting = true
         Task {
             _ = await services.health.requestAuthorization()
-            // Fill the page with the athlete's real history the moment they connect: the workouts
-            // their devices (Watch, Garmin, Oura — all via Health) already mirrored in. Without
-            // this, load/rhythm cards stayed empty until the user found Settings → Import.
-            // Unconditional: reads may be granted even when write-share was declined, and
-            // without reads this is a free no-op.
-            _ = await services.health.importExternalWorkouts(into: context, since: nil)
+            // Connecting grants recovery signals + live HR — it does NOT pull in the athlete's
+            // workout history (user call 2026-07-24). Apple Health workouts never auto-populate the
+            // log; the back-catalog is an explicit Settings → Import from Apple Health action.
             connecting = false
             refresh += 1   // new task key → rebuild off the fresh grant
         }
