@@ -188,7 +188,9 @@ struct SettingsView: View {
 
     private var membershipFooter: String? {
         paywall.isPro
-            ? "Manage or cancel anytime in the App Store — we’ll remind you before it renews."
+            // No invented promises in review-visible copy: the app sends no renewal reminder
+            // (Apple does, by email) — claim only what we do. Cancel stays the honest ≤2 taps.
+            ? "Manage or cancel anytime in the App Store — two taps, no hoops."
             : "Unlock the AI coach, full multi-discipline plans, advanced analytics, and your full history."
     }
 
