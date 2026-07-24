@@ -69,6 +69,12 @@ enum BarcodeFood {
         let perServing = kcalValue("serving") != nil
         let basis = perServing ? "serving" : "100g"
         guard let kcal = kcalValue(basis), kcal >= 0, kcal < 5000 else { return nil }
+        // NO fabricated numbers, ever: a label that doesn't declare all three macros declines to
+        // "describe it instead" rather than render invented zeros as measured label truth. (Real
+        // zeros pass — a diet soda declares 0/0/0 explicitly.)
+        guard let carbs = value("carbohydrates", basis),
+              let protein = value("proteins", basis),
+              let fat = value("fat", basis) else { return nil }
 
         let servingSize = (product["serving_size"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -80,9 +86,9 @@ enum BarcodeFood {
             brand: brand,
             servingDescription: servingDescription,
             kcal: kcal,
-            carbsG: value("carbohydrates", basis) ?? 0,
-            proteinG: value("proteins", basis) ?? 0,
-            fatG: value("fat", basis) ?? 0,
+            carbsG: carbs,
+            proteinG: protein,
+            fatG: fat,
             sodiumMg: (sodiumG(basis) ?? 0) * 1000,
             potassiumMg: value("potassium", basis).map { $0 * 1000 },
             calciumMg: value("calcium", basis).map { $0 * 1000 },

@@ -69,6 +69,11 @@ struct BarcodeFoodTests {
                                     barcode: "12345678") == nil)      // no energy → no card
         #expect(BarcodeFood.product(fromOFF: off(#"{"product_name":"Bar","nutriments":{"energy-kcal_100g":99999}}"#),
                                     barcode: "12345678") == nil)      // absurd energy
+        // A label missing any macro must decline — an invented 0 would render as measured truth.
+        #expect(BarcodeFood.product(fromOFF: off(#"""
+            {"product_name":"Bar","nutriments":{"energy-kcal_100g":200,
+             "carbohydrates_100g":30,"proteins_100g":5}}
+            """#), barcode: "12345678") == nil)                       // fat undeclared
         #expect(BarcodeFood.product(fromOFF: Data("not json".utf8), barcode: "1") == nil)
     }
 

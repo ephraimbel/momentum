@@ -57,11 +57,13 @@ struct BarcodeScanView: View {
         }
         .preferredColorScheme(.dark)   // chrome sits on live camera — always night
         .task {
-            if demoMode {
+            #if DEBUG
+            if demoMode {   // the canned card exists only in DEBUG; release compiles it out
                 try? await Task.sleep(nanoseconds: 600_000_000)
                 phase = .found(Self.demoProduct)
                 return
             }
+            #endif
             // Ask up front so the denied state is a designed screen, not a black void.
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .authorized:
@@ -225,9 +227,12 @@ struct BarcodeScanView: View {
                     Text("KCAL").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
                         .foregroundStyle(Theme.inkTertiary)
                 }
-                macro("\(numbers.carbsG)g", "CARBS")
-                macro("\(numbers.proteinG)g", "PROTEIN")
-                macro("\(numbers.fatG)g", "FAT")
+                // Each macro wears its ring's ink (the Fuel-page doctrine exception: numbers in
+                // data colors bind this card to the rings and journal rows it feeds). Energy
+                // stays neutral — it's the headline number, not a ring.
+                macro("\(numbers.carbsG)g", "CARBS", ink: Theme.Fuel.carbs)
+                macro("\(numbers.proteinG)g", "PROTEIN", ink: Theme.Fuel.protein)
+                macro("\(numbers.fatG)g", "FAT", ink: Theme.Fuel.fat)
                 Spacer(minLength: 0)
             }
             .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: servings)
@@ -267,13 +272,15 @@ struct BarcodeScanView: View {
                 .fill(Theme.surface))
     }
 
-    private func macro(_ value: String, _ label: String) -> some View {
+    private func macro(_ value: String, _ label: String, ink: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(value).font(.display(18, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+            Text(value).font(.display(18, weight: .heavy)).monospacedDigit().foregroundStyle(ink)
                 .contentTransition(.numericText())
             Text(label).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
                 .foregroundStyle(Theme.inkTertiary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(value) \(label.lowercased())")
     }
 
     private func stepButton(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -335,7 +342,10 @@ struct BarcodeScanView: View {
 
     private func resumeScanning() {
         servings = 1
-        phase = demoMode ? .found(Self.demoProduct) : .scanning
+        #if DEBUG
+        if demoMode { phase = .found(Self.demoProduct); return }
+        #endif
+        phase = .scanning
     }
 
     #if DEBUG
@@ -395,6 +405,13 @@ private struct CameraPreview: UIViewRepresentable {
                       let input = try? AVCaptureDeviceInput(device: camera),
                       session.canAddInput(input) else { return }
                 device = camera
+                // Barcodes live at arm's length: restricting focus hunting to the near range
+                // cuts acquisition time on close, small codes.
+                if camera.isAutoFocusRangeRestrictionSupported,
+                   (try? camera.lockForConfiguration()) != nil {
+                    camera.autoFocusRangeRestriction = .near
+                    camera.unlockForConfiguration()
+                }
                 session.beginConfiguration()
                 session.addInput(input)
                 let output = AVCaptureMetadataOutput()
