@@ -68,6 +68,13 @@ enum FuelReadiness {
 
     enum Status: String, Sendable { case fueled, onTrack, behind, empty }
 
+    /// Which macro the dashboard leads with — the athlete's optimization target. Plan-fueling
+    /// (`.fuel`) is CARB-first: carbs power the session, and getting enough of them is the whole
+    /// job. Every muscle-oriented goal (leaner / build / custom) is PROTEIN-first: they're keeping
+    /// or building muscle, which protein drives. This picks what the status bar and headline
+    /// judge, and what ring the page leads with.
+    enum Primary: String, Sendable { case carbs, protein }
+
     /// The endurance micros — eaten so far + sex-aware daily floors (RDA/AI anchors). Grouped so
     /// the readout grows without another dozen loose fields.
     struct Micros: Sendable, Equatable {
@@ -97,8 +104,11 @@ enum FuelReadiness {
         let proteinFloorG: Int
         let fatFloorG: Int
         let sodiumFloorMg: Int
-        /// Carb readiness vs the driving session — the headline judgment.
+        /// Readiness of the leading macro (`primary`) vs its floor — the headline judgment.
         let status: Status
+        /// Which macro leads the dashboard (carbs for plan-fueling, protein for muscle goals).
+        /// The status bar, the headline, and the ring order all follow this.
+        let primary: Primary
         /// "Tomorrow's long run (1h 45m)" / "today's race" — what the carb target is keyed to. nil = easy horizon.
         let drivingSession: String?
         /// The driving session is tomorrow's race (the classic all-day carb load) / is later today
@@ -116,6 +126,12 @@ enum FuelReadiness {
         let refuelDue: Bool
         /// Potassium · magnesium · iron · calcium — the quiet second row.
         let micros: Micros
+
+        /// The leading macro's eaten amount / floor / word — the status bar and headline read
+        /// these so they don't each re-branch on `primary`.
+        var primaryValueG: Int { primary == .carbs ? carbsG : proteinG }
+        var primaryFloorG: Int { primary == .carbs ? carbsFloorG : proteinFloorG }
+        var primaryLabel: String { primary == .carbs ? "carbs" : "protein" }
     }
 
     // MARK: Constants (authoritative — change here, tests pin them)
@@ -284,16 +300,23 @@ enum FuelReadiness {
             ? (goal.customSodiumMg ?? sodiumBaselineMg + Int(sweatMg.rounded()))
             : sodiumBaselineMg + Int(sweatMg.rounded())
 
-        // Status paces the carb floor across the waking day, so 09:00 isn't judged against dinner.
+        // The leading macro follows the goal: carbs fund the plan's sessions; every muscle-oriented
+        // goal (leaner/build/custom) optimizes protein first. Status + headline judge THIS macro.
+        let primary: Primary = goal.kind == .fuel ? .carbs : .protein
+        let primaryValue = primary == .carbs ? carbs : protein
+        let primaryFloor = primary == .carbs ? carbsFloor : proteinFloor
+
+        // Status paces the leading macro's floor across the waking day, so 09:00 isn't judged
+        // against dinner.
         let status: Status
         if today.isEmpty {
             status = .empty
         } else {
             let hour = Double(calendar.component(.hour, from: now)) + Double(calendar.component(.minute, from: now)) / 60
             let dayFraction = ((hour - dayStartHour) / (dayEndHour - dayStartHour)).clamped(to: 0.15...1)
-            let expected = Double(carbsFloor) * dayFraction
-            if Double(carbs) >= Double(carbsFloor) { status = .fueled }
-            else if Double(carbs) >= expected * 0.8 { status = .onTrack }
+            let expected = Double(primaryFloor) * dayFraction
+            if Double(primaryValue) >= Double(primaryFloor) { status = .fueled }
+            else if Double(primaryValue) >= expected * 0.8 { status = .onTrack }
             else { status = .behind }
         }
 
@@ -310,25 +333,36 @@ enum FuelReadiness {
             mealCount: today.count, pendingCount: today.count - numbered.count,
             kcalFloor: kcalFloor, carbsFloorG: carbsFloor, carbsHighG: carbsHigh,
             proteinFloorG: proteinFloor, fatFloorG: fatFloor, sodiumFloorMg: sodiumFloor,
-            status: status, drivingSession: drivingLabel,
+            status: status, primary: primary, drivingSession: drivingLabel,
             raceEve: raceEve, drivingIsToday: drivingIsToday,
             kcalIsGoal: kcalIsGoal, goalNote: goalNote,
-            headline: headline(status: status, carbs: carbs, floor: carbsFloor,
+            headline: headline(status: status, primary: primary,
+                               value: primaryValue, floor: primaryFloor,
                                driving: drivingLabel, refuelDue: refuelDue),
             refuelDue: refuelDue,
             micros: micros)
     }
 
-    /// Plain words, no shame: what's true and the one next step.
-    private static func headline(status: Status, carbs: Int, floor: Int,
+    /// Plain words, no shame: what's true about the leading macro and the one next step.
+    private static func headline(status: Status, primary: Primary, value: Int, floor: Int,
                                  driving: String?, refuelDue: Bool) -> String {
         if refuelDue { return "Refuel window — carbs + protein now beat carbs + protein later." }
+        // Protein-first (muscle goals): the session isn't the story, protecting muscle is.
+        if primary == .protein {
+            switch status {
+            case .empty: return "Log your first meal — aiming ≈\(floor) g of protein to protect muscle."
+            case .behind: return "≈\(value) g of protein so far — building toward ≈\(floor) g."
+            case .onTrack: return "On track — ≈\(value) g of \(floor) g protein."
+            case .fueled: return "Protein locked — ≈\(value) g banked."
+            }
+        }
+        // Carb-first (plan fueling): keyed to the session the carbs power.
         let target = driving.map { "ready for \($0)" } ?? "for an easy day"
         switch status {
         case .empty: return "Log your first meal — aiming ≈\(floor) g of carbs \(target)."
-        case .behind: return "≈\(carbs) g of carbs so far — building toward ≈\(floor) g \(target)."
-        case .onTrack: return "On track — ≈\(carbs) g of \(floor) g \(target)."
-        case .fueled: return "Fueled — ≈\(carbs) g of carbs banked \(target)."
+        case .behind: return "≈\(value) g of carbs so far — building toward ≈\(floor) g \(target)."
+        case .onTrack: return "On track — ≈\(value) g of \(floor) g \(target)."
+        case .fueled: return "Fueled — ≈\(value) g of carbs banked \(target)."
         }
     }
 

@@ -83,11 +83,11 @@ struct FuelGoalsSheet: View {
         VStack(spacing: 0) {
             goalRow(.fuel, fuelForTitle, fuelForLine)
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            goalRow(.leaner, "Leaner", "A gentle deficit that never raids training. Protein rises to protect muscle; carbs ease on lighter days.")
+            goalRow(.leaner, "Leaner", "A gentle deficit that never raids training. Your Fuel bar leads with protein to protect muscle; carbs ease on lighter days.")
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            goalRow(.build, "Build", "A small surplus for strength and rebuild blocks.")
+            goalRow(.build, "Build", "A small surplus for strength and rebuild blocks — your Fuel bar leads with protein.")
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            goalRow(.custom, "Custom", "Your numbers, your call. Training burn still adds on top.")
+            goalRow(.custom, "Custom", "Your numbers, your call, protein-led. Training burn still adds on top.")
         }
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))

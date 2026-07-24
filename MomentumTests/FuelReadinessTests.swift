@@ -69,6 +69,37 @@ struct FuelReadinessTests {
         #expect(fueled.status == .fueled)
     }
 
+    @Test func muscleGoalsLeadWithProteinNotCarbs() {
+        // Plan-fueling is carb-first (carbs power the session); muscle goals (leaner/build/custom)
+        // are protein-first. The status bar + headline must judge the LEADING macro.
+        // proteinFloor(leaner) = 1.9 g/kg × 70 = 133.
+        let leaner = goal(.leaner)
+
+        // Protein floor met, carbs almost nothing → FUELED. A carb-led judge would say "behind".
+        let proteinMet = FuelReadiness.readout(meals: [meal(1, carbs: 20, protein: 140)],
+                                               sessions: [], workoutsToday: [],
+                                               bodyMassKg: 70, goal: leaner, now: now)
+        #expect(proteinMet.primary == .protein)
+        #expect(proteinMet.primaryValueG == 140 && proteinMet.primaryFloorG == 133)
+        #expect(proteinMet.status == .fueled)
+        #expect(proteinMet.headline.lowercased().contains("protein"))
+
+        // Carbs sky-high but protein low → NOT fueled: on a muscle goal carbs don't drive the bar.
+        let carbsHighProteinLow = FuelReadiness.readout(meals: [meal(1, carbs: 400, protein: 10)],
+                                                        sessions: [], workoutsToday: [],
+                                                        bodyMassKg: 70, goal: leaner, now: now)
+        #expect(carbsHighProteinLow.status != .fueled)
+
+        // build also leads with protein; plan-fueling (the default) still leads with carbs.
+        let build = FuelReadiness.readout(meals: [meal(1, protein: 20)], sessions: [],
+                                          workoutsToday: [], bodyMassKg: 70, goal: goal(.build), now: now)
+        #expect(build.primary == .protein)
+        let plan = FuelReadiness.readout(meals: [meal(1, carbs: 400, protein: 10)],
+                                         sessions: [], workoutsToday: [], bodyMassKg: 70, now: now)
+        #expect(plan.primary == .carbs)
+        #expect(plan.status == .fueled)   // carbs well past the floor
+    }
+
     @Test func trainingRaisesEnergyAndSodiumFloors() {
         let long = FuelReadiness.WorkoutInput(endedAt: now.addingTimeInterval(-3 * 3600),
                                               durationS: 2 * 3600, kcal: 1400)

@@ -384,14 +384,16 @@ struct FuelView: View {
     private var readoutStrip: some View {
         let r = readout
         let tip = self.tip
-        let fraction = min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG)))
+        // The bar follows the goal's leading macro — carbs for plan-fueling, protein for muscle goals.
+        let fraction = min(1, CGFloat(r.primaryValueG) / CGFloat(max(1, r.primaryFloorG)))
+        let primaryTint = r.primary == .carbs ? Theme.Fuel.carbs : Theme.Fuel.protein
         return Button { showingReadout = true } label: {
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(statusWord(r.status))
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
                         .contentTransition(.opacity)
-                    Text(carbsLine(r))
+                    Text(primaryLine(r))
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                         .monospacedDigit()
                         .contentTransition(.numericText())
@@ -410,9 +412,9 @@ struct FuelView: View {
                 Capsule().fill(Theme.surface)
                     .overlay(alignment: .leading) {
                         Capsule()
-                            .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.Fuel.carbs))
+                            .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(primaryTint))
                             .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
-                            .opacity(r.carbsG > 0 ? 1 : 0)
+                            .opacity(r.primaryValueG > 0 ? 1 : 0)
                     }
                     .frame(height: 5)
                     .clipShape(Capsule())
@@ -424,7 +426,9 @@ struct FuelView: View {
                 // FOR tomorrow's long session (1h 45m)". Hidden on an easy horizon (nil), exactly
                 // like the sheet's keyed-to line. Race eve steps up half a voice (secondary ink,
                 // semibold) — the one morning the denominator IS the headline.
-                if let driving = r.drivingSession {
+                // The plan→carb link — only when carbs lead. On a protein-first goal the session
+                // still sets the carb floor, but it isn't the primary story, so it stays in the sheet.
+                if r.primary == .carbs, let driving = r.drivingSession {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("FOR")
                             .font(.rounded(10, weight: .bold)).tracking(1.2)
@@ -463,9 +467,9 @@ struct FuelView: View {
         .animation(Motion.standard, value: tip)
         .accessibilityLabel("Fueling readout")
         .accessibilityValue(
-            (r.status == .fueled ? "about \(r.carbsG) grams of carbohydrates banked, floor met"
-                                 : "about \(r.carbsG) of \(r.carbsFloorG) grams of carbohydrates")
-            + (r.drivingSession.map { ", keyed to \($0)" } ?? ""))
+            (r.status == .fueled ? "about \(r.primaryValueG) grams of \(r.primaryLabel) banked, floor met"
+                                 : "about \(r.primaryValueG) of \(r.primaryFloorG) grams of \(r.primaryLabel)")
+            + (r.primary == .carbs ? (r.drivingSession.map { ", keyed to \($0)" } ?? "") : ""))
         .accessibilityHint("Shows the full fueling detail")
         .sheet(isPresented: $showingReadout) { FuelReadoutSheet(readout: readout) }
     }
@@ -480,14 +484,19 @@ struct FuelView: View {
         }
     }
 
-    /// The carb clause after the status word. Past the floor the fraction goes away — "≈390 of
-    /// 210 g" reads like a mistake once you've sailed past it (a floor is not a denominator to
-    /// overshoot); from there the total banked is the whole story, in the engine's own verb.
-    private func carbsLine(_ r: FuelReadiness.DayReadout) -> String {
+    /// The leading macro's clause after the status word. Carbs carry a band top ("210–260 g");
+    /// protein is a single floor. Past the floor the fraction goes away — "≈390 of 210 g" reads
+    /// like a mistake once you've sailed past it (a floor is not a denominator to overshoot); from
+    /// there the total banked is the whole story, in the engine's own verb.
+    private func primaryLine(_ r: FuelReadiness.DayReadout) -> String {
+        let label = r.primaryLabel
         switch r.status {
-        case .empty: return "aiming ≈\(r.carbsFloorG)–\(r.carbsHighG) g carbs"
-        case .fueled: return "≈\(r.carbsG) g carbs banked"
-        case .behind, .onTrack: return "≈\(r.carbsG) of \(r.carbsFloorG) g carbs"
+        case .empty:
+            return r.primary == .carbs
+                ? "aiming ≈\(r.carbsFloorG)–\(r.carbsHighG) g carbs"
+                : "aiming ≈\(r.proteinFloorG) g protein"
+        case .fueled: return "≈\(r.primaryValueG) g \(label) banked"
+        case .behind, .onTrack: return "≈\(r.primaryValueG) of \(r.primaryFloorG) g \(label)"
         }
     }
 
@@ -848,9 +857,16 @@ struct FuelView: View {
         // in the Today card's MICROS grid, against sex-aware floors, and are estimated again
         // (they were briefly cut 2026-07-21 while nothing displayed them; the card met the
         // stated re-add condition).
+        // The leading macro takes the first ring (index 0 reveals first): protein on muscle goals,
+        // carbs on plan-fueling. Fat and sodium always trail.
         return HStack(alignment: .top, spacing: 0) {
-            FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
-            FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
+            if r.primary == .protein {
+                FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 0, tint: Theme.Fuel.protein)
+                FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 1, tint: Theme.Fuel.carbs)
+            } else {
+                FuelRing(value: r.carbsG, floor: r.carbsFloorG, label: "carbs", index: 0, tint: Theme.Fuel.carbs)
+                FuelRing(value: r.proteinG, floor: r.proteinFloorG, label: "protein", index: 1, tint: Theme.Fuel.protein)
+            }
             FuelRing(value: r.fatG, floor: r.fatFloorG, label: "fat", index: 2, tint: Theme.Fuel.fat)
             FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, tint: Theme.Fuel.sodium)
         }
@@ -1118,7 +1134,13 @@ private struct FuelReadoutSheet: View {
 
     var body: some View {
         let r = readout
-        let fraction = min(1, CGFloat(r.carbsG) / CGFloat(max(1, r.carbsFloorG)))
+        // The big bar leads with the goal's primary macro (carbs for plan-fueling, protein for
+        // muscle goals); the other macro drops to the floor-cell grid below.
+        let fraction = min(1, CGFloat(r.primaryValueG) / CGFloat(max(1, r.primaryFloorG)))
+        let primaryTint = r.primary == .carbs ? Theme.Fuel.carbs : Theme.Fuel.protein
+        let primaryCaption = r.primary == .carbs
+            ? "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs"
+            : "of \(r.proteinFloorG)+ g protein"
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
@@ -1128,29 +1150,34 @@ private struct FuelReadoutSheet: View {
                         .reveal(0)
                     VStack(alignment: .leading, spacing: Theme.Space.xs) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text("≈\(r.carbsG) g")
+                            Text("≈\(r.primaryValueG) g")
                                 .font(.display(34, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                            Text("of \(r.carbsFloorG)–\(r.carbsHighG) g carbs")
+                            Text(primaryCaption)
                                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                         }
                         Capsule().fill(Theme.surface)
                             .overlay(alignment: .leading) {
                                 Capsule()
-                                    .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.Fuel.carbs))
+                                    .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(primaryTint))
                                     .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
-                                    .opacity(r.carbsG > 0 ? 1 : 0)
+                                    .opacity(r.primaryValueG > 0 ? 1 : 0)
                             }
                             .frame(height: 10)
                             .clipShape(Capsule())
                             .accessibilityElement()
-                            .accessibilityLabel("Carbohydrates")
-                            .accessibilityValue("about \(r.carbsG) of \(r.carbsFloorG) grams")
+                            .accessibilityLabel(r.primaryLabel.capitalized)
+                            .accessibilityValue("about \(r.primaryValueG) of \(r.primaryFloorG) grams")
                     }
                     .reveal(0.08)
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
                               alignment: .leading, spacing: Theme.Space.md) {
                         floorCell("≈\(r.kcal)", r.kcalIsGoal ? "of \(r.kcalFloor) kcal today" : "of \(r.kcalFloor)+ kcal")
-                        floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
+                        // The macro NOT in the big bar above — so all four still appear once.
+                        if r.primary == .carbs {
+                            floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
+                        } else {
+                            floorCell("≈\(r.carbsG) g", "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs")
+                        }
                         floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
                         floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
                     }
