@@ -634,6 +634,11 @@ enum PlanEngine {
         let r400 = min(10, 6 + weekIndex / 3)
         let rVO2 = min(6, 4 + weekIndex / 3)
         let rHill = min(12, 8 + weekIndex / 3)
+        // Hills need a hill — not every athlete has one, so the plan never REQUIRES terrain
+        // (2026-07-24). The power stimulus is a flat hard-surge fartlek by default; a hill
+        // is a welcome option, not a prerequisite. Dedicated hill sessions live in the
+        // workout library for athletes who have one and want it.
+        let powerNote = "Short, hard efforts for power — flat ground is perfect; take them uphill if you've got a hill."
         // Threshold dose scales with the ATHLETE, not just the calendar (Daniels: T volume per
         // session tops out near ~10% of weekly mileage). A 40 km/wk runner cruises 4–5×1km; a
         // 120 km/wk runner has earned 10–12. The calendar still gates the ramp inside the ceiling.
@@ -659,7 +664,7 @@ enum PlanEngine {
             case .base:
                 menu = [(.tempo, nil, nil, nil),
                         avoidImpact ? (.fartlek, "6×(2min hard / 90sec float)", nil, impactNote)
-                                    : (.hills, "\(rHill)×45sec hills", nil, nil),
+                                    : (.fartlek, "\(rHill)×(45sec hard / 90sec float)", nil, powerNote),
                         (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
             case .peak:
                 menu = shortRace
@@ -684,7 +689,7 @@ enum PlanEngine {
                                        : (.intervals, "\(r400)×400m @ 5K", fiveK, nil),
                             (.intervals, "\(rVO2)×3min @ VO2", nil, nil),
                             avoidImpact ? (.tempo, nil, nil, impactNote)
-                                        : (.hills, "\(rHill)×45sec hills", nil, nil),
+                                        : (.fartlek, "\(rHill)×(45sec hard / 90sec float)", nil, powerNote),
                             (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
                 } else if midRace {
                     menu = [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),

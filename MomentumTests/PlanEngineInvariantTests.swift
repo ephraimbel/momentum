@@ -113,10 +113,9 @@ struct PlanEngineInvariantTests {
                     #expect((s.targetDistanceM ?? 0) <= PlanEngine.longRunPeak(forRaceM: raceM, podium: podiumActive) + 1_000,
                             "\(label) w\(week.index): long run above cap")
                 }
-                // Injury steering holds in every phase.
-                if !Set(inputs.injuryHistory).isDisjoint(with: PlanEngine.impactSensitiveAreas) {
-                    #expect(s.runType != .hills, "\(label) w\(week.index): hills despite impact-sensitive history")
-                }
+                // The auto-plan never requires terrain — hills are library-only (2026-07-24), so no
+                // generated session, for any athlete, prescribes them.
+                #expect(s.runType != .hills, "\(label) w\(week.index): auto-plan required a hill")
                 if !Set(inputs.injuryHistory).isDisjoint(with: PlanEngine.speedSensitiveAreas) {
                     #expect(s.runType != .strides, "\(label) w\(week.index): strides despite speed-sensitive history")
                     #expect(s.intervals?.contains("@ 5K") != true, "\(label) w\(week.index): sprint reps despite history")

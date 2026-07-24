@@ -467,8 +467,10 @@ struct PlanEngineTests {
         #expect(!cleanPlan.weeks[3].isDeload)   // aggressive deloads every 5th, not 4th
     }
 
-    @Test func lowerLegInjuryAvoidsHillReps() {
-        // A shin history swaps high-impact hill reps for tempo — and says so on the session.
+    @Test func autoPlanNeverRequiresTerrain() {
+        // Hills need a hill and not every athlete has one — the plan never PRESCRIBES terrain
+        // (2026-07-24). Dedicated hill sessions live in the workout library for those who want them.
+        // The flat power stimulus is a fartlek, offered with a hill as an option, not a requirement.
         func runTypes(_ areas: [InjuryArea]) -> (types: Set<RunType>, notes: [String]) {
             var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
             inp.raceDistanceM = 5_000
@@ -479,11 +481,11 @@ struct PlanEngineTests {
             let sessions = plan.weeks.flatMap(\.sessions)
             return (Set(sessions.compactMap(\.runType)), sessions.compactMap(\.rationale))
         }
-        let hurt = runTypes([.shins])
-        #expect(!hurt.types.contains(.hills))
-        #expect(hurt.notes.contains { $0.lowercased().contains("injury history") })
-        let clean = runTypes([])
-        #expect(clean.types.contains(.hills))   // regression: hills stay without a history
+        // No auto-generated plan — clean OR injured — ever forces a hill.
+        #expect(!runTypes([]).types.contains(.hills))
+        #expect(!runTypes([.shins]).types.contains(.hills))
+        // The flat power fartlek that replaced it says a hill is welcome but optional.
+        #expect(runTypes([]).notes.contains { $0.lowercased().contains("hill") && $0.lowercased().contains("flat") })
     }
 
     @Test func hamstringInjuryAvoidsMaxSpeedWork() {
