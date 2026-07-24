@@ -60,6 +60,30 @@ struct BarcodeFoodTests {
         #expect(abs(p.sodiumMg - 8) < 0.001)               // salt 0.02 g ÷ 2.5 → g → mg
     }
 
+    /// Regression pinned from the LIVE database (2026-07-24): Coca-Cola's `sodium_serving` is 142
+    /// with unit "g" — it means mg. Salt fields are the reliably-grams source; salt-less entries
+    /// get the plausibility fold (nothing edible carries >8 g sodium per serving).
+    @Test("Dirty sodium units: salt wins, and bare mg-valued sodium folds to mg")
+    func dirtySodiumUnits() throws {
+        let coke = off(#"""
+        {"product_name":"Coca-Cola Zero Sugar","brands":"Coca-Cola",
+         "serving_size":"1 can (12 fl oz)",
+         "nutriments":{"energy-kcal_serving":0,"carbohydrates_serving":0,
+                       "proteins_serving":0,"fat_serving":0,
+                       "salt_serving":0.355,"sodium_serving":142}}
+        """#)
+        let p = try #require(BarcodeFood.product(fromOFF: coke, barcode: "049000042566"))
+        #expect(abs(p.sodiumMg - 142) < 0.001)             // salt 0.355 g ÷ 2.5 → 142 mg, not 142 g
+
+        let saltless = off(#"""
+        {"product_name":"Broth","brands":"X",
+         "nutriments":{"energy-kcal_100g":10,"carbohydrates_100g":1,
+                       "proteins_100g":1,"fat_100g":0,"sodium_100g":240}}
+        """#)
+        let b = try #require(BarcodeFood.product(fromOFF: saltless, barcode: "12345678"))
+        #expect(abs(b.sodiumMg - 240) < 0.001)             // 240 "g" is impossible → already mg
+    }
+
     @Test("Unknown product, missing name, or absurd energy decline honestly")
     func declines() {
         #expect(BarcodeFood.product(fromOFF: off(#"{}"#, status: 0), barcode: "1") == nil)

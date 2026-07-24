@@ -61,9 +61,17 @@ enum BarcodeFood {
         func kcalValue(_ basis: String) -> Double? {
             value("energy-kcal", basis) ?? value("energy", basis).map { $0 * 0.2390 }
         }
-        // Sodium ladder: EU labels declare salt, not sodium — sodium = salt ÷ 2.5.
-        func sodiumG(_ basis: String) -> Double? {
-            value("sodium", basis) ?? value("salt", basis).map { $0 / 2.5 }
+        // Sodium ladder, SALT FIRST — proven against the live database: OFF's `salt_*` fields
+        // are reliably grams (EU labels declare salt; the US importer derives it), while raw
+        // `sodium_*` units are dirty in the wild (Coca-Cola's sodium_serving says 142 with
+        // unit "g" — it means mg, and trusting it logged a can of soda as 142 g of sodium).
+        // For salt-less entries, a plausibility fold: more than 8 g of sodium in one serving
+        // isn't food — the raw number was already milligrams.
+        func sodiumMg(_ basis: String) -> Double? {
+            if let salt = value("salt", basis) { return salt / 2.5 * 1000 }
+            guard let na = value("sodium", basis) else { return nil }
+            let asGrams = na * 1000
+            return asGrams > 8000 ? na : asGrams
         }
 
         let perServing = kcalValue("serving") != nil
@@ -89,7 +97,7 @@ enum BarcodeFood {
             carbsG: carbs,
             proteinG: protein,
             fatG: fat,
-            sodiumMg: (sodiumG(basis) ?? 0) * 1000,
+            sodiumMg: sodiumMg(basis) ?? 0,
             potassiumMg: value("potassium", basis).map { $0 * 1000 },
             calciumMg: value("calcium", basis).map { $0 * 1000 },
             ironMg: value("iron", basis).map { $0 * 1000 }   // OFF stores grams; mg is ours
