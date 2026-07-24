@@ -78,13 +78,17 @@ struct PlanFeasibility: Sendable {
     /// - currentP5kSPerKm: current 5K-equivalent pace (fitness). nil when unknown → time check is skipped.
     /// - currentWeeklyVolumeM: recent weekly running volume (0 for a brand-new runner).
     /// - injuryProne: past injuries reported — with room to spare, the recommendation eases off.
+    /// - daysPerWeek: the athlete's training frequency. nil (unknown) skips the frequency check —
+    ///   the calendar can be generous while the week is the real constraint, and pretending two
+    ///   days prepares a marathon is exactly the dishonesty this engine exists to refuse.
     static func assess(raceDistanceM: Double?,
                        goalFinishTimeS: Double?,
                        currentP5kSPerKm: Double?,
                        currentWeeklyVolumeM: Double,
                        weeksAvailable: Int,
                        experience: ExperienceLevel,
-                       injuryProne: Bool = false) -> PlanFeasibility {
+                       injuryProne: Bool = false,
+                       daysPerWeek: Int? = nil) -> PlanFeasibility {
 
         guard let distanceM = raceDistanceM, distanceM > 0 else {
             return PlanFeasibility(verdict: .noRace, weeksAvailable: weeksAvailable, weeksNeeded: 0,
@@ -128,21 +132,40 @@ struct PlanFeasibility: Sendable {
 
         let weeksNeeded = max(weeksForVolume, weeksForTime)
 
-        // 3) Verdict.
-        let verdict: Verdict
+        // 3) Verdict from the calendar.
+        let calendarVerdict: Verdict
         if goalBeyondReach && weeksAvailable < weeksNeeded {
-            verdict = .tooShort
+            calendarVerdict = .tooShort
         } else if weeksAvailable >= weeksNeeded {
-            verdict = .onTrack
+            calendarVerdict = .onTrack
         } else if weeksAvailable >= Int(ceil(Double(weeksNeeded) * 0.8)) {
-            verdict = .tight
+            calendarVerdict = .tight
         } else {
-            verdict = .tooShort
+            calendarVerdict = .tooShort
         }
 
-        // 4) Recommendation + honest copy.
+        // 3b) Frequency honesty: the calendar can be generous while the week is the real
+        // constraint. One day under the distance's effective minimum tightens the verdict; two or
+        // more under it is maintenance, not race preparation — say so.
+        var verdict = calendarVerdict
+        var frequencyShortfall: (days: Int, minDays: Int)? = nil
+        if let days = daysPerWeek {
+            let minDays = minimumEffectiveDays(forDistanceM: distanceM)
+            if days < minDays {
+                frequencyShortfall = (days: days, minDays: minDays)
+                if minDays - days >= 2 {
+                    verdict = .tooShort
+                } else if verdict == .onTrack {
+                    verdict = .tight
+                }
+            }
+        }
+
+        // 4) Recommendation + honest copy. The recommendation follows the CALENDAR verdict —
+        // aggression trades recovery for progress, and a frequency gap isn't closed by pushing
+        // harder on fewer days; it's closed by adding a day (which the copy says plainly).
         let recommended: PlanIntensity
-        switch verdict {
+        switch calendarVerdict {
         case .onTrack:
             // Ease in new runners and anyone with an injury history; everyone else builds.
             recommended = (experience == .new || injuryProne) ? .gentle : .balanced
@@ -154,7 +177,9 @@ struct PlanFeasibility: Sendable {
 
         let (headline, detail, options) = copy(verdict: verdict, weeksAvailable: weeksAvailable,
                                                weeksNeeded: weeksNeeded, distanceM: distanceM,
-                                               realisticFinishS: goalFinishTimeS != nil ? realisticFinishS : nil)
+                                               realisticFinishS: goalFinishTimeS != nil ? realisticFinishS : nil,
+                                               calendarVerdict: calendarVerdict,
+                                               frequencyShortfall: frequencyShortfall)
 
         return PlanFeasibility(verdict: verdict, weeksAvailable: weeksAvailable, weeksNeeded: weeksNeeded,
                                recommended: recommended, headline: headline, detail: detail,
@@ -194,6 +219,18 @@ struct PlanFeasibility: Sendable {
         }
     }
 
+    /// The effective training-frequency floor for a distance — under this, weekly structure can't
+    /// hold a long run AND quality AND enough easy volume, so the build maintains rather than
+    /// prepares. (The engine still generates whatever week the athlete asks for; this is the
+    /// honesty layer, not a gate.)
+    static func minimumEffectiveDays(forDistanceM distanceM: Double) -> Int {
+        switch RaceDistance.nearest(toMeters: distanceM) {
+        case .fiveK, .tenK: 3
+        case .half, .marathon: 4
+        case .fiftyK: 5
+        }
+    }
+
     /// Sustainable pace-improvement rate per week (fraction faster), by experience — beginners improve
     /// fastest, the trained plateau. Deliberately conservative.
     private static func improvementPerWeek(_ e: ExperienceLevel) -> Double {
@@ -206,15 +243,35 @@ struct PlanFeasibility: Sendable {
     }
 
     private static func copy(verdict: Verdict, weeksAvailable: Int, weeksNeeded: Int,
-                             distanceM: Double, realisticFinishS: Double?) -> (String, String, [String]) {
+                             distanceM: Double, realisticFinishS: Double?,
+                             calendarVerdict: Verdict? = nil,
+                             frequencyShortfall: (days: Int, minDays: Int)? = nil) -> (String, String, [String]) {
         let label = RaceDistance.nearest(toMeters: distanceM).label.lowercased()
+
+        // Frequency-driven tooShort gets its own copy: the calendar may be fine — the WEEK is the
+        // problem, and "move your race later" would be advice for the wrong constraint.
+        if let f = frequencyShortfall, f.minDays - f.days >= 2 {
+            var opts = ["Train \(f.minDays) days a week — \(f.minDays + 1) is even better for a \(label)"]
+            if distanceM >= RaceDistance.half.meters {
+                let shorter = distanceM >= RaceDistance.marathon.meters ? "half marathon" : "10K"
+                opts.append("Point this week at a \(shorter) instead and build up from there")
+            }
+            if calendarVerdict == .tooShort {
+                opts.append("Move your race about \(max(1, weeksNeeded - weeksAvailable)) weeks later so you can build safely")
+            }
+            return ("\(f.days) days a week won't prepare a \(label)",
+                    "We'll build your week either way — but honestly, \(f.days) days holds fitness rather than building race readiness. A \(label) build needs room for a long run, quality work, AND easy volume; that starts at about \(f.minDays) days. Your best moves:",
+                    opts)
+        }
+
+        var (headline, detail, options): (String, String, [String])
         switch verdict {
         case .onTrack:
-            return ("You've got room",
+            (headline, detail, options) = ("You've got room",
                     "\(weeksAvailable) weeks is comfortable for a safe \(label) build. We'll progress you steadily and arrive fresh.",
                     [])
         case .tight:
-            return ("It'll be tight — but doable",
+            (headline, detail, options) = ("It'll be tight — but doable",
                     "\(weeksAvailable) weeks to your \(label). We'd ideally want about \(weeksNeeded). It's within reach if you stay consistent; an aggressive plan bridges the gap, and we'll watch your recovery closely.",
                     [])
         case .tooShort:
@@ -224,12 +281,23 @@ struct PlanFeasibility: Sendable {
                 let shorter = distanceM >= RaceDistance.marathon.meters ? "half marathon" : "10K"
                 opts.append("Run a \(shorter) now and build to the \(label) later")
             }
-            return ("That's a very short runway",
+            (headline, detail, options) = ("That's a very short runway",
                     "A safe \(label) build from where you are is about \(weeksNeeded) weeks, and you have \(weeksAvailable). We won't pretend otherwise — cramming that gap sharply raises injury risk. We'll still coach every day between now and the start line — fresh legs, race-pace touches, a plan that gets you there ready to run the day well — but honestly, here are your best moves:",
                     opts)
         case .noRace:
-            return ("A plan that grows with you", "", [])
+            (headline, detail, options) = ("A plan that grows with you", "", [])
         }
+
+        // One day under the effective minimum: the calendar copy stands, with the frequency move
+        // named first — it's the cheapest fix on the table.
+        if let f = frequencyShortfall {
+            let tight = verdict == .tight && calendarVerdict == .onTrack
+            if tight {
+                detail = "\(weeksAvailable) weeks is comfortable — but \(f.days) days a week is the light side for a \(label). Most of the gap closes with one more day."
+            }
+            options.insert("Train \(f.minDays) days a week — a \(label) build really wants \(f.minDays)–\(f.minDays + 1)", at: 0)
+        }
+        return (headline, detail, options)
     }
 
     /// "h:mm:ss" / "mm:ss" for a duration.

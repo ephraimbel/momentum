@@ -424,6 +424,25 @@ struct OnboardingFlow: View {
                 SelectionCard(title: o.1, subtitle: o.2, isSelected: vm.daysPerWeek == o.0) { pick { vm.daysPerWeek = o.0 } }
                     .reveal(cascade(i))
             }
+            // Frequency honesty, said where the choice is made: a race build under its effective
+            // day floor holds fitness rather than building readiness (PlanFeasibility owns the
+            // numbers; the intensity step's verdict banner repeats the full read).
+            if vm.goal == .raceDistance, let race = vm.raceDistance,
+               vm.daysPerWeek < PlanFeasibility.minimumEffectiveDays(forDistanceM: race.meters) {
+                let minDays = PlanFeasibility.minimumEffectiveDays(forDistanceM: race.meters)
+                HStack(alignment: .top, spacing: Theme.Space.sm) {
+                    Image(systemName: "hand.raised.fill").font(.system(size: 13, weight: .semibold))
+                    Text("Honest note: a \(race.label.lowercased()) build really wants \(minDays)+ days — \(vm.daysPerWeek) will maintain fitness, not race readiness. We'll build your week either way.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .padding(Theme.Space.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+                .transition(.opacity)
+            }
         }
     }
 

@@ -35,6 +35,66 @@ struct PlanFeasibilityTests {
         #expect(f.options.contains { $0.localizedCaseInsensitiveContains("half") })
     }
 
+    // MARK: Frequency honesty (days/week is a real constraint, not a preference)
+
+    @Test func twoDaysTowardAMarathonIsCalledOut() {
+        // The calendar is generous — the WEEK is the problem. 2 days vs a 4-day floor → tooShort,
+        // with "add days" as the first move and no misdirected "move your race later".
+        let f = PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: nil,
+                                       currentP5kSPerKm: 300, currentWeeklyVolumeM: 60_000,
+                                       weeksAvailable: 20, experience: .experienced, daysPerWeek: 2)
+        #expect(f.verdict == .tooShort)
+        #expect(f.headline.contains("2 days"))
+        #expect(f.options.first?.localizedCaseInsensitiveContains("4 days") == true)
+        #expect(!f.options.contains { $0.localizedCaseInsensitiveContains("later") })   // calendar isn't the constraint
+    }
+
+    @Test func oneDayUnderTheFloorTightensTheVerdict() {
+        // 3 days toward a marathon (floor 4): comfortable calendar → .tight, with the day named
+        // as the cheapest fix — and the recommendation does NOT jump to aggressive (pushing
+        // harder on fewer days doesn't close a frequency gap).
+        let f = PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: nil,
+                                       currentP5kSPerKm: 300, currentWeeklyVolumeM: 60_000,
+                                       weeksAvailable: 20, experience: .experienced, daysPerWeek: 3)
+        #expect(f.verdict == .tight)
+        #expect(f.recommended == .balanced)
+        #expect(f.options.first?.localizedCaseInsensitiveContains("4") == true)
+        #expect(f.detail.localizedCaseInsensitiveContains("3 days"))
+    }
+
+    @Test func enoughDaysLeavesTheVerdictAlone() {
+        let base = PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: nil,
+                                          currentP5kSPerKm: 300, currentWeeklyVolumeM: 60_000,
+                                          weeksAvailable: 20, experience: .experienced)
+        let four = PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: nil,
+                                          currentP5kSPerKm: 300, currentWeeklyVolumeM: 60_000,
+                                          weeksAvailable: 20, experience: .experienced, daysPerWeek: 4)
+        #expect(base.verdict == .onTrack)
+        #expect(four.verdict == .onTrack)
+        #expect(four.headline == base.headline)
+        // 5K floor is 3 — a 3-day 5K build is honest work, no note.
+        let fiveK = PlanFeasibility.assess(raceDistanceM: RaceDistance.fiveK.meters, goalFinishTimeS: nil,
+                                           currentP5kSPerKm: 300, currentWeeklyVolumeM: 30_000,
+                                           weeksAvailable: 12, experience: .some, daysPerWeek: 3)
+        #expect(fiveK.verdict == .onTrack)
+    }
+
+    @Test func ultraFrequencyFloorIsFive() {
+        #expect(PlanFeasibility.minimumEffectiveDays(forDistanceM: RaceDistance.fiftyK.meters) == 5)
+        let f = PlanFeasibility.assess(raceDistanceM: RaceDistance.fiftyK.meters, goalFinishTimeS: nil,
+                                       currentP5kSPerKm: 280, currentWeeklyVolumeM: 70_000,
+                                       weeksAvailable: 24, experience: .experienced, daysPerWeek: 3)
+        #expect(f.verdict == .tooShort)   // two under the floor is maintenance, not an ultra build
+    }
+
+    @Test func noRaceIgnoresDays() {
+        let f = PlanFeasibility.assess(raceDistanceM: nil, goalFinishTimeS: nil, currentP5kSPerKm: 330,
+                                       currentWeeklyVolumeM: 20_000, weeksAvailable: 0,
+                                       experience: .some, daysPerWeek: 2)
+        #expect(f.verdict == .noRace)
+        #expect(f.options.isEmpty)
+    }
+
     @Test func fantasyGoalTimeIsCalledOutWithARealisticTarget() throws {
         // Current 5K ≈ 25:00; asking for 18:00 in 12 weeks isn't realistic — offer a real target.
         let f = PlanFeasibility.assess(raceDistanceM: RaceDistance.fiveK.meters, goalFinishTimeS: 1080,

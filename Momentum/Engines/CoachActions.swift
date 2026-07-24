@@ -46,7 +46,8 @@ enum CoachActions {
             currentWeeklyVolumeM: profile.weeklyRunVolumeM ?? 0,
             weeksAvailable: weeks,
             experience: experience,
-            injuryProne: !profile.injuryHistory.isEmpty)
+            injuryProne: !profile.injuryHistory.isEmpty,
+            daysPerWeek: profile.daysPerWeek)
     }
 
     // MARK: - Preview (the card's diff lines — shown before Apply, computed not narrated)

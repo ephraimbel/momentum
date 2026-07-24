@@ -65,7 +65,8 @@ final class OnboardingViewModel {
             currentWeeklyVolumeM: weeklyRunVolumeM ?? 0,
             weeksAvailable: hasRace ? (weeksToRace ?? 16) : 999,   // no date → no time pressure
             experience: experience,
-            injuryProne: !injuryAreas.isEmpty)
+            injuryProne: !injuryAreas.isEmpty,
+            daysPerWeek: daysPerWeek)
     }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0

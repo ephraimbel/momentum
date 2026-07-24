@@ -104,7 +104,8 @@ struct PlanSettingsSheet: View {
                                       currentWeeklyVolumeM: profile.weeklyRunVolumeM ?? 0,
                                       weeksAvailable: weeks,
                                       experience: experience,
-                                      injuryProne: !profile.injuryHistory.isEmpty)
+                                      injuryProne: !profile.injuryHistory.isEmpty,
+                                      daysPerWeek: days)   // the BUFFERED picker value — verdict updates live
     }
 
     var body: some View {
