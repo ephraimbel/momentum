@@ -42,7 +42,13 @@ extension StructuredWorkout {
     static func targetLabel(_ t: WorkoutStep.Target, distanceUnit: DistanceUnit) -> String {
         switch t {
         case let .distance(d): return d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
-        case let .duration(s): return s >= 60 ? "\(Int((s / 60).rounded())) min" : "\(Int(s)) s"
+        case let .duration(s):
+            // Never round a prescription: a 90 s jog must not read "2 min" (the athlete would
+            // stand around for 30 phantom seconds). Whole minutes say "min"; short odd durations
+            // speak in seconds like a coach ("90 s"); longer ones read as m:ss.
+            if s.truncatingRemainder(dividingBy: 60) == 0, s >= 60 { return "\(Int(s / 60)) min" }
+            if s < 120 { return "\(Int(s)) s" }
+            return String(format: "%d:%02d", Int(s) / 60, Int(s) % 60)
         }
     }
 

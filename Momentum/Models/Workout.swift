@@ -78,6 +78,9 @@ final class GPSDetail {
     var avgHR: Int?
     var avgCadence: Int?            // steps/min (run) or rpm (ride)
     var mapSnapshotData: Data?      // true-B/W PNG
+    /// `RouteSnapshotter.renderVersion` the snapshot was drawn with — the healer re-renders
+    /// stale-version images so look changes reach old workouts. 0 = pre-versioning.
+    var mapSnapshotVersion: Int = 0
     /// The basemap this workout's map renders with — chosen on the save screen (nil = the athlete's
     /// app-wide persisted style at render time). Raw string for SwiftData migration safety.
     var mapStyleRaw: String?

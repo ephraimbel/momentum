@@ -81,6 +81,14 @@ final class PhoneWatchSync: NSObject {
                     context["sessionPaceLo"] = pace * 0.94
                     context["sessionPaceHi"] = pace * 1.07
                 }
+                // A quality session's guided structure, whole: the watch runs the same step
+                // tracker the phone does, so the wrist can coach reps without the phone along.
+                if s.discipline == .running,
+                   let structured = StructuredWorkoutBuilder.build(from: s, p5kSPerKm: plan.p5kSPerKm,
+                                                                   raceDistanceM: profiles.first?.raceDistanceM),
+                   let steps = try? JSONEncoder().encode(structured) {
+                    context["sessionSteps"] = steps
+                }
             } else {
                 context["sessionCleared"] = true
             }
@@ -115,6 +123,13 @@ final class PhoneWatchSync: NSObject {
     }
 
     private static func detail(for s: PlannedSession, unit: DistanceUnit) -> String {
+        // Running sessions speak the same headline every phone surface does — a structured
+        // session's SHAPE ("10 × 400m @ 8:24 /mi"), a plain run's distance and pace. One
+        // formatter, so the wrist and the phone can never describe the day differently.
+        if s.discipline == .running {
+            let brief = PlanCoaching.brief(for: s, distanceUnit: unit, dropLeadingType: true)
+            if !brief.isEmpty { return brief }
+        }
         var parts: [String] = []
         if let m = s.targetDistanceM, m > 0 { parts.append(Formatters.distance(meters: m, unit: unit)) }
         if let pace = s.targetPaceSPerKm, pace > 0, s.discipline == .running {

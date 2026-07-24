@@ -75,7 +75,8 @@ struct FeedMediaView: View {
         ZStack {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            MuscleMapView(activation: muscles)
+            // Another athlete's post — pin neutral so it never inherits the viewer's own figure.
+            MuscleMapView(activation: muscles, sex: .neutral)
                 .padding(.vertical, Theme.Space.md)
                 .frame(maxWidth: .infinity)
         }

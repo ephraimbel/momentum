@@ -313,7 +313,9 @@ private struct PostTile: View {
         } else if let muscles = item.muscles, !muscles.isEmpty {
             ZStack {
                 Theme.surface
-                MuscleMapView(activation: muscles, forceStatic: true)
+                // A community post shows ANOTHER athlete's body — pin to neutral so it never
+                // inherits the viewer's own figure (when community returns, use the author's sex).
+                MuscleMapView(activation: muscles, sex: .neutral, forceStatic: true)
                     .padding(Theme.Space.sm)
             }
         } else if let route = routeCoords, route.count > 1 {

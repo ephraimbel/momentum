@@ -40,6 +40,8 @@ struct LogActivityView: View {
     /// The card being edited in the nested form sheet.
     @State private var editingCard: EditingCard?
     @State private var saveFailed = false
+    /// Drives the "you did it" beat that plays over the composer after a successful log.
+    @State private var celebrating = false
     @FocusState private var composing: Bool
 
     private struct EditingCard: Identifiable {
@@ -145,6 +147,7 @@ struct LogActivityView: View {
                         } else {
                             receipts
                                 .transition(.opacity.combined(with: .offset(y: 12)))
+                            editHint
                         }
                         Color.clear.frame(height: 1).id("receiptEnd")
                     }
@@ -214,6 +217,21 @@ struct LogActivityView: View {
                 if voice.isRecording { voice.stop() }
             }
         }
+        .overlay {
+            if celebrating {
+                // The beat IS the exit: the drawn circle+check plays over the composer, then
+                // dismisses it — a logged workout earns the same completion moment a tracked one does.
+                CompletionCelebration(title: celebrationTitle) { dismiss() }
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    /// The completion beat's headline — honest "logged" (a past workout recorded), by sport when
+    /// there's one card, counted when the sentence held several.
+    private var celebrationTitle: String {
+        if cards.count > 1 { return "\(cards.count) workouts logged" }
+        return (cards.first?.result.type?.title).map { "\($0) logged" } ?? "Workout logged"
     }
 
     // MARK: Header + composer
@@ -422,6 +440,16 @@ struct LogActivityView: View {
         }
     }
 
+    /// Names the review step out loud — the receipt is editable before it logs, which a card that
+    /// only looks tappable doesn't make obvious on its own.
+    private var editHint: some View {
+        Label("Tap a card to fix any detail before you log", systemImage: "hand.tap")
+            .font(.rounded(Theme.FontSize.caption, weight: .medium))
+            .foregroundStyle(Theme.inkTertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, Theme.Space.xxs)
+    }
+
     private func receiptCard(_ index: Int, _ card: Card) -> some View {
         Button {
             Haptics.light()
@@ -502,12 +530,17 @@ struct LogActivityView: View {
                     .foregroundStyle(Theme.inkTertiary)
             }
             Spacer()
-            Text("Edit")
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                .foregroundStyle(Theme.inkTertiary)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Theme.inkTertiary)
+            // A real pill, not a whispered gray label — the review step only works if the athlete
+            // can see the card is editable before they log.
+            HStack(spacing: 4) {
+                Image(systemName: "pencil").font(.system(size: 11, weight: .bold))
+                Text("Edit").font(.rounded(Theme.FontSize.caption, weight: .bold))
+            }
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Theme.background))
+            .overlay(Capsule().stroke(Theme.hairline))
         }
     }
 
@@ -716,12 +749,17 @@ struct LogActivityView: View {
             PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
         }
         AwardsBook.syncSoon()
-        Haptics.success()
-        dismiss()
+        // Crown it: the completion beat draws over the composer, then dismisses. (It fires its own
+        // celebration haptic, so no success tick here.) Drop the keyboard first so nothing slides
+        // out from under the overlay mid-beat.
+        composing = false
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { celebrating = true }
     }
 
     private func exerciseRef(named name: String) -> Exercise {
-        if let found = library.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { return found }
+        // Shorthand-aware: "bench press"/"squats" find the library rows instead of minting
+        // duplicate customs beside them.
+        if let found = ExerciseNameMatch.find(name, in: library) { return found }
         let e = Exercise()
         e.name = name
         e.isCustom = true

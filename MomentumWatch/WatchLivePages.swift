@@ -7,6 +7,144 @@ import WatchKit
 // true black; colour only where it carries information (zone colours, HR, energy) or marks live
 // progress (the periwinkle accent).
 
+// MARK: - Guide — the coaching page for a structured session: what you're doing, how much is
+// left, the target, what's next. First page on guided runs; the wrist IS the coach here.
+
+struct GuidePage: View {
+    @Bindable var model: WatchCardioModel
+    @Environment(\.isLuminanceReduced) private var dimmed
+    private let unit: DistanceUnit = .auto
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            content
+        }
+        .opacity(dimmed ? 0.8 : 1)
+    }
+
+    @ViewBuilder private var content: some View {
+        if let g = model.guide {
+            if let step = g.current {
+                stepView(g, step)
+            } else {
+                structureDone
+            }
+        }
+    }
+
+    private func stepView(_ g: StructuredRunTracker, _ step: WorkoutStep) -> some View {
+        let remaining = g.remaining(distanceM: model.distanceM, elapsedS: model.elapsed)
+        let progress = g.progress(distanceM: model.distanceM, elapsedS: model.elapsed)
+        return VStack(alignment: .leading, spacing: 4) {
+            // "REP 3/6" / "SURGE 2/8" / "WARM UP" — always know which part of the session this is.
+            HStack(spacing: 5) {
+                Text(eyebrow(step))
+                    .font(.system(size: 12, weight: .bold)).tracking(0.8)
+                    .foregroundStyle(step.kind.isWork ? WatchTheme.accent : WatchTheme.inkSecondary)
+                Spacer(minLength: 0)
+                if model.paused {
+                    Text("PAUSED").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                        .foregroundStyle(WatchTheme.inkSecondary)
+                }
+            }
+            // The one number that matters: what's left of this step.
+            Text(remainingText(step, remaining: remaining))
+                .font(.system(size: 44, weight: .black, design: .rounded)).monospacedDigit()
+                .foregroundStyle(WatchTheme.ink)
+                .minimumScaleFactor(0.5).lineLimit(1)
+                .contentTransition(.numericText(countsDown: true))
+            // Step progress — a thin honest bar, no ceremony.
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(WatchTheme.surface)
+                    Capsule()
+                        .fill(step.kind.isWork ? AnyShapeStyle(WatchTheme.iridescent)
+                                               : AnyShapeStyle(WatchTheme.inkSecondary))
+                        .frame(width: max(3, geo.size.width * progress))
+                }
+            }
+            .frame(height: 4)
+            .padding(.bottom, 2)
+            targetLine(step)
+            if let next = g.next {
+                Text("Next · \(next.displayNoun) \(StructuredWorkout.targetLabel(next.target, distanceUnit: unit))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(WatchTheme.inkSecondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            } else {
+                Text("Last one — bring it home.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(WatchTheme.inkSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(eyebrow(step))
+        .accessibilityValue("\(remainingText(step, remaining: remaining)) remaining")
+    }
+
+    /// Target + live pace on one line: "4:41 target · 4:38" with the live number tinted by the
+    /// band verdict. Effort steps say what the coach would: hard by feel / nice and easy.
+    @ViewBuilder private func targetLine(_ step: WorkoutStep) -> some View {
+        if let target = step.paceSPerKm {
+            HStack(spacing: 5) {
+                Text("\(Formatters.pace(secPerKm: target, unit: unit)) target")
+                    .font(.system(size: 14, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(WatchTheme.inkSecondary)
+                if model.rollingPaceSPerKm > 0 {
+                    Text("·").foregroundStyle(WatchTheme.inkSecondary)
+                    Text(Formatters.pace(secPerKm: model.rollingPaceSPerKm, unit: unit))
+                        .font(.system(size: 14, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(model.paceState == .inBand ? WatchTheme.accent : WatchTheme.ink)
+                }
+            }
+        } else {
+            // Unpaced steps guide in words. Specialty efforts (Hill, Stride) are hard by feel;
+            // a run/walk "Run" segment and every recovery are exactly the opposite.
+            Text(step.kind.isWork && step.title != nil && step.title != "Run"
+                 ? "Hard, by feel" : "Nice and easy")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(WatchTheme.inkSecondary)
+        }
+    }
+
+    /// The structure is finished but the run is still yours — say so, then get out of the way.
+    private var structureDone: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("WORKOUT DONE")
+                .font(.system(size: 12, weight: .bold)).tracking(0.8)
+                .foregroundStyle(WatchTheme.accent)
+            Text(Formatters.duration(s: model.elapsed))
+                .font(.system(size: 40, weight: .black, design: .rounded)).monospacedDigit()
+                .foregroundStyle(WatchTheme.ink)
+            Text("Every step banked. Run on, or hold End when you're ready.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(WatchTheme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func eyebrow(_ step: WorkoutStep) -> String {
+        if let i = step.repIndex, let n = step.repTotal {
+            return "\(step.displayNoun.uppercased()) \(i)/\(n)"
+        }
+        return step.displayNoun.uppercased()
+    }
+
+    /// Distance steps count down in meters (or the athlete's unit above 1 km); time steps in m:ss.
+    private func remainingText(_ step: WorkoutStep, remaining: Double) -> String {
+        switch step.target {
+        case .distance:
+            if remaining < 1000 { return "\(Int(remaining.rounded())) m" }
+            return Formatters.distance(meters: remaining, unit: unit)
+        case .duration:
+            let s = Int(remaining.rounded())
+            return String(format: "%d:%02d", s / 60, s % 60)
+        }
+    }
+}
+
 // MARK: - Metrics — the default page: time hero, pace + last lap, distance, zone-coloured HR, energy
 
 struct MetricsPage: View {

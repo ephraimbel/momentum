@@ -8,7 +8,6 @@ struct ExerciseLibraryView: View {
     var onSelect: ([Exercise]) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var context
     @Query private var allExercises: [Exercise]
 
     @State private var search = ""

@@ -36,6 +36,38 @@ struct CoachingCueBuilderTests {
         #expect(CoachingCueBuilder.encouragement(-1) == CoachingCueBuilder.encouragement(0))  // defensive clamp
     }
 
+    @Test func workoutIntroSpeaksTheDaysShape() {
+        // The coach's opening line: reps, hills-style efforts, and continuous titles all read
+        // naturally, and a warm-up-led session promises the warm-up first.
+        let reps = StructuredWorkoutBuilder.intervals(
+            reps: 10, repTarget: .distance(400), repPace: 280, easyPace: 380,
+            recoveryPace: 410, unitLabel: "400m")
+        #expect(CoachingCueBuilder.workoutIntro(reps)
+                == "Today: 10 repeats of 400 meters. Warm-up first. I'll call every step.")
+        let hills = StructuredWorkoutBuilder.hills(reps: 8, pushS: 30, easyPace: 380)
+        #expect(CoachingCueBuilder.workoutIntro(hills)
+                == "Today: 8 hills, 30 seconds each. Warm-up first. I'll call every step.")
+        let tempo = StructuredWorkoutBuilder.tempo(totalDistanceM: 6500, tempoPaceSPerKm: 320, easyPace: 380)!
+        #expect(CoachingCueBuilder.workoutIntro(tempo)
+                == "Today: Tempo run. Warm-up first. I'll call every step.")
+    }
+
+    @Test func lastRepGetsTheCoachsWords() {
+        var rep = WorkoutStep(kind: .work, target: .distance(400), paceSPerKm: 280,
+                              repIndex: 9, repTotal: 10)
+        #expect(!CoachingCueBuilder.stepStart(rep).contains("Last one"))
+        rep.repIndex = 10
+        #expect(CoachingCueBuilder.stepStart(rep)
+                == "Rep 10 of 10. Last one. 400 meters at your target. Go.")
+    }
+
+    @Test func surgesAreStrongNeverATarget() {
+        // Fartlek is speed PLAY — the surge cue says "strong", not "at your target".
+        let surge = WorkoutStep(kind: .work, target: .duration(60), paceSPerKm: 290,
+                                toleranceSPerKm: 25, repIndex: 2, repTotal: 8, title: "Surge")
+        #expect(CoachingCueBuilder.stepStart(surge) == "Surge 2 of 8. 1 minute strong. Go.")
+    }
+
     @Test func fixedCuesAreConciseAndClaimFree() {
         let cues = [CoachingCueBuilder.restComplete(), CoachingCueBuilder.paused(),
                     CoachingCueBuilder.resumed(), CoachingCueBuilder.goalReached(),

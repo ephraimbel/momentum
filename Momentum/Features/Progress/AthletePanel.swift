@@ -98,7 +98,10 @@ struct AthletePanel: View {
     /// Where the anatomy actually renders inside `fig` (aspect-fit, centered) — used to place
     /// the light the figure stands in.
     private func fittedBodyRect(in fig: CGRect) -> CGRect {
-        let aspect = BodyAnatomy.viewBoxWidth / BodyAnatomy.viewBoxHeight
+        // The figure shows front only; use its sex-specific viewBox so the light sits on the
+        // female figure's own proportions, not the male box's.
+        let vb = BodyAnatomy.viewBox(.front, sex)
+        let aspect = vb.width / vb.height
         var size = CGSize(width: fig.width, height: fig.width / aspect)
         if size.height > fig.height {
             size = CGSize(width: fig.height * aspect, height: fig.height)

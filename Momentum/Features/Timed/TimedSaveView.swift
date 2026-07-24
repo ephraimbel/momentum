@@ -11,7 +11,6 @@ struct TimedSaveView: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
     @Query private var workouts: [Workout]
-    @Query private var profiles: [UserProfile]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     @State private var title = ""

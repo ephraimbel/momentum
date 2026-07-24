@@ -35,13 +35,15 @@ enum WorkoutSnapshotHealer {
         while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1
         let style = gps.mapStyle
+        // Card on the clean canvas; the workout's own style is stamped for the interactive pager.
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
                                                    size: RouteSnapshotter.workoutTileSize,
-                                                   styleURI: style.styleURI(for: .light),
+                                                   styleURI: RouteSnapshotter.tileStyle,
                                                    insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
         guard let data else { failed.insert(id); return }
         gps.mapSnapshotData = data
+        gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
         gps.mapStyleRaw = style.rawValue
         try? context.save()
     }
@@ -71,15 +73,14 @@ enum WorkoutSnapshotHealer {
         for workout in stale {
             await healIfNeeded(workout, context: context)
         }
-        // Portrait upgrade: legacy landscape snapshots letterbox in the grid — re-render the most
-        // recent ones tile-native (in the workout's stamped style) so the visible grid sharpens
-        // without any user action.
-        let legacy = recent.filter { workout in
-            guard workout.type.isGPS, let data = workout.gps?.mapSnapshotData,
-                  let ui = UIImage(data: data) else { return false }
-            return ui.size.width > ui.size.height
+        // Look upgrade: re-render snapshots drawn by an older renderer (legacy landscape images,
+        // the gradient-trace era, the tight-framing era) so the visible grid picks up the current
+        // aesthetic — newest first, bounded per launch, no user action.
+        let outdatedLook = recent.filter { workout in
+            guard workout.type.isGPS, let gps = workout.gps, gps.mapSnapshotData != nil else { return false }
+            return gps.mapSnapshotVersion < RouteSnapshotter.renderVersion
         }.prefix(limit)
-        for workout in legacy {
+        for workout in outdatedLook {
             await rerender(workout, style: workout.gps?.mapStyle ?? .persisted, context: context)
         }
     }
@@ -94,11 +95,12 @@ enum WorkoutSnapshotHealer {
         active += 1
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
                                                    size: RouteSnapshotter.workoutTileSize,
-                                                   styleURI: style.styleURI(for: .light),
+                                                   styleURI: RouteSnapshotter.tileStyle,
                                                    insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
         guard let data else { return }
         gps.mapSnapshotData = data
+        gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
         gps.mapStyleRaw = style.rawValue
         try? context.save()
     }

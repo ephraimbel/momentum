@@ -12,7 +12,6 @@ struct StrengthSaveView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
-    @Query private var profiles: [UserProfile]
     // Read the just-finished workout from a FRESH context. The live session was persisted by a
     // background @ModelActor; the app's main context can still hold a stale copy (Today's @Query
     // cached the workout mid-session with no/partial sets, and SwiftData doesn't merge cross-context

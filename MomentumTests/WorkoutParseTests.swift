@@ -110,6 +110,47 @@ struct WorkoutParseTests {
         #expect(merged[1].distanceM == 6437)
     }
 
+    @Test @MainActor func sameDisciplineAICardsCollapseAsCorrections() {
+        // "ran 5 easy at 8:25 pace… actually a hard effort" — the model sometimes returns the
+        // restatement as a second run card. The composer collapses same-discipline extras back
+        // into one: later fields win (the correction), earlier stated facts survive (the pace).
+        var first = WorkoutLogParser.Result()
+        first.type = .run
+        first.distanceM = 8047
+        first.durationS = 2525
+        first.effort = 2
+        var correction = WorkoutLogParser.Result()
+        correction.type = .run
+        correction.distanceM = 8047
+        correction.effort = 8
+        var grammar = WorkoutLogParser.Result()
+        grammar.type = .run
+        grammar.distanceM = 8047
+        grammar.durationS = 2525
+        let merged = WorkoutParseService.merge(ai: [first, correction], grammar: [grammar])
+        #expect(merged.count == 1)
+        #expect(merged.first?.effort == 8)         // the correction won
+        #expect(merged.first?.durationS == 2525)   // the stated pace survives
+        #expect(merged.first?.distanceM == 8047)
+    }
+
+    @Test @MainActor func distinctTimeContextsDoNotCollapse() {
+        // "ran this morning… ran again tonight" is genuinely two runs — time words keep the split.
+        var morning = WorkoutLogParser.Result()
+        morning.type = .run
+        morning.distanceM = 8047
+        morning.timeHint = .morning
+        var evening = WorkoutLogParser.Result()
+        evening.type = .run
+        evening.distanceM = 5000
+        evening.timeHint = .evening
+        var grammar = WorkoutLogParser.Result()
+        grammar.type = .run
+        grammar.distanceM = 8047
+        let merged = WorkoutParseService.merge(ai: [morning, evening], grammar: [grammar])
+        #expect(merged.count == 2)
+    }
+
     // MARK: Merge — the server read the whole text, the grammar keeps what it left empty
 
     @Test @MainActor func mergePrefersAIWherePresent() {

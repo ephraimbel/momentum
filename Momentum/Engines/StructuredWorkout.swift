@@ -11,8 +11,8 @@ import Foundation
 
 // MARK: - Step model
 
-struct WorkoutStep: Equatable, Sendable {
-    enum Kind: String, Sendable {
+struct WorkoutStep: Equatable, Sendable, Codable {
+    enum Kind: String, Sendable, Codable {
         case warmup, work, recovery, cooldown
 
         /// The effort steps where pace adherence matters (and iridescence can appear).
@@ -20,7 +20,7 @@ struct WorkoutStep: Equatable, Sendable {
     }
 
     /// How the step ends — cover a distance, or hold for a duration.
-    enum Target: Equatable, Sendable {
+    enum Target: Equatable, Sendable, Codable {
         case distance(Double)   // meters
         case duration(Double)   // seconds
 
@@ -54,7 +54,7 @@ struct WorkoutStep: Equatable, Sendable {
     var displayNoun: String { title ?? kindLabel }
 }
 
-struct StructuredWorkout: Equatable, Sendable {
+struct StructuredWorkout: Equatable, Sendable, Codable {
     var title: String
     var steps: [WorkoutStep]
 
@@ -73,71 +73,9 @@ enum StructuredWorkoutBuilder {
     private static let warmupM = 1000.0
     private static let cooldownM = 1000.0
 
-    /// Expand a planned session into a guided workout, or `nil` when it's a plain run that needs no
-    /// in-run structure. `p5kSPerKm` (the athlete's calibrated 5k pace) lets warm-up / recovery / easy
-    /// steps hold the right pace even when the *work* reps run faster or slower than 5k pace (VO₂ vs
-    /// threshold reps); when omitted it's recovered from the session's own pace. `raceDistanceM` (the
-    /// athlete's goal race) prices the race-pace finish block on quality long runs — omitted, a long
-    /// race's marathon pace stands in. Pure + deterministic.
-    static func build(from session: PlannedSession, p5kSPerKm: Double? = nil,
-                      raceDistanceM: Double? = nil) -> StructuredWorkout? {
-        guard session.discipline == .running,
-              let runType = session.runType,
-              let pace = session.targetPaceSPerKm, pace > 0 else { return nil }
-
-        let p5k = p5kSPerKm ?? DanielsPaces.p5kSPerKm(fromPace: pace, type: runType)
-        let easyPace = PlanEngine.pace(.easy, p5k: p5k)
-        let recoveryPace = PlanEngine.pace(.recovery, p5k: p5k)
-        let vo2Pace = PlanEngine.pace(.intervals, p5k: p5k)   // vVO₂max — surges / by-feel hard bits
-
-        switch runType {
-        case .intervals:
-            // Distance reps ("6×400m", "4×1km") or time reps ("5×3min"); rep pace = the plan's target
-            // (5k / VO₂ / threshold), recovery + warm-up derive from P5k. Threshold cruise reps take
-            // a SHORT 60 s recovery (Daniels — the point of cruise intervals is that T effort barely
-            // drops between reps); the default 120 s doubled the rest and diluted the stimulus.
-            let cruise = session.intervals?.lowercased().contains("threshold") == true
-            if let d = parseIntervals(session.intervals) {
-                return intervals(reps: d.reps, repTarget: .distance(d.distanceM), repPace: pace,
-                                 easyPace: easyPace, recoveryPace: recoveryPace, unitLabel: repDistanceLabel(d.distanceM),
-                                 recoveryOverrideS: cruise ? 60 : nil)
-            }
-            if let t = parseTimeReps(session.intervals) {
-                return intervals(reps: t.reps, repTarget: .duration(t.seconds), repPace: pace,
-                                 easyPace: easyPace, recoveryPace: recoveryPace, unitLabel: minLabel(t.seconds))
-            }
-            return nil
-        case .tempo:
-            return tempo(totalDistanceM: session.targetDistanceM ?? 0, tempoPaceSPerKm: pace, easyPace: easyPace)
-        case .fartlek:
-            guard let f = parseFartlek(session.intervals) else { return nil }
-            return fartlek(reps: f.reps, onS: f.onS, floatS: f.floatS, hardPace: vo2Pace, floatPace: easyPace)
-        case .hills:
-            guard let h = parseTimedReps(session.intervals, keyword: "hill") else { return nil }
-            return hills(reps: h.reps, pushS: h.seconds, easyPace: easyPace)
-        case .strides:
-            let st = parseTimedReps(session.intervals, keyword: "stride") ?? (reps: 6, seconds: 20)
-            return strides(reps: st.reps, strideS: st.seconds, easyPace: easyPace, totalDistanceM: session.targetDistanceM)
-        case .progression:
-            return progression(totalDistanceM: session.targetDistanceM ?? 0, easyPace: easyPace, p5k: p5k)
-        case .long:
-            // A quality long run ("Last 5km @ race pace") guides its finish block; a plain long run
-            // needs no structure. Race pace comes from the goal distance when known; a long-race
-            // default (marathon) stands in otherwise — this pattern only generates for ≥half plans.
-            guard let finishM = parseRaceFinish(session.intervals) else { return nil }
-            let racePace = DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 42_195, p5kSPerKm: p5k)
-            return raceFinishLong(totalDistanceM: session.targetDistanceM ?? 0, finishM: finishM,
-                                  bodyPace: pace, racePace: racePace)
-        default:
-            // Beginner "Run/walk 1:1" sessions are a repeating structure worth guiding.
-            if let rw = parseRunWalk(session.intervals) {
-                return runWalk(runS: rw.runS, walkS: rw.walkS, runPaceSPerKm: easyPace,
-                               totalDistanceM: session.targetDistanceM,
-                               totalDurationS: session.targetDurationS)
-            }
-            return nil
-        }
-    }
+    // NOTE: `build(from: PlannedSession)` — the SwiftData-facing entry — lives in
+    // `StructuredWorkoutBuilder+Session.swift`. This file stays pure Foundation so the step
+    // model, tracker, and constructors compile into the watch target too.
 
     // MARK: Interval session (distance or time reps)
 
@@ -158,7 +96,13 @@ enum StructuredWorkoutBuilder {
 
     private static func recoveryDuration(for t: WorkoutStep.Target) -> Double {
         switch t {
-        case let .distance(d): return d <= 400 ? 90 : 120
+        case let .distance(d):
+            // The coach's rest ladder: 400s take a 90 s jog, 800s ~2:30, kilometre reps a full
+            // 3:00. Short-changing the rest on long VO₂ reps is how the session quietly collapses
+            // into a ragged tempo — the recovery IS part of the prescription.
+            if d <= 400 { return 90 }
+            if d <= 800 { return 150 }
+            return 180
         case let .duration(s): return max(60, s)   // roughly equal-time recovery for time reps
         }
     }
@@ -196,7 +140,8 @@ enum StructuredWorkoutBuilder {
         for i in 1...max(1, reps) {
             steps.append(WorkoutStep(kind: .work, target: .duration(pushS), paceSPerKm: nil,
                                      repIndex: i, repTotal: reps, title: "Hill"))
-            steps.append(WorkoutStep(kind: .recovery, target: .duration(max(60, pushS * 1.6)),
+            // A hard push earns a real reset — never less than 90 s even off a short hill.
+            steps.append(WorkoutStep(kind: .recovery, target: .duration(max(90, pushS * 1.6)),
                                      paceSPerKm: easyPace, title: "Jog down"))
         }
         steps.append(WorkoutStep(kind: .cooldown, target: .distance(cooldownM), paceSPerKm: easyPace))
@@ -212,7 +157,8 @@ enum StructuredWorkoutBuilder {
             steps.append(WorkoutStep(kind: .work, target: .duration(strideS), paceSPerKm: nil,
                                      repIndex: i, repTotal: reps, title: "Stride"))
             if i < reps {
-                steps.append(WorkoutStep(kind: .recovery, target: .duration(45), paceSPerKm: easyPace, title: "Walk back"))
+                // A full minute's walk — strides are practice, not load; each one starts fresh.
+                steps.append(WorkoutStep(kind: .recovery, target: .duration(60), paceSPerKm: nil, title: "Walk back"))
             }
         }
         return StructuredWorkout(title: "Easy run + \(reps) strides", steps: steps)
@@ -238,11 +184,10 @@ enum StructuredWorkoutBuilder {
     // The classic E→M→T ladder: each third steps up one Daniels zone, always in a faster-than-the-last
     // order regardless of the athlete's VDOT (E 66% < M race intensity < T ~89% VO₂max).
 
-    static func progression(totalDistanceM total: Double, easyPace: Double, p5k: Double) -> StructuredWorkout? {
+    static func progression(totalDistanceM total: Double, easyPace: Double,
+                            moderatePace moderate: Double, strongPace strong: Double) -> StructuredWorkout? {
         guard total >= 3000 else { return nil }
         let third = (total / 3).rounded()
-        let moderate = DanielsPaces.marathonPaceSPerKm(p5kSPerKm: p5k)
-        let strong = PlanEngine.pace(.tempo, p5k: p5k)
         return StructuredWorkout(title: "Progression run", steps: [
             WorkoutStep(kind: .work, target: .distance(third), paceSPerKm: easyPace, toleranceSPerKm: 25, title: "Easy"),
             WorkoutStep(kind: .work, target: .distance(third), paceSPerKm: moderate, toleranceSPerKm: 15, title: "Moderate"),
@@ -259,8 +204,11 @@ enum StructuredWorkoutBuilder {
         let cycles = max(1, min(40, Int((totalS / (runS + walkS)).rounded())))
         var steps: [WorkoutStep] = []
         for _ in 0..<cycles {
-            steps.append(WorkoutStep(kind: .work, target: .duration(runS), paceSPerKm: p))
-            steps.append(WorkoutStep(kind: .recovery, target: .duration(walkS), paceSPerKm: nil))
+            // No pace target on the run segments — run/walk guides by TIME and feel, and a
+            // beginner must never hear "pick it up" mid-interval (no-shame, PRD principle).
+            // Named steps so every surface says the plain thing: Run. Walk. Run.
+            steps.append(WorkoutStep(kind: .work, target: .duration(runS), paceSPerKm: nil, title: "Run"))
+            steps.append(WorkoutStep(kind: .recovery, target: .duration(walkS), paceSPerKm: nil, title: "Walk"))
         }
         return StructuredWorkout(title: "Run/walk intervals", steps: steps)
     }
@@ -352,11 +300,18 @@ enum StructuredWorkoutBuilder {
         return out
     }
 
-    // MARK: Labels
+    // MARK: Labels (internal — the session-facing builder file uses them too)
 
-    private static func repDistanceLabel(_ m: Double) -> String { m < 1000 ? "\(Int(m))m" : "\(trim(m / 1000))km" }
-    private static func secLabel(_ s: Double) -> String { s >= 60 ? minLabel(s) : "\(Int(s))s" }
-    private static func minLabel(_ s: Double) -> String {
+    static func repDistanceLabel(_ m: Double) -> String { m < 1000 ? "\(Int(m))m" : "\(trim(m / 1000))km" }
+    /// Duration labels must round-trip EXACTLY through `durationsIn` — these strings are the
+    /// session grammar, not just display. "1.2min" for 75 s parses back as 72 s (a corrupted
+    /// prescription); sub-2-minute odd durations stay in seconds, whole/half minutes in minutes.
+    static func secLabel(_ s: Double) -> String {
+        if s >= 60, s.truncatingRemainder(dividingBy: 60) == 0 { return minLabel(s) }
+        if s < 120 { return "\(Int(s))s" }
+        return minLabel(s)
+    }
+    static func minLabel(_ s: Double) -> String {
         let m = s / 60
         return m == m.rounded() ? "\(Int(m))min" : String(format: "%.1fmin", m)
     }

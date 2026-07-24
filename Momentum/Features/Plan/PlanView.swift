@@ -14,6 +14,7 @@ struct PlanView: View {
     @Query private var chatMessages: [ChatMessage]   // coach-button badge (threads stay small)
     @State private var weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
     @State private var showingAdd = false
+    @State private var showLibrary = false
     @State private var addDay = Date()
     @State private var editing: EditingSession?
     @State private var adjusted = false
@@ -136,7 +137,18 @@ struct PlanView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $showingAdd) {
             if let plan {
-                AddSessionSheet(plan: plan, defaultDate: addDay) { showingAdd = false }
+                AddSessionSheet(plan: plan, defaultDate: addDay, onDone: { showingAdd = false },
+                                onOpenLibrary: {
+                    // Sheet swap with the house 0.35 s beat — let this one finish dismissing
+                    // before the library presents (the CheckinSheet → injury-sheet pattern).
+                    showingAdd = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showLibrary = true }
+                })
+            }
+        }
+        .sheet(isPresented: $showLibrary) {
+            if let plan {
+                WorkoutLibrarySheet(plan: plan, defaultDate: addDay) { showLibrary = false }
             }
         }
         .sheet(item: $editing, onDismiss: {

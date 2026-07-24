@@ -72,6 +72,23 @@ You MAY do arithmetic on stated facts: "4 miles at 9:23 pace" states the run's d
 five" = 225. "Worked up to 225 for 3" = one top set of 3. "185 for 10 with 5 sets" = 5 sets \
 of 10 at 185.
 
+PLATE MATH (gym lingo — do this arithmetic): "two 45 pound plates on each side" = 2 × 45 × 2 \
+sides = 180 lb total; on a barbell lift (bench, squat, deadlift, rows, overhead press) the \
+45 lb bar rides along ("bench with two 45s per side" = 225 lb). Machines (leg press, hack \
+squat) have no bar. A bare "N plates" means N 45-lb plates PER SIDE plus the bar on barbell \
+lifts: "two plates" = 225 lb, "three plates" = 315, "four plates" = 405 (kilo gyms: 20 kg \
+plates and a 20 kg bar — "two plates" = 100 kg). But "benched two forty five" with no plate \
+word is the plain compound number: 245 lb.
+
+CORRECTIONS: athletes revise themselves mid-account ("ran 5 easy miles at 8:25 pace… actually \
+it was a hard effort", "make that 6 miles", "5 hard miles instead of 5 easy"). A restatement \
+or correction of the SAME workout is ONE workout, never two: apply the latest value for each \
+corrected field and KEEP every earlier stated fact the correction did not mention — when only \
+the effort changed, the 8:25 pace (and the duration it implies) stays. "X instead of Y" means \
+X. The same sport mentioned again in one account is a correction or elaboration of that \
+workout unless it clearly describes a separate session (its own numbers AND a different time \
+of day).
+
 Per-workout fields:
 - type: the sport, one of exactly: ${SPORTS.join(", ")}. Gym/weights/named \
 lifts mean "strength". Empty string only if no sport is discernible.

@@ -51,7 +51,7 @@ function Hero() {
           </h1>
           <p className="lede rise rise-3">
             momentum builds your training around your fitness, your recovery, and your life — then
-            adapts it after every run. From your first 5K to your first ultra.
+            adapts it after every run. From your first 5K to your first marathon.
           </p>
           <div className="hero-ctas rise rise-4">
             <a className="btn btn-ink" href="#download">
@@ -600,7 +600,7 @@ function Footer() {
         <div className="footer-grid">
           <div className="footer-brand">
             <Image className="wordmark-footer" src="/wordmark-black.png" alt="momentum" width={640} height={128} />
-            <p>The adaptive running coach. From your first 5K to your first ultra — keep moving.</p>
+            <p>The adaptive running coach. From your first 5K to your first marathon — keep moving.</p>
           </div>
           <div>
             <h5>Product</h5>

@@ -30,6 +30,9 @@ final class WatchSyncStore: NSObject {
         var paceLoSPerKm: Double?
         var paceHiSPerKm: Double?
         var dayKey: String
+        /// A quality session's full guided structure (phone-built, phone-encoded) — the wrist
+        /// runs the same step tracker the phone does. nil for plain runs.
+        var structured: StructuredWorkout?
     }
 
     struct Race: Equatable {
@@ -115,10 +118,13 @@ final class WatchSyncStore: NSObject {
            let detail = defaults.string(forKey: "sync.session.detail"),
            let typeRaw = defaults.string(forKey: "sync.session.typeRaw"),
            let day = defaults.string(forKey: "sync.session.dayKey") {
+            let steps = (defaults.data(forKey: "sync.session.steps"))
+                .flatMap { try? JSONDecoder().decode(StructuredWorkout.self, from: $0) }
             session = TodaySession(title: title, detail: detail, typeRaw: typeRaw,
                                    paceLoSPerKm: defaults.object(forKey: "sync.session.paceLo") as? Double,
                                    paceHiSPerKm: defaults.object(forKey: "sync.session.paceHi") as? Double,
-                                   dayKey: day)
+                                   dayKey: day,
+                                   structured: steps)
         }
         if let name = defaults.string(forKey: "sync.race.name"),
            let dateKey = defaults.string(forKey: "sync.race.dateKey") {
@@ -142,19 +148,28 @@ final class WatchSyncStore: NSObject {
            let detail = context["sessionDetail"] as? String,
            let day = context["sessionDayKey"] as? String {
             let typeRaw = context["sessionTypeRaw"] as? String ?? "run"
+            let stepsData = context["sessionSteps"] as? Data
+            let steps = stepsData.flatMap { try? JSONDecoder().decode(StructuredWorkout.self, from: $0) }
             session = TodaySession(title: title, detail: detail, typeRaw: typeRaw,
                                    paceLoSPerKm: context["sessionPaceLo"] as? Double,
                                    paceHiSPerKm: context["sessionPaceHi"] as? Double,
-                                   dayKey: day)
+                                   dayKey: day,
+                                   structured: steps)
             defaults.set(title, forKey: "sync.session.title")
             defaults.set(detail, forKey: "sync.session.detail")
             defaults.set(typeRaw, forKey: "sync.session.typeRaw")
             defaults.set(day, forKey: "sync.session.dayKey")
             defaults.set(context["sessionPaceLo"] as? Double, forKey: "sync.session.paceLo")
             defaults.set(context["sessionPaceHi"] as? Double, forKey: "sync.session.paceHi")
+            if let stepsData, steps != nil {
+                defaults.set(stepsData, forKey: "sync.session.steps")
+            } else {
+                defaults.removeObject(forKey: "sync.session.steps")
+            }
         } else if context["sessionCleared"] as? Bool == true {
             session = nil
             defaults.removeObject(forKey: "sync.session.title")
+            defaults.removeObject(forKey: "sync.session.steps")
         }
         if let raceName = context["raceName"] as? String,
            let raceDate = context["raceDateKey"] as? String {
@@ -187,6 +202,14 @@ final class WatchSyncStore: NSObject {
         if args.contains("--watch-session") {
             session = TodaySession(title: "Long run", detail: "6 mi · ~11:56 /mi", typeRaw: "run",
                                    paceLoSPerKm: 424, paceHiSPerKm: 465, dayKey: Self.dayKey())
+        }
+        if args.contains("--watch-guided") {
+            // A guided fartlek on the sim — the structure built by the shared pure constructor,
+            // exactly the shape the phone encodes. Pair with --watch-demo to watch steps advance.
+            session = TodaySession(title: "Fartlek", detail: "8×(1min hard / 1min float)", typeRaw: "run",
+                                   paceLoSPerKm: 300, paceHiSPerKm: 345, dayKey: Self.dayKey(),
+                                   structured: StructuredWorkoutBuilder.fartlek(
+                                       reps: 8, onS: 60, floatS: 60, hardPace: 290, floatPace: 380))
         }
         if let arg = args.first(where: { $0.hasPrefix("--watch-race=") }) {
             // "--watch-race=Berlin Half:3" → race in 3 days ("0" = race day)

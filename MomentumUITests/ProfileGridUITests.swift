@@ -32,6 +32,7 @@ final class ProfileGridUITests: XCTestCase {
         XCTAssertTrue(gridTab.waitForExistence(timeout: 20), "Profile grid didn't load.")
         let highlightsTab = app.buttons["Highlights"]
         XCTAssertTrue(highlightsTab.exists, "Highlights tab missing.")
+        dump(app, "verify_grid")
 
         // Highlights tab carries the moved lifetime/how-you-train/consistency sections.
         highlightsTab.tap()

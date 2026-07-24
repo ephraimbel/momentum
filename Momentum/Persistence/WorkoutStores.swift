@@ -72,6 +72,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
     func attachSnapshot(_ data: Data, styleRaw: String? = nil) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         detail.mapSnapshotData = data
+        detail.mapSnapshotVersion = RouteSnapshotter.renderVersion
         if let styleRaw { detail.mapStyleRaw = styleRaw }
         try? modelContext.save()
     }
@@ -151,6 +152,13 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         session.exercises.append(row)
         try? modelContext.save()
         rowIDs[rowId] = row.persistentModelID
+    }
+
+    func updateExerciseGrouping(rowId: UUID, order: Int, supersetGroup: Int?) {
+        guard let rowPID = rowIDs[rowId], let row = self[rowPID, as: WorkoutExercise.self] else { return }
+        row.order = order
+        row.supersetGroup = supersetGroup
+        try? modelContext.save()
     }
 
     func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,

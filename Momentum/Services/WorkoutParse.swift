@@ -112,8 +112,40 @@ struct WorkoutParseService {
     /// Card-list merge: the server read the whole text, so its card COUNT stands (it may have
     /// split a lift-then-run the grammar read as one); the grammar's primary read backfills the
     /// first card's gaps. Grammar-only when the server returned nothing.
+    ///
+    /// One exception — corrections. The grammar splits only on discipline change, so when it
+    /// read ONE workout and the server returned several cards of the SAME discipline, the extras
+    /// are almost always a restatement ("…actually it was a hard effort") the model mistook for
+    /// a second workout. Those collapse into one card: later fields win (the correction), earlier
+    /// stated facts survive (the pace that derived the duration). Cards carrying their own
+    /// distinct time context ("ran this morning… ran again tonight") are genuinely separate and
+    /// keep the split.
     static func merge(ai: [WorkoutLogParser.Result], grammar: [WorkoutLogParser.Result]) -> [WorkoutLogParser.Result] {
         guard !ai.isEmpty else { return grammar }
+        var ai = ai
+        if grammar.count == 1, ai.count > 1,
+           Set(ai.compactMap { $0.type?.discipline }).count <= 1 {
+            var collapsed = ai[0]
+            var didCollapse = true
+            for later in ai.dropFirst() {
+                guard later.timeHint == nil || later.timeHint == collapsed.timeHint,
+                      later.dayOffset == 0 || later.dayOffset == collapsed.dayOffset else {
+                    didCollapse = false
+                    break
+                }
+                collapsed.type = later.type ?? collapsed.type
+                collapsed.indoor = collapsed.indoor || later.indoor
+                collapsed.durationS = later.durationS ?? collapsed.durationS
+                collapsed.distanceM = later.distanceM ?? collapsed.distanceM
+                collapsed.effort = later.effort ?? collapsed.effort
+                collapsed.timeHint = collapsed.timeHint ?? later.timeHint
+                if collapsed.dayOffset == 0 { collapsed.dayOffset = later.dayOffset }
+                for ex in later.exercises where !collapsed.exercises.contains(ex) {
+                    collapsed.exercises.append(ex)
+                }
+            }
+            if didCollapse { ai = [collapsed] }
+        }
         var out = ai
         if let g = grammar.first { out[0] = merge(ai: out[0], grammar: g) }
         return out

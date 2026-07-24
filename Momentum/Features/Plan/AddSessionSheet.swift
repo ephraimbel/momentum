@@ -9,6 +9,8 @@ struct AddSessionSheet: View {
     let plan: TrainingPlan
     var defaultDate: Date = Date()
     var onDone: () -> Void
+    /// Present the workout library instead (the host swaps sheets). nil hides the row.
+    var onOpenLibrary: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
@@ -32,10 +34,12 @@ struct AddSessionSheet: View {
     private var isTimed: Bool { sport.isTimed }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
 
-    init(plan: TrainingPlan, defaultDate: Date = Date(), onDone: @escaping () -> Void) {
+    init(plan: TrainingPlan, defaultDate: Date = Date(), onDone: @escaping () -> Void,
+         onOpenLibrary: (() -> Void)? = nil) {
         self.plan = plan
         self.defaultDate = defaultDate
         self.onDone = onDone
+        self.onOpenLibrary = onOpenLibrary
         _date = State(initialValue: Calendar.current.startOfDay(for: defaultDate))
     }
 
@@ -44,6 +48,7 @@ struct AddSessionSheet: View {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    if onOpenLibrary != nil { libraryRow }
                     daySection
                     activitySection
                     if isGPS { goalSection } else { durationSection }   // strength-style gets a duration too
@@ -90,6 +95,37 @@ struct AddSessionSheet: View {
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.lg)
         .padding(.bottom, Theme.Space.md)
+    }
+
+    // MARK: The workout library door — guided classics, one tap away from the manual form
+
+    private var libraryRow: some View {
+        Button { Haptics.light(); onOpenLibrary?() } label: {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "text.book.closed.fill")
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.background)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Theme.ink))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("From the library")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Fartlek, tempo, hills — classic workouts, guided step by step.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Workout library")
+        .accessibilityHint("Pick a guided running workout")
     }
 
     // MARK: Day strip

@@ -119,6 +119,9 @@ enum DemoSeed {
         let profile = UserProfile()
         profile.displayName = "Alex Rivera"
         profile.handle = "alexrivera"   // display name and @handle are distinct (username vs name)
+        // --seed-female: render the demo athlete as female (the true female anatomy figure) — a
+        // deterministic path to verify the figure on every body surface.
+        if ProcessInfo.processInfo.arguments.contains("--seed-female") { profile.sex = "female" }
         profile.publicRouteMaps = true  // DEBUG demo shares (fuzzed) routes so feed posts show the run's map
         profile.disciplines = ["running", "strength"]
         profile.goal = .buildMuscle
@@ -177,8 +180,7 @@ enum DemoSeed {
 
         // A small demo lift library with real muscle mapping, so strength posts light the body map
         // (chest/back/legs/shoulders) instead of falling back to a glyph.
-        let lifts = demoLifts()
-        lifts.forEach(context.insert)
+        let lifts = demoLifts(in: context)
 
         // --marketing-profile: seed a full, established athlete (hundreds of real-route posts, a deep
         // lifetime, dense consistency) for the website's Profile screenshot — the "full account" look.
@@ -307,9 +309,10 @@ enum DemoSeed {
                 let seedStyle = MapStyleOption.persisted
                 if let data = await RouteSnapshotter.snapshot(
                     coordinates: coords, size: RouteSnapshotter.workoutTileSize,
-                    styleURI: seedStyle.styleURI(for: .light),
+                    styleURI: RouteSnapshotter.tileStyle,
                     insets: RouteSnapshotter.workoutTileInsets) {
                     gps.mapSnapshotData = data
+                    gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
                     gps.mapStyleRaw = seedStyle.rawValue
                     try? context.save()
                 }
@@ -424,9 +427,10 @@ enum DemoSeed {
                 let seedStyle = MapStyleOption.persisted
                 if let data = await RouteSnapshotter.snapshot(
                     coordinates: coords, size: RouteSnapshotter.workoutTileSize,
-                    styleURI: seedStyle.styleURI(for: .light),
+                    styleURI: RouteSnapshotter.tileStyle,
                     insets: RouteSnapshotter.workoutTileInsets) {
                     gps.mapSnapshotData = data
+                    gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
                     gps.mapStyleRaw = seedStyle.rawValue
                     try? context.save()
                 }
@@ -542,17 +546,12 @@ enum DemoSeed {
         try? context.save()
     }
 
-    private static func demoLifts() -> [Exercise] {
-        [
-            Exercise(name: "Barbell Bench Press", primaryMuscles: [.chest], secondaryMuscles: [.triceps, .shoulders],
-                     equipment: .barbell, category: .compound),
-            Exercise(name: "Barbell Row", primaryMuscles: [.back], secondaryMuscles: [.biceps],
-                     equipment: .barbell, category: .compound),
-            Exercise(name: "Back Squat", primaryMuscles: [.quads, .glutes], secondaryMuscles: [.hamstrings],
-                     equipment: .barbell, category: .compound),
-            Exercise(name: "Overhead Press", primaryMuscles: [.shoulders], secondaryMuscles: [.triceps],
-                     equipment: .barbell, category: .compound),
-        ]
+    /// The four demo lifts, taken FROM the shared library (which seeds before us) — inserting
+    /// copies here is what once double-listed "Barbell Bench Press" in the exercise search.
+    private static func demoLifts(in context: ModelContext) -> [Exercise] {
+        let names = ["Barbell Bench Press", "Barbell Row", "Barbell Back Squat", "Overhead Press"]
+        let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
+        return names.compactMap { name in all.first { $0.name == name && !$0.isCustom } }
     }
 
     private static func strengthSession(lifts: [Exercise], week: Double) -> StrengthSession {
@@ -564,7 +563,7 @@ enum DemoSeed {
             // scaled by a gently-building base.
             let ratio: Double = {
                 switch lift.name {
-                case "Back Squat": 1.6
+                case "Barbell Back Squat": 1.6
                 case "Barbell Bench Press": 1.05
                 case "Barbell Row": 0.95
                 case "Overhead Press": 0.62

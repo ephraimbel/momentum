@@ -52,8 +52,6 @@ actor GPSTrackingEngine {
     }
 
     enum Const {
-        static let heroUpdateThrottleS = 1.0
-        static let routeRedrawThrottleS = 0.5
         static let checkpointIntervalS = 5.0
         static let liveActivityUpdateS = 3.0
         static let gpsLostTimeoutS = 8.0   // no accepted fix for this long → GPSLost (keep timing)

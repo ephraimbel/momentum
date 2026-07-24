@@ -30,6 +30,7 @@ struct WatchCardioView: View {
                         model = m
                         await m.start()
                         guard !Task.isCancelled else { return }
+                        if m.guide != nil, page == .metrics { page = .guide }
                         phase = .live
                     }
             case .live:
@@ -57,6 +58,11 @@ struct WatchCardioView: View {
 
     private func live(_ model: WatchCardioModel) -> some View {
         TabView(selection: $page) {
+            // A guided session leads with its coaching page — the wrist tells you what you're
+            // doing and how much is left before it tells you anything else.
+            if model.guide != nil {
+                GuidePage(model: model).tag(LivePage.guide)
+            }
             MetricsPage(model: model).tag(LivePage.metrics)
             ZonesPage(model: model).tag(LivePage.zones)
             MapPage(model: model).tag(LivePage.map)
@@ -111,7 +117,7 @@ struct WatchCardioView: View {
 
 enum SessionPhase { case countdown, starting, live, summary }
 
-enum LivePage: String, Hashable { case metrics, zones, map, controls }
+enum LivePage: String, Hashable { case guide, metrics, zones, map, controls }
 
 // MARK: - Countdown (Apple Workout / Strava): 3 · 2 · 1 with a haptic per tick, GO in iridescence
 

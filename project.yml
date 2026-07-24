@@ -200,6 +200,8 @@ targets:
       - path: Momentum/Engines/RouteSmoothing.swift # shared: spline smoothing for the summary route trace
       - path: Momentum/Engines/Geo.swift            # shared: haversine (RouteSmoothing dependency)
       - path: Momentum/Engines/WorkoutLogParser.swift # shared: the voice-log grammar (pure Swift — receipts on the wrist)
+      - path: Momentum/Engines/StructuredWorkout.swift # shared: step model + tracker + pure builders (guided runs on the wrist; the PlannedSession-facing builder stays phone-side)
+      - path: Momentum/Features/Plan/StructuredWorkoutSummary.swift # shared: step → human row labels (pure display math over Formatters)
     dependencies:
       - target: MomentumWatchWidgets   # embeds the complications extension into the watch app
     settings:

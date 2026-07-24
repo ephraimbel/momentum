@@ -23,6 +23,13 @@ final class StructuredRunUITests: XCTestCase {
         }
         app.launch()
 
+        // A previous run of this very suite ends the app mid-session — cold launch recovers it
+        // into the save screen (zero-lost-workouts is designed behavior). File it away first.
+        let recoveredDone = app.buttons["Done"].firstMatch
+        if recoveredDone.waitForExistence(timeout: 3), app.buttons["Share your run"].exists {
+            recoveredDone.tap()
+        }
+
         // Reach the tracking screen: the acquiring gate auto-advances once the synthetic GPS locks;
         // tap "Start now" along the way if it's still showing. The Skip control only exists once the
         // guided run is live.

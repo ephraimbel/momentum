@@ -45,6 +45,8 @@ struct RootView: View {
     // Straight to Settings (screenshot verification of the settings surface).
     @State private var showSettingsDeepLink = false
     @State private var showWidgetPreview = ProcessInfo.processInfo.arguments.contains("--widget-preview")
+    // Straight into the planned-lift checklist (screenshot verification of the live strength flow).
+    @State private var showStrengthLivePlanned = false
     #endif
 
     var body: some View {
@@ -154,6 +156,23 @@ struct RootView: View {
                         }
                     }
                 }
+                // --strength-live-planned: the planned-lift checklist (nearest strength day with
+                // targets from the seeded plan) — deterministic verification of the prescription
+                // header + target rows. Own background view (same 4th-modifier gotcha as above).
+                .background {
+                    Color.clear.fullScreenCover(isPresented: $showStrengthLivePlanned) {
+                        if let session = profiles.first?.plan?.sessions
+                            .filter({ $0.discipline == .strength && !$0.strengthTargets.isEmpty
+                                      && $0.status != .completed })
+                            .sorted(by: { abs($0.date.timeIntervalSinceNow) < abs($1.date.timeIntervalSinceNow) })
+                            .first {
+                            StrengthLiveView(container: context.container, type: .strength,
+                                             plannedSession: session) { _ in
+                                showStrengthLivePlanned = false
+                            }
+                        }
+                    }
+                }
                 #endif
             }
         }
@@ -251,6 +270,9 @@ struct RootView: View {
             if ProcessInfo.processInfo.arguments.contains("--save-screen") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showSaveScreen = true }
             }
+            if ProcessInfo.processInfo.arguments.contains("--strength-live-planned") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showStrengthLivePlanned = true }
+            }
             if ProcessInfo.processInfo.arguments.contains("--coach-card") {
                 // Deterministic proposal in the thread (no network) — screenshot the card + Apply flow.
                 CoachDemo.seedProposalIfNeeded(in: context)
@@ -291,6 +313,10 @@ struct RootView: View {
             }
         }
         .background(Theme.background)
+        // Publish the athlete's own body figure once (and on any sex change), so every muscle map —
+        // including the ones inside covers, which don't inherit the environment — shows the right
+        // anatomy. `.task(id:)` re-fires when the sex changes, keeping Profile → Edit live.
+        .task(id: profiles.first?.sex) { AthleteFigure.sex = BodySex(profileSex: profiles.first?.sex) }
     }
 
     @ViewBuilder

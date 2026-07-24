@@ -179,7 +179,6 @@ struct ProgressScreen: View {
     /// distance/sessions callouts read these, recomputed together with activation on a range flip.
     @State private var cachedRangeDistanceM: Double?
     @State private var cachedRangeSessions: Int?
-    @State private var cachedFormPoint: FitnessFreshness.Point?
     /// Full-history weekly distance buckets — the season chart and volume delta read the
     /// workouts themselves (snapshots only accumulate one per week of app use).
     @State private var cachedWeekVolumes: [(week: Date, meters: Double)]?
@@ -258,7 +257,6 @@ struct ProgressScreen: View {
         prBadgeIDs = Set(records.compactMap { $0.workout?.id })
         cachedFacts = AthleteModelEngine(workouts: workouts, plan: plan).facts
         refreshWindowed()
-        cachedFormPoint = computeFormPoint()
         cachedWeekVolumes = computeWeekVolumes()
         cachedIntensityMix = computeIntensityMix()
         cachedHasStrength = workouts.contains { $0.type.isStrengthStyle && $0.strength != nil }
@@ -722,22 +720,6 @@ struct ProgressScreen: View {
                 return (s.weekStart, v)
             }
     }
-    /// Daily training load over the last 9 weeks → CTL/ATL/Form (Fitness/Fatigue/Form).
-    private var formPoint: FitnessFreshness.Point? { cachedFormPoint ?? computeFormPoint() }
-    private func computeFormPoint() -> FitnessFreshness.Point? {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        guard let start = cal.date(byAdding: .day, value: -62, to: today) else { return nil }
-        var buckets: [Date: Double] = [:]
-        for w in workouts where w.startedAt >= start {
-            buckets[cal.startOfDay(for: w.startedAt), default: 0] += TrainingLoad.session(w)
-        }
-        let loads = (0...62).map { i -> Double in
-            let day = cal.date(byAdding: .day, value: i - 62, to: today) ?? today
-            return buckets[cal.startOfDay(for: day)] ?? 0
-        }
-        return FitnessFreshness.current(dailyLoads: loads)
-    }
     private var goalRace: RaceDistance? { profiles.first?.raceDistanceM.map { RaceDistance.nearest(toMeters: $0) } }
     private var racePredictions: [(race: RaceDistance, timeS: Double, paceSPerKm: Double)] {
         guard let p5k = currentP5k else { return [] }
@@ -1016,13 +998,6 @@ struct ProgressScreen: View {
         }
     }
 
-    /// CTL/ATL Form only reads true after ~6 weeks of training — on a fresh account CTL sits near 0 and
-    /// TSB pegs deeply negative even when you're rested. Require enough history before showing Form.
-    private var hasFormHistory: Bool {
-        let cutoff = Calendar.current.date(byAdding: .weekOfYear, value: -5, to: Date()) ?? Date()
-        return workouts.count >= 10 && workouts.contains { $0.startedAt <= cutoff }
-    }
-
     /// The Trends → Health hand-off: the compact strip that replaced the retired recovery
     /// cards (deleted 2026-07-23 — their depth lives in the Health segment now). Same blend
     /// the segment's hero computes — the two surfaces can never disagree on the number.
@@ -1264,16 +1239,6 @@ struct ProgressScreen: View {
     }
     private func feedIsPR(_ w: Workout) -> Bool {
         prBadgeIDs?.contains(w.id) ?? false
-    }
-
-    /// One full detection pass — only ever run from `refreshAggregates`, never per row.
-    private func feedIsPRUncached(_ w: Workout) -> Bool {
-        // The cardio detector early-returns [] for strength, so lifts need their own check — a bench
-        // PR celebrated on the summary shouldn't vanish from the feed.
-        if w.type.isStrengthStyle {
-            return !StrengthPRs.detect(for: w, weightUnit: .default(), in: context).isEmpty
-        }
-        return !CardioAchievements.detect(for: w, distanceUnit: distanceUnit, in: context).isEmpty
     }
 
     // MARK: AI coach card

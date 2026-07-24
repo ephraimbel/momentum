@@ -28,7 +28,4 @@ enum Motion {
     /// The "drawing pen": eases gently out of the start and decelerates into the finish. Every hero
     /// line/ring that *draws itself* (welcome route, projection curve, commitment ring) shares it.
     static func pen(_ duration: Double) -> Animation { .timingCurve(0.42, 0.0, 0.22, 1.0, duration: duration) }
-
-    /// Slow continuous drift for iridescence (~6–10s); never fast/strobing.
-    static let iridescenceLoop = 8.0
 }

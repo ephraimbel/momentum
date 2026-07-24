@@ -88,15 +88,23 @@ final class ProgressChartsUITests: XCTestCase {
         XCTAssertTrue(distance.waitForExistence(timeout: 4), "Didn't return to Trends after Done.")
 
         // Steps reads against a ~20k axis ceiling (an ordinary day sits mid-chart, never
-        // towering to full height) — open its detail and capture it for the eyeball check.
+        // towering to full height) — open its detail. Tap the header strip (dy 0.1): the plot
+        // keeps its scrub gesture, so a mid-card tap could pin a bar. Retry in a loop — right
+        // after the distance sheet dismisses the page can still be settling, so a single tap can
+        // land while the card is mid-scroll (the multi-suite flake this hardens against).
         XCTAssertTrue(swipeUntilFound(steps, in: app), "Steps card lost after returning.")
-        if !steps.isHittable { app.swipeUp() }
-        steps.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
-        if !app.navigationBars["Daily movement"].waitForExistence(timeout: 4) {
-            steps.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+        var stepsOpened = app.navigationBars["Daily movement"].exists
+        var stepsTries = 0
+        while !stepsOpened && stepsTries < 5 {
+            if steps.isHittable {
+                steps.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
+            } else {
+                app.swipeUp()
+            }
+            stepsOpened = app.navigationBars["Daily movement"].waitForExistence(timeout: 3)
+            stepsTries += 1
         }
-        XCTAssertTrue(app.navigationBars["Daily movement"].waitForExistence(timeout: 6),
-                      "Steps card tap didn't open its detail sheet.")
+        XCTAssertTrue(stepsOpened, "Steps card tap didn't open its detail sheet.")
         let stepsShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         stepsShot.name = "steps-detail-sheet"
         stepsShot.lifetime = .keepAlways

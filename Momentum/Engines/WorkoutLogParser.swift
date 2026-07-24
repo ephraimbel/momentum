@@ -42,7 +42,7 @@ enum WorkoutLogParser {
     static func parse(_ raw: String, weightUnit: WeightUnit = .kg,
                       distanceUnit: DistanceUnit = .metric) -> Result {
         var r = Result()
-        let text = normalizeSpokenNumbers(raw.lowercased())
+        let text = preprocess(raw, weightUnit: weightUnit)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return r }
 
         parseWhen(text, into: &r)
@@ -69,7 +69,7 @@ enum WorkoutLogParser {
     /// lifted, then ran" — both were yesterday). Capped at 3 — nobody logs four in a breath.
     static func parseMulti(_ raw: String, weightUnit: WeightUnit = .kg,
                            distanceUnit: DistanceUnit = .metric) -> [Result] {
-        let text = normalizeSpokenNumbers(raw.lowercased())
+        let text = preprocess(raw, weightUnit: weightUnit)
         // Every sport-keyword hit, position-sorted, longest-wins, non-overlapping — so
         // "mountain bike ride" is one cycling mention, not three.
         var hits: [(pos: Int, len: Int, type: WorkoutType)] = []
@@ -189,6 +189,23 @@ enum WorkoutLogParser {
         return min(base, now)
     }
 
+    // MARK: Preprocess
+
+    /// The full text-rewrite pipeline every parse runs through: spoken numbers → digits, the
+    /// corrected-away halves of "instead of" phrases dropped, and gym plate lingo resolved to
+    /// explicit weights. Idempotent — `parseMulti` segments re-run it safely.
+    static func preprocess(_ raw: String, weightUnit: WeightUnit) -> String {
+        normalizePlateMath(stripCorrections(normalizeSpokenNumbers(raw.lowercased())),
+                           weightUnit: weightUnit)
+    }
+
+    /// "five hard miles instead of five easy miles" MEANS the hard five — drop the corrected-away
+    /// half (to the end of its clause) so no grammar downstream reads facts the athlete replaced.
+    static func stripCorrections(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\b(?:instead of|rather than)\s[^,.;\n]*"#,
+                                  with: "", options: .regularExpression)
+    }
+
     // MARK: Spoken numbers
 
     /// Dictation doesn't always render digits — gym lingo comes out as words: "one eighty five
@@ -234,6 +251,19 @@ enum WorkoutLogParser {
             while i < tokens.count {
                 let t = tokens[i]
                 func peek(_ n: Int) -> String? { i + n < tokens.count ? tokens[i + n] : nil }
+                // "two forty five pound plates" is a COUNT and a plate denomination, not 245 —
+                // the concat idiom stands down when a plate word follows (an optional unit word
+                // may sit between); `normalizePlateMath` does the arithmetic afterwards.
+                func plateFollows(_ n: Int) -> Bool {
+                    var k = i + n
+                    if k < tokens.count,
+                       ["pound", "pounds", "lb", "lbs", "kilo", "kilos", "kg"].contains(tokens[k]) {
+                        k += 1
+                    }
+                    guard k < tokens.count else { return false }
+                    let w = tokens[k].trimmingCharacters(in: CharacterSet(charactersIn: ".,;!?"))
+                    return w == "plate" || w == "plates"
+                }
                 if let u = units[t], peek(1) == "hundred" {
                     var value = u * 100, consumed = 2
                     var j = i + 2
@@ -255,9 +285,13 @@ enum WorkoutLogParser {
                     // "one eighty five" — the gym idiom: digit concatenation, not addition.
                     var value = u * 100 + tv, consumed = 2
                     if let last = peek(2), let uv = units[last] { value += uv; consumed += 1 }
+                    if plateFollows(consumed) {
+                        out.append(String(u)); i += 1; continue   // count stays; "forty five" next
+                    }
                     out.append(String(value)); i += consumed; continue
                 }
                 if let u = units[t], let next = peek(1), let te = teens[next] {
+                    if plateFollows(2) { out.append(String(u)); i += 1; continue }
                     out.append(String(u * 100 + te)); i += 2; continue   // "three fifteen" → 315
                 }
                 if let tv = tens[t] {
@@ -275,6 +309,106 @@ enum WorkoutLogParser {
         // "four and a half miles" (now "4 and a half miles") → "4.5 miles" — spoken or typed.
         return normalized.replacingOccurrences(of: #"\b(\d+)\s+and\s+a\s+half\b"#,
                                                with: "$1.5", options: .regularExpression)
+    }
+
+    // MARK: Plate lingo
+
+    /// Gym plate talk → an explicit total weight, so every set pattern downstream just reads a
+    /// number. Arithmetic on stated facts only (2026-07-23 user report — "two forty five pound
+    /// plates on each side" was mis-read as a 245 lb lift):
+    ///   "2 45 pound plates on each side" → 45 × 2 per side × 2 = "180 lbs" (leg press etc.)
+    ///   …in a barbell clause (bench/squat/deadlift/rows/overhead) the 45 lb bar rides along
+    ///   "three plates" (bare, barbell)   → the universal idiom: 3 per side of 45s + bar = 315
+    ///   "2 45s a side"                   → denominated shorthand; the side phrase disambiguates
+    /// Kilo gyms get the same treatment (20 kg plates, 20 kg bar). A number with no plate word
+    /// ("benched 245") is never touched.
+    static func normalizePlateMath(_ text: String, weightUnit: WeightUnit) -> String {
+        var text = text
+        // Typed/concatenated shorthand first: "245 pound plates" is 2 × 45-lb plates (245-lb
+        // plates don't exist) — split the digits so the denominated rule below reads it.
+        text = text.replacingOccurrences(
+            of: #"\b([1-9])(45|35|25|15)(?=\s*(?:pounds?|lbs?|kilos?|kg)?\s*plates?\b)"#,
+            with: "$1 $2", options: .regularExpression)
+
+        let sideCore = #"(?:on\s+)?(?:each|both|per|a)\s+sides?|each\b"#
+        let sideOpt = "(\\s+(?:" + sideCore + "))?"
+        let sideReq = "(\\s+(?:" + sideCore + "))"
+
+        // Denominated: "2 45 pound plates (on each side)".
+        text = rewrite(#"\b(\d{1,2})\s+(\d{1,3}(?:\.\d+)?)\s*(pounds?|lbs?|kilos?|kg)?\s*plates?\b(?!\s*of\b)"# + sideOpt,
+                       in: text) { g, clause in
+            guard let count = Int(g[0] ?? ""), (1...10).contains(count),
+                  let denom = Double(g[1] ?? "") else { return nil }
+            let lb = isPounds(unitWord: g[2], denom: denom, weightUnit: weightUnit)
+            guard (lb ? lbPlates : kgPlates).contains(denom) else { return nil }
+            return plateTotal(count: count, denom: denom, perSide: g[3] != nil, lb: lb, clause: clause)
+        }
+        // Denominated 's shorthand: "2 45s a side" — the side phrase is required (a bare
+        // "2 45s" could be anything).
+        text = rewrite(#"\b(\d{1,2})\s+(\d{2,3})s\b"# + sideReq, in: text) { g, clause in
+            guard let count = Int(g[0] ?? ""), (1...10).contains(count),
+                  let denom = Double(g[1] ?? "") else { return nil }
+            let lb = isPounds(unitWord: nil, denom: denom, weightUnit: weightUnit)
+            guard (lb ? lbPlates : kgPlates).contains(denom) else { return nil }
+            return plateTotal(count: count, denom: denom, perSide: true, lb: lb, clause: clause)
+        }
+        // Bare count: "three plates" — the idiom already means per side ("two plates" = 225 on
+        // a bar); metric gyms count 20 kg plates the same way.
+        text = rewrite(#"\b(\d{1,2})\s*plates?\b(?!\s*of\b)"# + sideOpt, in: text) { g, clause in
+            guard let count = Int(g[0] ?? ""), (1...10).contains(count) else { return nil }
+            let lb = weightUnit == .lb
+            return plateTotal(count: count, denom: lb ? 45 : 20, perSide: true, lb: lb, clause: clause)
+        }
+        return text
+    }
+
+    private static let lbPlates: Set<Double> = [2.5, 5, 10, 15, 25, 35, 45, 55]
+    private static let kgPlates: Set<Double> = [1.25, 2.5, 5, 10, 15, 20, 25]
+
+    /// Which unit a plate denomination is in: an explicit unit word wins; 45/35/55 only exist in
+    /// pounds and 20/1.25 only in kilos; the ambiguous sizes follow the athlete's display unit.
+    private static func isPounds(unitWord: String?, denom: Double, weightUnit: WeightUnit) -> Bool {
+        if let u = unitWord, !u.isEmpty { return u.hasPrefix("lb") || u.hasPrefix("pound") }
+        if lbPlates.contains(denom), !kgPlates.contains(denom) { return true }
+        if kgPlates.contains(denom), !lbPlates.contains(denom) { return false }
+        return weightUnit == .lb
+    }
+
+    /// The rewritten weight text for one plate clause, or nil to leave the words untouched.
+    /// The bar joins only in a barbell clause — machines (leg press, hack squat…) have none.
+    private static func plateTotal(count: Int, denom: Double, perSide: Bool, lb: Bool,
+                                   clause: String) -> String? {
+        let barbell = clause.range(
+            of: #"\b(bench|squats?|squatted|deadlifts?|deadlifted|barbell|rows?|rowed|overhead|ohp|military)\b"#,
+            options: .regularExpression) != nil
+        let machine = clause.range(
+            of: #"\b(leg press|hack|machine|sled|smith)\b"#, options: .regularExpression) != nil
+        var value = Double(count) * denom * (perSide ? 2 : 1)
+        if barbell && !machine { value += lb ? 45 : 20 }
+        guard value > 0, value <= (lb ? 1500 : 700) else { return nil }
+        let unit = lb ? "lbs" : "kg"
+        return value == value.rounded() ? "\(Int(value)) \(unit)" : "\(value) \(unit)"
+    }
+
+    /// Regex-rewrite with a computed replacement, matches processed back-to-front so earlier
+    /// ranges stay valid. The callback receives the capture groups and the clause text BEFORE
+    /// the match (the bar-context window); returning nil leaves that match as written.
+    private static func rewrite(_ pattern: String, in text: String,
+                                _ replacement: ([String?], String) -> String?) -> String {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
+        var out = text
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let full = Range(m.range, in: text) else { continue }
+            let groups = (1..<m.numberOfRanges).map {
+                Range(m.range(at: $0), in: text).map { String(text[$0]) }
+            }
+            let clause = String(text[..<full.lowerBound])
+                .components(separatedBy: CharacterSet(charactersIn: ",.;\n")).last ?? ""
+            guard let rep = replacement(groups, clause),
+                  let outRange = Range(m.range, in: out) else { continue }
+            out.replaceSubrange(outRange, with: rep)
+        }
+        return out
     }
 
     // MARK: When
@@ -379,7 +513,9 @@ enum WorkoutLogParser {
         }
         // The lookahead skips pace-speak: in "8 minute miles for 40 minutes", the first
         // "minute" is a pace's unit, not a duration — without it the run logged as 8 minutes.
-        if let c = captures(#"\b(\d{1,3})\s*(?:minutes?|mins?|min)(?![a-z])(?!\s+(?:miles?|mi|kilometers?|kilometres?|km|ks?)\b)"#, in: text),
+        // The `(?<!:)` keeps the seconds of an mm:ss out of it: "8:25 min/mile" is an 8:25 pace,
+        // and without it the "25 min" logged a phantom 25-minute run.
+        if let c = captures(#"(?<!:)\b(\d{1,3})\s*(?:minutes?|mins?|min)(?![a-z])(?!\s+(?:miles?|mi|kilometers?|kilometres?|km|ks?)\b)"#, in: text),
            let m = Double(c[0] ?? "") {
             r.durationS = m * 60
             return
@@ -432,29 +568,56 @@ enum WorkoutLogParser {
     /// an explicit "/km" or "per mile" wins.
     private static func parsePace(_ text: String, into r: inout Result, distanceUnit: DistanceUnit) {
         guard r.durationS == nil, let dist = r.distanceM else { return }
-        var perS: Double?
+
         // The pace's implicit unit follows the unit the athlete just SAID for the distance —
-        // "4 miles at 8:00 pace" is 8:00/mi even on a metric display (defaulting to the display
-        // unit computed a duration off by the km/mi ratio). An explicit "/km" or "per mile"
-        // below still wins.
+        // "4 miles at 8:00" is 8:00/mi even on a metric display (defaulting to the display unit
+        // computed a duration off by the km/mi ratio). An explicit "/km" or "per mile" on the
+        // pace itself still wins, below.
         var perMile = distanceUnit == .imperial
         if captures(#"\b\d+(?:\.\d+)?\s*(?:(?!min|sec|hour)[a-z]+\s+)?(?:miles?|mi)(?![a-z])"#, in: text) != nil {
             perMile = true
         } else if captures(#"(?<![x×])(?<![x×] )\b\d+(?:\.\d+)?\s*(?:(?!min|sec|hour)[a-z]+\s+)?(?:kilometers?|kilometres?|km|k)(?![a-z0-9])"#, in: text) != nil {
             perMile = false
         }
-        if let c = captures(#"\b(\d{1,2}):([0-5]\d)\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?(mi(?:le)?s?|km|kilometers?)?\s*pace"#, in: text),
-           let m = Double(c[0] ?? ""), let s = Double(c[1] ?? "") {
-            perS = m * 60 + s
-            if let unit = c[2] { perMile = unit.hasPrefix("mi") }
-        } else if let c = captures(#"\b(\d{3,4})\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?(mi(?:le)?s?|km|kilometers?)?\s*pace"#, in: text),
-                  let v = Double(c[0] ?? "") {
-            let m = (v / 100).rounded(.down), s = v.truncatingRemainder(dividingBy: 100)
-            if s < 60 {
+
+        // A pace is an mm:ss (or a spoken 3–4 digit "825"), marked as a pace — not a duration — by
+        // ANY of: the word "pace", a per-unit tag (/mi, per mile, min/mile), or simply a leading
+        // "at". Each colon pattern captures (minutes)(seconds)(unit?); first hit wins.
+        let unit = #"(mi(?:le)?s?|km|kilometres?|kilometers?)"#
+        var perS: Double?
+        var paceUnit: String?
+        let colonPatterns = [
+            #"\b(\d{1,2}):([0-5]\d)\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?"# + unit + #"?\s*pace"#,   // "8:25 pace", "8:25 /mi pace"
+            #"\b(\d{1,2}):([0-5]\d)\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)\s*"# + unit + #"\b"#,        // "8:25/mi", "8:25 per mile", "8:25 min/mile"
+            #"\b(?:at|@)\s+(?:an?\s+)?(\d{1,2}):([0-5]\d)\b(?!:)(?!\s*[ap]\.?m\b)(?:\s*(?:/|per\s+)\s*"# + unit + #")?"#,  // bare "at 8:25"
+        ]
+        for pattern in colonPatterns {
+            if let c = captures(pattern, in: text), let m = Double(c[0] ?? ""), let s = Double(c[1] ?? "") {
                 perS = m * 60 + s
-                if let unit = c[1] { perMile = unit.hasPrefix("mi") }
+                if c.count > 2 { paceUnit = c[2] }
+                break
             }
         }
+        // Spoken 3–4 digit forms ("825 pace", "825 per mile"). No bare-"at" here — a lone "825" is
+        // too ambiguous without the colon, so it needs "pace" or a per-unit tag to read as a pace.
+        if perS == nil {
+            let digitPatterns = [
+                #"\b(\d{3,4})\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)?"# + unit + #"?\s*pace"#,
+                #"\b(\d{3,4})\s*(?:min(?:ute)?s?\s*)?(?:/|per\s+)\s*"# + unit + #"\b"#,
+            ]
+            for pattern in digitPatterns {
+                if let c = captures(pattern, in: text), let v = Double(c[0] ?? "") {
+                    let m = (v / 100).rounded(.down), s = v.truncatingRemainder(dividingBy: 100)
+                    if s < 60 {
+                        perS = m * 60 + s
+                        if c.count > 1 { paceUnit = c[1] }
+                    }
+                    break
+                }
+            }
+        }
+        if let paceUnit { perMile = paceUnit.hasPrefix("mi") }
+
         // 2:30–20:00 per unit — outside that it's a mis-read, not a pace.
         guard let perS, perS >= 150, perS <= 1200 else { return }
         let unitCount = perMile ? dist / Formatters.metersPerMile : dist / 1000
@@ -475,10 +638,24 @@ enum WorkoutLogParser {
     ]
 
     private static func parseEffort(_ text: String, into r: inout Result) {
-        for e in efforts where boundedRange(of: e.phrase, in: text) != nil {
-            r.effort = e.rpe
-            return
+        // ALL mentions, position-scanned — the athlete's LAST word on it wins ("5 easy miles…
+        // actually a hard effort" is hard, and "…actually felt pretty easy" flips back), with
+        // the longer phrase beating its own substring ("really hard" is 9, never the inner 8).
+        var hits: [(pos: Int, len: Int, rpe: Int)] = []
+        let nsRange = NSRange(text.startIndex..., in: text)
+        for e in efforts {
+            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: e.phrase) + "\\b"
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            for m in re.matches(in: text, range: nsRange) {
+                guard let range = Range(m.range, in: text) else { continue }
+                hits.append((text.distance(from: text.startIndex, to: range.lowerBound),
+                             e.phrase.count, e.rpe))
+            }
         }
+        hits.sort { $0.pos != $1.pos ? $0.pos < $1.pos : $0.len > $1.len }
+        var kept: [(pos: Int, len: Int, rpe: Int)] = []
+        for h in hits where kept.last.map({ h.pos >= $0.pos + $0.len }) ?? true { kept.append(h) }
+        r.effort = kept.last?.rpe
     }
 
     // MARK: Exercises
@@ -560,6 +737,12 @@ enum WorkoutLogParser {
     /// ". " is a break but a bare "." is not ("22.5 kg" must survive).
     private static func clauses(_ text: String) -> [String] {
         text
+            // "10 reps and 5 sets" is ONE set line — join before the and-split strands the
+            // sets in their own clause (which silently logged 1×10).
+            .replacingOccurrences(of: #"(\d+)\s*(reps?)\s+and\s+(\d+)\s*(sets?)"#,
+                                  with: "$1 $2 with $3 $4", options: .regularExpression)
+            .replacingOccurrences(of: #"(\d+)\s*(sets?)\s+and\s+(\d+)\s*(reps?)"#,
+                                  with: "$1 $2 of $3 $4", options: .regularExpression)
             .replacingOccurrences(of: " and then ", with: ",")
             .replacingOccurrences(of: " then ", with: ",")
             .replacingOccurrences(of: " and ", with: ",")
@@ -585,6 +768,11 @@ enum WorkoutLogParser {
     private static func cleanName(_ raw: String) -> String? {
         var words = raw.split(separator: " ").map(String.init)
         while let first = words.first, ["the", "a", "my", "some"].contains(first) { words.removeFirst() }
+        // Trailing connectives are grammar residue, not name — "leg press with 180 lbs" must
+        // read as a Leg Press, not a "Leg Press With".
+        while let last = words.last, ["with", "at", "on", "using", "the", "a"].contains(last) {
+            words.removeLast()
+        }
         words = words.map { verbCanonical[$0] ?? $0 }
         guard !words.isEmpty, !words.contains(where: { nameRejects.contains($0) }) else { return nil }
         return words.joined(separator: " ").capitalized

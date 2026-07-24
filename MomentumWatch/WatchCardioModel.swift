@@ -59,10 +59,17 @@ final class WatchCardioModel: NSObject {
     private var lapStartElapsed: TimeInterval = 0
     private var lapStartDistance: Double = 0
 
+    // MARK: Guided structure — the synced quality session's steps, advancing off the metronome
+
+    /// The step tracker for today's guided workout (phone-built, phone-synced). nil for plain
+    /// runs — every guided surface hides and the wrist is just a recorder.
+    private(set) var guide: StructuredRunTracker?
+
     // MARK: Pace halo — the target band from today's synced session, judged on ROLLING pace
 
     /// Today's prescribed easy/target window (s/km), synced from the phone. nil = no plan today
-    /// → the halo never renders and the wrist never judges a free run.
+    /// → the halo never renders and the wrist never judges a free run. On guided runs the band
+    /// follows the CURRENT STEP (`applyGuideBand`), so the halo always judges against the rep.
     private(set) var paceBandSPerKm: ClosedRange<Double>?
     /// Where the athlete sits against the band right now (driven by the 1 Hz metronome).
     enum PaceState { case none, inBand, fast, slow }
@@ -130,6 +137,7 @@ final class WatchCardioModel: NSObject {
     func start() async {
         zones = HRZones.zones(maxHR: 190) ?? []          // placeholder until DOB resolves
         resolvePaceBand()
+        resolveGuide()
         #if DEBUG
         if demo { startDemo(); return }
         #endif
@@ -190,6 +198,48 @@ final class WatchCardioModel: NSObject {
         #endif
     }
 
+    /// Today's guided structure, if the phone synced one — the wrist runs the SAME step tracker
+    /// the phone does, so a quality session coaches identically on either device.
+    private func resolveGuide() {
+        guard type.discipline == .running,
+              let workout = WatchSyncStore.shared.todaySession?.structured,
+              !workout.steps.isEmpty else { return }
+        guide = StructuredRunTracker(steps: workout.steps)
+        applyGuideBand()
+    }
+
+    /// The halo band follows the CURRENT step on guided runs: a rep's target ± its tolerance,
+    /// nothing during effort-based steps (a grade destroys pace — hills guide by feel).
+    private func applyGuideBand() {
+        guard let step = guide?.current else { return }
+        if let target = step.paceSPerKm {
+            paceBandSPerKm = (target - step.toleranceSPerKm)...(target + step.toleranceSPerKm)
+        } else {
+            paceBandSPerKm = nil
+        }
+    }
+
+    /// Advance the guided structure off the 1 Hz metronome; step transitions speak in the shared
+    /// haptic vocabulary — a rep begins with the firm GO, a recovery with the settle double-pulse,
+    /// the whole structure done earns the surge (the run keeps recording; ending stays yours).
+    private func advanceGuide() {
+        guard var g = guide, !g.isComplete else { return }
+        guard g.advance(distanceM: distanceM, elapsedS: elapsed) else { guide = g; return }
+        guide = g
+        applyGuideBand()
+        stepEnteredHaptic()
+    }
+
+    private func stepEnteredHaptic() {
+        guard let g = guide else { return }
+        guard let step = g.current else { WatchHaptics.surge(); return }
+        switch step.kind {
+        case .work: WatchHaptics.go()
+        case .recovery, .cooldown: WatchHaptics.easeOff()
+        case .warmup: break
+        }
+    }
+
     /// Personalize the five zones from Health's date of birth (Tanaka max HR); keep 190 otherwise.
     private func resolveZones() {
         guard let dob = try? healthStore.dateOfBirthComponents(),
@@ -217,9 +267,17 @@ final class WatchCardioModel: NSObject {
 
     /// Manual lap (Garmin-style): close the current lap now and restart the counter.
     /// (recordSplit speaks the haptic — the split double-tap, or the surge on a new fastest.)
+    /// On a guided run the lap button ALSO ends the current step (the Garmin/COROS convention) —
+    /// GPS drift never traps an athlete inside a rep they've clearly finished.
     func lap() {
         guard running, !hasEnded else { return }
         recordSplit()
+        if var g = guide, !g.isComplete {
+            g.skip(distanceM: distanceM, elapsedS: elapsed)
+            guide = g
+            applyGuideBand()
+            stepEnteredHaptic()
+        }
     }
 
     // MARK: 1 Hz metronome — zone accrual + auto-lap (and, in demo, synthetic sensors)
@@ -252,6 +310,7 @@ final class WatchCardioModel: NSObject {
             if z >= 1 { timeInZone[z - 1] += delta }
         }
         advancePace()
+        advanceGuide()
         if distanceM - lapStartDistance >= splitLengthM {
             recordSplit()
         }

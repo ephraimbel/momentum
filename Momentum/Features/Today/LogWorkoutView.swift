@@ -363,8 +363,9 @@ struct LogWorkoutView: View {
     }
 
     /// Find an existing library/custom exercise by name, else create a custom one so the lift is real.
+    /// Shorthand-aware ("bench press" → Barbell Bench Press) so voice logs never mint doubles.
     private func exerciseRef(named name: String) -> Exercise {
-        if let found = library.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { return found }
+        if let found = ExerciseNameMatch.find(name, in: library) { return found }
         let e = Exercise()
         e.name = name
         e.isCustom = true

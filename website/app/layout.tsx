@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
   title: "momentum — the running coach that adapts to you",
   description:
-    "Adaptive training plans, live guided runs, and honest coaching intelligence. From your first 5K to your first ultra. keep moving.",
+    "Adaptive training plans, live guided runs, and honest coaching intelligence. From your first 5K to your first marathon. keep moving.",
   icons: { icon: "/brandicon.png", apple: "/icon-1024.png" },
   openGraph: {
     title: "momentum — keep moving",

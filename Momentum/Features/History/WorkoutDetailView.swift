@@ -6,7 +6,6 @@ struct WorkoutDetailView: View {
     @Bindable var workout: Workout
     var weightUnit: WeightUnit = .default()
     var distanceUnit: DistanceUnit = .auto
-    @Environment(\.modelContext) private var context
     @Environment(CoachPresenter.self) private var coach
 
     var body: some View {

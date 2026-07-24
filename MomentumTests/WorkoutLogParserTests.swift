@@ -240,6 +240,33 @@ struct WorkoutLogParserTests {
         #expect(d.durationS == 2400)
     }
 
+    @Test func paceDerivesDurationAcrossEverydayPhrasings() {
+        // 4 mi × 8:25/mi = 33:40 = 2020s — the same run stated a dozen ways people actually talk.
+        let expected: Double = (8 * 60 + 25) * 4
+        let cases = [
+            "ran 4 miles at a 8:25 pace",       // the article before the number
+            "ran 4 miles at an 8:25 pace",
+            "ran 4 miles at 8:25 pace",
+            "4 miles at 8:25 pace",
+            "ran 4 miles at 8:25 per mile",     // per-unit marker, NO word "pace"
+            "ran 4 miles at 8:25/mi",
+            "ran 4 miles at 8:25 min/mile",
+            "ran 4 miles at an 8:25 min per mile",
+            "ran 4 miles at 8:25",              // bare "at mm:ss" with a distance = pace
+        ]
+        for input in cases {
+            let r = WorkoutLogParser.parse(input, distanceUnit: .imperial)
+            #expect(r.durationS == expected, "\(input) → \(String(describing: r.durationS))")
+        }
+    }
+
+    @Test func inTimeStaysADurationNotAPace() {
+        // "in 32:00" is the run's clock, never a 32:00/mi pace — the "at vs in" distinction.
+        let m32: Double = 32 * 60
+        #expect(WorkoutLogParser.parse("ran 4 miles in 32:00", distanceUnit: .imperial).durationS == m32)
+        #expect(WorkoutLogParser.parse("ran 4 miles, 32 minutes", distanceUnit: .imperial).durationS == m32)
+    }
+
     @Test func multiWorkoutSplits() {
         let list = WorkoutLogParser.parseMulti(
             "45 min upper body, bench 4x8 at 185, then ran 4 miles at 9:23 pace",
@@ -314,6 +341,105 @@ struct WorkoutLogParserTests {
     }
 
     // MARK: Effort + when
+
+    // MARK: Plate lingo (2026-07-23 user report — "two forty five pound plates" read as 245)
+
+    @Test func platesOnEachSideAreArithmeticNotAWeight() {
+        // "two forty five pound plates on each side" is 2 × 45 lb × 2 sides = 180 lb — NOT a
+        // 245 lb lift. The digit-concat idiom stands down when a plate word follows.
+        let r = WorkoutLogParser.parse(
+            "i just hit legs and i did leg press with two forty five pound plates on each side for ten reps and five sets",
+            weightUnit: .lb)
+        #expect(r.type == .strength)
+        #expect(r.exercises.count == 1)
+        #expect(r.exercises.first?.name == "Leg Press")
+        #expect(r.exercises.first?.sets == 5)
+        #expect(r.exercises.first?.reps == 10)
+        let kg = r.exercises.first?.weightKg ?? 0
+        #expect(abs(kg - 180 * Formatters.kgPerLb) < 0.5)
+    }
+
+    @Test func barbellPlatesIncludeTheBar() {
+        // On a barbell lift the 45 lb bar rides along: two 45s per side = 225 total.
+        let r = WorkoutLogParser.parse("bench with two forty five pound plates on each side for 5",
+                                       weightUnit: .lb)
+        #expect(r.exercises.count == 1)
+        #expect(r.exercises.first?.sets == 1)
+        #expect(r.exercises.first?.reps == 5)
+        let kg = r.exercises.first?.weightKg ?? 0
+        #expect(abs(kg - 225 * Formatters.kgPerLb) < 0.5)
+    }
+
+    @Test func barePlateCountsSpeakTheConvention() {
+        // "three plates" IS 315 on a barbell — the number every lifter means by it.
+        let r = WorkoutLogParser.parse("squatted three plates for a single", weightUnit: .lb)
+        #expect(r.exercises.count == 1)
+        #expect(r.exercises.first?.name == "Squat")
+        #expect(r.exercises.first?.sets == 1)
+        #expect(r.exercises.first?.reps == 1)
+        let kg = r.exercises.first?.weightKg ?? 0
+        #expect(abs(kg - 315 * Formatters.kgPerLb) < 0.5)
+    }
+
+    @Test func typedPlateShorthandDeconcatenates() {
+        // Typed (or already-concatenated) form: "245 pound plates on each side" is still
+        // 2 × 45 per side — 245-pound plates don't exist.
+        let r = WorkoutLogParser.parse("leg press 245 pound plates on each side for 8", weightUnit: .lb)
+        let kg = r.exercises.first?.weightKg ?? 0
+        #expect(abs(kg - 180 * Formatters.kgPerLb) < 0.5)
+    }
+
+    @Test func benchedTwoFortyFiveIsStillTheCompoundNumber() {
+        // No plate word → the classic concat idiom stands: "benched two forty five" = 245 lb.
+        let r = WorkoutLogParser.parse("benched two forty five for 5", weightUnit: .lb)
+        #expect(r.exercises.count == 1)
+        let kg = r.exercises.first?.weightKg ?? 0
+        #expect(abs(kg - 245 * Formatters.kgPerLb) < 0.5)
+    }
+
+    @Test func repsAndSetsJoinedByAndSurvive() {
+        // "for ten reps and five sets" — the and-split was stranding the sets in their own
+        // clause, silently logging 1×10.
+        let r = WorkoutLogParser.parse("bench pressed one eighty five for ten reps and five sets",
+                                       weightUnit: .lb)
+        #expect(r.exercises.count == 1)
+        #expect(r.exercises.first?.sets == 5)
+        #expect(r.exercises.first?.reps == 10)
+        let kg = r.exercises.first?.weightKg ?? 0
+        #expect(abs(kg - 185 * Formatters.kgPerLb) < 0.5)
+    }
+
+    // MARK: Corrections (2026-07-23 user report — effort change deleted the stated pace)
+
+    @Test func lateEffortCorrectionKeepsThePace() {
+        // "actually it was hard" changes the effort and ONLY the effort — the 8:25 pace stays.
+        let r = WorkoutLogParser.parse(
+            "i ran five easy miles at an eight twenty five pace. actually it was a hard effort")
+        #expect(r.type == .run)
+        #expect(r.distanceM != nil && abs(r.distanceM! - 5 * 1609.344) < 0.5)
+        let expected: Double = (8 * 60 + 25) * 5
+        #expect(r.durationS == expected)
+        #expect(r.effort == 8)
+    }
+
+    @Test func lastEffortMentionWins() {
+        // Corrections read in order — the latest word is the athlete's final answer.
+        let r = WorkoutLogParser.parse("ran 5 hard miles, actually it felt pretty easy")
+        #expect(r.effort == 2)
+        // The longer phrase still beats its own substring at the same spot.
+        let s = WorkoutLogParser.parse("ran 3 miles, felt really hard")
+        #expect(s.effort == 9)
+    }
+
+    @Test func insteadOfDropsTheCorrectedHalf() {
+        // "five hard miles instead of five easy miles" MEANS hard — one workout, pace intact.
+        let list = WorkoutLogParser.parseMulti(
+            "i ran five easy miles at an eight twenty five pace. i ran five hard miles instead of five easy miles")
+        #expect(list.count == 1)
+        #expect(list.first?.effort == 8)
+        let expected: Double = (8 * 60 + 25) * 5
+        #expect(list.first?.durationS == expected)
+    }
 
     @Test func effortWords() {
         #expect(WorkoutLogParser.parse("ran 5 miles hard").effort == 8)

@@ -20,16 +20,34 @@ final class StrengthViewModel {
     var drafts: [UUID: Draft] = [:]
     private var previousByRow: [UUID: [Int: PreviousPerformance.PrevSet]] = [:]
     /// Planned prescription per exercise row — enables the scheme-aware progression prefill
-    /// (PRD §9.2: linear / double / percent, each advancing off last session's logged sets).
+    /// (PRD §9.2: linear / double / percent, each advancing off last session's logged sets)
+    /// and the checklist header's "what the plan asks" line.
     struct PlannedPrescription {
         var repLow: Int
         var repHigh: Int
         var scheme: String = "double"
         var pctRM: Double?
+        var targetSets: Int = 3
+        var rpe: Double?
     }
     private var plannedPrescription: [UUID: PlannedPrescription] = [:]
     /// Muscle targeting per catalog exercise, captured at add-time — drives the live muscle map.
     private var musclesByExercise: [UUID: (primary: [MuscleGroup], secondary: [MuscleGroup])] = [:]
+    /// Tracking mode per catalog exercise — a `weightReps` row without a weight isn't loggable
+    /// yet (checking it off would record a barbell lift as bodyweight), so the checklist row
+    /// asks for the weight instead.
+    private var trackingByExercise: [UUID: TrackingMode] = [:]
+    /// Sets the athlete has personally typed into. This is what separates "engaged with but
+    /// never checked" (worth asking about at Finish) from untouched prefill — prefill is a
+    /// TARGET, not performed work, and must never auto-log.
+    private(set) var userEditedSets: Set<UUID> = []
+    /// The exercise whose final set was just checked — the auto-advance beat the live view
+    /// scrolls on. Cleared when a set is un-logged.
+    private(set) var lastCompletedRowId: UUID?
+    /// Mid-superset-round: the partner's open set for this round. A 4-set pair card is taller
+    /// than the screen, so the live view scrolls this next move into place — the checklist
+    /// principle that the next item presents itself.
+    private(set) var roundNextSetId: UUID?
 
     private(set) var workoutId: UUID?
     let startedAt = Date()
@@ -80,6 +98,7 @@ final class StrengthViewModel {
                                              category: exercise.category, defaultRestS: exercise.defaultRestS)
         musclesByExercise[exercise.id] = (exercise.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
                                           exercise.secondaryMuscles.compactMap(MuscleGroup.init(rawValue:)))
+        trackingByExercise[exercise.id] = exercise.trackingMode
         previousByRow[rowId] = PreviousPerformance.lastSession(forExerciseId: exercise.id, in: context)
         if let prescription { plannedPrescription[rowId] = prescription }   // planned ⇒ scheme-aware progression
         await addSetInternal(rowId: rowId)
@@ -91,6 +110,100 @@ final class StrengthViewModel {
         await refresh()
     }
 
+    /// Add a warm-up ("prep") set — inserted above the working sets, marked W, excluded from
+    /// volume and PR math by every downstream reader. No prefill: a warm-up load is the
+    /// athlete's call, never invented, so the row opens as a form.
+    func addWarmupSet(rowId: UUID) async {
+        if let setId = await engine.addSet(toExercise: rowId, prefill: .init(), type: .warmup) {
+            drafts[setId] = Draft()
+        }
+        await refresh()
+    }
+
+    /// Pair an exercise with a newly picked partner as a superset. The partner arrives through
+    /// the normal add path (previous-session prefill and all), then the pair is grouped and made
+    /// adjacent. Rest changes meaning from here: it comes after the ROUND, not after each set.
+    func pairSuperset(anchor rowId: UUID, with exercise: Exercise) async {
+        await addExercise(exercise)
+        guard let partnerId = exercises.last?.id, partnerId != rowId else { return }
+        await engine.pairSuperset(rowId, partnerId)
+        await refresh()
+        Haptics.light()
+    }
+
+    /// Pair two exercises that are ALREADY in the session (no library trip).
+    func pairExisting(_ anchorId: UUID, _ partnerId: UUID) async {
+        await engine.pairSuperset(anchorId, partnerId)
+        await refresh()
+        Haptics.light()
+    }
+
+    /// The session's other standalone exercises — the picker offers these as one-tap links
+    /// FIRST: the plan gave you five exercises, and running two of them as a pair is the most
+    /// common superset there is.
+    func supersetLinkCandidates(for rowId: UUID) -> [StrengthSessionEngine.LiveExercise] {
+        exercises.filter { $0.id != rowId && $0.supersetGroup == nil }
+    }
+
+    /// Partner ideas from the catalog — the classic antagonist pairings (chest↔back,
+    /// biceps↔triceps, quads↔hamstrings): one side rests while the other works, which is the
+    /// whole point of a superset. Same-equipment partners rank first (you're already standing
+    /// at the barbell), compounds before isolation; in-session exercises are excluded (they're
+    /// offered above as links).
+    func supersetSuggestions(for rowId: UUID) -> [Exercise] {
+        guard let ex = exercises.first(where: { $0.id == rowId }) else { return [] }
+        let anchorMuscles = Set(musclesByExercise[ex.exerciseId]?.primary ?? [])
+        let targets = Set(anchorMuscles.flatMap { Self.antagonists[$0] ?? [] })
+        guard !targets.isEmpty else { return [] }
+        let inSession = Set(exercises.map(\.name))
+        let catalog = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
+        let anchorEquipment = catalog.first(where: { $0.id == ex.exerciseId })?.equipment
+        // Never suggest gear the athlete told us they don't have (mirrors PlanEngine's
+        // allowedEquipment) — a bodyweight-only athlete must never see "Barbell Deadlift".
+        let profileEquipment = ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? [])
+            .first?.equipment ?? .fullGym
+        let allowed: Set<EquipmentType> = switch profileEquipment {
+        case .fullGym: Set(EquipmentType.allCases)
+        case .dumbbellsOnly: [.dumbbell, .bodyweight]
+        case .homeMinimal: [.dumbbell, .bodyweight, .band, .kettlebell]
+        case .bodyweight: [.bodyweight]
+        }
+        return catalog
+            .filter { candidate in
+                let muscles = candidate.primaryMuscles.compactMap(MuscleGroup.init(rawValue:))
+                // A true partner hits the OTHER side and none of the anchor's own muscles —
+                // "Back Squat" is never a superset partner for Barbell Back Squat.
+                return !inSession.contains(candidate.name)
+                    && allowed.contains(candidate.equipment)
+                    && muscles.contains(where: targets.contains)
+                    && !muscles.contains(where: anchorMuscles.contains)
+            }
+            .sorted { a, b in
+                let aEq = a.equipment == anchorEquipment, bEq = b.equipment == anchorEquipment
+                if aEq != bEq { return aEq }
+                let aCompound = a.category == .compound, bCompound = b.category == .compound
+                if aCompound != bCompound { return aCompound }
+                return a.name < b.name
+            }
+            .prefix(5).map { $0 }
+    }
+
+    /// Why these two make sense together — push pairs with pull, so one side recovers while
+    /// the other works. Knee-dominant pairs with hip-dominant, never with itself.
+    private static let antagonists: [MuscleGroup: [MuscleGroup]] = [
+        .chest: [.back], .back: [.chest], .shoulders: [.back],
+        .biceps: [.triceps], .triceps: [.biceps], .forearms: [.biceps],
+        .quads: [.hamstrings], .hamstrings: [.quads], .glutes: [.quads],
+        .calves: [.quads],
+    ]
+
+    /// Break a superset back into standalone exercises (rest returns to per-set).
+    func unlinkSuperset(rowId: UUID) async {
+        await engine.unlinkSuperset(rowId)
+        await refresh()
+        Haptics.light()
+    }
+
     /// Pre-load a planned strength day: each target exercise with its prescribed set count and
     /// rep target (PRD §4.4 "from today's plan day").
     func loadPlanned(_ session: PlannedSession) async {
@@ -98,7 +211,8 @@ final class StrengthViewModel {
             guard let exercise = pe.exercise else { continue }
             await addExercise(exercise, prescription: PlannedPrescription(
                 repLow: pe.targetRepLow, repHigh: pe.targetRepHigh,
-                scheme: pe.progression, pctRM: pe.targetPctRM))
+                scheme: pe.progression, pctRM: pe.targetPctRM,
+                targetSets: pe.targetSets, rpe: pe.targetRPE))
             guard let rowId = exercises.last?.id else { continue }
             for _ in 1..<max(1, pe.targetSets) { await addSet(rowId: rowId) }
             if let row = exercises.first(where: { $0.id == rowId }) {
@@ -147,22 +261,126 @@ final class StrengthViewModel {
         let rpe = Double(draft.rpe)
 
         await engine.completeSet(exerciseId: rowId, setId: setId, weightKg: weightKg, reps: reps, rpe: rpe)
-        Haptics.light()
 
         let snapshot = await engine.exercises
-        if let ex = snapshot.first(where: { $0.id == rowId }),
-           let set = ex.sets.first(where: { $0.id == setId }) {
-            startRest(seconds: set.restS, exerciseName: ex.name)
+        if let ex = snapshot.first(where: { $0.id == rowId }) {
+            // Flow the just-logged numbers forward into this exercise's still-empty sets —
+            // type the weight once, and the rest of the exercise is pure check-off. Working
+            // weights only, and only into working sets: a 95 lb warm-up must never become
+            // the prescription for the top sets (or the reverse).
+            let loggedType = ex.sets.first(where: { $0.id == setId })?.type
+            if loggedType == .working {
+                for other in ex.sets where other.id != setId && !other.isComplete && other.type == .working {
+                    var d = drafts[other.id] ?? Draft()
+                    if d.weight.isEmpty { d.weight = draft.weight }
+                    if d.reps.isEmpty { d.reps = draft.reps }
+                    drafts[other.id] = d
+                }
+            }
+            let members = ex.supersetGroup.map { g in
+                snapshot.filter { $0.supersetGroup == g }
+            } ?? [ex]
+            if let set = ex.sets.first(where: { $0.id == setId }) {
+                if let partnerSet = openRoundPartnerSet(after: ex, set: set, in: snapshot) {
+                    // Mid-superset-round: the next move is the partner's set — no rest yet, a
+                    // ring still running from the previous round stands down, and the partner's
+                    // row gets scrolled into place.
+                    skipRest()
+                    roundNextSetId = partnerSet
+                } else {
+                    roundNextSetId = nil
+                    // A superset round rests for the pair's LONGEST prescription — finishing
+                    // the round on the curl must not shortchange the bench's recovery.
+                    let restSeconds = max(set.restS, members.map(\.defaultRestS).max() ?? set.restS)
+                    startRest(seconds: restSeconds, exerciseName: ex.name)
+                }
+            }
+            // Finishing the whole GROUP (the pair, or just this exercise when standalone) is its
+            // own beat — a firmer pulse than the set tick, and the auto-advance signal.
+            if members.allSatisfy({ !$0.sets.isEmpty && $0.sets.allSatisfy(\.isComplete) }) {
+                lastCompletedRowId = rowId
+                Haptics.success()
+            } else {
+                Haptics.light()
+            }
+        } else {
+            Haptics.light()
         }
         await refresh()
+    }
+
+    /// The superset round rule: after a working set in a paired exercise, the partner's open
+    /// set at the SAME working position is the next move — rest waits for the round. Returns
+    /// that set's id (nil = round complete; warm-ups and unpaired extra sets rest normally).
+    private func openRoundPartnerSet(after ex: StrengthSessionEngine.LiveExercise,
+                                     set: StrengthSessionEngine.LiveSet,
+                                     in snapshot: [StrengthSessionEngine.LiveExercise]) -> UUID? {
+        guard let group = ex.supersetGroup, set.type == .working else { return nil }
+        let position = ex.sets.filter { $0.type == .working }.firstIndex { $0.id == set.id } ?? 0
+        for partner in snapshot where partner.id != ex.id && partner.supersetGroup == group {
+            let working = partner.sets.filter { $0.type == .working }
+            if position < working.count, !working[position].isComplete { return working[position].id }
+        }
+        return nil
     }
 
     /// Un-log a completed set (the user tapped its ✓ again). Clears the rest timer it started.
     func uncompleteSet(rowId: UUID, setId: UUID) async {
         await engine.uncompleteSet(exerciseId: rowId, setId: setId)
+        if lastCompletedRowId == rowId { lastCompletedRowId = nil }
+        roundNextSetId = nil
         skipRest()
         Haptics.light()
         await refresh()
+    }
+
+    // MARK: Checklist reads
+
+    /// The athlete typed into this set themselves (weight/reps/rpe) — see `userEditedSets`.
+    func markEdited(_ setId: UUID) { userEditedSets.insert(setId) }
+
+    func prescription(rowId: UUID) -> PlannedPrescription? { plannedPrescription[rowId] }
+
+    /// The section header's prescription line — what the plan asks of this exercise, e.g.
+    /// "4 sets · 8–12 reps · RPE 8" or "4 sets · 4–6 reps · 82% 1RM". Nil for free sessions.
+    func prescriptionLine(rowId: UUID) -> String? {
+        guard let rx = plannedPrescription[rowId] else { return nil }
+        let reps = rx.repLow == rx.repHigh ? "\(rx.repLow) reps" : "\(rx.repLow)–\(rx.repHigh) reps"
+        var parts = ["\(rx.targetSets) sets", reps]
+        if let pct = rx.pctRM {
+            parts.append("\(Int((pct * 100).rounded()))% 1RM")
+        } else if let rpe = rx.rpe {
+            parts.append("RPE \(rpe == rpe.rounded() ? String(Int(rpe)) : String(format: "%.1f", rpe))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// A `weightReps` exercise needs a weight before a set can be checked off — logging it
+    /// weightless would record a barbell lift as bodyweight. Reps-only/timed rows never do.
+    func weightExpected(rowId: UUID) -> Bool {
+        guard let ex = exercises.first(where: { $0.id == rowId }) else { return false }
+        return (trackingByExercise[ex.exerciseId] ?? .weightReps) == .weightReps
+    }
+
+    func isRowComplete(_ rowId: UUID) -> Bool {
+        guard let ex = exercises.first(where: { $0.id == rowId }) else { return false }
+        return !ex.sets.isEmpty && ex.sets.allSatisfy(\.isComplete)
+    }
+
+    /// Where the checklist continues — the first exercise with unchecked work.
+    var firstIncompleteRowId: UUID? {
+        exercises.first(where: { !$0.sets.isEmpty && !$0.sets.allSatisfy(\.isComplete) })?.id
+    }
+
+    /// Sets the athlete engaged with (typed into) but never checked — what the Finish dialog
+    /// offers to log. Untouched prefill is a target, not performed work: it never auto-logs.
+    var pendingEditedSets: [(rowId: UUID, setId: UUID)] {
+        exercises.flatMap { ex in
+            ex.sets
+                .filter { !$0.isComplete && userEditedSets.contains($0.id)
+                          && !(drafts[$0.id]?.reps ?? "").isEmpty }
+                .map { (rowId: ex.id, setId: $0.id) }
+        }
     }
 
     private func refresh() async {

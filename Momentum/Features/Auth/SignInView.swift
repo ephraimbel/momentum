@@ -32,6 +32,7 @@ struct SignInView: View {
 
     @State private var showingSignIn: Bool
     @State private var googleInFlight = false
+    @State private var welcomeAppeared = false   // drives the lockup's one-time settle-in
 
     // Email + password (the classic boxes; @handle stays the social username — email only signs in)
     @State private var email = ""
@@ -63,8 +64,8 @@ struct SignInView: View {
 
     private var welcome: some View {
         ZStack {
-            // Full-bleed black-and-white hero. Clipped to a screen-sized layer so `scaledToFill`'s
-            // overflow can't inflate the ZStack (which would push the button past the screen edges).
+            // Full-bleed black-and-white hero of the runners. Clipped to a screen-sized layer so
+            // `scaledToFill`'s overflow can't inflate the ZStack (which would push the CTA off-screen).
             Color.clear
                 .overlay {
                     Image("WelcomeBackground")
@@ -75,20 +76,21 @@ struct SignInView: View {
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
 
-            // Scrim — clear at top (dark status bar reads over the bright sky), darkening toward the
-            // bottom so the Get started button stays crisp.
+            // Scrim — clear over the runners up top, darkening toward the bottom so the positioning
+            // line and the Get started button stay crisp.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.0),
-                    .init(color: .clear, location: 0.35),
-                    .init(color: .black.opacity(0.35), location: 0.72),
-                    .init(color: .black.opacity(0.85), location: 1.0),
+                    .init(color: .clear, location: 0.40),
+                    .init(color: .black.opacity(0.34), location: 0.74),
+                    .init(color: .black.opacity(0.88), location: 1.0),
                 ],
                 startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
 
-            // Brand lockup, centered on the hero. A soft shadow keeps it legible over the photo.
+            // Centered brand lockup: the wordmark with the motto right under it. A soft shadow keeps
+            // it legible over the photo.
             VStack(spacing: Theme.Space.sm) {
                 Image("WordmarkWhite")
                     .resizable()
@@ -97,15 +99,22 @@ struct SignInView: View {
                     .frame(height: 40)   // fixed height; width follows the wordmark's aspect ratio
                     .accessibilityLabel("momentum")
                 Text("keep moving")
-                    .font(.serif(Theme.FontSize.body + 3, weight: .medium))
+                    .font(.serif(24, weight: .medium))
                     .foregroundStyle(.white.opacity(0.95))
                     .multilineTextAlignment(.center)
             }
-            .shadow(color: .black.opacity(0.35), radius: 14, y: 2)
+            .shadow(color: .black.opacity(0.4), radius: 14, y: 2)
+            .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
+            .offset(y: welcomeAppeared || reduceMotion ? 0 : 12)
 
-            // The only CTA — everything else lives on the sign-in beat.
-            VStack {
+            // The positioning line sits right above the single CTA, both anchored to the bottom.
+            VStack(spacing: Theme.Space.md) {
                 Spacer()
+                Text("From your first 5K to your first ultra.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
                 Button {
                     Haptics.light()
                     showingSignIn = true
@@ -115,11 +124,20 @@ struct SignInView: View {
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity).frame(height: 56)
                         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(.white))
+                        .shadow(color: .black.opacity(0.28), radius: 20, y: 8)   // lifts the CTA off the photo
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, Theme.Space.xl)
             .padding(.bottom, Theme.Space.xxl)
+            .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
+            .offset(y: welcomeAppeared || reduceMotion ? 0 : 18)
+        }
+        // A quiet settle-in so the brand lands on the photo instead of snapping in. Honors Reduce
+        // Motion (no transform, no fade).
+        .onAppear {
+            guard !reduceMotion else { welcomeAppeared = true; return }
+            withAnimation(.easeOut(duration: 0.65).delay(0.12)) { welcomeAppeared = true }
         }
     }
 

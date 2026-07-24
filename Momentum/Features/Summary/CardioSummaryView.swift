@@ -29,6 +29,8 @@ struct CardioSummaryContent: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
     @State private var hits: [CardioAchievements.Hit] = []
+    /// Which rep GROUPS are opened to their rep-by-rep detail (collapsed by default).
+    @State private var expandedRepGroups: Set<Int> = []
     /// What this run MEANT, when it didn't set a record. Runs that did are carried by the badges.
     @State private var verdict: RunVerdict.Verdict?
     /// The run's relationship to the plan — credited a session, or left one honestly open.
@@ -339,13 +341,17 @@ struct CardioSummaryContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Per-rep adherence breakdown for a guided structured run — how each rep landed vs its target pace.
+    /// Per-rep adherence breakdown for a guided structured run — how each rep landed vs its target
+    /// pace. A rep GROUP collapses to one summary row ("10 × 400m · 8:21 /mi · 8/10 on") that
+    /// expands on tap — a 12-rep session must never read as a 12-row wall. Unnumbered blocks
+    /// (tempo, progression thirds, the long run's two halves) stay flat: they ARE the summary.
     @ViewBuilder
     private func repsSection(_ gps: GPSDetail) -> some View {
         let reps = gps.structuredReps
         if !reps.isEmpty {
             let paced = reps.filter { $0.verdict != .noTarget }
             let onPace = paced.filter { $0.verdict == .onPace }.count
+            let segments = RepGrouping.segments(reps)
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 HStack {
                     Text("REPS").font(.rounded(Theme.FontSize.label, weight: .bold))
@@ -356,19 +362,72 @@ struct CardioSummaryContent: View {
                             .foregroundStyle(Theme.inkTertiary)
                     }
                 }
-                ForEach(Array(reps.enumerated()), id: \.offset) { _, rep in
-                    HStack(spacing: Theme.Space.sm) {
-                        Text(rep.label).foregroundStyle(Theme.ink).frame(width: 92, alignment: .leading)
-                        Spacer()
-                        Text(Formatters.pace(secPerKm: rep.achievedPaceSPerKm, unit: distanceUnit))
-                            .monospacedDigit().foregroundStyle(Theme.ink)
-                        repVerdictChip(rep.verdict)
+                ForEach(segments) { segment in
+                    if segment.reps.count > 1 {
+                        repGroupRow(segment)
+                        if expandedRepGroups.contains(segment.id) {
+                            ForEach(Array(segment.reps.enumerated()), id: \.offset) { _, rep in
+                                repRow(rep)
+                                    .padding(.leading, Theme.Space.md)
+                                    .transition(.opacity)
+                            }
+                        }
+                    } else if let rep = segment.reps.first {
+                        repRow(rep)
                     }
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func repRow(_ rep: RepResult) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text(rep.label).foregroundStyle(Theme.ink).frame(width: 92, alignment: .leading)
+            Spacer()
+            Text(Formatters.pace(secPerKm: rep.achievedPaceSPerKm, unit: distanceUnit))
+                .monospacedDigit().foregroundStyle(Theme.ink)
+            repVerdictChip(rep.verdict)
+        }
+        .font(.rounded(Theme.FontSize.body, weight: .medium))
+    }
+
+    /// The collapsed face of a rep group: shape, average, tally — tap to open the rep-by-rep story.
+    private func repGroupRow(_ segment: RepGrouping.Segment) -> some View {
+        let expanded = expandedRepGroups.contains(segment.id)
+        let avg = segment.averagePaceSPerKm
+        return Button {
+            Haptics.selection()
+            withAnimation(Motion.standard) {
+                if expanded { expandedRepGroups.remove(segment.id) }
+                else { expandedRepGroups.insert(segment.id) }
+            }
+        } label: {
+            HStack(spacing: Theme.Space.sm) {
+                Text(segment.headline)
+                    .foregroundStyle(Theme.ink)
+                Spacer()
+                if let avg {
+                    Text(Formatters.pace(secPerKm: avg, unit: distanceUnit))
+                        .monospacedDigit().foregroundStyle(Theme.ink)
+                }
+                if segment.pacedCount > 0 {
+                    Text("\(segment.onPaceCount)/\(segment.pacedCount) on")
+                        .font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+            }
+            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(segment.headline)
+        .accessibilityValue(avg.map { "average \(Formatters.pace(secPerKm: $0, unit: distanceUnit)), \(segment.onPaceCount) of \(segment.pacedCount) on pace" } ?? "")
+        .accessibilityHint(expanded ? "Hides each rep" : "Shows each rep")
     }
 
     private func repVerdictChip(_ v: RepResult.Verdict) -> some View {
@@ -418,5 +477,72 @@ struct CardioSummaryContent: View {
             prev = s
         }
         return pts
+    }
+}
+
+// MARK: - Rep grouping (pure — unit-tested)
+
+/// Chunks a structured run's rep results into displayable segments: consecutive NUMBERED reps of
+/// the same kind form a collapsible group; unnumbered blocks stand alone. Pure math, no UI.
+enum RepGrouping {
+    struct Segment: Identifiable {
+        let id: Int              // stable position index within the workout
+        let reps: [RepResult]
+
+        /// "10 × 400m" · "8 × 30s hills" · "12 × 30s surges" — the group's shape in the same
+        /// language every other surface speaks. Distance reps read the median achieved distance
+        /// snapped to 50 m (GPS crossings land a few meters past the line); timed efforts
+        /// (hills, surges, strides, run/walk runs) read the median duration.
+        var headline: String {
+            let count = reps.count
+            let noun = reps.first?.title.map { " \($0.lowercased())s" } ?? ""
+            if let title = reps.first?.title, ["Hill", "Surge", "Stride", "Run"].contains(title) {
+                let d = RepGrouping.median(reps.map(\.durationS))
+                let rounded = (d / 5).rounded() * 5
+                return "\(count) × \(StructuredWorkoutBuilder.secLabel(rounded))\(noun)"
+            }
+            let m = RepGrouping.median(reps.map(\.distanceM))
+            let snapped = max(50, (m / 50).rounded() * 50)
+            return "\(count) × \(StructuredWorkoutBuilder.repDistanceLabel(snapped))\(noun)"
+        }
+
+        var pacedCount: Int { reps.filter { $0.verdict != .noTarget }.count }
+        var onPaceCount: Int { reps.filter { $0.verdict == .onPace }.count }
+
+        /// Mean achieved pace across paced reps; nil for pure-effort groups (hills, strides).
+        var averagePaceSPerKm: Double? {
+            let paced = reps.filter { $0.verdict != .noTarget && $0.achievedPaceSPerKm > 0 }
+            guard !paced.isEmpty else { return nil }
+            return paced.map(\.achievedPaceSPerKm).reduce(0, +) / Double(paced.count)
+        }
+    }
+
+    /// Consecutive reps sharing a noun and a rep count chunk together; anything unnumbered is
+    /// its own segment (a tempo block, a progression third, the long run's race-pace finish).
+    static func segments(_ reps: [RepResult]) -> [Segment] {
+        var out: [Segment] = []
+        var current: [RepResult] = []
+        func flush() {
+            if !current.isEmpty { out.append(Segment(id: out.count, reps: current)); current = [] }
+        }
+        for rep in reps {
+            if rep.repTotal == nil {
+                flush()
+                out.append(Segment(id: out.count, reps: [rep]))
+            } else if let last = current.last, last.title == rep.title, last.repTotal == rep.repTotal {
+                current.append(rep)
+            } else {
+                flush()
+                current = [rep]
+            }
+        }
+        flush()
+        return out
+    }
+
+    static func median(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        return sorted[sorted.count / 2]
     }
 }

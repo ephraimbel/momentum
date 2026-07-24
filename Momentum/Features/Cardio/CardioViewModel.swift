@@ -224,6 +224,8 @@ final class CardioViewModel {
         // independent of GPS-fix cadence so timed recoveries count down while you stand still.
         if let step = tracker?.current {
             Haptics.medium()   // the "go" cue at step one, matching every later transition
+            // The coach's opening line — the day's shape before the first step is called.
+            if let structured { voice?.announce(CoachingCueBuilder.workoutIntro(structured)) }
             voice?.announce(CoachingCueBuilder.stepStart(step))
             structuredTask = Task { [weak self] in
                 while !Task.isCancelled {
@@ -438,9 +440,11 @@ final class CardioViewModel {
             let store = self.store
             let snapshotStyle = MapStyleOption.persisted
             Task.detached(priority: .userInitiated) {
+                // Card renders on the clean canvas; the athlete's style is still stamped so the
+                // full-screen pager honors it.
                 if let data = await RouteSnapshotter.snapshot(
                     coordinates: coords, size: RouteSnapshotter.workoutTileSize,
-                    styleURI: snapshotStyle.styleURI(for: .light),
+                    styleURI: RouteSnapshotter.tileStyle,
                     insets: RouteSnapshotter.workoutTileInsets) {
                     await store.attachSnapshot(data, styleRaw: snapshotStyle.rawValue)
                 }
@@ -471,7 +475,7 @@ final class CardioViewModel {
                 let matchedStyle = await MapStyleOption.persisted
                 if let snapshot = await RouteSnapshotter.snapshot(
                     coordinates: match.coordinates, size: RouteSnapshotter.workoutTileSize,
-                    styleURI: matchedStyle.styleURI(for: .light),
+                    styleURI: RouteSnapshotter.tileStyle,
                     insets: RouteSnapshotter.workoutTileInsets) {
                     await store.attachSnapshot(snapshot, styleRaw: matchedStyle.rawValue)
                 }
