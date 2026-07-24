@@ -128,15 +128,17 @@ final class OnboardingViewModel {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
         // No cold-open — the welcome page (SignInView) is the brand entry; onboarding opens on the
-        // first question. Order flows broad→specific: who → goal → what you do → experience → about you
-        // → race specifics → schedule → equipment/focus → motivation → pace → build → reveal → opt-ins.
+        // first question. Order flows broad→specific: who → goal → what you do → running-level+pace →
+        // about you → race specifics → schedule → equipment/focus → motivation → build → reveal → opt-ins.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
         // `identity` (the profile photo — the @handle claim left with the community back-burner,
         // 2026-07-16) follows `name`, both before any training questions.
+        // `experience` doubles as the running pace question (2026-07-24), so there's no separate
+        // `calibration` step any more — runners are asked their level once.
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
-             calibration, health, intensity, building, reveal, notifications, primers
+             health, intensity, building, reveal, notifications, primers
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -156,7 +158,6 @@ final class OnboardingViewModel {
             // only where it changes the plan (2026-07-24).
             case .session:     return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
-            case .calibration: return running
             // Anything to train around — endurance athletes only (drives the protective ramp).
             case .injuries:    return running
             // The recovery-tracking consent beat (HealthKit) — shown to everyone; wearables sync there.
@@ -288,16 +289,21 @@ final class OnboardingViewModel {
             if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
             return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label) — whenever you toe the line"
         }
-        // Running-first phrasing (Phase 0): the runner identity leads; strength reads as the support.
+        // Every other goal is named for exactly what the athlete CHOSE — the plan is aimed at their
+        // goal, and the reveal says so, rather than a generic "faster, stronger runner" for a
+        // fat-loss or stay-consistent athlete who never asked to race.
         let phrase: String
-        if running && lifting {
-            phrase = hasRace ? "Race-ready — and stronger everywhere" : "A faster runner — stronger everywhere"
-        } else if running {
-            phrase = hasRace ? "Race-ready" : "A faster, stronger runner"
-        } else if lifting {
-            phrase = goal == .getStronger ? "Stronger" : "Leaner & stronger"
-        } else {
-            phrase = "Fitter"
+        switch goal {
+        case .endurance:
+            phrase = running && lifting ? "Going farther — stronger everywhere" : "Going farther, running stronger"
+        case .loseFat:        phrase = "Leaner and fitter"
+        case .buildMuscle:    phrase = "Building real muscle"
+        case .getStronger:    phrase = "Getting stronger"
+        case .stayConsistent: phrase = "Consistent — moving for good"
+        case .generalFitness:
+            phrase = running && lifting ? "Fitter and stronger, all over"
+                : running ? "A fitter, stronger runner" : lifting ? "Leaner and stronger" : "Fitter, across the board"
+        case .raceDistance:   phrase = "Race-ready"   // handled above; kept for exhaustiveness
         }
         if hasRace { return "\(phrase) by \(raceDate.formatted(.dateTime.month().day()))" }
         return "\(phrase) — one week at a time"
@@ -458,6 +464,16 @@ enum PaceFeel: String, CaseIterable, Identifiable {
     /// Estimated 5k pace in seconds per km (feeds `PlanEngine` pace offsets).
     var p5kSPerKm: Double {
         switch self { case .newRunner: 420; case .easyJogger: 360; case .regular: 315; case .fast: 270 }
+    }
+    /// The experience tier this running level implies — so a runner answers "how do you run" ONCE
+    /// and it seeds both the starting pace AND the plan's experience tier, instead of a separate,
+    /// redundant "how experienced are you?" page (2026-07-24).
+    var experienceLevel: ExperienceLevel {
+        switch self {
+        case .newRunner: .new
+        case .easyJogger, .regular: .some
+        case .fast: .experienced
+        }
     }
 }
 

@@ -11,7 +11,18 @@ struct BuildingPlanView: View {
 
     @State private var completed = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let lineTick = Timer.publish(every: 0.55, on: .main, in: .common).autoconnect()
+    private let lineTick = Timer.publish(every: Self.tickInterval, on: .main, in: .common).autoconnect()
+
+    /// Cadence the checklist ticks at, and the total wall time for it to finish + settle + hold as
+    /// "done". The caller (`OnboardingFlow.buildPlan`) waits `totalDuration` before advancing so the
+    /// beat ALWAYS animates fully — never cut off mid-checkmark (it used to advance on a fixed 3.1s
+    /// while five personalized lines take ~3.4s to settle).
+    static let tickInterval = 0.55
+    static func totalDuration(lineCount: Int) -> Double {
+        Double(max(1, lineCount)) * tickInterval   // every line ticks in
+            + 0.45                                  // the last checkmark + ring finish their animation
+            + 0.7                                   // a calm "done" hold before the reveal
+    }
 
     init(lines: [String]? = nil) { if let lines { self.lines = lines } }
 

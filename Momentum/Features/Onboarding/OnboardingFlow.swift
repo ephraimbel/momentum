@@ -113,7 +113,8 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-injuries") { vm.activities = [.run]; vm.step = .injuries }
             if args.contains("--onboarding-health") { vm.activities = [.run]; vm.step = .health }
             if args.contains("--onboarding-calibration") {
-                vm.activities = [.run]; vm.experience = .some; vm.step = .calibration
+                // The pace question folded into the experience step (2026-07-24); recipe still lands there.
+                vm.activities = [.run]; vm.step = .experience
             }
             if args.contains("--onboarding-intensity-short") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
@@ -247,7 +248,6 @@ struct OnboardingFlow: View {
         case .hybridFocus: hybridFocusStep
         case .metrics: metricsStep
         case .why: whyStep
-        case .calibration: calibrationStep
         case .health: healthStep
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
@@ -363,12 +363,29 @@ struct OnboardingFlow: View {
         }
     }
 
+    /// For runners this is BOTH the experience and the pace question — asked once (2026-07-24). The
+    /// running level (a pace-feel) seeds the starting pace AND the experience tier, and an optional
+    /// recent time sharpens it. Lifters get the plain three-way. A separate "how's your pace?" page
+    /// used to ask runners the same thing twice.
     private var experienceStep: some View {
-        questionScaffold("How experienced are you?",
-                         subtitle: vm.hybrid ? "We'll set running and lifting separately." : nil) {
-            if vm.hybrid {
-                expSegment("Running", vm.experience) { vm.experience = $0 }.reveal(cascade(0))
-                expSegment("Lifting", vm.liftExperience) { vm.liftExperience = $0 }.reveal(cascade(1))
+        questionScaffold(vm.running ? "How's your running?" : "How experienced are you?",
+                         subtitle: vm.running ? "This sets your starting paces — you can always adjust."
+                                              : (vm.hybrid ? "We'll set running and lifting separately." : nil)) {
+            if vm.running {
+                ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
+                    SelectionCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
+                                  isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
+                        pick { vm.paceFeel = f; vm.calibrationMode = .feel; vm.experience = f.experienceLevel }
+                    }
+                    .reveal(cascade(i))
+                }
+                // Optional precision — a recent race/time trial sharpens the paces past the by-feel guess.
+                timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
+                // Hybrids still need their lifting level (running has no bearing on it).
+                if vm.lifting {
+                    expSegment("Lifting", vm.liftExperience) { vm.liftExperience = $0 }
+                        .reveal(cascade(PaceFeel.allCases.count + 1))
+                }
             } else {
                 ForEach(Array([ExperienceLevel.new, .some, .experienced].enumerated()), id: \.element) { i, e in
                     SelectionCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
@@ -501,19 +518,8 @@ struct OnboardingFlow: View {
         }
     }
 
-    private var calibrationStep: some View {
-        questionScaffold("How's your running pace?",
-                         subtitle: "So your easy runs feel easy and the hard ones land right. Not sure? Just continue — we'll learn from your first runs.") {
-            ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
-                SelectionCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
-                              isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
-                    pick { vm.calibrationMode = .feel; vm.paceFeel = f }
-                }
-                .reveal(cascade(i))
-            }
-            timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
-        }
-    }
+    // The running pace question now lives in `experienceStep` (2026-07-24) — a runner sets their
+    // level once. The `timeEntryCard` below is still shared by that step.
 
     /// Past injuries — multi-select body areas the plan will train around (ENDURANCE-FOCUS §8.2).
     /// Optional and shame-free; empty = none. Feeds the protective ramp + the injury loop's watch list.
@@ -1311,8 +1317,9 @@ struct OnboardingFlow: View {
             OnboardingDraftStore.clear()
         }
         services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
-        // Long enough for the route to finish drawing and the head to pulse before the reveal.
-        try? await Task.sleep(for: .seconds(3.1))
+        // Wait for the "building" checklist to tick through every line and settle, so it always
+        // animates FULLY before the reveal (derived from the line count, not a guessed constant).
+        try? await Task.sleep(for: .seconds(BuildingPlanView.totalDuration(lineCount: vm.buildingLines().count)))
         goNext()
     }
 }

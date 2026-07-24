@@ -171,7 +171,7 @@ struct OnboardingFlowTests {
         #expect(try idx(.identity) < idx(.goal))             // identity settles before training questions
         #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
         #expect(try idx(.injuries) < idx(.race))             // before the race specifics
-        #expect(try idx(.calibration) < idx(.health))        // fitness baseline → recovery consent
+        #expect(try idx(.experience) < idx(.health))         // running level + pace → recovery consent
         #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
         #expect(try idx(.intensity) < idx(.building))        // last decision before the build
         #expect(!steps.contains(.equipment))                 // no lifting → no gym questions

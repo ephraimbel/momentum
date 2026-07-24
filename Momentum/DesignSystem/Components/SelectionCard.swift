@@ -73,16 +73,20 @@ struct SelectionCard: View {
                     .fill(isSelected ? Theme.ink : Theme.surface)
                 if iridescent {
                     // The glow stays through selection — the ink fill + iridescent ring reads as
-                    // "committed", not a lost highlight. IridescentMaterial is static under
+                    // "committed", not a lost highlight. `.strokeBorder` (not `.stroke`) draws the
+                    // whole 2pt ring INSIDE the card's frame, so the side edges are never clipped by
+                    // the scroll view that hosts these cards. IridescentMaterial is static under
                     // Reduce Motion by design.
                     RoundedRectangle(cornerRadius: Theme.Radius.card)
-                        .stroke(IridescentMaterial(), lineWidth: 2)
+                        .strokeBorder(IridescentMaterial(), lineWidth: 2)
                 } else {
                     RoundedRectangle(cornerRadius: Theme.Radius.card)
-                        .stroke(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
+                        .strokeBorder(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
                 }
             }
-            .shadow(color: iridescent ? Theme.iridescent[0].opacity(0.35) : .clear, radius: 10)
+            // A soft outer glow — kept modest so the small bloom the host scroll view can't clip
+            // stays imperceptible, while the inset `.strokeBorder` above carries the visible ring.
+            .shadow(color: iridescent ? Theme.iridescent[0].opacity(0.4) : .clear, radius: 6)
         }
         .buttonStyle(PressableScaleStyle())
         .animation(.spring(response: 0.34, dampingFraction: 0.7), value: isSelected)
