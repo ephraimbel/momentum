@@ -1,23 +1,25 @@
 import Foundation
 
-/// Decides WHEN the app may ask iOS to show the native App Store rating prompt.
+/// Decides WHEN the app may open the rating flow — a styled "Enjoying momentum?" pre-prompt
+/// (`RatingPromptView`) whose positive branch fires iOS's native App Store ask.
 ///
 /// App Review guideline 5.6.3: never ask on first launch or during onboarding — only after the
 /// athlete has *engaged*. The prompt used to be the last beat of onboarding, which is exactly what
 /// got the app rejected. So the ask is gated on genuine core-loop use: it fires only after the athlete
-/// has SAVED (not discarded, not imported) some workouts through the app, and only once, ever.
+/// has SAVED (not discarded, not imported) a workout through the app, and only once, ever.
 ///
-/// This engine owns the counting and the once-ever guard; the caller owns the actual
-/// `@Environment(\.requestReview)` call. iOS additionally rate-limits the prompt to a few times a
-/// year and may show nothing — that's expected. `markRequested` fires regardless, so we never nag.
+/// This engine owns the counting and the once-ever guard; the caller owns presenting the pre-prompt
+/// and the actual `@Environment(\.requestReview)` call. iOS additionally rate-limits the native
+/// prompt to a few times a year and may show nothing — that's expected. The latch fires on our
+/// REQUEST, not on whether iOS honoured it, so we never nag.
 ///
 /// Pure with respect to the injected `UserDefaults`, so every branch is unit-testable.
 enum AppReview {
 
-    /// Genuine in-app workout saves before the app is entitled to ask. Three is clearly past
-    /// first-launch and past onboarding — repeated use of the thing the app is for — without waiting
-    /// so long the goodwill moment has passed.
-    static let engagementThreshold = 3
+    /// Genuine in-app workout saves before the app is entitled to ask. One kept workout is real
+    /// core-loop engagement — you cannot save a workout during onboarding or on first launch, so
+    /// this clears the 5.6.3 bar — and it catches the goodwill peak while it's still warm.
+    static let engagementThreshold = 1
 
     private static let savesKey = "com.momentum.review.workoutSaves.v1"
     private static let askedKey = "com.momentum.review.asked.v1"
