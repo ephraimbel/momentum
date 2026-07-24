@@ -133,6 +133,48 @@ struct PlanFeasibilityTests {
         #expect(marathon > 3.5 * 3600 && marathon < 4.5 * 3600)
     }
 
+    @Test func aThirtyMinuteMarathonPRIn12WeeksIsDoableOnceThePushIsHardEnough() {
+        // The athlete's exact ask: a ~4:00 marathon → ~3:30 (a ~12.5% jump) with 12 weeks. Honest at
+        // Balanced — that rate of gain isn't a stroll — but a real, DOABLE goal the moment they
+        // commit to pushing. "How hard do you want to push" has to move the verdict; 12 weeks IS
+        // enough when the training ramps faster.
+        let p5k = 300.0
+        let now = PlanFeasibility.predictedFinishS(distanceM: RaceDistance.marathon.meters, p5kSPerKm: p5k)
+        let goal = now * 0.875   // ~12.5% faster — the 4:00 → 3:30 kind of jump
+        func verdict(_ push: PlanIntensity) -> PlanFeasibility.Verdict {
+            PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: goal,
+                                   currentP5kSPerKm: p5k, currentWeeklyVolumeM: 45_000, weeksAvailable: 12,
+                                   experience: .some, daysPerWeek: 5, intensity: push).verdict
+        }
+        #expect(verdict(.balanced) == .tooShort)        // we won't pretend at a moderate push…
+        #expect(verdict(.aggressive) != .tooShort)       // …but pushing harder makes it reachable
+        #expect(verdict(.podium) != .tooShort)
+        // The honest nudge for a stretch goal is Aggressive — never Podium (a commitment, not advice).
+        let f = PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: goal,
+                                       currentP5kSPerKm: p5k, currentWeeklyVolumeM: 45_000, weeksAvailable: 12,
+                                       experience: .some, daysPerWeek: 5)
+        #expect(f.recommended == .aggressive)
+    }
+
+    @Test func aRealRaceTimeIsNotReTaxedIntoImpossibility() {
+        // A marathoner enters their actual 4:00 marathon. The "now" must honor it — not round-trip it
+        // through a 5K-equivalent pace and re-apply the endurance tax, which paints them ~4:11 and
+        // turns a real 3:30 push into "impossible."
+        let fourHours = 4.0 * 3_600
+        let goal = 3.5 * 3_600   // 3:30
+        let p5k = PlanEngine.riegelP5k(distanceM: RaceDistance.marathon.meters, timeS: fourHours)  // the lossy value
+        func assess(honoringRealTime: Bool) -> PlanFeasibility {
+            PlanFeasibility.assess(raceDistanceM: RaceDistance.marathon.meters, goalFinishTimeS: goal,
+                                   currentP5kSPerKm: p5k, currentWeeklyVolumeM: 45_000, weeksAvailable: 12,
+                                   experience: .some, daysPerWeek: 5, intensity: .aggressive,
+                                   currentRaceTimeS: honoringRealTime ? fourHours : nil)
+        }
+        let honest = assess(honoringRealTime: true)
+        let roundTripped = assess(honoringRealTime: false)
+        #expect(honest.weeksNeeded < roundTripped.weeksNeeded)   // the re-tax needlessly inflates the ask
+        #expect(honest.verdict != .tooShort)                     // their real 3:30-off-4:00 is doable, pushed
+    }
+
     @Test func intensityTiersRampInOrder() {
         #expect(PlanIntensity.gentle.weeklyRamp < PlanIntensity.balanced.weeklyRamp)
         #expect(PlanIntensity.balanced.weeklyRamp < PlanIntensity.aggressive.weeklyRamp)

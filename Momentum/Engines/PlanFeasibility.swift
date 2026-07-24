@@ -73,6 +73,15 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
     var tightLeash: Bool {
         self == .aggressive || self == .podium
     }
+
+    /// How much the tier scales the honest pace-improvement ceiling. Pushing harder buys faster gains
+    /// for more risk — the steeper `weeklyRamp` and the tighter recovery leash are the other side of
+    /// this deal. Both the feasibility verdict AND the Podium outlook read improvement through this,
+    /// so choosing a harder push genuinely opens up a tighter goal (12 weeks IS enough for a real
+    /// jump if the athlete commits to ramping faster) — while the copy stays honest about the cost.
+    var improvementFactor: Double {
+        switch self { case .gentle: 0.9; case .balanced: 1.0; case .aggressive: 1.35; case .podium: 1.6 }
+    }
 }
 
 /// The honest read on whether a race goal is reachable in the time available, how much room there is,
@@ -113,7 +122,9 @@ struct PlanFeasibility: Sendable {
                        weeksAvailable: Int,
                        experience: ExperienceLevel,
                        injuryProne: Bool = false,
-                       daysPerWeek: Int? = nil) -> PlanFeasibility {
+                       daysPerWeek: Int? = nil,
+                       intensity: PlanIntensity = .balanced,
+                       currentRaceTimeS: Double? = nil) -> PlanFeasibility {
 
         guard let distanceM = raceDistanceM, distanceM > 0 else {
             return PlanFeasibility(verdict: .noRace, weeksAvailable: weeksAvailable, weeksNeeded: 0,
@@ -123,92 +134,94 @@ struct PlanFeasibility: Sendable {
                                    options: [], realisticFinishS: nil)
         }
 
-        // 1) Weeks needed to safely build the *volume* for this distance.
-        let peak = peakWeeklyVolumeM(distanceM: distanceM, experience: experience)
-        let current = max(currentWeeklyVolumeM, 8_000)          // floor so a near-zero base doesn't blow up the log
-        let buildWeeks = current >= peak ? 0
-            : Int(ceil(log(peak / current) / log(PlanIntensity.balanced.weeklyRamp)))
-        let baseWeeks = 2
-        let taperWeeks = distanceM >= RaceDistance.marathon.meters ? 3 : 2
-        let distanceMinWeeks = minWeeks(forDistanceM: distanceM)
-        let weeksForVolume = max(distanceMinWeeks, buildWeeks + baseWeeks + taperWeeks)
+        // The core read for a chosen level of push: how many weeks the goal needs (volume AND, when a
+        // goal time is set, pace improvement), whether that time goal is beyond one cycle's honest
+        // reach, and the best finish reachable by race day. Intensity feeds BOTH sides — a harder
+        // push ramps volume faster (`weeklyRamp`) and earns a higher improvement ceiling
+        // (`improvementFactor`) — so "how hard do you want to push" genuinely moves the verdict.
+        func read(_ push: PlanIntensity) -> (weeksNeeded: Int, beyondReach: Bool, realisticFinishS: Double?) {
+            let peak = peakWeeklyVolumeM(distanceM: distanceM, experience: experience)
+            let current = max(currentWeeklyVolumeM, 8_000)      // floor so a near-zero base doesn't blow up the log
+            let buildWeeks = current >= peak ? 0
+                : Int(ceil(log(peak / current) / log(push.weeklyRamp)))
+            let taperWeeks = distanceM >= RaceDistance.marathon.meters ? 3 : 2
+            let weeksForVolume = max(minWeeks(forDistanceM: distanceM), buildWeeks + 2 + taperWeeks)
 
-        // 2) Weeks needed to reach the *goal time* (if one was set and we know current fitness).
-        var weeksForTime = 0
-        var realisticFinishS: Double? = nil
-        var goalBeyondReach = false
-        if let goal = goalFinishTimeS, let p5k = currentP5kSPerKm {
-            let predicted = predictedFinishS(distanceM: distanceM, p5kSPerKm: p5k)
-            realisticFinishS = predicted
-            if goal < predicted {                               // needs improvement
-                let need = (predicted - goal) / predicted        // fraction faster required
-                let perWeek = improvementPerWeek(experience)
-                let cap = improvementCap(experience)
-                if need > cap {
-                    goalBeyondReach = true                       // not realistic in one normal cycle
-                    weeksForTime = Int(ceil(cap / perWeek)) + 4
-                } else {
-                    weeksForTime = Int(ceil(need / perWeek))
+            var weeksForTime = 0
+            var realistic: Double? = nil
+            var beyond = false
+            // The athlete's OWN time at the race distance is the truest "now"; otherwise project it
+            // from 5K fitness (Riegel). Round-tripping a marathon time through a 5K-equivalent pace and
+            // back re-applies the endurance tax — painting a real 4:00 marathoner as a 4:11 one, so a
+            // genuine 30-minute PR reads as impossible when it isn't. Their actual race time skips that.
+            let predictedNow = currentRaceTimeS ?? currentP5kSPerKm.map { predictedFinishS(distanceM: distanceM, p5kSPerKm: $0) }
+            if let goal = goalFinishTimeS, let predicted = predictedNow {
+                realistic = predicted
+                if goal < predicted {                           // needs improvement
+                    let need = (predicted - goal) / predicted    // fraction faster required
+                    let perWeek = improvementPerWeek(experience, push)
+                    let cap = improvementCap(experience, push)
+                    if need > cap {
+                        beyond = true                            // not realistic in one cycle at this push
+                        weeksForTime = Int(ceil(cap / perWeek)) + 4
+                    } else {
+                        weeksForTime = Int(ceil(need / perWeek))
+                    }
+                    let achievable = min(cap, perWeek * Double(weeksAvailable))
+                    realistic = predicted * (1 - achievable)     // best time reachable by race day
                 }
-                let achievable = min(cap, perWeek * Double(weeksAvailable))
-                realisticFinishS = predicted * (1 - achievable)  // best time reachable by race day
             }
+            return (max(weeksForVolume, weeksForTime), beyond, realistic)
         }
 
-        let weeksNeeded = max(weeksForVolume, weeksForTime)
-
-        // 3) Verdict from the calendar.
-        let calendarVerdict: Verdict
-        if goalBeyondReach && weeksAvailable < weeksNeeded {
-            calendarVerdict = .tooShort
-        } else if weeksAvailable >= weeksNeeded {
-            calendarVerdict = .onTrack
-        } else if weeksAvailable >= Int(ceil(Double(weeksNeeded) * 0.8)) {
-            calendarVerdict = .tight
-        } else {
-            calendarVerdict = .tooShort
+        func calendarVerdict(_ r: (weeksNeeded: Int, beyondReach: Bool, realisticFinishS: Double?)) -> Verdict {
+            if r.beyondReach && weeksAvailable < r.weeksNeeded { return .tooShort }
+            if weeksAvailable >= r.weeksNeeded { return .onTrack }
+            if weeksAvailable >= Int(ceil(Double(r.weeksNeeded) * 0.8)) { return .tight }
+            return .tooShort
         }
 
-        // 3b) Frequency honesty: the calendar can be generous while the week is the real
-        // constraint. One day under the distance's effective minimum tightens the verdict; two or
-        // more under it is maintenance, not race preparation — say so.
-        var verdict = calendarVerdict
+        // The DISPLAY read is at the athlete's chosen push, so the banner reacts as they pick a tier;
+        // the RECOMMENDATION is anchored at Balanced so the "· Recommended" badge stays put while
+        // they explore (and so a comfortable-at-balanced goal still eases new/injured athletes in).
+        let shown = read(intensity)
+        let shownVerdict = calendarVerdict(shown)
+        let balancedVerdict = calendarVerdict(read(.balanced))
+
+        // Frequency honesty: the calendar can be generous while the WEEK is the real constraint. One
+        // day under the distance's effective minimum tightens the verdict; two or more under it is
+        // maintenance, not race preparation — say so.
+        var verdict = shownVerdict
         var frequencyShortfall: (days: Int, minDays: Int)? = nil
         if let days = daysPerWeek {
             let minDays = minimumEffectiveDays(forDistanceM: distanceM)
             if days < minDays {
                 frequencyShortfall = (days: days, minDays: minDays)
-                if minDays - days >= 2 {
-                    verdict = .tooShort
-                } else if verdict == .onTrack {
-                    verdict = .tight
-                }
+                if minDays - days >= 2 { verdict = .tooShort }
+                else if verdict == .onTrack { verdict = .tight }
             }
         }
 
-        // 4) Recommendation + honest copy. The recommendation follows the CALENDAR verdict —
-        // aggression trades recovery for progress, and a frequency gap isn't closed by pushing
-        // harder on fewer days; it's closed by adding a day (which the copy says plainly).
+        // Recommendation follows the BALANCED read — aggression trades recovery for progress, and a
+        // frequency gap isn't closed by pushing harder on fewer days; it's closed by adding a day
+        // (which the copy says plainly). Podium is never recommended — it's a commitment the athlete
+        // makes, not advice the engine gives.
         let recommended: PlanIntensity
-        switch calendarVerdict {
-        case .onTrack:
-            // Ease in new runners and anyone with an injury history; everyone else builds.
-            recommended = (experience == .new || injuryProne) ? .gentle : .balanced
-        case .tight, .tooShort:
-            recommended = .aggressive
-        case .noRace:
-            recommended = .balanced
+        switch balancedVerdict {
+        case .onTrack: recommended = (experience == .new || injuryProne) ? .gentle : .balanced
+        case .tight, .tooShort: recommended = .aggressive
+        case .noRace: recommended = .balanced
         }
 
         let (headline, detail, options) = copy(verdict: verdict, weeksAvailable: weeksAvailable,
-                                               weeksNeeded: weeksNeeded, distanceM: distanceM,
-                                               realisticFinishS: goalFinishTimeS != nil ? realisticFinishS : nil,
-                                               calendarVerdict: calendarVerdict,
+                                               weeksNeeded: shown.weeksNeeded, distanceM: distanceM,
+                                               realisticFinishS: goalFinishTimeS != nil ? shown.realisticFinishS : nil,
+                                               calendarVerdict: shownVerdict,
                                                frequencyShortfall: frequencyShortfall)
 
-        return PlanFeasibility(verdict: verdict, weeksAvailable: weeksAvailable, weeksNeeded: weeksNeeded,
+        return PlanFeasibility(verdict: verdict, weeksAvailable: weeksAvailable, weeksNeeded: shown.weeksNeeded,
                                recommended: recommended, headline: headline, detail: detail,
-                               options: options, realisticFinishS: realisticFinishS)
+                               options: options, realisticFinishS: shown.realisticFinishS)
     }
 
     // MARK: Model
@@ -256,22 +269,28 @@ struct PlanFeasibility: Sendable {
         }
     }
 
-    /// Sustainable pace-improvement rate per week (fraction faster), by experience — beginners improve
-    /// fastest, the trained plateau. Deliberately conservative.
-    private static func improvementPerWeek(_ e: ExperienceLevel) -> Double {
-        switch e { case .new: 0.009; case .some: 0.006; case .experienced: 0.004 }
+    /// Sustainable pace-improvement rate per week (fraction faster), by experience and how hard the
+    /// athlete pushes — beginners improve fastest, the trained plateau; a harder push (with its
+    /// steeper ramp and tighter recovery leash) earns a faster rate. Still deliberately conservative.
+    private static func improvementPerWeek(_ e: ExperienceLevel, _ intensity: PlanIntensity = .balanced) -> Double {
+        let base: Double
+        switch e { case .new: base = 0.010; case .some: base = 0.007; case .experienced: base = 0.005 }
+        return base * intensity.improvementFactor
     }
 
-    /// Ceiling on total pace improvement in one training cycle (fraction faster).
-    private static func improvementCap(_ e: ExperienceLevel) -> Double {
-        switch e { case .new: 0.18; case .some: 0.12; case .experienced: 0.08 }
+    /// Ceiling on total pace improvement in one training cycle (fraction faster), scaled the same way.
+    private static func improvementCap(_ e: ExperienceLevel, _ intensity: PlanIntensity = .balanced) -> Double {
+        let base: Double
+        switch e { case .new: base = 0.20; case .some: base = 0.15; case .experienced: base = 0.10 }
+        return base * intensity.improvementFactor
     }
 
     /// The honest ceiling on how much faster `weeks` of training can make this athlete — the same
     /// per-week rates and per-cycle caps the verdict runs on, exposed so the Podium outlook can
     /// never promise what the verdict engine would refuse.
-    static func achievableImprovement(experience: ExperienceLevel, weeks: Int) -> Double {
-        min(improvementCap(experience), improvementPerWeek(experience) * Double(max(0, weeks)))
+    static func achievableImprovement(experience: ExperienceLevel, weeks: Int,
+                                      intensity: PlanIntensity = .balanced) -> Double {
+        min(improvementCap(experience, intensity), improvementPerWeek(experience, intensity) * Double(max(0, weeks)))
     }
 
     private static func copy(verdict: Verdict, weeksAvailable: Int, weeksNeeded: Int,

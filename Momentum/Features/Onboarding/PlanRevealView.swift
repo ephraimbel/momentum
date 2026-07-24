@@ -332,17 +332,35 @@ struct PlanRevealView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Race path: today's predicted finish vs. the build's target. No-race: the athlete's 5K, now
-    /// and where the block points it. Both from `PodiumOutlook` (the verdict's own improvement
-    /// model — never a promise the feasibility engine would refuse).
+    /// Race path: today's predicted finish, then the goal the block is built to REACH — aiming at the
+    /// athlete's actual target is the job, not hedging a lesser prediction. When the goal is a genuine
+    /// stretch beyond one cycle's honest reach, we still point at it and name the real ground this
+    /// block covers toward it. No-race: the athlete's 5K, now and where the block points it. All from
+    /// `PodiumOutlook` (the verdict's own improvement model — never a promise the engine would refuse).
     private var outlookProjectionLine: String? {
         guard let p5k = profile?.plan?.p5kSPerKm, p5k > 0 else { return nil }
         let weeks = planWeekCount
         if vm.goal == .raceDistance, let r = vm.raceDistance {
+            // Their own time at the race distance is the honest "now" — mirrors the feasibility
+            // banner, so the reveal never contradicts the verdict the athlete just saw.
+            let raceTimeS: Double? = {
+                guard let rr = vm.calibration.recentRun, abs(rr.distanceM - r.meters) < 100 else { return nil }
+                return rr.timeS
+            }()
             guard let proj = PodiumOutlook.raceProjection(raceDistanceM: r.meters, p5kSPerKm: p5k,
                                                           goalFinishTimeS: vm.goalFinishTimeS,
-                                                          experience: vm.experience, weeks: weeks) else { return nil }
-            return "Today's fitness runs a \(PlanFeasibility.hms(proj.nowS)) \(r.label.lowercased()). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
+                                                          experience: vm.experience, weeks: weeks,
+                                                          currentRaceTimeS: raceTimeS) else { return nil }
+            let now = PlanFeasibility.hms(proj.nowS)
+            let race = r.label.lowercased()
+            if let goalS = vm.goalFinishTimeS {
+                // Built to reach it (goal within honest reach) vs. built to close on it (a stretch).
+                if proj.builtS <= goalS + 1 {
+                    return "Today's fitness runs a \(now) \(race). This block is built to get you to your \(PlanFeasibility.hms(goalS)) goal."
+                }
+                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)) — real ground toward your \(PlanFeasibility.hms(goalS)) goal."
+            }
+            return "Today's fitness runs a \(now) \(race). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
         }
         guard let proj = PodiumOutlook.fiveKProjection(p5kSPerKm: p5k, experience: vm.experience,
                                                        weeks: weeks) else { return nil }

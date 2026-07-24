@@ -58,6 +58,14 @@ final class OnboardingViewModel {
     var feasibility: PlanFeasibility {
         let p5k = calibration.recentRun.map { PlanEngine.riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
             ?? calibration.estimatedP5kSPerKm
+        // If they gave a time AT the race distance (a marathoner's own marathon, say), that's the
+        // honest "now" — passing it lets feasibility skip the lossy 5K round-trip that would
+        // over-tax their fitness and make a real PR look unreachable.
+        let raceTimeS: Double? = {
+            guard goal == .raceDistance, let rd = raceDistance, let rr = calibration.recentRun,
+                  abs(rr.distanceM - rd.meters) < 100 else { return nil }
+            return rr.timeS
+        }()
         return PlanFeasibility.assess(
             raceDistanceM: goal == .raceDistance ? raceDistance?.meters : nil,
             goalFinishTimeS: goalFinishTimeS,
@@ -66,7 +74,9 @@ final class OnboardingViewModel {
             weeksAvailable: hasRace ? (weeksToRace ?? 16) : 999,   // no date → no time pressure
             experience: experience,
             injuryProne: !injuryAreas.isEmpty,
-            daysPerWeek: daysPerWeek)
+            daysPerWeek: daysPerWeek,
+            intensity: intensity,   // the banner reacts to how hard they choose to push
+            currentRaceTimeS: raceTimeS)
     }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0

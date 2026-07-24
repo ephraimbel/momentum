@@ -3,36 +3,31 @@ import SwiftUI
 /// The "building your plan…" beat (PRD §4.1 step 3) — a clean, enterprise-grade loader: a single
 /// iridescent progress ring that fills as the plan comes together, over a title and a per-answer
 /// checklist that **ticks to checkmarks** one at a time (each line reflects one of the user's answers).
-/// Calm and premium — no theatrics. Auto-advances after a couple of seconds. Honors Reduce Motion.
+///
+/// Purely presentational: `completed` and `ringProgress` are DRIVEN by the parent
+/// (`OnboardingFlow.buildPlan`), which paces the beat with `await`s and slots the real plan
+/// generation in behind the final "Finalizing" line — where the main thread's brief busy moment is
+/// hidden by a spinner that's *supposed* to be spinning. That's why the beat always plays in full and
+/// never freezes mid-tick (the old self-timed version stalled while `finish()` starved its timer).
+/// Calm and premium — no theatrics. Honors Reduce Motion.
 struct BuildingPlanView: View {
     /// Personalized status lines (from `OnboardingViewModel.buildingLines()`), completed one at a time.
     var lines: [String] = ["Balancing your week", "Spacing your efforts",
                            "Setting your paces", "Finalizing your plan"]
 
-    /// Fires once the ring has filled and every line has ticked off (plus a brief "done" hold). The
-    /// advance is DRIVEN by the animation finishing — not a fixed timer the plan generation running
-    /// alongside could outrun — so the beat always plays in full before the reveal.
-    var onComplete: (() -> Void)?
+    /// How many lines are checked off — 0…lines.count, parent-driven.
+    var completed: Int = 0
 
-    @State private var completed = 0
-    @State private var ringFill = 0.0
-    @State private var didComplete = false
+    /// Ring fill, 0…1 — parent-driven. A continuous Core Animation fill (stays smooth even while the
+    /// main thread is briefly busy generating the plan), not stepped with the checklist.
+    var ringProgress: Double = 0
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let lineTick = Timer.publish(every: Self.tickInterval, on: .main, in: .common).autoconnect()
-
-    static let tickInterval = 0.55
-
-    init(lines: [String]? = nil, onComplete: (() -> Void)? = nil) {
-        if let lines { self.lines = lines }
-        self.onComplete = onComplete
-    }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                // A continuous fill (Core Animation, so it stays smooth even while the main thread is
-                // briefly busy generating the plan), not stepped with the checklist.
-                ProgressRing(progress: ringFill, lineWidth: 6)
+                ProgressRing(progress: ringProgress, lineWidth: 6)
                 BrandMark(size: 40)
             }
             .frame(width: 92, height: 92)
@@ -57,32 +52,8 @@ struct BuildingPlanView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(Theme.background.ignoresSafeArea())
-        .onReceive(lineTick) { _ in
-            guard !reduceMotion, completed < lines.count else { return }
-            withAnimation(.easeOut(duration: 0.4)) { completed += 1 }
-            if completed == lines.count { holdThenAdvance(1.0) }   // all checked → hold, then reveal
-        }
-        .onAppear {
-            if reduceMotion {
-                completed = lines.count; ringFill = 1
-                holdThenAdvance(0.7)
-            } else {
-                // Fill the ring across the whole checklist span so it completes right as the last
-                // line checks off — one continuous, premium motion.
-                withAnimation(.easeInOut(duration: Double(lines.count) * Self.tickInterval + 0.35)) {
-                    ringFill = 1
-                }
-            }
-        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Building your plan")
-    }
-
-    /// Advance once, after a calm hold on the finished state (full ring + every checkmark).
-    private func holdThenAdvance(_ hold: Double) {
-        guard !didComplete else { return }
-        didComplete = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { onComplete?() }
     }
 
     private func checklistRow(_ i: Int) -> some View {

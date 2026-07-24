@@ -22,7 +22,9 @@ struct PodiumOutlookTests {
         let dream = now * 0.6   // 40% faster — far beyond any cycle cap
         let proj = PodiumOutlook.raceProjection(raceDistanceM: RaceDistance.marathon.meters, p5kSPerKm: 300,
                                                 goalFinishTimeS: dream, experience: .some, weeks: 16)
-        let cappedFloor = now * (1 - 0.12)   // `.some`'s per-cycle cap
+        // The outlook reads improvement at the Podium push (its only caller), so the honest floor is
+        // `.some`'s cap scaled by that tier's factor — still a hard ceiling the dream sits far under.
+        let cappedFloor = now * (1 - 0.15 * PlanIntensity.podium.improvementFactor)
         #expect((proj?.builtS ?? 0) > dream, "the outlook must not promise the dream")
         #expect((proj?.builtS ?? 0) >= cappedFloor - 1, "…and never more than the model's cap")
     }

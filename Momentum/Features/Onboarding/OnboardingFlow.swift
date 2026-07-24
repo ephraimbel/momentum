@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import UIKit   // UIAccessibility.isReduceMotionEnabled in the building beat
 
 /// Onboarding → plan reveal (PRD §4.1, §7.1) — the conversion engine. Cal-AI-grade structure
 /// (continuous progress, back chevron, one bold question per screen, tactile cards, a pinned
@@ -33,13 +34,16 @@ struct OnboardingFlow: View {
     @State private var remindersAdvanced = false      // same for the reminders primer
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
+    @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
+    @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
 
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
             if vm.step == .building {
                 // A calm, centered loader — renders full-bleed so it escapes the flow's padding.
-                BuildingPlanView(lines: vm.buildingLines()) { goNext() }
+                // `buildPlan` paces it (and slots the real generation behind the "Finalizing" line).
+                BuildingPlanView(lines: vm.buildingLines(), completed: buildCompleted, ringProgress: buildRing)
                     .task { await buildPlan() }
                     .transition(.opacity)
             } else {
@@ -120,6 +124,17 @@ struct OnboardingFlow: View {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
                 vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 6, to: Date()) ?? Date()
                 vm.experience = .new; vm.weeklyRunVolumeM = 15_000
+                vm.step = .intensity
+            }
+            if args.contains("--onboarding-intensity-pr") {
+                // The "12 weeks, 4:00 → 3:30 marathon" case: a goal TIME drives the verdict, so the
+                // banner reacts as the athlete picks how hard to push (tooShort at Balanced → doable
+                // once they commit to Aggressive/Podium). A marathon benchmark of 14:400 = a 4:00 now.
+                vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
+                vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 12, to: Date()) ?? Date()
+                vm.experience = .some; vm.calibrationMode = .time; vm.benchmark = .marathon
+                vm.recentRunSeconds = 14_400; vm.weeklyRunVolumeM = 45_000; vm.daysPerWeek = 5
+                vm.goalHours = 3; vm.goalMinutes = 30
                 vm.step = .intensity
             }
             // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
@@ -1316,20 +1331,46 @@ struct OnboardingFlow: View {
         )
     }
 
+    /// Paces the "building your plan" beat and — crucially — controls exactly when it advances, so the
+    /// animation ALWAYS plays in full. The lead-in lines tick off with the main thread free (perfectly
+    /// smooth); the real plan generation (`finish`, which briefly blocks the main thread) runs behind
+    /// the last "Finalizing" line, where a spinner is *expected* to spin — so its cost is never a
+    /// visible freeze mid-tick. Only after the plan exists and the ring/checklist have settled does it
+    /// reveal. This is the single source of timing truth (the old self-timed view could be outrun by
+    /// `finish` and cut the animation short — the bug the athlete kept seeing).
     private func buildPlan() async {
-        // Let the building beat get on screen and its ring + first line start animating before the
-        // plan generation briefly occupies the main thread — otherwise the loader looks frozen at
-        // the start until finish() returns. The advance is driven by the animation completing
-        // (BuildingPlanView.onComplete), so this delay never shortens what the athlete sees.
-        try? await Task.sleep(for: .seconds(0.6))
-        if profile == nil {
+        let lines = vm.buildingLines()
+        let n = max(1, lines.count)
+
+        func generate() {
+            guard profile == nil else { return }
             profile = vm.finish(in: context)
-            // The profile now exists — onboarding succeeded, so there's nothing left to resume.
-            OnboardingDraftStore.clear()
+            OnboardingDraftStore.clear()   // onboarding succeeded — nothing left to resume
+            services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
         }
-        services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
-        // The advance is driven by `BuildingPlanView`'s onComplete — it fires when the ring has
-        // filled and every line has ticked off — so this plan generation can't race or cut the
-        // animation short. Nothing to wait on here.
+
+        // Reduce Motion: no ticking theatre — build, show the finished state, hold briefly, reveal.
+        if UIAccessibility.isReduceMotionEnabled {
+            generate()
+            buildCompleted = n; buildRing = 1
+            try? await Task.sleep(for: .seconds(0.5))
+            goNext(); return
+        }
+
+        let tick = 0.5
+        // The ring fills continuously to ~85% across the lead-in lines (Core Animation — stays smooth
+        // no matter what the main thread does); the final 15% lands once the plan is actually built.
+        withAnimation(.easeInOut(duration: Double(max(1, n - 1)) * tick + 0.3)) { buildRing = 0.85 }
+        // Tick the lead-in lines one at a time; the last line stays spinning for the real work.
+        for i in 0..<(n - 1) {
+            try? await Task.sleep(for: .seconds(tick))
+            withAnimation(.easeOut(duration: 0.35)) { buildCompleted = i + 1 }
+        }
+        // "Finalizing your plan" is the spinning row now — generate behind it (main-thread cost hidden).
+        generate()
+        // Land the last checkmark + complete the ring, hold on the finished state, then reveal.
+        withAnimation(.easeOut(duration: 0.4)) { buildCompleted = n; buildRing = 1 }
+        try? await Task.sleep(for: .seconds(0.85))
+        goNext()
     }
 }
