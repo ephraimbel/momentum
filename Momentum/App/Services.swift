@@ -25,7 +25,6 @@ final class Services {
     let analytics: any AnalyticsServing
     let voiceCoach: any VoiceCoachServing
     let presence: any PresenceServing
-    let spots: any SpotsProviding
     let social: any SocialBackending
 
     init(
@@ -40,7 +39,6 @@ final class Services {
         analytics: any AnalyticsServing = StubAnalyticsService(),
         voiceCoach: any VoiceCoachServing = StubVoiceCoachService(),
         presence: any PresenceServing = StubPresenceService(),
-        spots: any SpotsProviding = StubSpotsProvider(),
         social: any SocialBackending = StubSocialBackend()
     ) {
         self.location = location
@@ -54,7 +52,6 @@ final class Services {
         self.analytics = analytics
         self.voiceCoach = voiceCoach
         self.presence = presence
-        self.spots = spots
         self.social = social
     }
 
@@ -74,7 +71,6 @@ final class Services {
             analytics: AnalyticsService(),
             voiceCoach: VoiceCoachService(),
             presence: LivePresenceService(),
-            spots: CachingSpotsProvider(wrapping: MapboxSpotsProvider()),
             social: SupabaseSocialBackend(paywall: paywall)
         )
     }
