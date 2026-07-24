@@ -232,7 +232,10 @@ struct StepsCard: View {
                             .foregroundStyle(Theme.inkSecondary)
                     }
                 }
+                // Caption must match what chart() actually plots: it only collapses to weekly
+                // averages above 35 points, so the 1M range (≈30 daily bars) is still by-day.
                 Text(isDaily ? "7-day average · steps by day, from Apple Health"
+                             : days.count <= 35 ? "7-day average · steps by day, \(windowPhrase)"
                              : "7-day average · daily steps averaged per week, \(windowPhrase)")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     .padding(.bottom, Theme.Space.xs)

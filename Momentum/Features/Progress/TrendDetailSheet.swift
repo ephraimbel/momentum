@@ -271,8 +271,7 @@ struct TrendDetailSheet: View {
             }
         }
         .chartXSelection(value: $scrub.selection(dates: plotted.map(\.date)))
-        .chartYScale(domain: detail.form == .line && (detail.lowerIsBetter || detail.hugsY)
-                     ? yDomainHugging(plotted) : 0...max(detail.minimumYTop, maxV * 1.15))
+        .chartYScale(domain: yDomain(plotted, maxV: maxV))
         .chartXAxis {
             if daily, plotted.count > 60 {
                 // Long daily series (a season of vitals, a year of nights): month labels on
@@ -309,6 +308,17 @@ struct TrendDetailSheet: View {
             }
         }
         .frame(height: 240)
+    }
+
+    /// Array-form y-domain so direction can invert: a lower-is-better line (pace) must keep the
+    /// card's faster-reads-up convention — the tap-through rendering the same series ascending
+    /// showed an improving athlete a falling line right after the card taught the opposite.
+    private func yDomain(_ pts: [TrendDetail.Point], maxV: Double) -> [Double] {
+        guard detail.form == .line && (detail.lowerIsBetter || detail.hugsY) else {
+            return [0, max(detail.minimumYTop, maxV * 1.15)]
+        }
+        let r = yDomainHugging(pts)
+        return detail.lowerIsBetter ? [r.upperBound, r.lowerBound] : [r.lowerBound, r.upperBound]
     }
 
     /// The zero-free domain: pad the real span (and the personal band, when there is one) so the

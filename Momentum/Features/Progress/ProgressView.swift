@@ -38,7 +38,9 @@ struct ProgressScreen: View {
     @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
     /// The strip's cold-path full-blend result (same `ReadinessToday` recipe as deck + hub) —
     /// only consulted when today's cache is empty.
-    @State private var stripReadiness: (score: Int, band: String, driver: String)?
+    /// Day-stamped: an app resident past midnight must not present yesterday's score as today's
+    /// (the day-keyed ReadinessTodayCache correctly nils out at midnight; this fallback has to too).
+    @State private var stripReadiness: (day: Date, score: Int, band: String, driver: String)?
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
     @State private var connectingHealth = false
     @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
@@ -201,8 +203,10 @@ struct ProgressScreen: View {
     /// Data-plus-day key for the aggregate caches. The engines bake "today" into streaks, ACWR
     /// windows, and rolling cutoffs, so a count-only key froze yesterday's read in place when the
     /// app stayed in memory past midnight — the day stamp re-walks on the first visit of a new day.
+    /// Content signature, not count: an equal-count mutation (edit a sport, delete one + log
+    /// another) must refresh the aggregates too.
     private var aggregateKey: String {
-        "\(workouts.count)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
+        "\(workouts.contentSignature)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
     }
 
     /// One quiet frame of placeholder cards while the caches compute — the tab responds
@@ -663,12 +667,13 @@ struct ProgressScreen: View {
             // The strip's own full-blend compute — covers the cold path (straight to Progress
             // before Today or the hub ran today) through the same ReadinessToday recipe, and
             // publishes so every sibling surface shows this exact number.
-            .task(id: "\(workouts.count)-\(checkins.count)") {
+            .task(id: "\(workouts.count)-\(checkins.count)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))") {
                 guard ReadinessTodayCache.today() == nil else { return }
                 if let r = await ReadinessToday.compute(health: services.health,
                                                         workouts: workouts, checkins: checkins) {
                     ReadinessToday.publish(r)
-                    stripReadiness = (r.score, r.band.rawValue, r.displayDriverLine)
+                    stripReadiness = (Calendar.current.startOfDay(for: Date()),
+                                      r.score, r.band.rawValue, r.displayDriverLine)
                 }
             }
         }
@@ -790,16 +795,38 @@ struct ProgressScreen: View {
         }
     }
 
-    private var athleteAge: Int {
-        (profiles.first?.birthYear).map { max(14, Calendar.current.component(.year, from: Date()) - $0) } ?? 35
+    private var athleteAge: Int? {
+        (profiles.first?.birthYear).map { max(14, Calendar.current.component(.year, from: Date()) - $0) }
     }
-    private var athleteMale: Bool { BiologicalSex(rawValue: profiles.first?.sex ?? "") != .female }
+    /// Which norms table fits — `nil` when we honestly can't rate (no age, or sex unset/other:
+    /// the Cooper/ACSM tables are male/female only). Never guess a demographic and present the
+    /// rating as personalized.
+    private var athleteNormsMale: Bool? {
+        switch BiologicalSex(rawValue: profiles.first?.sex ?? "") {
+        case .male: true
+        case .female: false
+        default: nil
+        }
+    }
 
     /// A good-vs-bad range for VO₂max: the athlete's rating for their age + sex, and where they sit on a
-    /// muted→iridescent track (higher = fitter = the earned accent).
+    /// muted→iridescent track (higher = fitter = the earned accent). Without a real age + sex the
+    /// rating claim would be a lie (the old code silently rated everyone as a 35-year-old man) —
+    /// so it renders a one-line nudge instead.
     @ViewBuilder
     private func vo2RangeBar(_ vo2: Double) -> some View {
-        let age = athleteAge, male = athleteMale
+        if let age = athleteAge, let male = athleteNormsMale {
+            ratedVO2RangeBar(vo2, age: age, male: male)
+        } else {
+            Text("Add your age and sex in Profile → Edit to rate this against your age group.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func ratedVO2RangeBar(_ vo2: Double, age: Int, male: Bool) -> some View {
         let rating = VO2maxNorms.rating(vo2: vo2, age: age, male: male)
         let pos = VO2maxNorms.position(vo2: vo2, age: age, male: male)
         VStack(alignment: .leading, spacing: 8) {
@@ -1012,7 +1039,10 @@ struct ProgressScreen: View {
     /// light fallback is GONE — it read 83 where the full blend read 75, and a briefly-wrong
     /// number is worse than a briefly-quiet strip.
     private func todaysReadinessDisplay() -> (score: Int, band: String, driver: String)? {
-        ReadinessTodayCache.today() ?? stripReadiness
+        if let cached = ReadinessTodayCache.today() { return cached }
+        guard let s = stripReadiness,
+              s.day == Calendar.current.startOfDay(for: Date()) else { return nil }
+        return (s.score, s.band, s.driver)
     }
 
     /// RETIRED by the Health segment (2026-07-15): formCard/recoveryCard/signalsRow/readinessRing/
@@ -1214,7 +1244,9 @@ struct ProgressScreen: View {
             Divider().frame(height: 34).overlay(Theme.hairline)
             summaryCell("\(far.value)", "\(far.unit) this month")
             Divider().frame(height: 34).overlay(Theme.hairline)
-            summaryCell("\(profiles.first?.prs.count ?? 0)", "PRs")
+            // Month-scoped like its siblings — the lifetime improvement-event count here read
+            // as "47 PRs this month" to a two-year athlete.
+            summaryCell("\((profiles.first?.prs ?? []).filter { month?.contains($0.achievedAt) ?? false }.count)", "PRs")
         }
         .padding(.vertical, Theme.Space.sm)
         .frame(maxWidth: .infinity)
@@ -1594,10 +1626,12 @@ struct ProgressScreen: View {
         let latest = paced.last.map { paceMMSS($0.avgPaceSPerKm) }
         let subtitle = trendIsDaily ? "Average running pace by day · faster reads up"
                                     : "Average running pace · faster reads up"
-        let faster = insights.paceTrendPct < -1
+        // <= so exactly −1.0% lands on the faster branch (the chip renders at abs >= 1, and
+        // "<" sent that boundary case to "↓-1% slower"); abs() keeps the slower text sign-safe.
+        let faster = insights.paceTrendPct <= -1
         let delta: ChartDelta? = (!trendIsDaily && abs(insights.paceTrendPct) >= 1)
             ? ChartDelta(text: faster ? "↑\(Int(abs(insights.paceTrendPct).rounded()))% faster"
-                                      : "↓\(Int(insights.paceTrendPct.rounded()))% slower",
+                                      : "↓\(Int(abs(insights.paceTrendPct).rounded()))% slower",
                          good: faster)
             : nil
         return chartSection(trendIsDaily ? "Daily pace" : "Weekly pace", subtitle: subtitle,
@@ -1643,13 +1677,17 @@ struct ProgressScreen: View {
         let maxDist = pts.map { disp($0.distanceM) }.max() ?? 0
         let last = pts.last?.date
         // Daily view headlines the week-to-date total (a rest-day "0.0" is honest but tells the
-        // athlete nothing); weekly views headline the current week's bar.
-        let latest = trendIsDaily ? pts.reduce(0) { $0 + disp($1.distanceM) }
+        // athlete nothing) — CALENDAR week-to-date, matching the THIS WEEK strip above it: the
+        // engine's `days` is a trailing-7-day window, and summing all of it under "This week so
+        // far" contradicted the strip every Monday morning. Weekly views headline the newest
+        // bar, which the engine builds as a rolling last-7-days — caption it as exactly that.
+        let weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+        let latest = trendIsDaily ? pts.filter { $0.date >= weekStart }.reduce(0) { $0 + disp($1.distanceM) }
                                   : pts.last.map { disp($0.distanceM) } ?? 0
         let miles = unit == "mi" ? "miles" : "kilometres"
         let title = trendIsDaily ? "Daily distance" : "Weekly distance"
         let subtitle = trendIsDaily ? "This week so far · \(miles) by day"
-                                    : "This week · \(miles) per week, \(trendRange.windowPhrase)"
+                                    : "Last 7 days · \(miles) per week, \(trendRange.windowPhrase)"
         let delta: ChartDelta? = (!trendIsDaily && abs(insights.distanceTrendPct) >= 1)
             ? ChartDelta(text: "\(insights.distanceTrendPct >= 0 ? "↑" : "↓")\(Int(abs(insights.distanceTrendPct).rounded()))%",
                          good: insights.distanceTrendPct >= 0)

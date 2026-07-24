@@ -22,6 +22,7 @@ struct EditProfileView: View {
     @State private var name: String
     @State private var bio: String
     @State private var sex: String?
+    @State private var birthYear: Int?
     @State private var heightCm: Double?
     @State private var bodyMassKg: Double?
     @State private var avatarData: Data?
@@ -31,6 +32,7 @@ struct EditProfileView: View {
         _name = State(initialValue: profile.displayName)
         _bio = State(initialValue: profile.bio)
         _sex = State(initialValue: profile.sex)
+        _birthYear = State(initialValue: profile.birthYear)
         _heightCm = State(initialValue: profile.heightCm)
         _bodyMassKg = State(initialValue: profile.bodyMassKg)
         _avatarData = State(initialValue: profile.avatarData)
@@ -127,6 +129,8 @@ struct EditProfileView: View {
                 }
             }
             divider
+            stepperRow("Age", value: ageLabel, dec: { bumpAge(false) }, inc: { bumpAge(true) })
+            divider
             stepperRow("Height", value: heightLabel, dec: { bumpHeight(false) }, inc: { bumpHeight(true) })
             divider
             stepperRow("Weight", value: weightLabel, dec: { bumpWeight(false) }, inc: { bumpWeight(true) })
@@ -154,6 +158,16 @@ struct EditProfileView: View {
     private func stepGlyph(_ s: String) -> some View {
         Image(systemName: s).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
             .frame(width: 40, height: 40).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+    }
+
+    // Age is stored as birth year (SI-of-time rule: derive display at render). "—" until set —
+    // the VO₂max norms rating and fueling floors stay honestly un-personalized without it.
+    private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
+    private var ageValue: Int? { birthYear.map { max(13, currentYear - $0) } }
+    private var ageLabel: String { ageValue.map(String.init) ?? "—" }
+    private func bumpAge(_ up: Bool) {
+        let a = min(90, max(13, (ageValue ?? 30) + (up ? 1 : -1)))
+        birthYear = currentYear - a
     }
 
     private var heightInches: Double { (heightCm ?? 172.72) / 2.54 }
@@ -209,6 +223,7 @@ struct EditProfileView: View {
         profile.displayName = name.trimmingCharacters(in: .whitespaces)
         profile.bio = bio.trimmingCharacters(in: .whitespaces)
         profile.sex = sex
+        profile.birthYear = birthYear
         profile.heightCm = heightCm
         profile.bodyMassKg = bodyMassKg
         profile.avatarData = avatarData

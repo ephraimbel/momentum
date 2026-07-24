@@ -39,8 +39,15 @@ struct ProTrendsSection: View {
     /// Session cache: the whole Trends branch — and this view's `@State` — is destroyed on every
     /// segment flip, and `.task(id:)` re-fires on every tab visit, so an unguarded build re-ran
     /// the full pipeline per visit. The analytics are deterministic from the workout array, so
-    /// count is a complete key; pure value types only (never cache SwiftData refs).
-    @MainActor private static var modelCache: (count: Int, model: Model)?
+    /// a content signature + day is the key (count alone missed equal-count edits — delete one,
+    /// log another: the curve replayed pre-edit data — and the F&F pipeline bakes "today" into
+    /// the curve's anchor, so a rest stretch must not replay yesterday's form as current);
+    /// pure value types only (never SwiftData refs).
+    @MainActor private static var modelCache: (key: String, model: Model)?
+
+    private var cacheKey: String {
+        "\(workouts.contentSignature)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -53,15 +60,16 @@ struct ProTrendsSection: View {
             }
         }
         // Compute once per data change, off the first frame. Skip entirely when locked.
-        .task(id: pro ? workouts.count : -1) {
+        .task(id: pro ? cacheKey : "locked") {
             guard pro else { return }
-            if let cached = Self.modelCache, cached.count == workouts.count {
+            let key = cacheKey
+            if let cached = Self.modelCache, cached.key == key {
                 if model == nil { model = cached.model }   // instant remount after a segment flip
                 return
             }
             if model == nil { await Task.yield() }   // let the first frame paint the skeleton
             let built = Model.build(workouts)
-            Self.modelCache = (workouts.count, built)
+            Self.modelCache = (key, built)
             model = built
         }
         .onAppear {

@@ -1,27 +1,29 @@
-// KEPT (lean-cleanup 2026-07): currently unreachable — its entry point was lost in the
-// Profile-tab redesign. This is planned strength-support analytics (per-lift e1RM progression);
-// re-link it from the strength surfaces rather than rebuilding. Do not delete.
 import SwiftUI
 import SwiftData
 import Charts
 
 /// Per-lift progression (PRD §4.8, §13.10) — the estimated-1RM curve over time plus a session
-/// readout. Reached from the Personal Records shelf; the trend chart is Pro (advanced analytics).
+/// readout. Reached from the Lift Progression card's tap-through (re-linked 2026-07-23).
 struct ExerciseDetailView: View {
     let exerciseName: String
     var weightUnit: WeightUnit = .default()
 
     @Query private var workouts: [Workout]
+    // Hot-path rule: the full workout×exercise×set walk runs ONCE per data change in `.task(id:)`
+    // below — as a computed var it re-ran ~8× per body evaluation (headline, chart, domain,
+    // stats, recent), each pass faulting every strength relationship.
+    @State private var series: [ExerciseTrends.Point] = []
+    @State private var heaviest: String?
+    @State private var resolved = false
 
-    private var series: [ExerciseTrends.Point] {
-        ExerciseTrends.e1RMSeries(exerciseName: exerciseName, in: workouts)
-    }
     private var best: Double { series.map(\.e1RM).max() ?? 0 }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                if series.isEmpty {
+                if !resolved {
+                    Color.clear.frame(height: 1)   // one quiet frame while the walk resolves
+                } else if series.isEmpty {
                     emptyState
                 } else {
                     headline
@@ -36,6 +38,11 @@ struct ExerciseDetailView: View {
         .background(Theme.background)
         .navigationTitle(exerciseName)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: "\(exerciseName)-\(workouts.contentSignature)") {
+            series = ExerciseTrends.e1RMSeries(exerciseName: exerciseName, in: workouts)
+            heaviest = Self.heaviestSet(named: exerciseName, in: workouts, unit: weightUnit)
+            resolved = true
+        }
     }
 
     // MARK: Headline
@@ -93,7 +100,7 @@ struct ExerciseDetailView: View {
         HStack(spacing: Theme.Space.xl) {
             stat("\(series.count)", "Sessions")
             stat(lastSessionLabel, "Last")
-            if let heaviest = heaviestSet { stat(heaviest, "Heaviest") }
+            if let heaviest { stat(heaviest, "Heaviest") }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.lg)
@@ -145,7 +152,8 @@ struct ExerciseDetailView: View {
     }
 
     /// Heaviest single working set ever logged for this lift (across all sessions).
-    private var heaviestSet: String? {
+    private static func heaviestSet(named exerciseName: String, in workouts: [Workout],
+                                    unit: WeightUnit) -> String? {
         var top: (kg: Double, reps: Int)?
         for w in workouts {
             for row in (w.strength?.exercises ?? []) where row.exercise?.name == exerciseName {
@@ -156,7 +164,7 @@ struct ExerciseDetailView: View {
             }
         }
         guard let top else { return nil }
-        return "\(Formatters.weight(kg: top.kg, unit: weightUnit))×\(top.reps)"
+        return "\(Formatters.weight(kg: top.kg, unit: unit))×\(top.reps)"
     }
 
     private func disp(_ kg: Double) -> Double { weightUnit == .lb ? kg * Formatters.lbPerKg : kg }

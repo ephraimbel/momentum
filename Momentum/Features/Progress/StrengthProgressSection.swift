@@ -53,8 +53,14 @@ struct StrengthProgressSection: View {
 
     /// Session cache — same rationale as ProTrendsSection: segment flips destroy `@State` and
     /// `.task(id:)` re-fires per tab visit, so an unguarded build re-walked every set per visit.
-    /// Deterministic from the workout array; pure value types only (never cache SwiftData refs).
-    @MainActor private static var modelCache: (count: Int, model: Model)?
+    /// Deterministic from the workout array + day; keyed on a content signature (count alone
+    /// missed equal-count edits) plus a day stamp (weekly volume/balance window off "now" — a
+    /// resident app must not replay yesterday's week); pure value types only.
+    @MainActor private static var modelCache: (key: String, model: Model)?
+
+    private var cacheKey: String {
+        "\(workouts.contentSignature)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
+    }
 
     var body: some View {
         if hasStrength {
@@ -68,16 +74,17 @@ struct StrengthProgressSection: View {
                     skeleton
                 }
             }
-            .task(id: pro ? workouts.count : -1) {
+            .task(id: pro ? cacheKey : "locked") {
                 guard pro else { return }
-                if let cached = Self.modelCache, cached.count == workouts.count {
+                let key = cacheKey
+                if let cached = Self.modelCache, cached.key == key {
                     if model == nil { model = cached.model }   // instant remount after a segment flip
                     if selectedLift == nil { selectedLift = cached.model.lifts.first }
                     return
                 }
                 if model == nil { await Task.yield() }   // paint the skeleton first
                 let built = Model.build(workouts)
-                Self.modelCache = (workouts.count, built)
+                Self.modelCache = (key, built)
                 if selectedLift == nil { selectedLift = built.lifts.first }
                 model = built
             }

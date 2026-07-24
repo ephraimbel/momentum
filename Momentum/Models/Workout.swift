@@ -143,3 +143,20 @@ final class Split {
 
     init() {}
 }
+
+/// Cheap content signature over already-materialized scalars — the cache key for aggregates
+/// that must refresh on equal-count mutations (edit a saved workout's sport, delete one and
+/// import another in the same session). A count-only key silently replays stale charts through
+/// exactly those edits. Scalars only — never faults relationships (sets, GPS samples).
+extension Array where Element == Workout {
+    var contentSignature: Int {
+        var h = Hasher()
+        h.combine(count)
+        for w in self {
+            h.combine(w.startedAt)
+            h.combine(w.type.rawValue)
+            h.combine(w.durationS)
+        }
+        return h.finalize()
+    }
+}
