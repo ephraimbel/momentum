@@ -43,10 +43,11 @@ struct WorkoutRunner: ViewModifier {
                                    workoutType: presented.type, weekRing: weekRing) { dismissSummary() }
                 }
             }
-            // The one-time "Enjoying momentum?" soft-ask. A fitted sheet so it reads as a light
-            // moment, not a wall; the positive branch fires the native ask AFTER it dismisses
-            // (presenting the system prompt over a dismissing sheet cancels it).
-            .sheet(isPresented: $showRatingPrompt) {
+            // The one-time "Enjoying momentum?" soft-ask — a centered modal over a dimmed backdrop
+            // (clear cover background; the card draws its own dim + centering). The positive branch
+            // fires the native ask AFTER it closes (presenting the system prompt over a dismissing
+            // modal cancels it).
+            .fullScreenCover(isPresented: $showRatingPrompt) {
                 RatingPromptView(
                     onRate: {
                         showRatingPrompt = false
@@ -56,9 +57,7 @@ struct WorkoutRunner: ViewModifier {
                         }
                     },
                     onDismiss: { showRatingPrompt = false })
-                .presentationDetents([.height(400)])
-                .presentationCornerRadius(Theme.Radius.sheet)
-                .presentationDragIndicator(.visible)
+                .presentationBackground(.clear)
             }
             #if DEBUG
             // `--rating-prompt`: raise the soft-ask straight away for sim verification (the real
