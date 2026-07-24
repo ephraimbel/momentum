@@ -31,6 +31,7 @@ struct SettingsView: View {
     @State private var confirmDeleteAccount = false
     @State private var deletingAccount = false
     @State private var deleteAccountFailed = false
+    @State private var offerDeviceErase = false   // post-account-deletion: offer the local wipe
 
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
     /// Persisted mute for the run voice coach — the live service reads this same key, so flipping it
@@ -82,7 +83,9 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently removes your profile, plan, and every workout from this device. This can’t be undone.")
+            // The consequence AND the landing: a reset athlete goes back through setup, where the
+            // coach rebuilds their plan — they don't wander a gutted app wondering what's next.
+            Text("This permanently removes everything on this device — profile, plan, workouts, meals, and awards. It can't be undone, so Export my data first if you want a copy. You'll stay signed in and go back through setup, where your coach builds you a fresh plan. Only want a new plan? Do that from the Plan tab — nothing gets deleted.")
         }
         .confirmationDialog("Delete your account?", isPresented: $confirmDeleteAccount, titleVisibility: .visible) {
             Button("Delete my account", role: .destructive) {
@@ -92,11 +95,26 @@ struct SettingsView: View {
                     let ok = await auth.deleteAccount()
                     deletingAccount = false
                     deleteAccountFailed = !ok
+                    // Second half of the hand-hold: the server side is gone — now offer the
+                    // device. Two separate decisions, each with its own consent.
+                    if ok { offerDeviceErase = true }
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently removes your account, @handle, posts, and backups from momentum's servers. Workouts saved on this device stay here.")
+            Text("This permanently removes your account and backups from momentum's servers, then signs you out. It can't be undone. Data on this device stays — you'll choose what to do with it next.")
+        }
+        .alert("Account deleted", isPresented: $offerDeviceErase) {
+            Button("Erase this device too", role: .destructive) {
+                deletingData = true
+                Task {
+                    await DataManager.deleteAllUserData(container: context.container)
+                    deletingData = false
+                }
+            }
+            Button("Keep my data", role: .cancel) {}
+        } message: {
+            Text("Everything on momentum's servers is gone. The workouts and meals on this phone are still here — keep training as a guest, or erase them too and start completely fresh from setup.")
         }
     }
 

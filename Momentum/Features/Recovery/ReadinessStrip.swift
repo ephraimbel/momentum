@@ -15,6 +15,10 @@ enum ReadinessTodayCache {
                                   forKey: key)
     }
 
+    /// Forget the published score — the data wipes call this so a fresh start's first morning
+    /// can't open on the deleted athlete's number.
+    static func clear() { UserDefaults.standard.removeObject(forKey: key) }
+
     static func today(now: Date = Date(), calendar: Calendar = .current)
         -> (score: Int, band: String, driver: String)? {
         guard let dict = UserDefaults.standard.dictionary(forKey: key),

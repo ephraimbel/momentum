@@ -103,6 +103,8 @@ enum DataManager {
         wipe(Meal.self)               // food log — standalone since the Fuel tab landed
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything
+        WidgetBridge.clear()          // the Home Screen widget must not keep the deleted streak
+        ReadinessTodayCache.clear()   // nor the strip open on the deleted athlete's score
         try? context.save()
     }
 
@@ -142,6 +144,8 @@ enum DataManager {
         }.value
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything
+        WidgetBridge.clear()          // the Home Screen widget must not keep the deleted streak
+        ReadinessTodayCache.clear()   // nor the strip open on the deleted athlete's score
     }
 }
 

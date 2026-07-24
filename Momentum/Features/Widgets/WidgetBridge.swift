@@ -19,6 +19,14 @@ enum WidgetBridge {
         WidgetCenter.shared.reloadTimelines(ofKind: "TodayWidget")
     }
 
+    /// Wipe the published snapshot and wake the widget — the data wipes call this so a reset
+    /// athlete's Home Screen doesn't keep glowing with the deleted streak. Safe from any thread
+    /// (UserDefaults and WidgetCenter both are).
+    nonisolated static func clear() {
+        UserDefaults(suiteName: WidgetSnapshot.appGroup)?.removeObject(forKey: WidgetSnapshot.storageKey)
+        WidgetCenter.shared.reloadTimelines(ofKind: "TodayWidget")
+    }
+
     /// Pure composition — separated so fixtures can assert on it directly.
     static func build(profile: UserProfile?, workouts: [Workout],
                       today: Date = Date(), calendar: Calendar = .current) -> WidgetSnapshot {
