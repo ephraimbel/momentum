@@ -427,7 +427,8 @@ enum ActivityChoice: String, CaseIterable, Identifiable {
 /// How running paces get seeded in onboarding. `.none` = skipped (use experience default);
 /// `.feel` = the by-feel self-assessment; `.time` = a manually entered recent race/benchmark time.
 /// (Health-derived estimation was removed 2026-07-24 — too unreliable to seed paces from.)
-enum CalibrationMode { case none, feel, time }
+/// String-raw so it serializes into the interruption-recovery draft like every other answer.
+enum CalibrationMode: String { case none, feel, time }
 
 /// A beginner-friendly "by feel" running self-assessment → an estimated 5k pace (s/km). Lets someone
 /// who has never timed a run still give the plan a sensible starting pace.

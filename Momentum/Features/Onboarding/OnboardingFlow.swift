@@ -17,8 +17,11 @@ struct OnboardingFlow: View {
     @Environment(Services.self) private var services
     @Environment(AuthController.self) private var auth
     @Environment(PaywallController.self) private var paywall
+    @Environment(\.scenePhase) private var scenePhase
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
-    @State private var vm = OnboardingViewModel()
+    // Resumes a draft when a prior onboarding was interrupted before the profile was created;
+    // fresh otherwise. See OnboardingDraft.
+    @State private var vm = OnboardingViewModel.resuming()
     @State private var profile: UserProfile?
     @State private var goingBack = false
     @State private var locator = LocationService()   // request location on the final primer
@@ -65,6 +68,9 @@ struct OnboardingFlow: View {
             if vm.name.isEmpty, let known = auth.displayName, !known.isEmpty { vm.name = known }
             #if DEBUG
             let args = ProcessInfo.processInfo.arguments
+            // Combine with any onboarding step arg to see the FEMALE anatomy figure (the flow the
+            // user actually takes: select female → the anatomy beats render her body).
+            if args.contains("--onboarding-female") { vm.sex = .female }
             if args.contains("--onboarding-identity") { vm.name = "Maya"; vm.step = .identity }
             // Pre-set a handle so the field's taken/available state renders deterministically
             // (sim can't type): pair with a row for that handle in the backend to see ✗ + chips.
@@ -129,7 +135,16 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
             #endif
         }
-        .onChange(of: vm.step) { _, step in services.analytics.log(.onboardingStep(index: step.rawValue)) }
+        .onChange(of: vm.step) { _, step in
+            services.analytics.log(.onboardingStep(index: step.rawValue))
+            // Checkpoint on every navigation — the draft now holds every answer made up to and
+            // including the step just left, so an eviction resumes here, not at question one.
+            saveDraftIfEnabled()
+        }
+        // Capture the very latest answers the instant the app leaves the foreground — the moment
+        // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
+        // (answers changed on the current step before tabbing away).
+        .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
         // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
         // continues to the primers and into the app on the free tier.
         .fullScreenCover(isPresented: $showPaywall, onDismiss: { goNext() }) {
@@ -202,6 +217,13 @@ struct OnboardingFlow: View {
 
     private func goNext() { goingBack = false; vm.advance() }
     private func goBack() { goingBack = true; vm.back() }
+
+    /// Persist the interruption-recovery draft, unless a deep link is driving the flow (those set a
+    /// specific step for verification and must stay deterministic — no stray draft written or read).
+    private func saveDraftIfEnabled() {
+        guard !ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding-") }) else { return }
+        OnboardingDraftStore.save(vm.draft())
+    }
 
     // MARK: Content router
 
@@ -1285,6 +1307,8 @@ struct OnboardingFlow: View {
     private func buildPlan() async {
         if profile == nil {
             profile = vm.finish(in: context)
+            // The profile now exists — onboarding succeeded, so there's nothing left to resume.
+            OnboardingDraftStore.clear()
         }
         services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
         // Long enough for the route to finish drawing and the head to pulse before the reveal.

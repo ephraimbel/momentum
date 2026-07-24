@@ -81,7 +81,8 @@ final class AuthController {
         // presented over a clean no-profile state — no tabs render behind it, no map location prompt.
         if ProcessInfo.processInfo.arguments.contains("--seed-demo")
             || ProcessInfo.processInfo.arguments.contains("--seed-empty")
-            || ProcessInfo.processInfo.arguments.contains("--onboarding") {
+            || ProcessInfo.processInfo.arguments.contains("--onboarding")
+            || ProcessInfo.processInfo.arguments.contains("--resume-demo") {   // resume-verification path
             userID = "demo-user"; displayName = "Alex Rivera"; return   // matches the seeded demo profile
         }
         #endif
@@ -178,6 +179,9 @@ final class AuthController {
         UserDefaults.standard.removeObject(forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
+        // Drop any in-progress onboarding draft — a different athlete on this device must never
+        // resume someone else's answers.
+        OnboardingDraftStore.clear()
         if let client = SupabaseClientProvider.client {
             Task { try? await client.auth.signOut() }
         }
