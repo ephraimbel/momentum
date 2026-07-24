@@ -9,29 +9,30 @@ struct BuildingPlanView: View {
     var lines: [String] = ["Balancing your week", "Spacing your efforts",
                            "Setting your paces", "Finalizing your plan"]
 
+    /// Fires once the ring has filled and every line has ticked off (plus a brief "done" hold). The
+    /// advance is DRIVEN by the animation finishing — not a fixed timer the plan generation running
+    /// alongside could outrun — so the beat always plays in full before the reveal.
+    var onComplete: (() -> Void)?
+
     @State private var completed = 0
+    @State private var ringFill = 0.0
+    @State private var didComplete = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let lineTick = Timer.publish(every: Self.tickInterval, on: .main, in: .common).autoconnect()
 
-    /// Cadence the checklist ticks at, and the total wall time for it to finish + settle + hold as
-    /// "done". The caller (`OnboardingFlow.buildPlan`) waits `totalDuration` before advancing so the
-    /// beat ALWAYS animates fully — never cut off mid-checkmark (it used to advance on a fixed 3.1s
-    /// while five personalized lines take ~3.4s to settle).
     static let tickInterval = 0.55
-    static func totalDuration(lineCount: Int) -> Double {
-        Double(max(1, lineCount)) * tickInterval   // every line ticks in
-            + 0.45                                  // the last checkmark + ring finish their animation
-            + 0.7                                   // a calm "done" hold before the reveal
+
+    init(lines: [String]? = nil, onComplete: (() -> Void)? = nil) {
+        if let lines { self.lines = lines }
+        self.onComplete = onComplete
     }
-
-    init(lines: [String]? = nil) { if let lines { self.lines = lines } }
-
-    private var progress: Double { Double(completed) / Double(max(1, lines.count)) }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                ProgressRing(progress: progress, lineWidth: 6)
+                // A continuous fill (Core Animation, so it stays smooth even while the main thread is
+                // briefly busy generating the plan), not stepped with the checklist.
+                ProgressRing(progress: ringFill, lineWidth: 6)
                 BrandMark(size: 40)
             }
             .frame(width: 92, height: 92)
@@ -59,10 +60,29 @@ struct BuildingPlanView: View {
         .onReceive(lineTick) { _ in
             guard !reduceMotion, completed < lines.count else { return }
             withAnimation(.easeOut(duration: 0.4)) { completed += 1 }
+            if completed == lines.count { holdThenAdvance(1.0) }   // all checked → hold, then reveal
         }
-        .onAppear { if reduceMotion { completed = lines.count } }
+        .onAppear {
+            if reduceMotion {
+                completed = lines.count; ringFill = 1
+                holdThenAdvance(0.7)
+            } else {
+                // Fill the ring across the whole checklist span so it completes right as the last
+                // line checks off — one continuous, premium motion.
+                withAnimation(.easeInOut(duration: Double(lines.count) * Self.tickInterval + 0.35)) {
+                    ringFill = 1
+                }
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Building your plan")
+    }
+
+    /// Advance once, after a calm hold on the finished state (full ring + every checkmark).
+    private func holdThenAdvance(_ hold: Double) {
+        guard !didComplete else { return }
+        didComplete = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { onComplete?() }
     }
 
     private func checklistRow(_ i: Int) -> some View {

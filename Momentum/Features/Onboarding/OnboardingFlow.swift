@@ -27,7 +27,7 @@ struct OnboardingFlow: View {
     @State private var locator = LocationService()   // request location on the final primer
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
-    @State private var showPaywall = false           // the `onboarding_complete` paywall, after the reveal
+    @State private var showPaywall = false           // the `onboarding_complete` paywall — the last beat, before the app
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
     @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
     @State private var remindersAdvanced = false      // same for the reminders primer
@@ -39,7 +39,7 @@ struct OnboardingFlow: View {
             Theme.background.ignoresSafeArea()
             if vm.step == .building {
                 // A calm, centered loader — renders full-bleed so it escapes the flow's padding.
-                BuildingPlanView(lines: vm.buildingLines())
+                BuildingPlanView(lines: vm.buildingLines()) { goNext() }
                     .task { await buildPlan() }
                     .transition(.opacity)
             } else {
@@ -146,9 +146,10 @@ struct OnboardingFlow: View {
         // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
-        // The plan reveal sells Pro (PRD §10, `onboarding_complete`). Honest + skippable: closing it
-        // continues to the primers and into the app on the free tier.
-        .fullScreenCover(isPresented: $showPaywall, onDismiss: { goNext() }) {
+        // The onboarding_complete paywall (PRD §10) — the FINAL gate, shown from the last step's
+        // "Start training" after every opt-in. Honest + skippable: dismissing it (subscribed or not)
+        // enters the app, so it's always the last thing the athlete sees in onboarding.
+        .fullScreenCover(isPresented: $showPaywall, onDismiss: { onComplete() }) {
             PaywallView(feature: .fullPlan, hard: false)
         }
     }
@@ -252,12 +253,10 @@ struct OnboardingFlow: View {
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) {
-            // Freemium (2026-07-14): every new athlete meets the paywall after the plan reveal, but
-            // it's SOFT — subscribe/trial to unlock the coach + full plan, or close it and continue
-            // into the app on the free tier (tracking, runs, fueling, and week 1 of the plan).
-            // Already entitled (restored subscribers, demo runs) sail straight through.
-            if paywall.isPro { goNext() }
-            else { showPaywall = true }
+            // "This looks great" flows into the final opt-in beats — the paywall now waits until the
+            // very end (the last step's "Start training"), so nothing interrupts the reveal moment
+            // (user call 2026-07-24: the paywall is the LAST thing before the app).
+            goNext()
         }
         case .notifications: notificationsStep
         case .primers: primersStep
@@ -730,15 +729,17 @@ struct OnboardingFlow: View {
             .buttonStyle(.plain)
 
             if showTimeEntry {
-                HStack(spacing: Theme.Space.sm) {
+                HStack(spacing: 6) {                          // tighter so "Marathon" fits at full size
                     ForEach(RunBenchmark.allCases) { b in
                         let on = vm.benchmark == b
                         Button {
                             Haptics.selection()
                             vm.benchmark = b; vm.recentRunSeconds = b.defaultSeconds; vm.calibrationMode = .time
                         } label: {
-                            Text(b.label).font(.rounded(Theme.FontSize.caption, weight: .bold))
-                                .lineLimit(1).minimumScaleFactor(0.7)   // five chips — "Marathon" must fit
+                            // Uniform smaller label so the longest word ("Marathon") sits comfortably
+                            // in its chip rather than shrinking alone against the others.
+                            Text(b.label).font(.rounded(Theme.FontSize.label, weight: .bold))
+                                .lineLimit(1).minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity).frame(height: 40)
                                 .foregroundStyle(on ? Theme.background : Theme.ink)
                                 .background {
@@ -1243,8 +1244,13 @@ struct OnboardingFlow: View {
             }
             .reveal(0.15)
             Spacer()
-            // Straight into the app — no rating beat here any more (5.6.3).
-            OversizedButton(title: "Start training") { onComplete() }
+            // The LAST beat before the app, so this is where the (soft, skippable) paywall lands —
+            // subscribe/trial to unlock the coach + full plan, or close it and go in on the free
+            // tier. Already-entitled athletes (restored subscribers, demo) go straight through. No
+            // rating beat here (5.6.3).
+            OversizedButton(title: "Start training") {
+                if paywall.isPro { onComplete() } else { showPaywall = true }
+            }
                 .reveal(0.3)
         }
         // Ask for location here so the app opens with the map already centered on the athlete.
@@ -1311,15 +1317,19 @@ struct OnboardingFlow: View {
     }
 
     private func buildPlan() async {
+        // Let the building beat get on screen and its ring + first line start animating before the
+        // plan generation briefly occupies the main thread — otherwise the loader looks frozen at
+        // the start until finish() returns. The advance is driven by the animation completing
+        // (BuildingPlanView.onComplete), so this delay never shortens what the athlete sees.
+        try? await Task.sleep(for: .seconds(0.6))
         if profile == nil {
             profile = vm.finish(in: context)
             // The profile now exists — onboarding succeeded, so there's nothing left to resume.
             OnboardingDraftStore.clear()
         }
         services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
-        // Wait for the "building" checklist to tick through every line and settle, so it always
-        // animates FULLY before the reveal (derived from the line count, not a guessed constant).
-        try? await Task.sleep(for: .seconds(BuildingPlanView.totalDuration(lineCount: vm.buildingLines().count)))
-        goNext()
+        // The advance is driven by `BuildingPlanView`'s onComplete — it fires when the ring has
+        // filled and every line has ticked off — so this plan generation can't race or cut the
+        // animation short. Nothing to wait on here.
     }
 }
