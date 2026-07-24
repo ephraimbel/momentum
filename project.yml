@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "9"   # build 9: onboarding feasibility/building-beat/goal-aim fixes + workout library + female anatomy + supersets
+    CURRENT_PROJECT_VERSION: "10"   # build 10: no Health workout auto-import + coach paywall (single-fire, no dark leak) + sequenced notifications/location prompts
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
