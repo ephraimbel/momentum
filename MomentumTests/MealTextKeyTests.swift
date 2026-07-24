@@ -89,8 +89,42 @@ struct MealTextKeyTests {
         #expect(key("two eggs") == key("2 eggs"))
         #expect(key("dozen eggs") == key("12 eggs"))
         #expect(key("two eggs") != key("3 eggs"))
-        #expect(key("half a banana") != key("banana"))   // "half" stays a word, deliberately
         #expect(key("a couple gels") != key("2 gels"))   // ambiguous: never merged
+        #expect(key("a few dates") != key("3 dates"))    // ambiguous: never merged
+    }
+
+    /// v3: dictation says "half of a bagel", never "1/2 bagel" — spoken portions must land on the
+    /// SAME key as their typed spelling, and a spoken half must never alias onto the whole food.
+    @Test("Spoken portions canonicalize to their typed fraction")
+    func spokenPortions() {
+        #expect(key("half of a rice crispy treat") == key("1/2 rice crispy treat"))
+        #expect(key("half a bagel") == key("1/2 bagel"))
+        #expect(key("half an apple") == key("1/2 apple"))
+        #expect(key("a half banana") == key("1/2 banana"))
+        #expect(key("half bagel") == key("1/2 bagel"))
+        #expect(key("a quarter of a bagel") == key("1/4 bagel"))
+        #expect(key("quarter of the pizza") == key("1/4 pizza"))
+        #expect(key("three quarters of a cup of oats") == key("3/4 cup oats"))
+        #expect(key("three quarter cup rice") == key("3/4 cup rice"))
+        #expect(key("one and a half bananas") == key("1.5 bananas"))
+        #expect(key("two and a half cups of rice") == key("2.5 cups rice"))
+        #expect(key("2 and a half gels") == key("2.5 gels"))
+        // The half can never disappear into the whole food.
+        #expect(key("half a banana") != key("banana"))
+        #expect(key("half of a rice crispy treat") != key("rice crispy treat"))
+        // Sizes ride with the food, so a half LARGE treat is not a half treat.
+        #expect(key("half of a large rice crispy treat") == key("1/2 large rice crispy treat"))
+        #expect(key("half of a large rice crispy treat") != key("1/2 rice crispy treat"))
+    }
+
+    /// "half and half" is a coffee creamer, not two fractions — and a trailing "half" is a
+    /// position, not a portion.
+    @Test("Spoken-portion guardrails: the creamer and trailing halves stay unmapped")
+    func spokenPortionGuardrails() {
+        #expect(key("coffee with half and half") != key("coffee, 1/2, 1/2"))
+        #expect(key("coffee with half and half") == key("coffee and half-and-half"))
+        #expect(key("banana half") != key("1/2 banana"))     // trailing: honest miss
+        #expect(key("half and half") != key("1/2 1/2"))
     }
 
     @Test("Decimals survive intact")
@@ -225,6 +259,6 @@ struct MealTextKeyTests {
 
     @Test("Version is pinned — bump it deliberately when the algorithm changes")
     func versionPinned() {
-        #expect(MealTextKey.version == 2)   // v2: digit-flanked separators are number content
+        #expect(MealTextKey.version == 3)   // v3: spoken portions canonicalize to typed fractions
     }
 }

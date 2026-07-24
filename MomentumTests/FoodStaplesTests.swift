@@ -36,6 +36,34 @@ struct FoodStaplesTests {
         #expect(two[0].qty == 2 && two[0].kcal == 200)
     }
 
+    /// The dictation voice never says "1/2" — spoken portions must compose exactly like their
+    /// typed spelling, offline, without an estimator call.
+    @Test func spokenPortionsCompose() throws {
+        let half = try #require(FoodStaples.compose("half of a rice crispy treat"))
+        #expect(half[0].name == "Rice Krispie Treat")
+        #expect(half[0].qty == 0.5 && half[0].kcal == 45)   // 90 × 0.5
+        #expect(half[0].carbsG == 9)                        // 17 × 0.5 rounds away from zero
+
+        let halfBanana = try #require(FoodStaples.compose("half a banana"))
+        #expect(halfBanana[0].qty == 0.5 && halfBanana[0].kcal == 53)
+
+        let compound = try #require(FoodStaples.compose("one and a half bananas"))
+        #expect(compound[0].qty == 1.5 && compound[0].kcal == 158)   // 105 × 1.5 = 157.5 → 158
+
+        let quarter = try #require(FoodStaples.compose("a quarter of a bagel"))
+        #expect(quarter[0].qty == 0.25 && quarter[0].kcal == 61)     // 245 × 0.25 = 61.25 → 61
+
+        let threeQ = try #require(FoodStaples.compose("three quarters of a banana"))
+        #expect(threeQ[0].qty == 0.75 && threeQ[0].kcal == 79)       // 105 × 0.75 = 78.75 → 79
+    }
+
+    /// A SIZED portion is a stranger to the table — "half of a LARGE rice crispy treat" must
+    /// decline to the AI (which scales sizes), never silently compose as the standard bar.
+    @Test func sizedPortionsDecline() {
+        #expect(FoodStaples.compose("half of a large rice crispy treat") == nil)
+        #expect(FoodStaples.compose("small banana") == nil)
+    }
+
     @Test func pluralAndSingularAreTheSameFood() throws {
         let one = try #require(FoodStaples.compose("egg"))
         let many = try #require(FoodStaples.compose("eggs"))

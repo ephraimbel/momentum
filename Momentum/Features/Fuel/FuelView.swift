@@ -64,6 +64,8 @@ struct FuelView: View {
     @State private var showingHistory = false
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
+    @State private var showScanner = false
+    @State private var barcodeDemoShown = false   // DEBUG --barcode-demo latch (see onAppear)
     /// The "Hey Siri, log a meal in Momentum" tip row — shown until the athlete dismisses it.
     @AppStorage("com.momentum.fuel.siriTip") private var siriTipVisible = true
     @FocusState private var composing: Bool
@@ -215,6 +217,25 @@ struct FuelView: View {
             // rather than showing yesterday's pacing for up to a minute.
             .onChange(of: scenePhase) { _, phase in if phase == .active { refreshDerived() } }
             .onDisappear { if voice.isRecording { voice.stop() } }
+            // The label lane: full screen because it's a camera, not a form. The scanned meal
+            // inserts through `logScanned` — label numbers, source "manual", no estimator.
+            .fullScreenCover(isPresented: $showScanner) {
+                BarcodeScanView { product, servings in
+                    logScanned(product, servings: servings)
+                }
+            }
+            #if DEBUG
+            // `--barcode-demo` self-presents on arrival so the sim (no camera) can screenshot
+            // the confirm card from one launch: `--seed-demo --debug-pro --fuel --barcode-demo`.
+            // Latched: `.onAppear` re-fires when the cover dismisses, and an unlatched present
+            // would trap the page in the scanner forever (caught by BarcodeScanUITests).
+            .onAppear {
+                if ProcessInfo.processInfo.arguments.contains("--barcode-demo"), !barcodeDemoShown {
+                    barcodeDemoShown = true
+                    showScanner = true
+                }
+            }
+            #endif
         }
     }
 
@@ -534,6 +555,9 @@ struct FuelView: View {
                     .padding(.leading, 4)
                     .padding(.vertical, 8)
             }
+            if !voice.isRecording {
+                scanButton
+            }
             if voice.isSupported {
                 micButton
             }
@@ -599,6 +623,50 @@ struct FuelView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate meal")
+    }
+
+    /// The label lane's entry — same quiet 34pt circle as the mic, hidden while dictating (the
+    /// transcript needs the width, and pointing a camera mid-sentence isn't a real flow).
+    private var scanButton: some View {
+        Button(action: attemptScan) {
+            Image(systemName: "barcode.viewfinder")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scan a barcode")
+    }
+
+    /// Same Pro gate as `attemptLog` — the wall lives at the action, and it opens BEFORE the
+    /// athlete points a camera at dinner only to be stopped at "Log it".
+    private func attemptScan() {
+        guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
+        Haptics.light()
+        showScanner = true
+    }
+
+    /// Save a scanned product: label numbers verbatim × servings, `source = "manual"` (a label is
+    /// ground truth, and manual is what outranks estimates when these words come back typed —
+    /// `MealTextKey.outranks`). No estimator, no note (nobody wrote coaching for this snack).
+    private func logScanned(_ product: BarcodeFood.ScannedProduct, servings: Double) {
+        let numbers = BarcodeFood.portion(of: product, servings: servings)
+        let meal = Meal()
+        meal.text = BarcodeFood.mealText(for: product, servings: servings)
+        meal.items = [MealItem(name: product.name, qty: servings, unit: "serving",
+                               kcal: numbers.kcal, carbsG: numbers.carbsG,
+                               proteinG: numbers.proteinG, fatG: numbers.fatG,
+                               sodiumMg: numbers.sodiumMg, fluidsMl: 0,
+                               potassiumMg: numbers.potassiumMg, magnesiumMg: nil,
+                               ironMg: numbers.ironMg, calciumMg: numbers.calciumMg)]
+        meal.source = "manual"
+        meal.confidence = 1
+        withAnimation(Motion.standard) {
+            context.insert(meal)
+            try? context.save()
+            refreshDerived()
+        }
+        Haptics.success()
     }
 
     private var canLog: Bool {

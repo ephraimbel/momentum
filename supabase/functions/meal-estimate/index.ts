@@ -75,6 +75,16 @@ it's a drink), potassium milligrams, magnesium milligrams, iron milligrams (deci
 calcium milligrams — the endurance micros. Typical home/restaurant portions unless quantities \
 are given. confidence is 0-1 (branded sports nutrition rates higher; vague descriptions lower).
 
+PORTIONS ARE EXACT. The description is often dictated speech — honor every stated quantity, \
+fraction, and size to the letter, and scale ALL numbers by it. "half a bagel" is qty 0.5 with \
+half the nutrition of a whole bagel; "half of a large rice krispie treat" is qty 0.5 of the \
+LARGE size (scale up for the size first, then halve); "a quarter of" is 0.25; "three quarters" \
+is 0.75; "one and a half" is 1.5. Size words (mini, snack size, small, medium, large, king size, \
+footlong, tall, grande, venti) scale the base food realistically. Never round a fractional \
+portion up to a whole item, and never ignore a size word. When a number names a NUTRIENT, not a \
+count — "40g protein shake" means a shake carrying 40 grams of protein — set that nutrient to \
+the stated amount and size the rest around it.
+
 tags: up to 3 from exactly this set: "carb-dense", "protein", "electrolytes", "light", "pre-session", \
 "recovery". note: ONE short second-person line about how this serves their training (use the context; \
 e.g. "Good carb bank for tomorrow's long run."). Fueling language only — never diet, weight, calorie- \

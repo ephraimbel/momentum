@@ -156,6 +156,12 @@ enum FoodStaples {
         (["rice cake", "rice cakes"],
          Entry(name: "Rice Cake", unit: "cake", kcal: 35, carbsG: 7, proteinG: 1, fatG: 0, sodiumMg: 15,
                kMg: 26, mgMg: 12, feMg: 0.3, caMg: 1)),
+        // Every spelling dictation produces for the mid-ride classic; label numbers (22 g bar).
+        (["rice krispie treat", "rice krispie treats", "rice krispy treat", "rice krispy treats",
+          "rice crispy treat", "rice crispy treats", "rice crispie treat", "rice crispie treats",
+          "krispie treat", "krispie treats", "crispy treat", "crispy treats"],
+         Entry(name: "Rice Krispie Treat", unit: "bar", kcal: 90, carbsG: 17, proteinG: 1, fatG: 2,
+               sodiumMg: 105)),
 
         // — Recovery / snacks (countable, label-stable) —
         (["protein shake", "whey", "whey protein", "recovery shake"],

@@ -19,7 +19,13 @@ enum MealTextKey {
     /// v2 (2026-07-21): separators flanked by digits are read as part of the NUMBER, not as food
     /// boundaries — see `numberInternalSeparators`. v1 split "1/2 tbsp butter" into "1" plus
     /// "2 tbsp butter", inverting the fraction and letting the denominator sort onto another food.
-    static let version = 2
+    ///
+    /// v3 (2026-07-24): SPOKEN portions canonicalize to the numeric forms the rest of the ladder
+    /// already understands — dictation says "half of a bagel", never "1/2 bagel". Only exact
+    /// cardinalities map ("half" = 0.5, "a quarter" = 0.25, "three quarters" = 0.75,
+    /// "N and a half" = N.5) so the pass can only merge texts that mean the SAME amount; "couple"/
+    /// "few" stay unmatched, and "half and half" (the creamer) is protected before any mapping.
+    static let version = 3
 
     // MARK: Tables
 
@@ -106,7 +112,7 @@ enum MealTextKey {
             .folding(options: [.diacriticInsensitive, .caseInsensitive],
                      locale: Locale(identifier: "en_US_POSIX"))
             .lowercased()
-        let chars = Array(folded)
+        let chars = Array(spokenPortions(folded))
 
         var segments: [String] = []
         var tokens: [String] = []
@@ -174,6 +180,56 @@ enum MealTextKey {
 
     /// Convenience: a key worth looking up.
     static func isMatchable(_ key: String) -> Bool { !key.isEmpty }
+
+    // MARK: Spoken portions (v3)
+
+    /// Ordered, whole-word rewrites applied to the folded text before segmentation. Each rule maps
+    /// one exact spoken cardinality onto the numeric spelling the number-welding machinery (and
+    /// `FoodStaples.quantity`) already handles, so "half of a bagel" and "1/2 bagel" become one
+    /// key and one staple hit. Order is load-bearing: the creamer is protected first, compound
+    /// "N and a half" runs before the bare-"half" rules would eat its tail, and "three quarters"
+    /// runs before "a quarter" so the "quarters" substring can't half-match.
+    private static let spokenPortionRules: [(pattern: String, replacement: String)] = [
+        // "half and half" is a FOOD (coffee creamer), not two halves. Hyphens are token breakers,
+        // so this keys as one segment "half half" — distinct from every fraction below. (v2 split
+        // it into two stray segments via the "and" joiner; this is also a correctness upgrade.)
+        ("\\bhalf and half\\b", "half-and-half"),
+        // "one and a half bananas" → "1.5 bananas" (the "and" would otherwise close the segment
+        // and orphan the number). Digits first, then the small spoken cardinals.
+        ("\\b([0-9]+) and a half\\b", "$1.5"),
+        ("\\bone and a half\\b", "1.5"), ("\\btwo and a half\\b", "2.5"),
+        ("\\bthree and a half\\b", "3.5"), ("\\bfour and a half\\b", "4.5"),
+        ("\\bfive and a half\\b", "5.5"), ("\\bsix and a half\\b", "6.5"),
+        ("\\bseven and a half\\b", "7.5"), ("\\beight and a half\\b", "8.5"),
+        ("\\bnine and a half\\b", "9.5"), ("\\bten and a half\\b", "10.5"),
+        ("\\bthree[ -]quarters? (?:of )?", "3/4 "),
+        ("\\b(?:a )?quarter of ", "1/4 "),
+        ("\\ba quarter ", "1/4 "),
+        // Prefix "half" forms, most-specific first. Trailing space in the pattern keeps a bare
+        // trailing "half" ("banana half") honestly unmapped — that's a position, not a portion.
+        ("\\b(?:a )?half (?:of )?(?:a |an |the )?", "1/2 "),
+    ]
+
+    /// The compiled rules — built once; a bad pattern is a programmer error caught by the tests.
+    private static let compiledPortionRules: [(regex: NSRegularExpression, replacement: String)] =
+        spokenPortionRules.compactMap { rule in
+            (try? NSRegularExpression(pattern: rule.pattern)).map { ($0, rule.replacement) }
+        }
+
+    /// Apply the spoken-portion rewrites. Pure, allocation-light, runs once per normalize/segment
+    /// call on short meal strings — never in a render pass.
+    static func spokenPortions(_ folded: String) -> String {
+        // Fast path: no portion word, no regex work — this keeps the 300-candidate normalize
+        // loop in `FuelLocalResolver.match` at its documented sub-millisecond cost.
+        guard folded.contains("half") || folded.contains("quarter") else { return folded }
+        var text = folded
+        for rule in compiledPortionRules {
+            let range = NSRange(text.startIndex..., in: text)
+            text = rule.regex.stringByReplacingMatches(in: text, range: range,
+                                                       withTemplate: rule.replacement)
+        }
+        return text
+    }
 
     // MARK: Which remembered meal wins
 

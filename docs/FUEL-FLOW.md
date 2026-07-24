@@ -157,7 +157,33 @@ the athlete made by hand can be visible to the typed lookup and invisible to the
 words resolve differently depending on how you asked. Correct a bad estimate once and every future
 match of that text inherits the correction.
 
+## Spoken portions (2026-07-24)
+Dictation never says "1/2" — it says "half of a rice krispie treat". `MealTextKey` v3
+canonicalizes exact spoken cardinalities into the numeric forms the whole ladder already
+understands, in one pre-pass before segmentation: "half (of) (a/an/the)" → `1/2`, "a quarter
+(of)" → `1/4`, "three quarters" → `3/4`, "N and a half" → `N.5`. Only unambiguous amounts map —
+"a couple"/"a few" stay unmatched (precision doctrine), a trailing "half" is a position not a
+portion, and "half and half" (the creamer) is protected as one food before any rule runs. Net
+effect: "half of a rice crispy treat" hits the same history/staples key as "1/2 rice crispy
+treat" and scales every number by 0.5, offline, for free. Sized portions ("half of a LARGE
+rice crispy treat") deliberately miss the table and go to the estimator, whose prompt now
+carries a PORTIONS ARE EXACT contract (fractions scale, size words scale, "40g protein shake"
+reads as nutrient content — deployed to `meal-estimate` 2026-07-24).
+
+## The barcode lane (2026-07-24)
+The one estimate-free path: scan a wrapper, read the LABEL. Deliberately **not** photo-calorie
+guessing — we never estimate food from images. `BarcodeScanView` (full-screen camera,
+monochrome chrome, torch, honest denied/miss/offline states) → `OpenFoodFactsService` (v2 API,
+no key, nothing sent but the barcode) → the pure `BarcodeFood` engine decodes label JSON
+(per-serving wins over per-100 g; kJ→kcal and salt→sodium ladders for EU labels; micros stay
+nil when undeclared) and scales by the servings stepper with FoodStaples' rounding rule. Logs
+as `source = "manual"`, confidence 1 — a label is ground truth, so it outranks any earlier AI
+guess when the same words come back typed (`MealTextKey.outranks`). The scan button lives in
+the composer beside the mic, behind the same Pro gate as send; `--barcode-demo` lands a canned
+product for sim/UI-test coverage. Engine + decode fixtures pinned in `BarcodeFoodTests`.
+
 ## Later (explicitly deferred)
 Add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness ·
-fueling trends in Progress · refuel push notification · pre-race dinner reminder.
+fueling trends in Progress · refuel push notification · pre-race dinner reminder ·
+off-label serving sizes for scans ("3 crackers" of a 30 g serving).
 *(Day-history browsing + quick-repeat shipped 2026-07-16.)*
