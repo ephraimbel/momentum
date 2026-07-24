@@ -87,6 +87,19 @@ final class AthleteModelService: AthleteModelServing {
         motivation.confidence = Confidence.emerging.rawValue
         seeded.append(motivation)
 
+        // What to protect — so the coach is careful about a known-vulnerable area from message one,
+        // not after the athlete flares it. Only when they reported something to train around.
+        let areas = profile.injuryHistory.compactMap { InjuryArea(rawValue: $0)?.label }
+        if !areas.isEmpty {
+            let list = ListFormatter.localizedString(byJoining: areas).lowercased()
+            let risk = MemoryNote()
+            risk.category = MemoryCategory.risk.rawValue
+            risk.text = "Training around a history of \(list) trouble — ease impact and hard efforts there, and never push through pain in it."
+            risk.source = MemorySource.onboarding.rawValue
+            risk.confidence = Confidence.emerging.rawValue
+            seeded.append(risk)
+        }
+
         for note in seeded { context.insert(note) }
         model.notes.append(contentsOf: seeded)
         try? context.save()
@@ -180,7 +193,33 @@ final class AthleteModelService: AthleteModelServing {
         case ExperienceLevel.experienced.rawValue: levelWord = "A seasoned"
         default: levelWord = "A"
         }
-        return "\(levelWord) \(noun) just getting started with Momentum."
+        var line = "\(levelWord) \(noun)"
+
+        // What they're training FOR — the single most useful thing for the coach to know from the
+        // first message, straight from onboarding instead of waiting to infer it over weeks.
+        if profile.goal == .raceDistance, let raceM = profile.raceDistanceM {
+            var race = "training for a \(RaceDistance.nearest(toMeters: raceM).label.lowercased())"
+            if let date = profile.raceDate { race += " on \(date.formatted(.dateTime.month().day()))" }
+            if let goalS = profile.goalFinishTimeS, goalS > 0 { race += ", aiming for \(PlanFeasibility.hms(goalS))" }
+            line += " \(race)"
+        } else {
+            switch profile.goal {
+            case .buildMuscle:    line += " focused on building muscle"
+            case .getStronger:    line += " working on strength"
+            case .loseFat:        line += " training to get lean"
+            case .endurance:      line += " building endurance"
+            case .stayConsistent: line += " keeping a steady rhythm"
+            case .generalFitness: line += " here for all-round fitness"
+            case .raceDistance:   break   // handled above
+            }
+        }
+
+        // How hard they've committed — frequency, and the podium tell when they chose to go all in.
+        line += ", \(profile.daysPerWeek) days a week"
+        if profile.planIntensity == PlanIntensity.podium.rawValue {
+            line += " — all in, chasing the front of the race"
+        }
+        return line + "."
     }
 
     static func motivationSeed(_ reason: String) -> String {
