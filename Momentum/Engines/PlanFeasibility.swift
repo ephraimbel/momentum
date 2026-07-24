@@ -267,6 +267,13 @@ struct PlanFeasibility: Sendable {
         switch e { case .new: 0.18; case .some: 0.12; case .experienced: 0.08 }
     }
 
+    /// The honest ceiling on how much faster `weeks` of training can make this athlete — the same
+    /// per-week rates and per-cycle caps the verdict runs on, exposed so the Podium outlook can
+    /// never promise what the verdict engine would refuse.
+    static func achievableImprovement(experience: ExperienceLevel, weeks: Int) -> Double {
+        min(improvementCap(experience), improvementPerWeek(experience) * Double(max(0, weeks)))
+    }
+
     private static func copy(verdict: Verdict, weeksAvailable: Int, weeksNeeded: Int,
                              distanceM: Double, realisticFinishS: Double?,
                              calendarVerdict: Verdict? = nil,

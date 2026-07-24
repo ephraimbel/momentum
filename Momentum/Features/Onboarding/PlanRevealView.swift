@@ -50,6 +50,7 @@ struct PlanRevealView: View {
                 reflectionChips.reveal(0.24)
                 if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.27) }
                 weeklyVolumeCard.reveal(0.30)
+                if vm.intensity == .podium, vm.running { podiumOutlook.reveal(0.33) }
                 fullPlanList.id("plan")
             }
             .frame(maxWidth: .infinity)
@@ -292,6 +293,92 @@ struct PlanRevealView: View {
     /// The peak week's value for the on-chart callout — distance for runners, session count otherwise.
     private func peakLabel(_ v: Double) -> String {
         vm.running ? Formatters.distance(meters: v, unit: distanceUnit) : "\(Int(v.rounded()))"
+    }
+
+    // MARK: The Podium outlook (podium tier only — the depth the commitment earned)
+
+    /// Honest projections + the block's peak profile, for the athlete training to win. Wears the
+    /// tier's iridescent border — the reveal stays monochrome (user call) EXCEPT the Podium
+    /// signature, which follows the tier from its selection card to its promise.
+    private var podiumOutlook: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            sectionLabel("THE PODIUM OUTLOOK")
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                if let line = outlookProjectionLine {
+                    Text(line)
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let s = peakWeekStats {
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+                    HStack(spacing: 0) {
+                        outlookCell(Formatters.distance(meters: s.volumeM, unit: distanceUnit), "PEAK WEEK")
+                        statDivider
+                        outlookCell(Formatters.distance(meters: s.longestM, unit: distanceUnit), "LONGEST RUN")
+                        statDivider
+                        outlookCell("\(s.hardDays)", "HARD DAYS / WK")
+                    }
+                }
+                Text("Projected from your logged fitness — the work still has to happen.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(IridescentMaterial(), lineWidth: 1.5))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Race path: today's predicted finish vs. the build's target. No-race: the athlete's 5K, now
+    /// and where the block points it. Both from `PodiumOutlook` (the verdict's own improvement
+    /// model — never a promise the feasibility engine would refuse).
+    private var outlookProjectionLine: String? {
+        guard let p5k = profile?.plan?.p5kSPerKm, p5k > 0 else { return nil }
+        let weeks = planWeekCount
+        if vm.goal == .raceDistance, let r = vm.raceDistance {
+            guard let proj = PodiumOutlook.raceProjection(raceDistanceM: r.meters, p5kSPerKm: p5k,
+                                                          goalFinishTimeS: vm.goalFinishTimeS,
+                                                          experience: vm.experience, weeks: weeks) else { return nil }
+            return "Today's fitness runs a \(PlanFeasibility.hms(proj.nowS)) \(r.label.lowercased()). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
+        }
+        guard let proj = PodiumOutlook.fiveKProjection(p5kSPerKm: p5k, experience: vm.experience,
+                                                       weeks: weeks) else { return nil }
+        return "Today you're a \(PlanFeasibility.hms(proj.nowS)) 5K runner. This block is built to move you toward \(PlanFeasibility.hms(proj.builtS))."
+    }
+
+    /// The block's biggest week: running volume, the single longest run anywhere in the block, and
+    /// how many hard days that peak week holds.
+    private var peakWeekStats: (volumeM: Double, longestM: Double, hardDays: Int)? {
+        let weeks = weeksGrouped
+        guard !weeks.isEmpty else { return nil }
+        func runVol(_ ss: [PlannedSession]) -> Double {
+            ss.filter { $0.discipline == .running && $0.runType != .race }
+                .compactMap(\.targetDistanceM).reduce(0, +)
+        }
+        guard let peak = weeks.max(by: { runVol($0.sessions) < runVol($1.sessions) }) else { return nil }
+        let vol = runVol(peak.sessions)
+        guard vol > 0 else { return nil }
+        let longest = profile?.plan?.sessions
+            .filter { $0.discipline == .running && $0.runType != .race }
+            .compactMap(\.targetDistanceM).max() ?? 0
+        let hard = peak.sessions.filter { $0.runType?.isQuality == true }.count
+        return (volumeM: vol, longestM: longest, hardDays: hard)
+    }
+
+    private func outlookCell(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(.display(20, weight: .black)).monospacedDigit()
+                .foregroundStyle(Theme.ink)
+            Text(label)
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.0)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: Race countdown (dated race goals)

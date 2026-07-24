@@ -86,6 +86,17 @@ struct OnboardingFlow: View {
                 vm.activities = args.contains("--reveal-runs") ? [.run] : [.run, .strength]
                 vm.daysPerWeek = demo.daysPerWeek; vm.goal = demo.goal
                 vm.name = "Maya"; vm.step = .reveal
+                // --reveal-podium: the Podium outlook card (race path w/ goal time; add
+                // --reveal-podium-open for the no-race "become great" variant).
+                if args.contains("--reveal-podium") {
+                    vm.activities = [.run]; vm.intensity = .podium; vm.experience = .some
+                    if args.contains("--reveal-podium-open") {
+                        vm.goal = .endurance
+                    } else {
+                        vm.goal = .raceDistance; vm.raceDistance = .marathon
+                        vm.goalHours = 3; vm.goalMinutes = 10
+                    }
+                }
             }
             if args.contains("--onboarding-goaltime") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.step = .raceGoalTime
