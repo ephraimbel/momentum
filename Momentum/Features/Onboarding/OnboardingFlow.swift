@@ -30,9 +30,6 @@ struct OnboardingFlow: View {
     @State private var remindersAdvanced = false      // same for the reminders primer
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
-    @State private var healthImport: HealthImportState = .idle   // calibration: the Health baseline card
-
-    enum HealthImportState { case idle, importing, done(BaselineEstimator.RunningBaseline), empty }
 
     var body: some View {
         ZStack {
@@ -111,15 +108,6 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-health") { vm.activities = [.run]; vm.step = .health }
             if args.contains("--onboarding-calibration") {
                 vm.activities = [.run]; vm.experience = .some; vm.step = .calibration
-                // With the Health demo flag, exercise the import path automatically (sim can't tap).
-                if args.contains("--health-baseline-demo") {
-                    Task {
-                        if let b = await services.health.runningBaseline() {
-                            vm.importedBaseline = b
-                            withAnimation(Motion.standard) { healthImport = .done(b) }
-                        }
-                    }
-                }
             }
             if args.contains("--onboarding-intensity-short") {
                 vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
@@ -494,104 +482,14 @@ struct OnboardingFlow: View {
     private var calibrationStep: some View {
         questionScaffold("How's your running pace?",
                          subtitle: "So your easy runs feel easy and the hard ones land right. Not sure? Just continue — we'll learn from your first runs.") {
-            healthImportCard.reveal(cascade(0))
             ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
                 SelectionCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
                               isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
                     pick { vm.calibrationMode = .feel; vm.paceFeel = f }
                 }
-                .reveal(cascade(i + 1))
+                .reveal(cascade(i))
             }
-            timeEntryCard.reveal(cascade(PaceFeel.allCases.count + 1))
-        }
-    }
-
-    /// "It already understands me" — estimate the baseline from their Apple Health run history
-    /// (Watch/Garmin/Oura all sync into Health, so one tap covers every device). Read-only.
-    @ViewBuilder
-    private var healthImportCard: some View {
-        switch healthImport {
-        case .done(let b):
-            VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "checkmark.seal.fill").font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Theme.ink)
-                    Text("Got it — we found your runs").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                }
-                Text("\(b.runCount) runs in 8 weeks · ~\(Formatters.distance(meters: b.weeklyVolumeM, unit: .auto))/week · longest \(Formatters.distance(meters: b.longestRunM, unit: .auto)) · est. 5K \(PlanFeasibility.hms(b.p5kSPerKm * 5))")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Your paces and starting volume are set from what you actually run.")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-            }
-            .padding(Theme.Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(IridescentMaterial(), lineWidth: 1.5)   // earned — real history read
-            }
-        case .empty:
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: "heart.text.square").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                Text("Not enough recent runs in Apple Health — pick how your pace feels below.")
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(Theme.Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        case .idle, .importing:
-            Button {
-                Haptics.light()
-                healthImport = .importing
-                Task {
-                    _ = await services.health.requestAuthorization()
-                    // Same consent moment → also capture resting HR for Karvonen zones.
-                    let metrics = await services.health.importedBodyMetrics()
-                    if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
-                    if let baseline = await services.health.runningBaseline() {
-                        vm.importedBaseline = baseline
-                        withAnimation(Motion.standard) { healthImport = .done(baseline) }
-                    } else {
-                        withAnimation(Motion.standard) { healthImport = .empty }
-                    }
-                    // Backfill their real history in the background (UUID-deduped, safe-commit):
-                    // day one opens on THEIR training log — Watch/Garmin/Oura runs via Health —
-                    // not an empty grid. Un-awaited so the step's reveal never waits on it.
-                    // Unconditional: reads may be granted even when write-share (isAuthorized's
-                    // signal) was declined, and without reads this is a free no-op.
-                    let ctx = context
-                    Task { _ = await services.health.importExternalWorkouts(into: ctx, since: nil) }
-                }
-            } label: {
-                HStack(spacing: Theme.Space.md) {
-                    Image(systemName: "heart.text.square.fill")
-                        .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.purple)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Theme.purple.opacity(0.1)))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Use my run history").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                        Text("Apple Health — Watch, Garmin & Oura sync there too. Read-only.")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    if case .importing = healthImport {
-                        ProgressView().tint(Theme.inkSecondary)
-                    } else {
-                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                    }
-                }
-                .padding(Theme.Space.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-                }
-            }
-            .buttonStyle(.plain)
+            timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
         }
     }
 
@@ -670,6 +568,12 @@ struct OnboardingFlow: View {
                         let metrics = await services.health.importedBodyMetrics()
                         if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
                         if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
+                        // Backfill their real training history (UUID-deduped, safe-commit) so day one
+                        // opens on THEIR log — Watch/Garmin/Oura runs via Health — not an empty grid.
+                        // This imports actual logged runs (accurate), distinct from the pace-estimate
+                        // path removed from calibration. Un-awaited so the step transition never waits.
+                        let ctx = context
+                        Task { _ = await services.health.importExternalWorkouts(into: ctx, since: nil) }
                         goNext()
                         // Re-arm AFTER the step transition settles (in case the athlete comes
                         // back) — an immediate reset would re-open the double-tap window.

@@ -87,17 +87,12 @@ final class OnboardingViewModel {
     /// finish, so the season is branded with its occasion from day one.
     var plannedRaceName: String?
 
-    // Health import (ENDURANCE-FOCUS §4) — the baseline estimated from their recent runs. Set by the
-    // calibration step's import card; feeds the pace seed AND the current-volume inputs.
-    var importedBaseline: BaselineEstimator.RunningBaseline? {
-        didSet {
-            guard let b = importedBaseline else { return }
-            calibrationMode = .imported
-            // Real measured load beats self-report — feeds the plan's starting volume + feasibility.
-            weeklyRunVolumeM = b.weeklyVolumeM
-            longestRunM = b.longestRunM
-        }
-    }
+    // Health-derived pace estimation was removed from onboarding (2026-07-24): a baseline inferred
+    // from mixed Health run history was too unreliable to seed a plan's paces. Athletes now enter
+    // their fitness directly — by feel or a recent time (calibration step) and their weekly volume
+    // (runVolume step). Past workouts still backfill into the training log when they connect Apple
+    // Health at the `health` step — that imports REAL logged runs, which is accurate; it just no
+    // longer drives pace calibration.
 
     /// A balanced full-body activation for the anatomy animation, emphasized by the chosen focus.
     func targetMuscles() -> [MuscleGroup: Double] {
@@ -217,7 +212,6 @@ final class OnboardingViewModel {
         switch calibrationMode {
         case .time: seed.recentRun = (benchmark.meters, recentRunSeconds)
         case .feel: if let f = paceFeel { seed.estimatedP5kSPerKm = f.p5kSPerKm }
-        case .imported: seed.estimatedP5kSPerKm = importedBaseline?.p5kSPerKm
         case .none: break
         }
         return seed
@@ -427,8 +421,9 @@ enum ActivityChoice: String, CaseIterable, Identifiable {
 // MARK: - Calibration model
 
 /// How running paces get seeded in onboarding. `.none` = skipped (use experience default);
-/// `.imported` = estimated from their Apple Health run history (most precise, zero effort).
-enum CalibrationMode { case none, feel, time, imported }
+/// `.feel` = the by-feel self-assessment; `.time` = a manually entered recent race/benchmark time.
+/// (Health-derived estimation was removed 2026-07-24 — too unreliable to seed paces from.)
+enum CalibrationMode { case none, feel, time }
 
 /// A beginner-friendly "by feel" running self-assessment → an estimated 5k pace (s/km). Lets someone
 /// who has never timed a run still give the plan a sensible starting pace.
