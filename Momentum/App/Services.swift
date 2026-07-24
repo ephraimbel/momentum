@@ -150,8 +150,10 @@ protocol PaywallServing: AnyObject {
 }
 @MainActor
 protocol NotificationServing: AnyObject {
-    /// Ask for local-notification permission (once; no-op if already determined).
-    func requestAuthorization()
+    /// Ask for local-notification permission (once; no-op if already determined). `completion` runs
+    /// on the main thread once the system prompt is RESOLVED (or immediately if already determined),
+    /// so a flow can advance only after the prompt is dismissed — never stacking another prompt on it.
+    func requestAuthorization(completion: (() -> Void)?)
     /// Resync next-workout reminders to the plan's upcoming sessions (each carries its prescription).
     func schedulePlannedReminders(_ plan: TrainingPlan?)
     /// An immediate, encouraging nudge when the coach adapts the plan.
@@ -160,6 +162,11 @@ protocol NotificationServing: AnyObject {
     func scheduleWeeklyCheckIn()
     /// A gentle, ≤1/day streak-protection nudge when a real streak is at risk on a planned day (§24).
     func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool)
+}
+
+extension NotificationServing {
+    /// Fire-and-forget convenience — request without waiting on the prompt.
+    func requestAuthorization() { requestAuthorization(completion: nil) }
 }
 
 @MainActor

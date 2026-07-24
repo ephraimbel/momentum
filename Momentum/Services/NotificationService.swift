@@ -73,11 +73,14 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         }
     }
 
-    func requestAuthorization() {
+    func requestAuthorization(completion: (() -> Void)? = nil) {
+        // `completion` always fires on the main thread once the prompt is resolved (or right away if
+        // already determined), so callers can advance a flow only after the system alert is dismissed.
+        let finish = { DispatchQueue.main.async { completion?() } }
         // Re-acquire the (non-Sendable) center inside the closure rather than capturing it.
         UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .notDetermined else { return }
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            guard settings.authorizationStatus == .notDetermined else { finish(); return }
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in finish() }
         }
     }
 

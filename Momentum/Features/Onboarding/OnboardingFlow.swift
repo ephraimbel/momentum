@@ -1134,9 +1134,12 @@ struct OnboardingFlow: View {
                     // One-shot — a fast double-tap called goNext() twice and skipped a step.
                     guard !remindersAdvanced else { return }
                     remindersAdvanced = true
-                    services.notifications.requestAuthorization()
-                    goNext()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
+                    // Advance only AFTER the notifications prompt is dismissed, so the next page's
+                    // location prompt lands on a settled screen instead of stacking on this one.
+                    services.notifications.requestAuthorization {
+                        goNext()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
+                    }
                 }
                 Button { Haptics.light(); goNext() } label: {
                     Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
@@ -1268,8 +1271,12 @@ struct OnboardingFlow: View {
             }
                 .reveal(0.3)
         }
-        // Ask for location here so the app opens with the map already centered on the athlete.
-        .onAppear { locator.requestAuthorization() }
+        // Ask for location only AFTER this page is visibly on screen — the athlete reads WHY (their
+        // map centered on them) first, THEN the system prompt appears. The brief beat also guarantees
+        // the prior notifications prompt has cleared, so the two never stack (user report 2026-07-24).
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { locator.requestAuthorization() }
+        }
     }
 
     // MARK: Scaffolding
