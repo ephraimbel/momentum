@@ -148,14 +148,13 @@ function Seasons() {
 function Hero() {
   return (
     <section className="hero" id="top">
-      {/* Living iridescent field: two slowly-drifting pastel layers behind everything (incl. the
-          transparent nav), masked to melt into white as the hero meets the page below. */}
-      <div className="hero-aura" aria-hidden />
-      {/* The self-drawing route — the app's welcome motif, redrawn across the header. */}
+      {/* No background wash here by design — see the `.hero-aura` note in globals.css. The surface
+          is flat white; the route below is the only motif. */}
+      {/* The self-drawing route — the app's welcome motif. Kept clear of the text column: it runs
+          under the trust strip, then climbs behind the phone. It used to cut across the lede. */}
       <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
-        <path d="M -60 470 C 180 380 260 560 470 470 S 760 300 980 400 S 1280 540 1520 380" />
+        <path d="M -60 706 C 200 692 520 730 860 664 S 1180 448 1520 388" />
       </svg>
-      <div className="hero-runner" aria-hidden />
       <div className="wrap hero-grid">
         <div>
           <p className="eyebrow rise rise-1">The adaptive running coach</p>
@@ -562,11 +561,13 @@ function Pricing() {
             <div className="plan plan-pro">
               <span className="plan-badge">7-day free trial</span>
               <h3>momentum Pro</h3>
+              {/* Must match PaywallController.swift (monthlyPrice 14.99 / annualPrice 109.99) —
+                  this page quoted Runna's $19.99/$119.99 for months while the app charged less. */}
               <div className="plan-price">
-                $119.99 <small>/ year</small>
+                $109.99 <small>/ year</small>
               </div>
               <p className="plan-cycle">
-                7 days free, then $119.99/year (about $10/month) · or $19.99/month, cancel anytime
+                7 days free, then $109.99/year (about $9/month) · or $14.99/month, cancel anytime
               </p>
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
@@ -684,7 +685,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $119.99/year with a 7-day free trial, or $19.99/month.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
