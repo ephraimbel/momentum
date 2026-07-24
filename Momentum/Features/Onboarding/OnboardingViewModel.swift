@@ -463,15 +463,43 @@ enum PaceFeel: String, CaseIterable, Identifiable {
 
 /// A known recent effort the athlete can time, for a precise (Riegel) pace seed.
 enum RunBenchmark: String, CaseIterable, Identifiable {
-    case mile, fiveK, tenK
+    case mile, fiveK, tenK, half, marathon
     var id: String { rawValue }
-    var meters: Double { switch self { case .mile: 1_609.344; case .fiveK: 5_000; case .tenK: 10_000 } }
-    var label: String { switch self { case .mile: "1 mile"; case .fiveK: "5K"; case .tenK: "10K" } }
-    var defaultSeconds: Double { switch self { case .mile: 600; case .fiveK: 1_800; case .tenK: 3_600 } }
-    /// Floors sit just under the world records (mile 3:43, 5K ~12:35, 10K ~26:11) so ANY real
-    /// athlete — including an elite — can enter their true time; the engine's Daniels/VDOT zones are
-    /// curvilinear and handle that fitness correctly. The old floors (5:00 / 15:00 / 30:00) silently
-    /// capped a sub-elite's seed and started their whole plan 8–15% too slow.
-    var range: ClosedRange<Double> { switch self { case .mile: 210...1_200; case .fiveK: 720...3_600; case .tenK: 1_500...7_200 } }
-    var step: Double { switch self { case .mile: 15; case .fiveK: 30; case .tenK: 60 } }
+    var meters: Double {
+        switch self {
+        case .mile: 1_609.344; case .fiveK: 5_000; case .tenK: 10_000
+        case .half: 21_097.5; case .marathon: 42_195
+        }
+    }
+    var label: String {
+        switch self {
+        case .mile: "1 mile"; case .fiveK: "5K"; case .tenK: "10K"
+        case .half: "Half"; case .marathon: "Marathon"
+        }
+    }
+    var defaultSeconds: Double {
+        switch self {
+        case .mile: 600; case .fiveK: 1_800; case .tenK: 3_600
+        case .half: 7_200; case .marathon: 14_400
+        }
+    }
+    /// Floors sit just under the world records (mile 3:43, 5K ~12:35, 10K ~26:11, half ~57:31,
+    /// marathon ~2:00:35) so ANY real athlete — including an elite — can enter their true time; the
+    /// engine's Daniels/VDOT zones are curvilinear and handle that fitness correctly. The old floors
+    /// (5:00 / 15:00 / 30:00) silently capped a sub-elite's seed and started their whole plan 8–15%
+    /// too slow. Half/marathon added 2026-07-24: a marathoner's own race is the truest seed for a
+    /// long-distance plan — a Riegel projection from their 5K systematically flatters marathon
+    /// fitness (speed ≠ endurance), so letting them give the real number calibrates the whole
+    /// block honestly.
+    var range: ClosedRange<Double> {
+        switch self {
+        case .mile: 210...1_200; case .fiveK: 720...3_600; case .tenK: 1_500...7_200
+        case .half: 3_300...12_600; case .marathon: 7_080...25_200
+        }
+    }
+    var step: Double {
+        switch self {
+        case .mile: 15; case .fiveK: 30; case .tenK: 60; case .half: 60; case .marathon: 120
+        }
+    }
 }

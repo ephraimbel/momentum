@@ -128,6 +128,16 @@ enum PlanEngine {
         // protective cap as the ramp. Podium on a 3-day week or a hurt body trains like Aggressive.
         let podiumActive = profile.intensity == .podium && runDays >= 5 && injuryAreas.isEmpty
 
+        // The tune-up time trial (2026-07-24, pro-practice pass): every real build for a long race
+        // carries a checkpoint race effort — coaches use it to test fitness and set honest paces.
+        // Ours does the same job mechanically: a hard 5K TT is planned quality, so its result feeds
+        // the recalibration loop (bank → confirm) with REAL evidence instead of waiting for one to
+        // happen by accident. Placed once, on the first build week (end of base = exactly when a
+        // coach tests), for in-window races of 10K+ with an 8+ week runway.
+        let wantsTimeTrial = cardio == .running && raceInWindow && totalWeeks >= 8
+            && (profile.raceDistanceM ?? 0) >= 10_000 && runDays >= 3
+        var timeTrialPlaced = false
+
         // Build ceiling: volume grows toward the race distance's readiness peak and then HOLDS —
         // a year-long marathon plan reaches marathon volume; a no-race block never exceeds double
         // its start. Clamped so a very low starting base can't be asked to quadruple in one plan.
@@ -185,6 +195,8 @@ enum PlanEngine {
                 buildIndex += 1
             }
 
+            let isTimeTrialWeek = wantsTimeTrial && !timeTrialPlaced && phase == .build && !isDeload
+            if isTimeTrialWeek { timeTrialPlaced = true }
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
                                  goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload,
@@ -192,7 +204,7 @@ enum PlanEngine {
                                  currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM,
                                  injuryAreas: injuryAreas, phase: phase,
                                  qualityBias: qualityBias, longWaveMult: longWaveMult,
-                                 podium: podiumActive)
+                                 podium: podiumActive, timeTrial: isTimeTrialWeek)
                 : []
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
@@ -289,8 +301,11 @@ enum PlanEngine {
             for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
                 let runType = weeks[w].sessions[s].runType
                 if let d = weeks[w].sessions[s].targetDistanceM, d > 0 {
+                    // A time trial IS its distance — "5K time trial", never "3 mi time trial".
+                    let canonical = runType == .race
+                        || weeks[w].sessions[s].intervals?.contains("Time trial") == true
                     weeks[w].sessions[s].targetDistanceM =
-                        RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: runType == .race)
+                        RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: canonical)
                 }
                 if let p = weeks[w].sessions[s].targetPaceSPerKm, p > 0, let runType {
                     weeks[w].sessions[s].targetPaceSPerKm =
@@ -399,7 +414,7 @@ enum PlanEngine {
                                currentWeeklyVolumeM: Double? = nil, longestRunM: Double? = nil,
                                injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build,
                                qualityBias: Double = 1.0, longWaveMult: Double = 1.0,
-                               podium: Bool = false) -> [GeneratedSession] {
+                               podium: Bool = false, timeTrial: Bool = false) -> [GeneratedSession] {
         guard runDays > 0 else { return [] }
         var (easyBase, longBase, qualityBase): (Double, Double, Double)
         // Seed the starting week from the athlete's actual current load when they gave it — so the plan
@@ -470,7 +485,9 @@ enum PlanEngine {
             // `longWaveMult` oscillates the plateau (1.0 / 0.88 / 0.95) so months of identical
             // 32 km Sundays become a real wave; the caps still bound every variant.
             let wavedLong = longBase * longWaveMult
-            if rotate, longRace, weekIndex % 3 == 1, phase == .build || phase == .peak, isRunning {
+            // `!timeTrial`: the checkpoint week keeps its long run EASY — the test needs fresh
+            // legs to mean anything, so the TT is that week's only hard running.
+            if rotate, longRace, weekIndex % 3 == 1, phase == .build || phase == .peak, isRunning, !timeTrial {
                 var s = makeRun(.long, wavedLong, hard: true, cap: longCap)
                 let dist = s.targetDistanceM ?? 0
                 // Grow 3 km → cap (marathon 8 km, half 5 km), never more than 40% of the run.
@@ -497,12 +514,34 @@ enum PlanEngine {
         // taper science cuts volume, never intensity (the menu shrinks to a short race-pace touch).
         var primaryQuality: (type: RunType, intervals: String?, paceOverride: Double?, note: String?)?
         if runDays >= 3 && !isDeload && goal != .stayConsistent && isRunning {
-            let q = qualityWorkout(weekIndex: weekIndex, raceDistanceM: raceDistanceM, level: level, p5k: p5k,
-                                   injuryAreas: injuryAreas, phase: phase, weeklyVolumeM: weeklyM,
-                                   qualityDistanceM: qualityBase * volumeMult)
-            primaryQuality = q
-            out.append(makeRun(q.type, qualityBase, hard: true, intervals: q.intervals,
-                               paceOverride: q.paceOverride, note: q.note))
+            if timeTrial {
+                // The checkpoint race effort — replaces this week's quality menu. A .tempo carrier
+                // (planned quality, so a hard result banks recalibration evidence) at 5K race pace.
+                let tt = (type: RunType.tempo, intervals: Optional("Time trial — 5K at race effort"),
+                          paceOverride: Optional(pace(.race, p5k: p5k)),
+                          note: Optional("A checkpoint, not a race: run it honest. Your training paces recalibrate from the result."))
+                primaryQuality = tt
+                var session = makeRun(tt.type, 5_000, hard: true, intervals: tt.intervals,
+                                      paceOverride: tt.paceOverride, note: tt.note)
+                // A test is its exact distance — never scaled by the week's multiplier (the final
+                // snap also keeps it canonical, so the governor can't be silently undone there).
+                session.targetDistanceM = 5_000
+                out.append(session)
+                // The fixed 5K can outweigh the quality it replaced — shave the surplus off the
+                // easy days so the week's TOTAL stays on the governed ramp.
+                let fillerDays = Double(max(1, runDays - (runDays >= 2 ? 1 : 0) - 1))
+                let surplus = 5_000 - qualityBase * volumeMult
+                if surplus > 0 {
+                    easyBase = max(2_000, easyBase - (surplus / fillerDays) / volumeMult)
+                }
+            } else {
+                let q = qualityWorkout(weekIndex: weekIndex, raceDistanceM: raceDistanceM, level: level, p5k: p5k,
+                                       injuryAreas: injuryAreas, phase: phase, weeklyVolumeM: weeklyM,
+                                       qualityDistanceM: qualityBase * volumeMult)
+                primaryQuality = q
+                out.append(makeRun(q.type, qualityBase, hard: true, intervals: q.intervals,
+                                   paceOverride: q.paceOverride, note: q.note))
+            }
         }
         // The SECOND weekly quality session — the dial `PlanIntensity.qualityBias` was built for.
         // Two hard sessions is the Pfitzinger/Hansons norm for committed athletes; one-forever was
@@ -512,7 +551,8 @@ enum PlanEngine {
         // protective cap as the ramp), and never on a deload. The stimulus COMPLEMENTS the primary
         // (`secondQualityWorkout`) — threshold beside a speed day, VO₂ beside a threshold day.
         var secondQualityAdded = false
-        let wantsSecond = (qualityBias > 1.0 || level == .experienced) && weeklyM >= (podium ? 40_000 : 45_000)
+        let wantsSecond = !timeTrial
+            && (qualityBias > 1.0 || level == .experienced) && weeklyM >= (podium ? 40_000 : 45_000)
         if isRunning, runDays >= 5, !isDeload, goal != .stayConsistent, injuryAreas.isEmpty,
            level != .new, wantsSecond, phase == .build || phase == .peak, out.count < runDays,
            let primary = primaryQuality {

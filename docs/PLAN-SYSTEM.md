@@ -34,6 +34,15 @@ quality standard (volume gate 45→40 km/wk), one OPTIONAL ~3 km rest-day shakeo
 (never deload/taper/lead-in; skipping counts as rest). Feasibility never *recommends* podium.
 Its selection card wears the iridescent border — the sanctioned exception to earned-only.
 
+**Tune-up time trial** (2026-07-24, pro-practice pass — all tiers): every in-window race build of
+10K+ with an 8+ week runway and 3+ run days carries ONE checkpoint — a 5K TT on the first build
+week (end of base, where coaches test). A `.tempo` carrier at 5K race pace, so a hard result feeds
+the recalibration loop with planned evidence; the week's long run stays easy (fresh legs), the
+second quality is suppressed, the easy days absorb the TT's volume so the governed ramp holds, and
+the distance stays an exact 5K through snapping. Calibration entry also accepts **half + marathon
+benchmarks** (elite-floor ranges) so long-distance plans seed from the athlete's own race, not a
+stacked projection off a stale 5K.
+
 ## 2. Honesty (`PlanFeasibility.assess` — the verdict before the plan)
 
 Reads race distance, goal time, current fitness + volume, weeks available, experience, injury

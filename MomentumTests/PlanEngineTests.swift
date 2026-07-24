@@ -209,8 +209,12 @@ struct PlanEngineTests {
                                                  to: Date(timeIntervalSinceReferenceDate: 0))
             let plan = PlanEngine.generate(profile: inp, catalog: catalog,
                                            startDate: Date(timeIntervalSinceReferenceDate: 0))
+            // The tune-up TT legitimately runs at 5K effort — it's a checkpoint, not a training
+            // stimulus, so it's excluded from the "never raw 5K speed in a marathon build" pin.
             return plan.weeks.filter { $0.phase == .build }
-                .flatMap(\.sessions).filter(\.isHardRun).compactMap(\.targetPaceSPerKm)
+                .flatMap(\.sessions).filter(\.isHardRun)
+                .filter { $0.intervals?.contains("Time trial") != true }
+                .compactMap(\.targetPaceSPerKm)
         }
         #expect(buildPaces(5_000).contains(300))                                  // race-pace reps appear
         let marathon = buildPaces(42_195)
@@ -722,7 +726,10 @@ struct PlanEngineTests {
         inp.longestRunM = 16_000
         let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
 
-        let buildWeeks = plan.weeks.filter { $0.phase == .build }
+        // The time-trial week deliberately carries ONE hard run (the test needs fresh legs) —
+        // TimeTrialTests owns that pin; here we assert the ordinary build weeks.
+        let buildWeeks = plan.weeks.filter { w in w.phase == .build
+            && !w.sessions.contains { $0.intervals?.contains("Time trial") == true } }
         #expect(!buildWeeks.isEmpty)
         for week in buildWeeks {
             let quality = week.sessions.filter { $0.isHardRun && $0.runType != .long }

@@ -806,6 +806,7 @@ struct OnboardingFlow: View {
                             vm.benchmark = b; vm.recentRunSeconds = b.defaultSeconds; vm.calibrationMode = .time
                         } label: {
                             Text(b.label).font(.rounded(Theme.FontSize.caption, weight: .bold))
+                                .lineLimit(1).minimumScaleFactor(0.7)   // five chips — "Marathon" must fit
                                 .frame(maxWidth: .infinity).frame(height: 40)
                                 .foregroundStyle(on ? Theme.background : Theme.ink)
                                 .background {
