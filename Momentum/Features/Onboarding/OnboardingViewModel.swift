@@ -151,6 +151,10 @@ final class OnboardingViewModel {
             case .raceGoalTime: return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
+            // Session length only shapes STRENGTH days (it sets how many exercises fit); running is
+            // prescribed by distance under a time cap, so it means nothing to a pure runner. Show it
+            // only where it changes the plan (2026-07-24).
+            case .session:     return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
             case .calibration: return running
             // Anything to train around — endurance athletes only (drives the protective ramp).

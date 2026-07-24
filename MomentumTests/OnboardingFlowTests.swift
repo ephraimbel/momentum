@@ -78,8 +78,13 @@ struct OnboardingFlowTests {
         let vm = OnboardingViewModel()
         vm.activities = [.run]                        // no lifting
         #expect(!vm.steps.contains(.equipment))
+        // Session length only shapes strength days — a pure runner must never be asked it.
+        #expect(!vm.steps.contains(.session))
         vm.activities = [.strength]
         #expect(vm.steps.contains(.equipment))
+        #expect(vm.steps.contains(.session))          // lifters set it (it drives exercise count)
+        vm.activities = [.run, .strength]
+        #expect(vm.steps.contains(.session))          // hybrids lift too → keep it
 
         vm.step = .disciplines
         #expect(vm.canAdvance)                        // activities chosen
@@ -144,6 +149,7 @@ struct OnboardingFlowTests {
         #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
         #expect(try idx(.intensity) < idx(.building))        // last decision before the build
         #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
+        #expect(!steps.contains(.session))                   // …nor session length (strength-only)
 
         // Walk the whole flow front to back — advance() must traverse every step without a dead end.
         vm.step = steps.first!

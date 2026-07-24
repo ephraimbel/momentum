@@ -123,7 +123,7 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-musclefocus") { vm.activities = [.strength]; vm.goal = .buildMuscle; vm.step = .muscleFocus }
             if args.contains("--onboarding-days") { vm.activities = [.run]; vm.step = .days }
             if args.contains("--onboarding-preferreddays") { vm.activities = [.run]; vm.daysPerWeek = 4; vm.step = .preferredDays }
-            if args.contains("--onboarding-session") { vm.activities = [.run]; vm.step = .session }
+            if args.contains("--onboarding-session") { vm.activities = [.strength]; vm.step = .session }
             if args.contains("--onboarding-equipment") { vm.activities = [.strength]; vm.step = .equipment }
             if args.contains("--onboarding-why") { vm.activities = [.run]; vm.step = .why }
             if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
