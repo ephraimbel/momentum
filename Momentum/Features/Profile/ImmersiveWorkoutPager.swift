@@ -70,10 +70,14 @@ private struct ImmersiveWorkoutPage: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHint = false
+    /// Camera line to the route map (routes only): shows the re-center control once the athlete
+    /// pinch-explores away from the fitted overview, and answers its tap.
+    @State private var mapCamera = RouteMapCameraHandle()
 
     var body: some View {
         ZStack {
-            WorkoutTileMedia(workout: workout, style: .immersive)
+            WorkoutTileMedia(workout: workout, style: .immersive,
+                             distanceUnit: distanceUnit, mapCameraHandle: mapCamera)
 
             // Soft light scrims keep ink controls legible over any media (photos, maps, muscle art).
             VStack(spacing: 0) {
@@ -104,16 +108,29 @@ private struct ImmersiveWorkoutPage: View {
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(alignment: .top) {
             Button(action: onClose) {
                 Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
                     .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
             }
             .accessibilityLabel("Close")
             Spacer()
-            ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
-                .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
-                .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+            VStack(spacing: Theme.Space.sm) {
+                ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
+                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                // Appears only once the athlete pinch-explores the route map; one tap re-frames
+                // the whole route. Joins the trailing control column so the map stays uncluttered.
+                if mapCamera.isExplored {
+                    Button { mapCamera.recenter() } label: {
+                        Image(systemName: "viewfinder").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                    }
+                    .accessibilityLabel("Re-center route")
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                }
+            }
+            .animation(.easeOut(duration: 0.25), value: mapCamera.isExplored)
         }
     }
 

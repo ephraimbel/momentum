@@ -13,6 +13,10 @@ import CoreLocation
 struct WorkoutTileMedia: View {
     let workout: Workout
     var style: Style = .tile
+    /// Sets the immersive route map's mile/km milestone badges; tiles ignore it.
+    var distanceUnit: DistanceUnit = .auto
+    /// Immersive only: lets the pager page host the re-center control for the explorable map.
+    var mapCameraHandle: RouteMapCameraHandle? = nil
 
     enum Style { case tile, immersive }
 
@@ -151,7 +155,11 @@ struct WorkoutTileMedia: View {
     @ViewBuilder
     private func routeMedia(_ coords: [CLLocationCoordinate2D]) -> some View {
         if style == .immersive {
-            RouteMapView(coordinates: coords, style: workout.gps?.mapStyle ?? .persisted)
+            RouteMapView(coordinates: coords, style: workout.gps?.mapStyle ?? .persisted,
+                         interactive: true,
+                         milestoneUnitMeters: distanceUnit.resolved() == .imperial
+                             ? Formatters.metersPerMile : 1000,
+                         cameraHandle: mapCameraHandle)
         } else {
             ZStack {
                 Theme.background

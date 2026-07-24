@@ -250,7 +250,8 @@ struct CardioSummaryContent: View {
         let coords = gps.routeCoordinates(type: workout.type)
         let style = mapStyleOverride ?? gps.mapStyle
         if coords.count > 1 {
-            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style)
+            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style,
+                         milestoneUnitMeters: unitMeters)   // same unit as the splits below
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
                 // When the map-matched route lands post-finish (nil→present), the coordinates change
