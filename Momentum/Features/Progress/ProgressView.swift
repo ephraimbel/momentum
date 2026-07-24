@@ -42,7 +42,6 @@ struct ProgressScreen: View {
     /// (the day-keyed ReadinessTodayCache correctly nils out at midnight; this fallback has to too).
     @State private var stripReadiness: (day: Date, score: Int, band: String, driver: String)?
     @State private var measuredVO2: Double?                 // device-measured VO₂max (Watch/Garmin), if any
-    @State private var connectingHealth = false
     @State private var didUpkeep = false                     // athlete-model upkeep runs once per screen
     @State private var aggregatedForKey = ""                 // .task(id:) re-fires on every tab visit; only re-walk when data (or the day) moved
     @State private var showAllAdaptations = false
@@ -576,8 +575,8 @@ struct ProgressScreen: View {
                             .padding(.top, Theme.Space.sm)
                             .id("coachHead")
                         // "How am I right now" is the Health segment's story — Trends keeps only
-                        // the compact hand-off strip (the retired formCard/recoveryCard/signalsRow
-                        // depth all lives there now; Form/TSB stays with FitnessFreshnessCard above).
+                        // the compact hand-off strip (the retired recovery-card cluster was
+                        // deleted 2026-07-23; Form/TSB stays with FitnessFreshnessCard above).
                         readinessStrip.id("formRace")
                         coachCard(insights)
                         athleteStory
@@ -1024,9 +1023,9 @@ struct ProgressScreen: View {
         return workouts.count >= 10 && workouts.contains { $0.startedAt <= cutoff }
     }
 
-    /// The Trends → Health hand-off: the compact strip that replaced formCard/recoveryCard/
-    /// signalsRow (their depth lives in the Health segment now). Same blend the segment's hero
-    /// computes — the two surfaces can never disagree on the number.
+    /// The Trends → Health hand-off: the compact strip that replaced the retired recovery
+    /// cards (deleted 2026-07-23 — their depth lives in the Health segment now). Same blend
+    /// the segment's hero computes — the two surfaces can never disagree on the number.
     private var readinessStrip: some View {
         let display = todaysReadinessDisplay()
         return ReadinessStrip(score: display?.score, bandWord: display?.band, driverLine: display?.driver) {
@@ -1043,72 +1042,6 @@ struct ProgressScreen: View {
         guard let s = stripReadiness,
               s.day == Calendar.current.startOfDay(for: Date()) else { return nil }
         return (s.score, s.band, s.driver)
-    }
-
-    /// RETIRED by the Health segment (2026-07-15): formCard/recoveryCard/signalsRow/readinessRing/
-    /// formBar/recoveryUpsell are no longer mounted — `readinessStrip` is the only Trends surface.
-    /// Kept in place for one cycle while parallel lanes settle; delete on the next quiet pass.
-    @ViewBuilder
-    private func formCard(_ r: RecoveryModel) -> some View {
-        if r.hasData, hasFormHistory, let form = formPoint {
-            let score = signals.blendedReadiness(base: r.score)
-            let band = RecoveryModel.band(score)
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
-                HStack {
-                    sectionTitle("Form & readiness — now")
-                    Spacer()
-                    if signals.hasPhysio { fromDevicesChip }
-                    MetricInfoButton(explainer: MetricExplainers.recoveryForm).padding(.leading, 2)
-                }
-                HStack(spacing: Theme.Space.md) {
-                    readinessRing(score: score)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(band.rawValue).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
-                        Text(RecoveryModel.guidance(band)).font(.rounded(Theme.FontSize.label, weight: .medium))
-                            .foregroundStyle(Theme.inkTertiary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: Theme.Space.sm)
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text("\(form.tsb >= 0 ? "+" : "")\(Int(form.tsb.rounded()))")
-                            .font(.display(24, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                        Text(FitnessFreshness.formLabel(form.tsb)).font(.rounded(Theme.FontSize.label, weight: .bold)).foregroundStyle(Theme.inkSecondary)
-                    }
-                }
-                formBar(tsb: form.tsb)
-                if signals.hasPhysio {
-                    Divider().overlay(Theme.hairline)
-                    signalsRow
-                } else {
-                    Divider().overlay(Theme.hairline)
-                    recoveryUpsell
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Space.md).background(card)
-        } else {
-            recoveryCard(r)
-        }
-    }
-
-    private func formBar(tsb: Double) -> some View {
-        let frac = max(0, min(1, (tsb + 40) / 70))   // −40 (buried) … +30 (peaked)
-        return VStack(spacing: 6) {
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.hairline)
-                    Capsule().fill(IridescentMaterial()).opacity(0.5).frame(width: w * 0.22).offset(x: w * 0.46)
-                    Circle().fill(Theme.ink).frame(width: 14, height: 14)
-                        .overlay(Circle().stroke(Theme.background, lineWidth: 3))
-                        .offset(x: max(0, min(w - 14, w * frac - 7)))
-                }
-            }
-            .frame(height: 12)
-            HStack {
-                Text("Buried"); Spacer(); Text("Balanced"); Spacer(); Text("Peaked")
-            }
-            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-        }
     }
 
     /// RACE OUTLOOK — Riegel projections for every distance; your goal earns the iridescent row.
@@ -1341,213 +1274,6 @@ struct ProgressScreen: View {
             return !StrengthPRs.detect(for: w, weightUnit: .default(), in: context).isEmpty
         }
         return !CardioAchievements.detect(for: w, distanceUnit: distanceUnit, in: context).isEmpty
-    }
-
-    // MARK: Status hero
-
-    private func statusHero(_ insights: ProgressInsights) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text("TRAINING STATUS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-            Text(insights.status.rawValue).font(.display(28, weight: .black)).foregroundStyle(Theme.ink)
-            acwrGauge(insights.acwr)
-            Text(gaugeCaption(insights)).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.md)
-        .background(card)
-    }
-
-    private func acwrGauge(_ acwr: Double) -> some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            ZStack(alignment: .leading) {
-                Capsule().fill(Theme.hairline)
-                // Optimal band (ACWR 0.8–1.3 on a 0–2 scale).
-                Capsule().fill(IridescentMaterial()).opacity(0.55)
-                    .frame(width: w * 0.25).offset(x: w * 0.40)
-                Circle().fill(Theme.ink).frame(width: 16, height: 16)
-                    .overlay(Circle().stroke(Theme.background, lineWidth: 3))
-                    .offset(x: max(0, min(w - 16, w * min(1, acwr / 2) - 8)))
-            }
-        }
-        .frame(height: 16)
-    }
-
-    private func gaugeCaption(_ insights: ProgressInsights) -> String {
-        guard insights.acwr > 0 else { return "Build a couple of weeks and your load balance shows here." }
-        return "Load balance \(String(format: "%.2f", insights.acwr)) · sweet spot is 0.8–1.3"
-    }
-
-    // MARK: Recovery / readiness (PRD §4.8)
-
-    @ViewBuilder
-    private func recoveryCard(_ r: RecoveryModel) -> some View {
-        if r.hasData {
-            // Blend the load-derived readiness with device signals (HRV / resting HR / sleep) when present.
-            let score = signals.blendedReadiness(base: r.score)
-            let band = RecoveryModel.band(score)
-            let guidance = RecoveryModel.guidance(band)
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
-                HStack {
-                    Text("RECOVERY").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                    if signals.hasPhysio { fromDevicesChip }
-                }
-                HStack(spacing: Theme.Space.lg) {
-                    readinessRing(score: score)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(band.rawValue).font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
-                        Text(guidance).font(.rounded(Theme.FontSize.caption, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-                Divider().overlay(Theme.hairline)
-                // Device users get the physiological trio (HRV / resting HR / sleep, each vs their
-                // baseline); everyone else gets the load-derived readout.
-                if signals.hasPhysio {
-                    signalsRow
-                } else {
-                    HStack(alignment: .top, spacing: Theme.Space.lg) {
-                        recoveryMetric(Formatters.compact(r.weeklyLoad), "Weekly load", loadVsUsual(r.acwr))
-                        recoveryMetric("\(r.restDays)", "Rest days", "of last 7")
-                        recoveryMetric(varietyWord(r.monotony), "Training mix", varietyNote(r.monotony))
-                    }
-                    recoveryUpsell.padding(.top, 2)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Space.md)
-            .background(card)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Recovery, \(band.rawValue)")
-            .accessibilityValue("Readiness \(score) of 100. \(guidance)\(signalsAXSummary)")
-        }
-    }
-
-    /// The physiological trio read from Apple Health — HRV, resting HR, last night's sleep — each
-    /// anchored to the athlete's own baseline. Only the signals that are actually present render.
-    @ViewBuilder
-    private var signalsRow: some View {
-        // Units (ms for HRV, bpm for resting HR) are conventional enough to leave off — the note carries
-        // the meaning ("above your norm"), and appending "· ms" only forces an ugly wrap.
-        HStack(alignment: .top, spacing: Theme.Space.lg) {
-            if let v = signals.hrvValue { recoveryMetric(v, "HRV", signals.hrvNote) }
-            if let v = signals.restingHRValue { recoveryMetric(v, "Resting HR", signals.restingHRNote) }
-            if let v = signals.sleepValue { recoveryMetric(v, "Sleep", signals.sleepNote) }
-        }
-    }
-
-    /// The no-device state — honest, never a nagging popup. If Health isn't connected yet, a tappable
-    /// row opens the permission flow (and re-reads on grant); if it's connected but no wearable is
-    /// writing HRV/sleep, a quiet line explains why. Either way the readiness above stays valid — it's
-    /// load-based, not wrong.
-    @ViewBuilder
-    private var recoveryUpsell: some View {
-        if services.health.isAuthorized {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: "applewatch").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                Text("Add an Apple Watch, Garmin, or Oura ring and your HRV & sleep will sharpen this automatically.")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            Button {
-                connectingHealth = true
-                Task {
-                    _ = await services.health.requestAuthorization()
-                    async let s = services.health.recoverySignals()
-                    async let v = services.health.measuredVO2Max()
-                    signals = await s; measuredVO2 = await v
-                    connectingHealth = false
-                }
-            } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "applewatch").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text("Connect Apple Health for HRV & sleep-based readiness")
-                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(connectingHealth)
-        }
-    }
-
-    /// Small "from your devices" attribution so users know the readiness is device-backed, not guessed.
-    private var fromDevicesChip: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "applewatch").font(.system(size: 9, weight: .bold))
-            Text("FROM YOUR DEVICES").font(.rounded(9, weight: .bold)).tracking(0.5)
-        }
-        .foregroundStyle(Theme.inkTertiary)
-    }
-
-    private var signalsAXSummary: String {
-        guard signals.hasPhysio else { return "" }
-        var parts: [String] = []
-        if let v = signals.hrvValue, let n = signals.hrvNote { parts.append("HRV \(v) milliseconds, \(n)") }
-        if let v = signals.restingHRValue, let n = signals.restingHRNote { parts.append("resting heart rate \(v), \(n)") }
-        if let v = signals.sleepValue, let n = signals.sleepNote { parts.append("sleep \(v), \(n)") }
-        return parts.isEmpty ? "" : ". From your devices: " + parts.joined(separator: ", ")
-    }
-
-    private func readinessRing(score: Int) -> some View {
-        ZStack {
-            Circle().stroke(Theme.hairline, lineWidth: 8)
-            Circle().trim(from: 0, to: max(0.01, Double(score) / 100))
-                .stroke(IridescentMaterial(), style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Text("\(score)").font(.display(22, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-        }
-        .frame(width: 72, height: 72)
-    }
-
-    /// A recovery mini-stat: the number, its label, and a plain-language anchor so the value carries
-    /// meaning on its own — a bare "832" or "1.4" reads as noise without it (the Oura/Whoop rule:
-    /// never a naked metric).
-    private func recoveryMetric(_ value: String, _ label: String, _ note: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.rounded(Theme.FontSize.headline, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.inkTertiary)
-            if let note {
-                Text(note).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Frames the week's load against the athlete's own recent norm (the acute:chronic ratio) so "832"
-    /// reads as "about your usual week" rather than a naked number.
-    private func loadVsUsual(_ acwr: Double) -> String? {
-        guard acwr > 0 else { return nil }
-        switch acwr {
-        case ..<0.8:     return "lighter week"
-        case 0.8..<1.15: return "on par"
-        case 1.15..<1.4: return "above usual"
-        default:         return "well up"
-        }
-    }
-
-    /// Monotony (how samey the daily load is) reframed as a plain "training mix" word — lower is better.
-    private func varietyWord(_ monotony: Double) -> String {
-        switch monotony {
-        case ..<1.5:    return "Varied"
-        case 1.5..<2.0: return "Steady"
-        default:        return "Samey"
-        }
-    }
-
-    private func varietyNote(_ monotony: Double) -> String? {
-        switch monotony {
-        case ..<1.5:    return "hard + easy"
-        case 1.5..<2.0: return "repetitive"
-        default:        return "one-note"
-        }
     }
 
     // MARK: AI coach card
