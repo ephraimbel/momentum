@@ -40,10 +40,17 @@ create policy app_events_insert on public.app_events
   with check (user_id is null or user_id = auth.uid());
 
 -- No select/update/delete policy anywhere: RLS denies by default, so clients are write-only.
--- Grants and RLS are separate gates and BOTH have to pass — an insert policy alone still fails with
+--
+-- Deny-all-then-grant-one, NOT revoke-the-few-I-thought-of. Supabase's default privileges hand
+-- anon/authenticated GRANT ALL on new public tables, and revoking only select/update/delete leaves
+-- **TRUNCATE** behind — which RLS does not gate at all, because it is a table-level privilege that
+-- bypasses row security entirely. Anyone holding the anon key (it ships inside the app binary; it is
+-- public by construction) could have emptied this table in one statement.
+--
+-- Grants and RLS are separate gates and BOTH must pass: the insert policy alone still fails with
 -- "permission denied for table app_events" if the role was never granted INSERT.
+revoke all on table public.app_events from anon, authenticated;
 grant insert on table public.app_events to anon, authenticated;
-revoke select, update, delete on table public.app_events from anon, authenticated;
 
 -- Funnel queries scan by name over a time window; retention/cohorts group by install.
 create index if not exists app_events_name_time_idx on public.app_events (name, occurred_at desc);
