@@ -38,6 +38,16 @@ final class AuthController {
     /// person starts on a clean slate + re-onboards; guest→real upgrade and first sign-in never fire it.
     var onAccountSwitch: (() -> Void)?
 
+    /// Fires whenever the signed-in identity changes: the account id on sign-in, `nil` on sign-out
+    /// and for guests. Wired to `PaywallController.identify` in `MomentumApp` so billing knows who
+    /// the customer is — kept as a callback so this stays free of any billing import.
+    ///
+    /// **Invariant: every path that assigns `userID` must fire this.** There are four —
+    /// `signIn(userID:)` (Apple), `signInWithGoogle()`, `adoptEmailSession()` (email), and
+    /// `signOut()`. Miss one and that provider's athletes keep an anonymous RevenueCat customer,
+    /// silently, with nothing failing to point at it.
+    var onIdentityChange: ((String?) -> Void)?
+
     /// Record a real-account sign-in and, if it differs from the account whose data is on this device,
     /// fire `onAccountSwitch` (wipe + re-onboard). First-ever sign-in (`prior == nil`) and a guest
     /// upgrade (guests never write `lastRealUserIDKey`) both carry local data over, as intended.
@@ -106,6 +116,8 @@ final class AuthController {
             self.email = email
             UserDefaults.standard.set(email, forKey: Self.emailKey)
         }
+        // Real accounts only — a guest stays an anonymous RevenueCat customer.
+        onIdentityChange?(userID == Self.guestID ? nil : userID)
         Haptics.success()
     }
 
@@ -182,6 +194,7 @@ final class AuthController {
         // Drop any in-progress onboarding draft — a different athlete on this device must never
         // resume someone else's answers.
         OnboardingDraftStore.clear()
+        onIdentityChange?(nil)   // release the RevenueCat customer back to anonymous
         if let client = SupabaseClientProvider.client {
             Task { try? await client.auth.signOut() }
         }
@@ -213,6 +226,7 @@ final class AuthController {
                 email = mail
                 UserDefaults.standard.set(mail, forKey: Self.emailKey)
             }
+            onIdentityChange?(gid)   // see signIn(userID:) — every identity path must fire this
             markCloudSession()
             Haptics.success()
             return true
@@ -399,6 +413,7 @@ final class AuthController {
             self.email = mail
             UserDefaults.standard.set(mail, forKey: Self.emailKey)
         }
+        onIdentityChange?(eid)   // see signIn(userID:) — every identity path must fire this
         markCloudSession()
         Haptics.success()
     }

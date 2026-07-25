@@ -41,7 +41,17 @@ struct MomentumApp: App {
         authController.onAccountSwitch = {
             DataManager.deleteAllUserData(in: PersistenceController.shared.container.mainContext)
         }
+        // Billing follows the account: without this RevenueCat keeps a random anonymous customer id
+        // per install, so a reinstall reads as a new customer and revenue can never be joined to a
+        // user. Set before `refresh()`, which may itself sign the athlete out.
+        authController.onIdentityChange = { [weak controller] userID in
+            controller?.identify(userID: userID)
+        }
         authController.refresh()   // sign out if the Apple credential was revoked
+        // Link the already-restored session on a warm launch — `signIn` only fires on a fresh one.
+        if let existing = authController.userID, !authController.isGuest {
+            controller.identify(userID: existing)
+        }
         _auth = State(initialValue: authController)
         MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
         // Wrist sync (Watch Slice 4): readiness/session/race push out, the morning check-in
@@ -55,6 +65,7 @@ struct MomentumApp: App {
     }
 
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -81,5 +92,12 @@ struct MomentumApp: App {
             .environment(coach)
             .environment(router)
             .tint(Theme.ink)
+            // Backgrounding is the last reliable moment to get a session's events off the device —
+            // the batch threshold alone would strand the tail of every session (and the whole of a
+            // short one). `.onChange` only reads scenePhase; it installs no preference writer, so
+            // it cannot re-trigger the System-appearance invalidation loop noted above.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { services.analytics.flush() }
+            }
     }
 }

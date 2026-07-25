@@ -158,6 +158,8 @@ struct TimedSaveView: View {
         // Timed sessions move the streak, session-count, and time-of-day awards (deferred).
         AwardsBook.syncSoon()
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
+        // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
+        services.analytics.log(.workoutCompleted(type: saved.type.rawValue))
         // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
         // `onDone` when the beat completes or is tapped through.
         celebrating = true

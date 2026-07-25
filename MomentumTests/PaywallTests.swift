@@ -22,11 +22,36 @@ struct PaywallTests {
 
     @Test func purchaseGrantsEntitlement() async {
         let pw = PaywallController(isPro: false)
-        let ok = await pw.purchase(pw.offering.annual)
-        #expect(ok)
+        let outcome = await pw.purchase(pw.offering.annual)
+        #expect(outcome == .purchased)
         #expect(pw.isPro)
         #expect(pw.isEntitled(to: .fullPlan))
         pw.resetForTesting()
+    }
+
+    /// A purchase attempt reports WHY it ended. These three cases used to collapse into one `false`,
+    /// so the paywall couldn't tell a cancelled sheet from a store failure and stayed silent for
+    /// both — a dead Buy button for anyone actually trying to pay.
+    @Test func purchaseOutcomeDistinguishesCancelFromFailure() {
+        #expect(PurchaseOutcome.purchased != PurchaseOutcome.cancelled)
+        #expect(PurchaseOutcome.cancelled != PurchaseOutcome.failed("boom"))
+        #expect(PurchaseOutcome.failed("boom") == PurchaseOutcome.failed("boom"))
+        // A failure always carries something worth showing — an empty alert is the old bug again.
+        if case .failed(let message) = PurchaseOutcome.failed("Check your connection.") {
+            #expect(!message.isEmpty)
+        } else {
+            Issue.record("expected a failure message")
+        }
+    }
+
+    /// Placeholder prices are US dollars. Until the store's offering lands the paywall must not
+    /// present them as fact — `pricingIsLive` is what the view keys the price, the savings line,
+    /// the CTA, and the renewal fine print off.
+    @Test func pricingIsNotLiveUntilTheStoreAnswers() {
+        let pw = PaywallController(isPro: false)
+        #expect(pw.pricingIsLive == false)
+        // The placeholder offering still populates so the layout has something to size against.
+        #expect(!pw.offering.annual.priceText.isEmpty)
     }
 
     @Test func presentsOnlyWhenLocked() {

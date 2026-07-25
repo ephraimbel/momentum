@@ -29,6 +29,38 @@ struct GuestFlowStateTests {
 
     // ── Guest creation ───────────────────────────────────────────────────────────
 
+    // ── Billing identity ─────────────────────────────────────────────────────────
+
+    /// `onIdentityChange` is what links the RevenueCat customer to the account. Every path that
+    /// assigns `userID` has to fire it: miss one and that provider's athletes silently keep an
+    /// anonymous customer, so a reinstall reads as a new purchaser and revenue can't be joined to a
+    /// user. Apple and sign-out are covered here; Google/email go through Supabase and can't be
+    /// driven from a unit test, so the invariant is documented on the property itself.
+    @Test func appleSignInAndSignOutReportTheBillingIdentity() {
+        freshDefaults()
+        let auth = AuthController(userID: nil)
+        var reported: [String?] = []
+        auth.onIdentityChange = { reported.append($0) }
+
+        auth.signIn(userID: "apple-user-1", fullName: nil, email: nil)
+        #expect(reported == ["apple-user-1"])
+
+        auth.signOut()
+        #expect(reported == ["apple-user-1", nil])   // released back to an anonymous customer
+    }
+
+    /// A guest is not a billing identity — they must stay anonymous, not be linked under the
+    /// shared guest sentinel, which would pool every guest on this device into one RC customer.
+    @Test func guestDoesNotBecomeABillingIdentity() {
+        freshDefaults()
+        let auth = AuthController(userID: nil)
+        var reported: [String?] = []
+        auth.onIdentityChange = { reported.append($0) }
+
+        auth.continueAsGuest()
+        #expect(reported.allSatisfy { $0 == nil })
+    }
+
     @Test func guestEntryCreatesPersistedLocalIdentity() {
         freshDefaults()
         let auth = AuthController(userID: nil)

@@ -354,6 +354,12 @@ struct CardioSaveView: View {
             Task { await services.health.save(saved) }
         }
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
+        // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a
+        // completed workout. `workout_completed` is also what advances the north-star funnel — it
+        // was declared in the taxonomy but never logged anywhere, so the funnel could never report
+        // `.achieved` (fixed 2026-07-25).
+        services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
+        for record in records { services.analytics.log(.prHit(type: record.type.rawValue)) }
         // The celebration is the exit: it draws over this screen (its own haptic fires — no extra
         // success buzz here) and calls `onDone` when the beat completes or is tapped through.
         celebrating = true

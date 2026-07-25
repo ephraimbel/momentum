@@ -119,15 +119,19 @@ struct StrengthSaveView: View {
         // Persist the records this session set (fresh context — the logged sets are complete there).
         if let workout = reader.workout {
             let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)
-            PersonalRecord.persist(hits.compactMap { hit in
+            let persisted = hits.compactMap { hit in
                 hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
-            }, workout: workout, in: reader.context)
+            }
+            PersonalRecord.persist(persisted, workout: workout, in: reader.context)
+            for record in persisted { services.analytics.log(.prHit(type: record.type.rawValue)) }
             // Session count, tonnage, and streak awards move with every kept session (deferred —
             // the snapshot walk must never sit between the Save tap and dismissal).
             AwardsBook.syncSoon()
         }
         if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
+        // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
+        if let workout { services.analytics.log(.workoutCompleted(type: workout.type.rawValue)) }
         // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
         // `onDone` when the beat completes or is tapped through.
         celebrating = true

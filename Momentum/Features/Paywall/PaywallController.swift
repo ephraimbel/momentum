@@ -19,6 +19,14 @@ struct PaywallProduct: Identifiable, Sendable, Equatable {
     var isAnnual: Bool { period == .annual }
 }
 
+/// What came of a purchase attempt. `cancelled` is a normal, silent outcome — the athlete closed
+/// the sheet. `failed` carries a sentence worth showing them.
+enum PurchaseOutcome: Equatable, Sendable {
+    case purchased
+    case cancelled
+    case failed(String)
+}
+
 /// The `default` RevenueCat offering: monthly + annual (PRD §10).
 struct PaywallOffering: Sendable, Equatable {
     let monthly: PaywallProduct
@@ -95,6 +103,16 @@ final class PaywallController: PaywallServing {
     /// Display offering; replaced with the store's localized prices once `configure()` loads them.
     private(set) var offering: PaywallOffering = .standard
 
+    /// Whether `offering` holds the STORE's prices rather than the built-in placeholders.
+    ///
+    /// This matters because the placeholders are US dollars. If the offering fails to load — no
+    /// network, a misconfigured offering, a missing package — the paywall would otherwise present
+    /// "$14.99" to someone whose storefront charges euros, and would keep presenting it after any
+    /// future price change. Showing a number we can't stand behind is the one thing this brand
+    /// doesn't do, and Apple expects accurate pricing besides. The view suppresses prices and
+    /// offers a retry while this is false.
+    private(set) var pricingIsLive = false
+
     /// `isPro:` overrides persistence (for tests/previews). Otherwise: entitled in DEBUG demo runs so
     /// Pro surfaces stay visible, else the persisted entitlement (free by default).
     init(isPro override: Bool? = nil) {
@@ -131,12 +149,18 @@ final class PaywallController: PaywallServing {
         // real (un-entitled) sandbox state and STOMP the --seed-demo Pro grant — and StoreKit can pop
         // a sandbox sign-in dialog over screenshots. Demo means no billing network, period.
         let args = ProcessInfo.processInfo.arguments
+        // Screenshot seam for the pricing-unavailable state — the branch a real athlete lands on
+        // when the store can't be reached. It is otherwise unreachable on a simulator, and an
+        // unverified error state is how you ship a broken-looking one.
+        if args.contains("--paywall-pricing-down") { pricingIsLive = false; return }
+        // Hermetic runs never reach the store, so the placeholder prices ARE the intended truth
+        // here — mark pricing live or the marketing-screenshot builds would render the retry state.
         if args.contains("--seed-demo") || args.contains("--debug-pro")
-            || args.contains("--ui-test-route") { return }   // no billing network → no sandbox stomp
+            || args.contains("--ui-test-route") { pricingIsLive = true; return }   // no billing network → no sandbox stomp
         // A dev-unlocked install (persisted --debug-pro) is hermetic on EVERY launch, not just
         // flagged ones — otherwise the first plain launch reconciles the sandbox account's
         // un-entitled truth over the deliberate dev grant.
-        if UserDefaults.standard.bool(forKey: Self.devUnlockKey) { return }
+        if UserDefaults.standard.bool(forKey: Self.devUnlockKey) { pricingIsLive = true; return }
         #endif
         #if canImport(RevenueCat)
         Purchases.logLevel = .warn
@@ -146,6 +170,8 @@ final class PaywallController: PaywallServing {
             await loadOffering()
             for await info in Purchases.shared.customerInfoStream { apply(info) }   // live entitlement
         }
+        #else
+        pricingIsLive = true   // local seam (SDK not linked): the PRD prices are all there is
         #endif
         #if canImport(SuperwallKit)
         Superwall.configure(apiKey: BillingKeys.superwall)
@@ -173,26 +199,54 @@ final class PaywallController: PaywallServing {
 
     // MARK: Purchase
 
-    /// Buy a product. Returns whether the user ended up entitled.
-    func purchase(_ product: PaywallProduct) async -> Bool {
+    /// Buy a product.
+    ///
+    /// Returns an outcome rather than a Bool: this used to collapse "the athlete changed their
+    /// mind" and "the store failed" into the same `false`, and the caller — having no way to tell
+    /// them apart — stayed silent for both. The failure case was a dead button. Someone trying to
+    /// pay tapped, the spinner stopped, and nothing happened or explained itself.
+    func purchase(_ product: PaywallProduct) async -> PurchaseOutcome {
         #if DEBUG
         // Unit tests pin the ENTITLEMENT FLIP, not StoreKit: with RevenueCat linked, the live
         // purchase path tries to present a confirmation sheet inside the headless test host and
         // hangs the suite (no UI anchor + TestTimeoutsEnabled=false). The seam is the contract
         // under test. XCTest classes load only in the unit-test host, never in the shipping app
         // or the XCUITest-driven app process.
-        if Self.isRunningUnitTests { grantLocally(); return true }
+        if Self.isRunningUnitTests { grantLocally(); return .purchased }
         #endif
         #if canImport(RevenueCat)
         do {
-            guard let package = try await package(for: product) else { return false }
+            guard let package = try await package(for: product) else {
+                // No matching package means the offering never loaded — the prices on screen are
+                // placeholders and there is nothing to actually buy. Say so.
+                return .failed("We couldn't reach the App Store. Check your connection and try again.")
+            }
             let result = try await Purchases.shared.purchase(package: package)
+            if result.userCancelled { return .cancelled }
             apply(result.customerInfo)
-            return isPro
-        } catch { return false }   // user-cancelled or store error — caller keeps the paywall up
+            // Purchase reported success but the entitlement didn't land (deferred/pending payment,
+            // Ask to Buy). Point at Restore rather than leaving them staring at a locked app.
+            return isPro ? .purchased
+                         : .failed("That didn't complete. If you were charged, tap Restore.")
+        } catch {
+            // RevenueCat throws a cancellation for some store paths and reports it via
+            // `userCancelled` on others — handle both or a dismissed sheet reads as an error.
+            let ns = error as NSError
+            if ns.domain == ErrorCode.errorDomain,
+               ns.code == ErrorCode.purchaseCancelledError.rawValue { return .cancelled }
+            return .failed(ns.localizedDescription)
+        }
         #else
         grantLocally()             // local seam: exercise the full unlock flow offline + in tests
-        return true
+        return .purchased
+        #endif
+    }
+
+    /// Re-fetch the store's offering. The paywall calls this to retry after a pricing failure.
+    func reloadPricing() async {
+        #if canImport(RevenueCat)
+        guard Purchases.isConfigured else { return }
+        await loadOffering()
         #endif
     }
 
@@ -205,6 +259,31 @@ final class PaywallController: PaywallServing {
         if let info = try? await Purchases.shared.restorePurchases() { apply(info) }
         #endif
         return isPro
+    }
+
+    /// Tie RevenueCat's customer record to the athlete's account, or release it back to anonymous.
+    ///
+    /// Without this the SDK mints a random anonymous App User ID per install, which has three
+    /// consequences: a reinstall reads as a brand-new customer (inflating new-customer counts and
+    /// breaking cohort/retention numbers), entitlement only follows the athlete across devices via a
+    /// manual Restore tap, and RevenueCat's revenue data can't be joined to our own `app_events`
+    /// funnel or to a Supabase user — so "which placement actually converts" stays unanswerable on
+    /// the revenue side. Pass the real Apple user id on sign-in; pass nil for guests and sign-out.
+    ///
+    /// Aliasing is RevenueCat's documented behaviour: logging in from an anonymous id transfers that
+    /// id's purchases onto the identified customer, so an athlete who bought before signing in keeps
+    /// what they paid for.
+    func identify(userID: String?) {
+        #if canImport(RevenueCat)
+        guard Purchases.isConfigured else { return }   // hermetic DEBUG paths never configured the SDK
+        Task {
+            if let userID {
+                if let result = try? await Purchases.shared.logIn(userID) { apply(result.customerInfo) }
+            } else {
+                if let info = try? await Purchases.shared.logOut() { apply(info) }
+            }
+        }
+        #endif
     }
 
     // MARK: RevenueCat plumbing (compiled only when the SDK is linked)
@@ -243,6 +322,7 @@ final class PaywallController: PaywallServing {
                           priceText: a.localizedPriceString, perMonthText: perMonth, trialDays: trial),
             monthlyPriceValue: NSDecimalNumber(decimal: m.price).doubleValue,
             annualPriceValue: NSDecimalNumber(decimal: a.price).doubleValue)
+        pricingIsLive = true   // only now are the numbers on screen the store's
     }
 
     private func package(for product: PaywallProduct) async -> Package? {

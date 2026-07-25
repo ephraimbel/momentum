@@ -26,6 +26,9 @@ struct PaywallView: View {
     /// Set when a restore finds nothing to restore — the user gets a plain confirmation rather than
     /// a button that silently does nothing.
     @State private var nothingToRestore = false
+    /// Set when a purchase genuinely fails (not when the athlete cancels) — a tap that does nothing
+    /// and says nothing is how you lose someone who was trying to pay.
+    @State private var purchaseError: String?
 
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
@@ -118,6 +121,23 @@ struct PaywallView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("We couldn't find a past purchase on this Apple ID.")
+        }
+        // Cancellation stays silent — this only fires on a real failure, and always offers Restore,
+        // since "charged but not entitled" is the case where saying nothing is worst.
+        .alert("Purchase didn't go through",
+               isPresented: Binding(get: { purchaseError != nil },
+                                    set: { if !$0 { purchaseError = nil } })) {
+            Button("Try again") { purchaseError = nil }
+            Button("Restore") {
+                purchaseError = nil
+                Task {
+                    working = true; _ = await paywall.restore(); working = false
+                    if paywall.isPro { dismiss() } else { nothingToRestore = true }
+                }
+            }
+            Button("Not now", role: .cancel) { purchaseError = nil }
+        } message: {
+            Text(purchaseError ?? "")
         }
         .interactiveDismissDisabled(working || hard)
         .onAppear {
@@ -237,7 +257,9 @@ struct PaywallView: View {
                     Text(p.isAnnual ? "Annual" : "Monthly")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).tracking(0.4)
                         .foregroundStyle(Theme.inkSecondary)
-                    if p.isAnnual, p.trialDays > 0 {
+                    // Suppressed with the price: the trial length is a placeholder until the store
+                    // answers, and "7-DAY FREE TRIAL" is as much a promise as the number beside it.
+                    if p.isAnnual, p.trialDays > 0, paywall.pricingIsLive {
                         Text("\(p.trialDays)-DAY FREE TRIAL")
                             .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Color(hex: "0E0E12"))
                             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -247,14 +269,15 @@ struct PaywallView: View {
                     checkmark(on: isSelected)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(p.priceText)
+                    // Never present a placeholder as the price. Until the store's offering lands,
+                    // `p.priceText` is a US-dollar constant that would be wrong for any other
+                    // storefront and would survive a price change — so show a dash instead.
+                    Text(paywall.pricingIsLive ? p.priceText : "—")
                         .font(.display(23, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
                     Text(p.isAnnual ? "/ year" : "/ month")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     Spacer()
-                    Text(p.isAnnual
-                         ? "≈ \(p.perMonthText ?? PaywallOffering.standard.annual.perMonthText ?? "") · save \(offering.annualSavingsPercent)%"
-                         : "No trial · cancel anytime")
+                    Text(pricingAside(p))
                         .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
             }
@@ -295,9 +318,27 @@ struct PaywallView: View {
             Haptics.light()
             Task {
                 working = true
-                let ok = await paywall.purchase(product)
+                // Pricing not live means `offering` is still placeholders — there is no real
+                // package to buy, so retry the fetch instead of firing a purchase that can only
+                // fail. Succeeds → the athlete taps again and buys at the store's real price.
+                guard paywall.pricingIsLive else {
+                    await paywall.reloadPricing()
+                    working = false
+                    if !paywall.pricingIsLive {
+                        purchaseError = "We couldn't load pricing from the App Store. Check your connection and try again."
+                    }
+                    return
+                }
+                let outcome = await paywall.purchase(product)
                 working = false
-                if ok { services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly")) }
+                switch outcome {
+                case .purchased:
+                    services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly"))
+                case .cancelled:
+                    break                                   // they changed their mind — say nothing
+                case .failed(let message):
+                    purchaseError = message
+                }
                 if paywall.isPro { dismiss() }
             }
         } label: {
@@ -312,8 +353,20 @@ struct PaywallView: View {
         .disabled(working)
     }
 
+    /// The right-hand note on a plan row. Suppressed with the price — a savings percentage computed
+    /// from placeholder numbers is just as wrong as the numbers themselves.
+    private func pricingAside(_ p: PaywallProduct) -> String {
+        guard paywall.pricingIsLive else { return "Pricing unavailable" }
+        return p.isAnnual
+            ? "≈ \(p.perMonthText ?? PaywallOffering.standard.annual.perMonthText ?? "") · save \(offering.annualSavingsPercent)%"
+            : "No trial · cancel anytime"
+    }
+
     private var ctaTitle: String {
         if working { return "One moment…" }
+        // Don't quote a price we haven't confirmed with the store, and don't promise a trial length
+        // that came from a placeholder either.
+        guard paywall.pricingIsLive else { return "Retry" }
         return product.trialDays > 0 ? "Start my \(product.trialDays)-day free trial" : "Continue — \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
     }
 
@@ -343,6 +396,9 @@ struct PaywallView: View {
 
     /// Plain-language renewal terms (the §10 honesty bar), one short line per plan.
     private var renewalTerms: String {
+        // The fine print is the one place a wrong number is actually a claim about what we'll
+        // charge — never build it from placeholder pricing.
+        guard paywall.pricingIsLive else { return "Pricing unavailable · cancel anytime" }
         if product.isAnnual, product.trialDays > 0 {
             return "\(product.trialDays) days free, then \(product.priceText)/yr · cancel anytime"
         }

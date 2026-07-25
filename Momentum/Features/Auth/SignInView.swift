@@ -40,6 +40,10 @@ struct SignInView: View {
     @State private var isCreatingAccount: Bool
     @State private var emailInFlight = false
     @State private var authMessage: String?
+    /// Failures from the Apple/Google buttons. Deliberately separate from `authMessage`: that one
+    /// renders inside the email block, which sits a full screen above the OAuth buttons — a message
+    /// shown there for a Google failure would land off-screen for anyone who scrolled down to tap it.
+    @State private var oauthMessage: String?
     @FocusState private var focusedField: Field?
     private enum Field { case email, password }
 
@@ -281,9 +285,21 @@ struct SignInView: View {
                         SignInWithAppleButton(.signIn) { request in
                             auth.prepareAppleSignIn(request)
                         } onCompletion: { result in
-                            if case .success(let authResult) = result,
-                               let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
-                                auth.signIn(credential: credential)
+                            switch result {
+                            case .success(let authResult):
+                                if let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
+                                    auth.signIn(credential: credential)
+                                }
+                            case .failure(let error):
+                                // Dismissing the Apple sheet reports as `.canceled` — that's a
+                                // choice, not a fault, and must stay silent. Anything else left the
+                                // athlete on a gate that had just refused them without saying why.
+                                let code = (error as? ASAuthorizationError)?.code
+                                if code != .canceled {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        oauthMessage = "Apple sign-in didn't complete. Check your connection and try again."
+                                    }
+                                }
                             }
                         }
                         .signInWithAppleButtonStyle(.black)
@@ -294,9 +310,18 @@ struct SignInView: View {
                             guard !googleInFlight else { return }
                             Haptics.light()
                             googleInFlight = true
+                            oauthMessage = nil
                             Task {
-                                _ = await auth.signInWithGoogle()
+                                // The result used to be discarded, so a failure — offline, the
+                                // provider not configured, the sheet erroring — stopped the spinner
+                                // and said nothing. A gate that silently refuses you is a dead end.
+                                let ok = await auth.signInWithGoogle()
                                 googleInFlight = false
+                                if !ok, !auth.isSignedIn {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        oauthMessage = "Google sign-in didn't complete. Check your connection and try again."
+                                    }
+                                }
                             }
                         } label: {
                             HStack(spacing: Theme.Space.sm) {
@@ -318,6 +343,14 @@ struct SignInView: View {
                         .buttonStyle(.plain)
                         .disabled(googleInFlight)
                         .accessibilityLabel("Continue with Google")
+
+                        if let oauthMessage {
+                            Text(oauthMessage)
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                                .foregroundStyle(Theme.inkSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .transition(.opacity)
+                        }
                     }
 
                     // The guest door stays open (guest-first principle) — quiet, never blocking.
