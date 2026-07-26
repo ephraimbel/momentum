@@ -1314,11 +1314,11 @@ struct OnboardingFlow: View {
             // is the behaviour App Review 5.6.3 names, and this app has been rejected under that rule
             // before. That trade-off was made knowingly; see the warning on OnboardingViewModel.Step.
             VStack(spacing: Theme.Space.sm) {
-                Text("How was that?")
+                Text("Your plan is ready")
                     .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Your plan came from your goal, your week, and how you actually train — not a template. If that felt right, a rating brings more runners to momentum.")
+                Text("A quick rating helps the next runner find theirs.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(2)
