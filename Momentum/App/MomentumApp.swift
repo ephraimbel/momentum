@@ -92,6 +92,15 @@ struct MomentumApp: App {
             .environment(coach)
             .environment(router)
             .tint(Theme.ink)
+            // Ceiling on Dynamic Type. `Font.custom(_:size:)` scales relative to `.body`, so every
+            // string in the app grows with the athlete's text-size setting — unbounded, until this.
+            // At the largest accessibility sizes the dense surfaces stopped being readable rather
+            // than becoming more readable: Today's primary button truncated to "Start…", Progress's
+            // streak pill landed on top of the title, and VO₂ MAX rendered as "3…" — the number the
+            // stat exists for was the part that got cut.
+            // accessibility1 still allows roughly double the default size, which is the range that
+            // actually helps; past it these layouts lose more information than the larger type adds.
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
             // Backgrounding is the last reliable moment to get a session's events off the device —
             // the batch threshold alone would strand the tail of every session (and the whole of a
             // short one). `.onChange` only reads scenePhase; it installs no preference writer, so

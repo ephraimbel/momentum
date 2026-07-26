@@ -49,6 +49,16 @@ enum SportCategory: String, CaseIterable, Identifiable {
 }
 enum Discipline: String, Codable, Sendable, CaseIterable { case running, cycling, walking, strength }
 
+extension WorkoutType {
+    /// The sport bucket a discipline maps to when nothing more precise is known.
+    static func forDiscipline(_ d: Discipline) -> WorkoutType {
+        switch d { case .strength: .strength; case .cycling: .ride; case .walking: .walk; case .running: .run }
+    }
+
+    // `forPlanned(_:)` lives in TrainingPlan.swift, not here: this file is compiled into the watch
+    // and widget targets too, and they don't build PlannedSession.
+}
+
 /// A target race the plan points at (drives long-run progression + taper). Onboarding captures one
 /// for "run a race" goals; the engine reads `raceDistanceM`.
 enum RaceDistance: String, Codable, Sendable, CaseIterable, Identifiable {

@@ -39,6 +39,9 @@ struct TodayView: View {
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
     @State private var activity: WorkoutType =
         debugFlag("--ui-test-strength") ? .strength : .run
+    /// Set the moment the athlete picks a sport themselves. Until then the picker follows today's
+    /// plan; afterwards it stays where they put it for the rest of the session.
+    @State private var pickerIsAthletesChoice = false
     @State private var goalKind: GoalKind = .open
     @State private var goalValue = 3.0
     @State private var viewport: Viewport = .idle
@@ -251,6 +254,7 @@ struct TodayView: View {
             // AFTER bootstrap (its reconcile pass can move sessions): snapshot today's plan row so
             // body reads stay cheap. Every appear, so plan-tab edits show the moment you return.
             refreshPendingToday()
+            matchPickerToTodaysPlan()
             // Refresh the Home Screen widget's snapshot whenever Today surfaces — the write is
             // change-guarded, so an identical snapshot never wakes the widget.
             WidgetBridge.publish(profile: profiles.first, workouts: workouts)
@@ -340,7 +344,12 @@ struct TodayView: View {
             planConfirmSheet(session)
         }
         .sheet(isPresented: $showSportPicker) {
-            SportPicker(selection: $activity) { showSportPicker = false }
+            // Picking a sport by hand is a deliberate choice — from here on, today's plan stops
+            // moving the picker (see `matchPickerToTodaysPlan`).
+            SportPicker(selection: Binding(get: { activity },
+                                           set: { activity = $0; pickerIsAthletesChoice = true })) {
+                showSportPicker = false
+            }
         }
         .sheet(isPresented: $showNotifications) { NotificationsView() }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
@@ -1519,7 +1528,24 @@ struct TodayView: View {
     }
 
     private func workoutType(for d: Discipline) -> WorkoutType {
-        switch d { case .strength: .strength; case .cycling: .ride; case .walking: .walk; case .running: .run }
+        WorkoutType.forDiscipline(d)
+    }
+
+    /// Point the sport picker at whatever today's plan actually prescribes.
+    ///
+    /// The picker used to be hardcoded to `.run` forever, which was invisible on a running day and
+    /// wrong on every other one: on a strength day the deck read "TODAY'S PLAN — Strength — 4
+    /// exercises" while the big black button underneath said "Start run" and, via `startFree()`,
+    /// launched an untracked free run that credited the plan nothing. The most prominent control on
+    /// the home screen did the opposite of what the card above it advertised.
+    ///
+    /// Only ever moves the picker BEFORE the athlete touches it (`pickerIsAthletesChoice`), so a
+    /// deliberate "actually I want to ride today" is never stomped on the next appear.
+    private func matchPickerToTodaysPlan() {
+        guard !pickerIsAthletesChoice, !marketingHero else { return }
+        guard !debugFlag("--ui-test-strength") else { return }   // the UI test pins its own sport
+        guard let session = pendingToday else { return }
+        activity = WorkoutType.forPlanned(session)
     }
 
 }

@@ -89,3 +89,19 @@ final class PlannedExercise {
 
     init() {}
 }
+
+extension WorkoutType {
+    /// The sport Today's picker should show for a planned session — and therefore what its Start
+    /// button says it will do.
+    ///
+    /// The picker used to be hardcoded to `.run` and never moved off it. On a running day that was
+    /// invisible; on every other day the deck read "TODAY'S PLAN — Strength — 4 exercises" directly
+    /// above a large primary button saying "Start run". The precise sport wins (a planned
+    /// swim/yoga/row must not collapse into its discipline bucket); the bucket is the fallback.
+    ///
+    /// Lives here rather than beside `forDiscipline` in Enums.swift because that file is compiled
+    /// into the watch and widget targets, which don't build `PlannedSession`.
+    static func forPlanned(_ session: PlannedSession) -> WorkoutType {
+        session.workoutType ?? forDiscipline(session.discipline)
+    }
+}
