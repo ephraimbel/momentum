@@ -210,4 +210,25 @@ struct OnboardingFlowTests {
         #expect(easy.verdict == .onTrack)
         #expect(easy.recommended == .gentle)
     }
+
+    /// The rating beat is the LAST step, immediately before the paywall gate (owner call
+    /// 2026-07-26). Two things must hold or the flow breaks in ways a screenshot won't catch:
+    /// it has to sit after `primers` (so "Start training" reaches it), and it must not be counted
+    /// as an answerable question (or the progress bar grows a phantom notch and never reads 100%).
+    ///
+    /// ⚠️ This step is a deliberate App Review 5.6.3 risk — the app was previously rejected for a
+    /// rating beat in onboarding. If it has to come out, delete the `.rateUs` case and this test.
+    @Test func ratingBeatIsTheFinalStepAndIsNotAQuestion() {
+        let all = OnboardingViewModel.Step.allCases
+        #expect(all.last == .rateUs, "rateUs must be the last step — the paywall follows it")
+
+        let primers = all.firstIndex(of: .primers)!
+        let rate = all.firstIndex(of: .rateUs)!
+        #expect(rate == primers + 1, "rateUs must come straight after primers")
+
+        // Not an answerable question: it must never appear in the progress denominator.
+        let vm = OnboardingViewModel()
+        vm.step = .rateUs
+        #expect(!vm.isQuestionStep)
+    }
 }

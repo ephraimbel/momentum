@@ -146,9 +146,14 @@ final class OnboardingViewModel {
         // 2026-07-16) follows `name`, both before any training questions.
         // `experience` doubles as the running pace question (2026-07-24), so there's no separate
         // `calibration` step any more — runners are asked their level once.
+        // `rateUs` is the last beat, between `primers` and the paywall (user call 2026-07-26).
+        // ⚠️ App Review guideline 5.6.3 says not to solicit ratings before real engagement, and this
+        // app was rejected under exactly that rule for a rating beat in onboarding. Shipping it again
+        // is a deliberate, informed decision by the owner — if a submission is rejected, this step is
+        // the first thing to pull (delete the case; the flow closes over it with no other changes).
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
-             health, intensity, building, reveal, notifications, primers
+             health, intensity, building, reveal, notifications, primers, rateUs
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -184,7 +189,8 @@ final class OnboardingViewModel {
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
         // `.health` is an opt-in consent beat (like notifications), not an answerable question.
-        steps.filter { ![.health, .building, .reveal, .notifications, .primers].contains($0) }
+        // `.rateUs` isn't one either — it must not add a phantom notch to the progress bar.
+        steps.filter { ![.health, .building, .reveal, .notifications, .primers, .rateUs].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 

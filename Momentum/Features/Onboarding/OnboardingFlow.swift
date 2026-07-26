@@ -19,6 +19,9 @@ struct OnboardingFlow: View {
     @Environment(AuthController.self) private var auth
     @Environment(PaywallController.self) private var paywall
     @Environment(\.scenePhase) private var scenePhase
+    /// Apple's native App Store rating alert — used by the `.rateUs` beat.
+    @Environment(\.requestReview) private var requestReview
+    @State private var rateStarsIn = false
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     // Resumes a draft when a prior onboarding was interrupted before the profile was created;
     // fresh otherwise. See OnboardingDraft.
@@ -138,6 +141,7 @@ struct OnboardingFlow: View {
                 vm.step = .intensity
             }
             // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
+            if args.contains("--onboarding-rate") { vm.step = .rateUs }
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
             if args.contains("--onboarding-metrics") { vm.activities = [.run]; vm.step = .metrics }
@@ -275,6 +279,7 @@ struct OnboardingFlow: View {
         }
         case .notifications: notificationsStep
         case .primers: primersStep
+        case .rateUs: rateUsStep
         }
     }
 
@@ -1262,13 +1267,8 @@ struct OnboardingFlow: View {
             }
             .reveal(0.15)
             Spacer()
-            // The LAST beat before the app, so this is where the (soft, skippable) paywall lands —
-            // subscribe/trial to unlock the coach + full plan, or close it and go in on the free
-            // tier. Already-entitled athletes (restored subscribers, demo) go straight through. No
-            // rating beat here (5.6.3).
-            OversizedButton(title: "Start training") {
-                if paywall.isPro { onComplete() } else { showPaywall = true }
-            }
+            // Hands off to `rateUs`, which is now the last beat before the paywall (2026-07-26).
+            OversizedButton(title: "Start training") { goNext() }
                 .reveal(0.3)
         }
         // Ask for location only AFTER this page is visibly on screen — the athlete reads WHY (their
@@ -1277,6 +1277,88 @@ struct OnboardingFlow: View {
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { locator.requestAuthorization() }
         }
+    }
+
+    /// The last onboarding beat: an ask for an App Store rating, immediately before the paywall.
+    ///
+    /// ⚠️ App Review guideline 5.6.3 — "don't require or encourage customers to submit a rating" —
+    /// and this app has already been rejected once for a rating beat in onboarding. This ships at
+    /// the owner's explicit, informed direction. If a submission comes back rejected, delete the
+    /// `.rateUs` case from `Step` and this view; `primersStep`'s button goes back to
+    /// `if paywall.isPro { onComplete() } else { showPaywall = true }` and nothing else changes.
+    ///
+    /// Skippable by design: "Not now" is a real, equally-reachable control, and the native alert is
+    /// Apple's own `requestReview` (the only sanctioned way to open it) — we never fake stars, never
+    /// gate anything behind rating, and never route unhappy athletes anywhere but onward.
+    private var rateUsStep: some View {
+        VStack(spacing: Theme.Space.lg) {
+            Spacer()
+
+            HStack(spacing: 10) {
+                ForEach(0..<5, id: \.self) { i in
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(Theme.route)
+                        .opacity(rateStarsIn ? 1 : 0)
+                        .scaleEffect(rateStarsIn ? 1 : 0.7)
+                        .animation(reduceMotion ? nil
+                                   : .spring(response: 0.4, dampingFraction: 0.7).delay(0.1 + Double(i) * 0.07),
+                                   value: rateStarsIn)
+                }
+            }
+            .accessibilityHidden(true)
+
+            VStack(spacing: Theme.Space.sm) {
+                Text("Help more runners find momentum")
+                    .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("momentum is built by one person, not a big team. A rating is the single biggest thing that helps another runner discover it.")
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .reveal(0.15)
+
+            Spacer()
+
+            VStack(spacing: Theme.Space.xs) {
+                OversizedButton(title: "Rate momentum") {
+                    // Apple's own alert — the only sanctioned way to open it. It is rate-limited by
+                    // the system and may not appear; the flow must continue either way, so we never
+                    // wait on it or branch on whether it showed.
+                    requestReview()
+                    // Latch the once-ever guard so the post-first-save pre-prompt doesn't ask the
+                    // same athlete again a few days later.
+                    AppReview.markAsked()
+                    // Let the system alert settle before the paywall cover animates in over it —
+                    // two modals racing on the same frame is how you get a stuck screen.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finishOnboarding() }
+                }
+                Button {
+                    Haptics.light()
+                    finishOnboarding()
+                } label: {
+                    Text("Not now")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .reveal(0.3)
+        }
+        .onAppear {
+            if reduceMotion { rateStarsIn = true }
+            else { withAnimation { rateStarsIn = true } }
+        }
+    }
+
+    /// Where onboarding actually ends: the paywall gate (or straight through for entitled athletes).
+    /// Was inline in `primersStep` before `.rateUs` was inserted between them.
+    private func finishOnboarding() {
+        if paywall.isPro { onComplete() } else { showPaywall = true }
     }
 
     // MARK: Scaffolding
