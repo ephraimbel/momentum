@@ -1296,10 +1296,9 @@ struct OnboardingFlow: View {
 
             HStack(spacing: 10) {
                 ForEach(0..<5, id: \.self) { i in
-                    // Outlined, not filled: a row of solid five-star glyphs sitting directly above a
-                    // rate button reads as telling the athlete which rating to leave. The outline
-                    // keeps the visual language and drops the implied answer.
-                    Image(systemName: "star")
+                    // Filled, matching RatingPromptView (owner's call — outlined was tried and
+                    // reverted 2026-07-26).
+                    Image(systemName: "star.fill")
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(Theme.route)
                         .opacity(rateStarsIn ? 1 : 0)
