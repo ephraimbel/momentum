@@ -54,61 +54,18 @@ create policy storage_post_photos_read on storage.objects for select to authenti
   );
 
 -- ── 3. blocked users out of reaction counts ────────────────────────────────────────────────
-create or replace function public.feed_page(
-  p_scope text default 'everyone',
-  p_cursor_created timestamptz default null,
-  p_cursor_id uuid default null,
-  p_limit int default 20,
-  p_author uuid default null
-)
-returns table (
-  id uuid,
-  author_id uuid,
-  author_name text,
-  author_handle text,
-  author_location text,
-  avatar_path text,
-  workout_type text,
-  started_at timestamptz,
-  title text,
-  caption text,
-  stat_line text,
-  pr_badge text,
-  muscles jsonb,
-  route jsonb,
-  map_style text,
-  ai_read text,
-  photo_paths text[],
-  reaction_count bigint,
-  viewer_reacted boolean,
-  created_at timestamptz
-)
-language sql stable security invoker set search_path = public
-as $$
-  select
-    p.id, p.author_id,
-    pr.display_name,
-    nullif(pr.handle, ''),
-    pr.public_location,
-    pr.avatar_path,
-    p.workout_type, p.started_at, p.title, p.caption,
-    p.stat_line, p.pr_badge, p.muscles, p.route, p.map_style, p.ai_read, p.photo_paths,
-    (select count(*) from reactions r
-      where r.post_id = p.id
-        and not is_blocked_either((select auth.uid()), r.user_id)),
-    exists (select 1 from reactions r where r.post_id = p.id and r.user_id = (select auth.uid())),
-    p.created_at
-  from posts p
-  join profiles pr on pr.id = p.author_id
-  where (p_scope <> 'following'
-         or p.author_id = (select auth.uid())
-         or is_following((select auth.uid()), p.author_id))
-    and (p_author is null or p.author_id = p_author)
-    and (p_cursor_created is null
-         or (p.created_at, p.id) < (p_cursor_created, p_cursor_id))
-  order by p.created_at desc, p.id desc
-  limit least(greatest(coalesce(p_limit, 20), 1), 50);
-$$;
+-- REMOVED (2026-07-26). This section used to `create or replace public.feed_page(...)`.
+--
+-- This migration was never applied. 20260710000002 (which IS applied) recreated feed_page with a
+-- trailing `author_pro` column, and the body that lived here predates it — so running this file
+-- would have replaced the live function with an older signature and broken the feed decoder.
+-- That is precisely what `supabase db push` would have done, since push applies every pending
+-- migration in order and this one was still pending.
+--
+-- Sections 1, 2 and 4 were applied by hand on 2026-07-26 after verifying preconditions against
+-- production (is_following present, profiles.discoverable present, feed_page already carrying
+-- author_pro). Section 2's storage policy was already correct in production and was a no-op.
+-- The blocked-users change this section also carried lives on in 20260710000002's body.
 
 -- ── 4. global feed keyset index ────────────────────────────────────────────────────────────
 create index if not exists posts_created_id on public.posts (created_at desc, id desc);
