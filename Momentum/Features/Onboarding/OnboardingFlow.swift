@@ -1308,12 +1308,17 @@ struct OnboardingFlow: View {
             }
             .accessibilityHidden(true)
 
+            // Copy order is deliberate: the athlete's own experience first (what they just built),
+            // the ask second. Wording is the owner's call (2026-07-26) — "runners", not "users".
+            // Note for anyone auditing this later: the closing clause does encourage a rating, which
+            // is the behaviour App Review 5.6.3 names, and this app has been rejected under that rule
+            // before. That trade-off was made knowingly; see the warning on OnboardingViewModel.Step.
             VStack(spacing: Theme.Space.sm) {
-                Text("Help more runners find momentum")
+                Text("How was that?")
                     .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("momentum is built by one person, not a big team. A rating is the single biggest thing that helps another runner discover it.")
+                Text("Your plan came from your goal, your week, and how you actually train — not a template. If that felt right, a rating brings more runners to momentum.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(2)
