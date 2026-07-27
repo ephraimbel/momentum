@@ -10,6 +10,7 @@ struct RootView: View {
     @Environment(AuthController.self) private var auth
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router           // cross-tab mailbox — RootView owns pendingTab
+    @Environment(Services.self) private var services          // crash-recovery completion runs the live pipeline
     @Environment(\.modelContext) private var context
     // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
     // and set was persisted as it happened — this prompt is how they come back.
@@ -187,7 +188,24 @@ struct RootView: View {
                isPresented: $showRecoveryPrompt, presenting: recoveredWorkout) { workout in
             Button("Save it") {
                 WorkoutRecovery.finalizePending(in: context)
-                recoverySave = PresentedWorkout(id: workout.id, type: workout.type)
+                // A recovered workout is a real workout: it runs the SAME completion pipeline as a
+                // live finish. Without this it landed in history uncredited — the session the
+                // athlete had actually just run still sat open on their plan, and the plan never
+                // learned from it (no pace recalibration, no protective easing, stale reminders).
+                let id = workout.id, type = workout.type
+                if let recovered = WorkoutCompletion.fetch(id, in: context) {
+                    WorkoutCompletion.credit(recovered, launched: nil, plan: profiles.first?.plan,
+                                             profile: profiles.first, in: context)
+                    // Deferred like the live path — heavy main-actor SwiftData work that nothing
+                    // on screen is waiting for.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.6))
+                        guard let w = WorkoutCompletion.fetch(id, in: context) else { return }
+                        WorkoutCompletion.adapt(w, plan: profiles.first?.plan, profile: profiles.first,
+                                                unit: distanceUnit, services: services, in: context)
+                    }
+                }
+                recoverySave = PresentedWorkout(id: id, type: type)
                 recoveredWorkout = nil
             }
             Button("Discard", role: .destructive) {

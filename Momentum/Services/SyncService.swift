@@ -16,7 +16,12 @@ final class SyncService: SyncServing {
     /// Push every dirty (never-synced) workout, then stamp `syncedAt` so it isn't sent again.
     func sync(_ workouts: [Workout], in context: ModelContext) async {
         guard let endpoint, let bearer else { return }              // unconfigured → no-op
-        let pending = workouts.filter { $0.syncedAt == nil }
+        // Never upload the recording that is still being captured. Its row exists from the first
+        // second (durability), so a sweep firing mid-run — or on the launch right after a crash,
+        // before recovery has finalized it — used to ship a 0 km husk AND stamp it, after which the
+        // finished workout could never be sent. The marker is exactly "the workout that isn't done".
+        let live = ActiveWorkoutMarker.pendingID
+        let pending = workouts.filter { $0.syncedAt == nil && $0.id != live }
         guard !pending.isEmpty else { return }
 
         do {

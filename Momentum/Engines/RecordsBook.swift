@@ -28,11 +28,15 @@ enum RecordsBook {
         }
     }
 
+    /// The record types this book owns — everything derived from a cardio workout. Strength records
+    /// are per-exercise and live on the strength surfaces.
+    static let cardioTypes: [PRType] = [.fastest1k, .fastest5k, .fastest10k, .fastestHalf,
+                                        .fastestMarathon, .fastest50k, .longestRun, .longestDuration]
+
     /// Reduce the full PR history to the current best per type (cardio types only — strength
     /// records are per-exercise and live on the strength surfaces).
     static func currentBests(_ prs: [PersonalRecord]) -> [Best] {
-        let cardio: [PRType] = [.fastest1k, .fastest5k, .fastest10k, .fastestHalf, .fastestMarathon,
-                                .fastest50k, .longestRun, .longestDuration]
+        let cardio = cardioTypes
         return cardio.compactMap { type in
             let rows = prs.filter { $0.type == type && $0.value > 0 }
             guard var best = rows.first else { return nil }
@@ -47,15 +51,27 @@ enum RecordsBook {
     /// best are persisted, so the book reads as a true progression.
     static func backfillIfNeeded(in context: ModelContext,
                                  defaults: UserDefaults = .standard) {
-        // v3: re-replays history once for the 50K benchmark (2026-07-22; v2 added half/marathon
-        // the same day). Safe: `persist` dedupes per (type, workout), so already-persisted rows
-        // are skipped and only the new distance adds rows.
-        let flag = "com.momentum.records.backfill.v3"
+        // v4 (2026-07-26) REBUILDS rather than tops up. Every cardio record until now was measured
+        // off a raw haversine walk over the stored fixes, which GPS jitter inflates by 3–40%: the
+        // benchmark windows closed hundreds of metres early, so the stored "Fastest 5K" was minutes
+        // faster than the athlete ever ran — and `beats` then defended that phantom against every
+        // real record they went on to set. The corrected replay can't fix those rows in place, so
+        // the machine-derived cardio rows are dropped and re-derived from history. Strength records
+        // are per-exercise and untouched.
+        //
+        // (v3 re-replayed history for the 50K benchmark, 2026-07-22; v2 added half/marathon.)
+        let flag = "com.momentum.records.backfill.v4"
         guard !defaults.bool(forKey: flag) else { return }
         defaults.set(true, forKey: flag)
 
         let all = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
             .sorted { $0.startedAt < $1.startedAt }
+
+        let owned = Set(cardioTypes)
+        for pr in ((try? context.fetch(FetchDescriptor<PersonalRecord>())) ?? []) where owned.contains(pr.type) {
+            context.delete(pr)
+        }
+        try? context.save()   // clear the shelf before replaying, so `persist`'s dedupe sees a clean slate
 
         var bests: [PRType: Double] = [:]
         for workout in all {
@@ -96,17 +112,10 @@ enum RecordsBook {
         // Fastest benchmark windows are a RUNNING record only — a ride covers these distances far
         // faster and would corrupt the run 1K/5K/10K, so cycling never seeds them.
         if workout.type == .run {
-            let sorted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-            guard let first = sorted.first else { return out }
-            var cumulative = 0.0
-            var prev: LocationSample?
-            let pts: [CardioMetrics.SamplePoint] = sorted.map { s in
-                if let p = prev {
-                    cumulative += Geo.distance(lat1: p.lat, lon1: p.lon, lat2: s.lat, lon2: s.lon)
-                }
-                prev = s
-                return .init(t: s.t.timeIntervalSince(first.t), cumulativeM: cumulative)
-            }
+            // One reduction for the whole app (`GPSDetail.routePoints`): engine-consistent distance,
+            // so a benchmark window can't close hundreds of metres early and mint a phantom PR that
+            // `beats` then defends forever against the athlete's real ones.
+            let pts = gps.samplePoints(type: workout.type)
             for (meters, type) in [(1000.0, PRType.fastest1k), (5000.0, .fastest5k), (10000.0, .fastest10k),
                                    (21_097.5, .fastestHalf), (42_195.0, .fastestMarathon),
                                    (50_000.0, .fastest50k)] {

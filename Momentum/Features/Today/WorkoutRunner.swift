@@ -115,15 +115,8 @@ struct WorkoutRunner: ViewModifier {
         // to fetch would otherwise have shown the PREVIOUS session's ring.
         weekRing = nil
         if let workout = fetchWorkout(id) {
-            // Deterministic active-energy estimate (body-mass aware) — drives the calorie stat and the
-            // Apple Health energy sample. Recomputed on save if the sport type is corrected. Stays on
-            // the synchronous path: the summary reads through a fresh context, so a calorie figure
-            // written after that read would simply never appear.
-            workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
-            try? context.save()   // persist now so the fresh-context strength summary reader sees it
-            if let planned { PlanCoaching.markComplete(planned, with: workout, in: context) }
-            else { PlanCoaching.creditWorkout(workout, to: plan, in: context) }
-            weekRing = WeekRingReader.reading(for: workout, plan: plan, profile: profiles.first, in: context)
+            weekRing = WorkoutCompletion.credit(workout, launched: planned, plan: plan,
+                                                profile: profiles.first, in: context)
         }
         // Present FIRST. Everything below faults the whole workout history and rewrites the plan;
         // running it here used to stall the app at the exact moment the athlete crossed their finish
@@ -148,28 +141,66 @@ struct WorkoutRunner: ViewModifier {
     /// main-actor SwiftData work, and nothing it produces is on screen yet.
     private func adaptAfterFinish(_ id: UUID, plan: TrainingPlan?, profile: UserProfile?,
                                   unit: DistanceUnit) {
-        if let workout = fetchWorkout(id) {
-            // Protective adaptation first (ACWR-driven, ≤1×/week, never auto-increases load) —
-            // then pace recalibration only when the plan was NOT just eased. The old order could
-            // announce "paces got faster" and ease those same sessions in one save.
-            let recent = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-            if let rec = PlanCoaching.autoAdapt(plan, workouts: recent, in: context) {
-                services.notifications.notifyPlanUpdated(
-                    title: rec == .rest ? "Recovery banked" : "Eased your upcoming sessions",
-                    body: rec == .rest
-                        ? "Your load's been climbing — I pulled the next sessions back so it lands. No streak lost."
-                        : "Your load's been climbing — I eased the next sessions ~15%. Still on track.")
-            } else if workout.type.discipline == .running,
-                      let rec = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context),
-                      rec.sessionsUpdated > 0 {
-                let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
-                services.notifications.notifyPlanUpdated(
-                    title: "Your paces just got faster",
-                    body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: unit)).")
-            } else if workout.type.isStrengthStyle,
-                      let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context) {
-                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
-            }
+        guard let workout = WorkoutCompletion.fetch(id, in: context) else { return }
+        WorkoutCompletion.adapt(workout, plan: plan, profile: profile, unit: unit,
+                                services: services, in: context)
+    }
+
+    private func fetchWorkout(_ id: UUID) -> Workout? { WorkoutCompletion.fetch(id, in: context) }
+}
+
+/// Everything that has to happen once a workout becomes real, in one place so **every** path into
+/// the journal behaves identically: the live finish (`WorkoutRunner`) and cold-launch crash recovery
+/// (`RootView`). Recovery used to skip all of it — a run interrupted by a force-quit was saved to
+/// history but never credited its planned session, never recalibrated paces, never eased load, and
+/// never rescheduled reminders, so the athlete who actually did the work still saw the session open.
+@MainActor
+enum WorkoutCompletion {
+
+    /// Calories, plan credit, and the week's ring — the synchronous half, done before the summary
+    /// presents. `launched` is the session the athlete started FROM the plan (nil for a free
+    /// workout or a recovered one); crediting is magnitude-aware either way.
+    @discardableResult
+    static func credit(_ workout: Workout, launched: PlannedSession?, plan: TrainingPlan?,
+                       profile: UserProfile?, in context: ModelContext) -> WeekRing.Reading? {
+        // Deterministic active-energy estimate (body-mass aware) — drives the calorie stat and the
+        // Apple Health energy sample. Recomputed on save if the sport type is corrected. Stays on
+        // the synchronous path: the summary reads through a fresh context, so a calorie figure
+        // written after that read would simply never appear.
+        workout.calories = CalorieEstimator.kcal(for: workout, bodyMassKg: profile?.bodyMassKg)
+        try? context.save()   // persist now so the fresh-context strength summary reader sees it
+        if let launched {
+            PlanCoaching.creditLaunched(launched, with: workout, to: plan, in: context)
+        } else {
+            PlanCoaching.creditWorkout(workout, to: plan, in: context)
+        }
+        return WeekRingReader.reading(for: workout, plan: plan, profile: profile, in: context)
+    }
+
+    /// The adaptive pass: protective load easing, pace recalibration, athlete-model ingest and
+    /// reminder rescheduling.
+    static func adapt(_ workout: Workout, plan: TrainingPlan?, profile: UserProfile?,
+                      unit: DistanceUnit, services: Services, in context: ModelContext) {
+        // Protective adaptation first (ACWR-driven, ≤1×/week, never auto-increases load) —
+        // then pace recalibration only when the plan was NOT just eased. The old order could
+        // announce "paces got faster" and ease those same sessions in one save.
+        let recent = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
+        if let rec = PlanCoaching.autoAdapt(plan, workouts: recent, in: context) {
+            services.notifications.notifyPlanUpdated(
+                title: rec == .rest ? "Recovery banked" : "Eased your upcoming sessions",
+                body: rec == .rest
+                    ? "Your load's been climbing — I pulled the next sessions back so it lands. No streak lost."
+                    : "Your load's been climbing — I eased the next sessions ~15%. Still on track.")
+        } else if workout.type.discipline == .running,
+                  let rec = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context),
+                  rec.sessionsUpdated > 0 {
+            let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
+            services.notifications.notifyPlanUpdated(
+                title: "Your paces just got faster",
+                body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: unit)).")
+        } else if workout.type.isStrengthStyle,
+                  let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context) {
+            services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
         }
         // Let the Athlete Model learn from this session (local, never blocks the summary).
         if let profile {
@@ -179,9 +210,9 @@ struct WorkoutRunner: ViewModifier {
         services.notifications.schedulePlannedReminders(plan)
     }
 
-    private func fetchWorkout(_ id: UUID) -> Workout? {
-        // One row by id — fetching the whole table to find it faulted every workout right at the
-        // moment the finish/summary screen is trying to present.
+    /// One row by id — fetching the whole table to find it faulted every workout right at the
+    /// moment the finish/summary screen is trying to present.
+    static func fetch(_ id: UUID, in context: ModelContext) -> Workout? {
         var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == id })
         descriptor.fetchLimit = 1
         return (try? context.fetch(descriptor))?.first

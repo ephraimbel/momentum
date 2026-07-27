@@ -197,6 +197,12 @@ final class FinishedWorkoutReader {
     func commit(_ mutate: (Workout) -> Void) -> Bool {
         guard let workout else { return false }
         mutate(workout)
+        // Re-dirty for sync. `SyncEngine` states the contract — "an edit clears `syncedAt` to
+        // re-sync" — but nothing implemented it, and the finish flow dismisses the live screen
+        // (waking Today's throttled sweep) BEFORE this editor appears: the un-named workout was
+        // routinely uploaded and stamped, so the title, notes, effort and sport correction the
+        // athlete then typed never left the device.
+        workout.syncedAt = nil
         do { try context.save(); return true } catch { return false }
     }
 

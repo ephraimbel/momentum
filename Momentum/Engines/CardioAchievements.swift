@@ -36,14 +36,26 @@ enum CardioAchievements {
 
         // Fastest benchmark windows — a RUNNING record only (a ride covers these distances far
         // faster and would corrupt the run PRs), and only distances actually covered.
-        if workout.type == .run {
-            let pts = samplePoints(gps)
+        if workout.type == .run, gps.distanceM >= 1_000 {   // shorter than the smallest benchmark → skip the scan
+            // `GPSDetail.routePoints` — the same engine-consistent replay the splits and the record
+            // book use. A raw haversine walk over the stored fixes (what this used to do) runs long
+            // by GPS jitter, so every benchmark window closed early and the "PR" was minutes fast.
+            let pts = gps.samplePoints(type: workout.type)
+            // Reduce each prior run ONCE. The comparison below runs over six benchmark distances,
+            // and deriving the points inside that loop replayed every previous run's samples six
+            // times — cheap-ish as a raw walk, but the replay is a Kalman pass over every fix, and
+            // this whole pass is main-actor work in the summary's `.task`. One pass per run.
+            let priorPoints: [(distanceM: Double, points: [CardioMetrics.SamplePoint])] =
+                prior.compactMap { w in
+                    guard let g = w.gps, g.distanceM >= 1_000 else { return nil }
+                    return (g.distanceM, g.samplePoints(type: w.type))
+                }
             for (meters, name) in [(1000.0, "1K"), (5000.0, "5K"), (10000.0, "10K"),
                                    (21_097.5, "half"), (42_195.0, "marathon"), (50_000.0, "50K")] {
                 guard gps.distanceM >= meters, let cur = CardioMetrics.fastestWindow(pts, distanceM: meters) else { continue }
-                let priorBest = prior.compactMap { w -> TimeInterval? in
-                    guard let g = w.gps, g.distanceM >= meters else { return nil }
-                    return CardioMetrics.fastestWindow(samplePoints(g), distanceM: meters)
+                let priorBest = priorPoints.compactMap { prior -> TimeInterval? in
+                    guard prior.distanceM >= meters else { return nil }
+                    return CardioMetrics.fastestWindow(prior.points, distanceM: meters)
                 }.min()
                 if let pb = priorBest, cur < pb - 0.5 {   // at least half a second faster
                     let prType: PRType? = switch meters {
@@ -78,18 +90,4 @@ enum CardioAchievements {
         return !all.contains { $0.type == workout.type && $0.startedAt < workout.startedAt && $0.gps != nil }
     }
 
-    /// Reduce accepted GPS samples to `(elapsed, cumulative distance)` — matches the summary's reducer.
-    private static func samplePoints(_ gps: GPSDetail) -> [CardioMetrics.SamplePoint] {
-        let accepted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-        guard let first = accepted.first else { return [] }
-        var pts: [CardioMetrics.SamplePoint] = []
-        var cumulative = 0.0
-        var prev: LocationSample?
-        for s in accepted {
-            if let p = prev { cumulative += Geo.distance(lat1: p.lat, lon1: p.lon, lat2: s.lat, lon2: s.lon) }
-            pts.append(.init(t: s.t.timeIntervalSince(first.t), cumulativeM: cumulative))
-            prev = s
-        }
-        return pts
-    }
 }

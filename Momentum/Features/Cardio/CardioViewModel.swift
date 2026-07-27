@@ -380,6 +380,11 @@ final class CardioViewModel {
         return max(0, end.timeIntervalSince(startedAt) - pausedTotalS)
     }
 
+    /// Wall-clock time since recording began, pauses INCLUDED — the workout's `elapsedS`, and the
+    /// window every Health read (HR series, time in zones) has to span. Distinct from `elapsed()`,
+    /// which is the moving time the athlete watches and every pace divides by.
+    func totalElapsed(at now: Date = Date()) -> TimeInterval { max(0, now.timeIntervalSince(startedAt)) }
+
     /// Elapsed time for structured timed steps — freezes only on MANUAL pause. A timed recovery keeps
     /// counting through GPS auto-pause (when you slow to a walk or stop during the recovery), so a guided
     /// interval never stalls waiting for movement.
@@ -421,7 +426,7 @@ final class CardioViewModel {
             t.skip(distanceM: distanceM, elapsedS: structuredElapsed())
             tracker = t
         }
-        await engine.finish(durationOverrideS: elapsed())
+        await engine.finish(durationOverrideS: elapsed(), elapsedOverrideS: totalElapsed())
         // Persist the run's average cadence + heart rate when the sensors produced readings.
         if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
         if let avgHR = RunSignals.mean(hrReadings) { await store.attachHR(avgHR) }
@@ -472,12 +477,16 @@ final class CardioViewModel {
                 let pairs = match.coordinates.map { [$0.latitude, $0.longitude] }
                 guard let routeData = try? JSONEncoder().encode(pairs) else { return }
                 await store.attachMatchedRoute(routeData)
-                let matchedStyle = await MapStyleOption.persisted
                 if let snapshot = await RouteSnapshotter.snapshot(
                     coordinates: match.coordinates, size: RouteSnapshotter.workoutTileSize,
                     styleURI: RouteSnapshotter.tileStyle,
                     insets: RouteSnapshotter.workoutTileInsets) {
-                    await store.attachSnapshot(snapshot, styleRaw: matchedStyle.rawValue)
+                    // No style stamp: matching lands seconds-to-minutes after finish, often AFTER the
+                    // athlete picked this run's basemap on the save screen. Re-reading the app-wide
+                    // style here overwrote that choice with the global one — the picker looked like
+                    // it hadn't stuck. The image itself is style-independent (always the clean tile
+                    // canvas), so leaving the stamp alone is both correct and sufficient.
+                    await store.attachSnapshot(snapshot)
                 }
             }
         }

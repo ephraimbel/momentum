@@ -130,6 +130,13 @@ final class LocationSample {
     var altitudeM: Double = 0
     var speedMS: Double = 0
     var accepted: Bool = true
+    /// Captured while the recording was PAUSED — manually or by auto-pause. The engine accrued
+    /// neither distance nor time for it, so no reader may either: the route skips it and the
+    /// split/PR reducer freezes its clock across the span (`GPSDetail.routePoints`). Deliberately
+    /// distinct from `accepted == false`, which means the accept gate rejected the fix (a spike, a
+    /// weak-signal reading) while the athlete *was* still moving and the clock must keep running.
+    /// Additive-only (defaults false, so pre-2026-07 rows read as "never paused").
+    var pausedSpan: Bool = false
 
     init() {}
 }

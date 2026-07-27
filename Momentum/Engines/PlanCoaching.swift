@@ -52,6 +52,34 @@ enum PlanCoaching {
         try? context.save()
     }
 
+    /// Credit the session the athlete **launched from the plan** — but only if the work they did
+    /// actually fulfils it.
+    ///
+    /// Tapping Start on today's 16 km long run and stopping at 1 km used to check that session off
+    /// outright: the launched branch skipped `PlanCredit` entirely, and a completed session is
+    /// skipped by missed-session reconciliation, so the week's marquee run silently disappeared from
+    /// the plan — the exact failure `PlanCredit` exists to prevent ("a false credit silently deletes
+    /// the athlete's key session"). Under-fulfilled now falls through to the same magnitude-aware
+    /// matching a free workout gets, so the effort can still credit a smaller session it *does*
+    /// cover; otherwise the prescription simply stays open and rolls forward. No shame either way —
+    /// the summary says plainly how much of it the run covered.
+    ///
+    /// A session with no measurable target (a strength day, an open-ended session) is completed by
+    /// any real workout, exactly as `PlanCredit.bestMatch` treats an untargeted candidate.
+    @discardableResult
+    static func creditLaunched(_ session: PlannedSession, with workout: Workout, to plan: TrainingPlan?,
+                               in context: ModelContext, calendar: Calendar = .current) -> PlannedSession? {
+        let candidate = PlanCredit.Candidate(targetDistanceM: session.targetDistanceM,
+                                             targetDurationS: session.targetDurationS)
+        let ratio = PlanCredit.fulfillment(of: candidate, distanceM: workout.gps?.distanceM ?? 0,
+                                           durationS: workout.durationS)
+        if ratio == nil || ratio! >= PlanCredit.minFulfillment {
+            markComplete(session, with: workout, in: context)
+            return session
+        }
+        return creditWorkout(workout, to: plan, in: context, calendar: calendar)
+    }
+
     /// Credit a free workout toward today's matching planned session, if still open. Magnitude-aware
     /// (`PlanCredit`): the workout must plausibly *fulfill* the prescription — a short recovery jog
     /// leaves the day's long run open instead of silently completing it.

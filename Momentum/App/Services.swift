@@ -115,6 +115,10 @@ protocol HealthServing: AnyObject {
     /// De-duplicated; skips our own writes. Returns the number newly imported.
     @discardableResult
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int
+    /// The automatic, throttled version of the above — called on the app's normal rhythm so
+    /// wearable workouts arrive on their own instead of waiting for a Settings button.
+    @discardableResult
+    func importRecentIfDue(into context: ModelContext, now: Date, defaults: UserDefaults) async -> Int
     /// Estimate the athlete's current running baseline (fitness + load) from their recent Health run
     /// history — the onboarding "it already understands me" import. nil when there isn't enough.
     func runningBaseline() async -> BaselineEstimator.RunningBaseline?

@@ -85,7 +85,10 @@ final class CoreRunFlowUITests: XCTestCase {
         else { app.buttons["Finish"].firstMatch.tap() }   // fallback if not an action sheet
 
         // ── 7. Save / edit page ───────────────────────────────────────────────────────
-        XCTAssertTrue(app.navigationBars["Save run"].waitForExistence(timeout: 15), "Save screen didn't appear after finishing.")
+        // Titled with the discipline, not "Save run": the recording is already on disk by the time
+        // this appears, so a filing verb described work the athlete wasn't doing. This assertion
+        // still said "Save run" and had been failing the whole end-to-end guard ever since.
+        XCTAssertTrue(app.navigationBars["Run"].waitForExistence(timeout: 15), "Save screen didn't appear after finishing.")
         sleep(2)
         attach("5-save-screen")           // top of the page — hero route map
 
@@ -123,12 +126,24 @@ final class CoreRunFlowUITests: XCTestCase {
             app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Workout visibility")).firstMatch.exists,
             "The visibility control should be gone from the save page (social is back-burnered).")
 
-        // 7d. Save.
-        let save = app.navigationBars.buttons["Save"].firstMatch
+        // 7d. Save — the confirmation action is "Done" (it was renamed with the title above).
+        let save = app.navigationBars.buttons["Done"].firstMatch
         if save.waitForExistence(timeout: 3) { save.tap() }
-        else { app.buttons["Save"].firstMatch.tap() }
+        else { app.buttons["Done"].firstMatch.tap() }
         sleep(3)                          // completion celebration auto-dismisses (~1.4s) → back to app
         attach("8-after-save")
+
+        // 7e. Tap through any award unlocks the run earned. They present at the root the moment the
+        // save cover clears, and they own the whole screen until dismissed — exactly what a real
+        // athlete taps through, and what the rest of this test has to get past before it can see
+        // the tab bar at all.
+        var awardTaps = 0
+        while app.staticTexts["AWARD EARNED"].waitForExistence(timeout: 3), awardTaps < 8 {
+            app.staticTexts["AWARD EARNED"].tap()
+            awardTaps += 1
+            sleep(1)
+        }
+        if awardTaps > 0 { attach("8b-after-awards") }
 
         // ── 8. There is NO Community tab — the bar is Today · Plan · Progress · Fuel · Profile.
         XCTAssertFalse(app.tabBars.buttons["Community"].exists,

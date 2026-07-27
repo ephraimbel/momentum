@@ -905,4 +905,112 @@ struct PlanCoachingTests {
         #expect(Formatters.raceCountdown(days: 84) == "12 weeks to go")
         #expect(Formatters.raceCountdown(days: 85) == "13 weeks to go")
     }
+
+    // MARK: - Crediting the session the athlete LAUNCHED (`creditLaunched`)
+
+    /// The regression: starting today's long run from the plan and stopping a kilometre in used to
+    /// check the session off outright — the launched path skipped `PlanCredit` entirely — and a
+    /// completed session is skipped by missed-session reconciliation, so the week's marquee run
+    /// silently vanished from the plan.
+    @Test func launchedSessionIsNotCompletedByAFractionOfIt() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let long = PlannedSession()
+        long.date = Calendar.current.startOfDay(for: Date())
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16_000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let bailed = Workout()
+        bailed.type = .run
+        bailed.startedAt = Date()
+        bailed.durationS = 380
+        let gps = GPSDetail()
+        gps.distanceM = 1_200                 // 7.5% of the prescription
+        bailed.gps = gps
+        ctx.insert(bailed)
+
+        let credited = PlanCoaching.creditLaunched(long, with: bailed, to: plan, in: ctx)
+        #expect(credited == nil)
+        #expect(long.status == .planned, "an under-fulfilled session stays on the board")
+        #expect(long.completedWorkout == nil)
+        #expect(bailed.plannedSession == nil)
+    }
+
+    @Test func launchedSessionIsCompletedWhenTheWorkIsActuallyDone() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let long = PlannedSession()
+        long.date = Calendar.current.startOfDay(for: Date())
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16_000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let run = Workout()
+        run.type = .run
+        run.startedAt = Date()
+        run.durationS = 5_400
+        let gps = GPSDetail()
+        gps.distanceM = 15_800                // just under, comfortably past the 70% bar
+        run.gps = gps
+        ctx.insert(run)
+
+        #expect(PlanCoaching.creditLaunched(long, with: run, to: plan, in: ctx) != nil)
+        #expect(long.status == .completed)
+        #expect(run.plannedSession?.id == long.id)
+    }
+
+    /// A session with no measurable target (a strength day) is completed by any real session —
+    /// exactly as `PlanCredit.bestMatch` treats an untargeted candidate. Unchanged behaviour.
+    @Test func launchedSessionWithoutATargetStillCompletes() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let lift = PlannedSession()
+        lift.date = Calendar.current.startOfDay(for: Date())
+        lift.discipline = .strength
+        lift.status = .planned
+        let plan = makePlan(in: ctx, sessions: [lift])
+
+        let workout = Workout()
+        workout.type = .strength
+        workout.startedAt = Date()
+        workout.durationS = 2_700
+        ctx.insert(workout)
+
+        #expect(PlanCoaching.creditLaunched(lift, with: workout, to: plan, in: ctx) != nil)
+        #expect(lift.status == .completed)
+    }
+
+    /// Falling short of the launched session still credits a smaller open one it genuinely covers —
+    /// the athlete who set out for the long run and ran the easy run gets the easy run.
+    @Test func shortOfTheLaunchedSessionCreditsOneItDoesFulfil() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let today = Calendar.current.startOfDay(for: Date())
+        let long = PlannedSession()
+        long.date = today; long.discipline = .running; long.runType = .long
+        long.targetDistanceM = 16_000; long.status = .planned
+        let easy = PlannedSession()
+        easy.date = today; easy.discipline = .running; easy.runType = .easy
+        easy.targetDistanceM = 5_000; easy.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long, easy])
+
+        let run = Workout()
+        run.type = .run
+        run.startedAt = Date()
+        run.durationS = 1_800
+        let gps = GPSDetail()
+        gps.distanceM = 5_100
+        run.gps = gps
+        ctx.insert(run)
+
+        let credited = PlanCoaching.creditLaunched(long, with: run, to: plan, in: ctx)
+        #expect(credited?.id == easy.id)
+        #expect(easy.status == .completed)
+        #expect(long.status == .planned)
+    }
 }

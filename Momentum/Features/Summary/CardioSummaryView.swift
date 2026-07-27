@@ -464,19 +464,7 @@ struct CardioSummaryContent: View {
     }
 
     private func samplePoints(_ gps: GPSDetail) -> [CardioMetrics.SamplePoint] {
-        let accepted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-        guard let first = accepted.first else { return [] }
-        var pts: [CardioMetrics.SamplePoint] = []
-        var cumulative = 0.0
-        var prev: LocationSample?
-        for s in accepted {
-            if let p = prev {
-                cumulative += Geo.distance(lat1: p.lat, lon1: p.lon, lat2: s.lat, lon2: s.lon)
-            }
-            pts.append(.init(t: s.t.timeIntervalSince(first.t), cumulativeM: cumulative))
-            prev = s
-        }
-        return pts
+        gps.samplePoints(type: workout.type)
     }
 }
 

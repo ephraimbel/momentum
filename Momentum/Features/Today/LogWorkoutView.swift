@@ -8,6 +8,7 @@ import SwiftData
 struct LogWorkoutView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(Services.self) private var services   // records → Health mirror → funnel, same as a tracked save
     @Query private var library: [Exercise]
     @Query private var profiles: [UserProfile]
 
@@ -328,6 +329,15 @@ struct LogWorkoutView: View {
             return
         }
         PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
+        // …and it earns records, reaches Apple Health, and counts in the funnel like a tracked one.
+        // None of that used to happen here, so a hand-logged personal best simply never existed.
+        RecordsBook.record(w, in: context)
+        services.analytics.log(.workoutCompleted(type: w.type.rawValue))
+        if w.durationS >= 60 || (w.gps?.distanceM ?? 0) > 0 {
+            let saved = w
+            Task { await services.health.save(saved) }
+        }
+        AppReview.recordWorkoutSaved()
         // A logged workout moves streak/session/distance awards like a tracked one (deferred).
         AwardsBook.syncSoon()
         Haptics.success()

@@ -167,4 +167,93 @@ struct DurabilityTests {
         #expect(pace == 0 && pace.isFinite)
         ActiveWorkoutMarker.clear()
     }
+
+    /// Moving time and wall time are different numbers the moment anyone pauses, and every Health
+    /// read spans `startedAt + max(elapsedS, durationS)`. Storing the moving time in BOTH cut the
+    /// HR series and the time-in-zones histogram short by the length of the athlete's stops.
+    @Test func finishStoresWallTimeAsElapsedAndMovingTimeAsDuration() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        await store.beginWorkout(type: .run, startedAt: Date(timeIntervalSinceReferenceDate: 0))
+        // 50 minutes moving, 8 minutes of it standing at lights ⇒ 58 minutes on the wall.
+        await store.finishWorkout(distanceM: 10_000, durationS: 3_000, elapsedS: 3_480, elevationGainM: 0)
+
+        let fresh = ModelContext(container)
+        let w = try #require(try fresh.fetch(FetchDescriptor<Workout>()).first)
+        #expect(w.durationS == 3_000)
+        #expect(w.elapsedS == 3_480)
+        // Pace still divides by MOVING time — the number the athlete watched.
+        #expect(w.gps?.avgPaceSPerKm == 300)
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// `elapsedS` can never read shorter than the moving time, whatever a caller passes.
+    @Test func elapsedNeverUndercutsDuration() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        await store.beginWorkout(type: .run, startedAt: Date(timeIntervalSinceReferenceDate: 0))
+        await store.finishWorkout(distanceM: 5_000, durationS: 1_500, elevationGainM: 0)  // no elapsed given
+        let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
+        #expect(all.first?.elapsedS == 1_500)
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// Splits are written at finish. Nothing in the app ever created a `Split` row, so the AI read
+    /// was handed an empty split list on every run and the coach could never describe how one was
+    /// paced.
+    @Test func finishPersistsKilometreSplits() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        await store.beginWorkout(type: .run, startedAt: start)
+
+        // A clean 2.5 km at 3 m/s: one fix a second, straight north, tight accuracy.
+        let mPerDegLat = 111_320.0
+        for i in 0...833 {
+            await store.persistSample(
+                .init(t: start.addingTimeInterval(Double(i)), lat: 37.79 + (Double(i) * 3.0) / mPerDegLat,
+                      lon: -122.40, accuracyM: 5, speedMS: 3, altitudeM: 0),
+                accepted: true, pausedSpan: false)
+        }
+        await store.finishWorkout(distanceM: 2_499, durationS: 833, elapsedS: 833, elevationGainM: 0)
+
+        let fresh = ModelContext(container)
+        let w = try #require(try fresh.fetch(FetchDescriptor<Workout>()).first)
+        let splits = try #require(w.gps?.splits).sorted { $0.index < $1.index }
+        #expect(splits.count == 3)                       // 2 full km + a partial tail
+        #expect(splits.filter { !$0.isPartial }.count == 2)
+        // 1 km at 3 m/s ⇒ ~333 s per full split.
+        for split in splits where !split.isPartial {
+            #expect(abs(split.durationS - 333) < 8, "split \(split.index) took \(split.durationS)s")
+        }
+        ActiveWorkoutMarker.clear()
+    }
+
+    /// A paused fix is stored, but never as accepted: the engine counted nothing for it, and the
+    /// saved route + every reducer must agree. Auto-paused fixes used to be stored accepted, so the
+    /// traffic-light wander landed in the route and in the splits.
+    @Test func pausedFixesArePersistedButNotAccepted() async throws {
+        ActiveWorkoutMarker.clear()
+        let container = try makeContainer()
+        let store = GPSWorkoutStore(modelContainer: container)
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        await store.beginWorkout(type: .run, startedAt: start)
+        await store.persistSample(.init(t: start, lat: 37.79, lon: -122.40, accuracyM: 5,
+                                        speedMS: 3, altitudeM: 0), accepted: true, pausedSpan: false)
+        await store.persistSample(.init(t: start.addingTimeInterval(1), lat: 37.7901, lon: -122.40,
+                                        accuracyM: 5, speedMS: 0, altitudeM: 0),
+                                  accepted: false, pausedSpan: true)
+
+        let pending = try #require(WorkoutRecovery.pendingWorkout(in: container.mainContext))
+        let samples = try #require(pending.gps?.samples).sorted { $0.t < $1.t }
+        #expect(samples.count == 2)
+        #expect(samples[0].accepted && !samples[0].pausedSpan)
+        #expect(!samples[1].accepted && samples[1].pausedSpan)
+        // The route the athlete sees skips it entirely.
+        #expect(pending.gps?.routeCoordinates(type: .run).count == 1)
+        ActiveWorkoutMarker.clear()
+    }
 }

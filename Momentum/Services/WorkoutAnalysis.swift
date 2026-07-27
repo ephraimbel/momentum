@@ -36,9 +36,13 @@ struct WorkoutDigest: Codable, Sendable {
         durationS = w.durationS
         perceivedEffort = w.perceivedEffort
         if let g = w.gps, g.distanceM > 0 {
+            // `splitResults` — persisted rows when the run has them, computed from the samples when
+            // it doesn't. Reading the relationship directly handed the model an empty list on EVERY
+            // run, because nothing in the app ever wrote a `Split`.
             gps = GPSDigest(distanceM: g.distanceM, avgPaceSPerKm: g.avgPaceSPerKm,
                             avgSpeedMS: g.avgSpeedMS, elevationGainM: g.elevationGainM, avgHR: g.avgHR,
-                            splitSecondsPerUnit: g.splits.sorted { $0.index < $1.index }.map(\.durationS))
+                            splitSecondsPerUnit: g.splitResults(type: w.type)
+                                .filter { !$0.isPartial }.map(\.durationS))
         } else { gps = nil }
         if w.type.isStrengthStyle, let s = w.strength {
             var tops: [StrengthDigest.TopSet] = []

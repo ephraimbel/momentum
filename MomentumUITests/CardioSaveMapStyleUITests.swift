@@ -23,7 +23,10 @@ final class CardioSaveMapStyleUITests: XCTestCase {
         }
         app.launch()
 
-        let saveButton = app.buttons["Save"]
+        // "Done", not "Save": the confirm action was renamed with the screen's title (the recording
+        // is already on disk by the time this appears). This assertion still said "Save", so the
+        // whole map-style guard had been failing on its first line.
+        let saveButton = app.buttons["Done"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 20), "Save screen didn't open.")
 
         // The map-style row: free styles + Pro styles present.
@@ -52,7 +55,7 @@ final class CardioSaveMapStyleUITests: XCTestCase {
 
         // Save completes the flow: the celebration auto-dismisses too fast for a reliable text
         // assert, so completion = the editor going away.
-        app.buttons["Save"].tap()
+        app.buttons["Done"].tap()
         XCTAssertTrue(saveButton.waitForNonExistence(timeout: 15), "Save didn't complete.")
     }
 

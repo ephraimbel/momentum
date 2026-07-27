@@ -17,6 +17,7 @@ struct LogActivityView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(Services.self) private var services   // records → Health mirror → funnel, same as a tracked save
     @Query private var profiles: [UserProfile]
     @Query private var library: [Exercise]
 
@@ -747,7 +748,19 @@ struct LogActivityView: View {
         }
         for w in workouts {
             PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
+            // A logged workout is a real workout — so it earns records, reaches Apple Health, and
+            // counts in the funnel exactly like a tracked one. It did none of that: log your
+            // longest-ever run by hand and the record book never heard about it (the history
+            // backfill is one-shot behind a version flag, so nothing rescued it later) and Health
+            // never saw it either.
+            RecordsBook.record(w, in: context)
+            services.analytics.log(.workoutCompleted(type: w.type.rawValue))
+            if w.durationS >= 60 || (w.gps?.distanceM ?? 0) > 0 {
+                let saved = w
+                Task { await services.health.save(saved) }
+            }
         }
+        AppReview.recordWorkoutSaved()   // a kept workout, same as a tracked save
         AwardsBook.syncSoon()
         // Crown it: the completion beat draws over the composer, then dismisses. (It fires its own
         // celebration haptic, so no success tick here.) Drop the keyboard first so nothing slides

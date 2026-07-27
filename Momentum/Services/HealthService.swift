@@ -10,6 +10,14 @@ final class HealthService: HealthServing {
     private let store = HKHealthStore()
     private static let savedKey = "com.momentum.health.savedWorkoutIDs"
     private static let importedKey = "com.momentum.health.importedWorkoutIDs"
+    private static let lastAutoImportKey = "com.momentum.health.lastAutoImport"
+    /// How often the background sweep may run. Health is the aggregator — Watch/Garmin/Strava
+    /// mirror in continuously — but a full scan per app-open would be wasteful.
+    static let autoImportIntervalS: TimeInterval = 15 * 60
+    /// How far back each incremental sweep re-reads. Devices sync late (a watch left on the
+    /// charger, a Garmin that uploads on Wi-Fi), so the window overlaps generously; the persisted
+    /// UUID ledger makes re-reading free.
+    static let autoImportOverlapS: TimeInterval = 3 * 86_400
 
     /// Forget the save/import dedupe ledgers — called by the data wipes. Without this, a
     /// "Delete all data" reset left the sets in UserDefaults and a later "Import workouts"
@@ -17,6 +25,7 @@ final class HealthService: HealthServing {
     static func resetDedupe(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: savedKey)
         defaults.removeObject(forKey: importedKey)
+        defaults.removeObject(forKey: lastAutoImportKey)   // else the post-wipe sweep waits out its throttle
     }
 
     /// Types we write. Reads (HR, resting HR, body mass, steps) are requested so a later slice can
@@ -292,6 +301,31 @@ final class HealthService: HealthServing {
             }
         }
         return committed
+    }
+
+    /// The automatic sweep: pull anything new out of Health on the app's normal rhythm, throttled.
+    ///
+    /// Importing was wired to exactly two buttons in Settings, so an Apple Watch or Garmin run only
+    /// ever reached the athlete's journal if they went and tapped "Import workouts" — by hand, every
+    /// time — and an athlete who connected Health during *onboarding* (the primary path, which
+    /// imports body metrics only) never imported a single workout in the app's life. For a product
+    /// whose one wearable integration is HealthKit, the wearable half of history simply never
+    /// arrived. Cheap by construction: throttled, incremental after the first pass, and idempotent
+    /// through the persisted UUID + overlap ledgers.
+    @discardableResult
+    func importRecentIfDue(into context: ModelContext, now: Date = Date(),
+                           defaults: UserDefaults = .standard) async -> Int {
+        guard isAuthorized else { return 0 }
+        let last = defaults.object(forKey: Self.lastAutoImportKey) as? Date
+        if let last, now.timeIntervalSince(last) < Self.autoImportIntervalS { return 0 }
+        // First sweep reads a year (the athlete's existing device history); later ones read only
+        // since the last sweep, overlapped, so a late-syncing device can't fall through a gap.
+        let since = last.map { $0.addingTimeInterval(-Self.autoImportOverlapS) }
+            ?? Calendar.current.date(byAdding: .year, value: -1, to: now)
+        let count = await importExternalWorkouts(into: context, since: since)
+        // Stamp AFTER the pass so a crash mid-import simply retries the same window.
+        defaults.set(now, forKey: Self.lastAutoImportKey)
+        return count
     }
 
     /// Commit imported rows, THEN record that they were imported — never the other way round.

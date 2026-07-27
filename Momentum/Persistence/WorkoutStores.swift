@@ -24,7 +24,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         ActiveWorkoutMarker.set(workout.id)
     }
 
-    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) {
+    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool, pausedSpan: Bool = false) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         let sample = LocationSample()
         sample.t = fix.t
@@ -34,6 +34,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         sample.altitudeM = fix.altitudeM
         sample.speedMS = fix.speedMS
         sample.accepted = accepted
+        sample.pausedSpan = pausedSpan
         detail.samples.append(sample)
         try? modelContext.save()
     }
@@ -47,7 +48,8 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) {
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elapsedS: TimeInterval = 0,
+                       elevationGainM: Double) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self],
               let workoutID, let workout = self[workoutID, as: Workout.self] else { return }
         detail.distanceM = distanceM
@@ -60,9 +62,29 @@ actor GPSWorkoutStore: GPSWorkoutSink {
             detail.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS)
         }
         workout.durationS = durationS
-        workout.elapsedS = durationS
+        // Moving time and wall time are different numbers the moment anyone pauses. Storing the
+        // moving time in BOTH cut every Health window (`startedAt + max(elapsedS, durationS)`) short
+        // by the length of the pauses — the tail of the HR chart and the time-in-zones histogram
+        // simply went missing on any run with stops, which is most of them.
+        workout.elapsedS = max(elapsedS, durationS)
+        persistSplits(detail)
         try? modelContext.save()
         ActiveWorkoutMarker.clear()
+    }
+
+    /// Write the run's whole-kilometre splits (SI, `CardioMetrics.splits` over the canonical replay).
+    /// The relationship existed and was never populated by anything, so the AI read was handed an
+    /// empty split list on every run and the coach's negative-split call could never fire.
+    private func persistSplits(_ detail: GPSDetail) {
+        guard type.isGPS, detail.splits.isEmpty else { return }
+        for split in detail.kilometreSplits(type: type) {
+            let row = Split()
+            row.index = split.index
+            row.distanceM = split.distanceM
+            row.durationS = split.durationS
+            row.isPartial = split.isPartial
+            detail.splits.append(row)
+        }
     }
 
     /// Attach the rendered route snapshot (PRD §8.5) to the finished workout's GPS detail, stamping

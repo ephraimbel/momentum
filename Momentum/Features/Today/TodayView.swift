@@ -443,6 +443,11 @@ struct TodayView: View {
         }
         // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
         Task { await services.sync.sync(workouts, in: context) }
+        // Pull anything the athlete's devices mirrored into Apple Health since the last sweep —
+        // Watch runs, Garmin rides, a Strava re-sync. Self-throttled (15 min) and incremental, so
+        // this is a no-op on almost every pass; without it wearable workouts only ever arrived when
+        // someone tapped a button in Settings.
+        Task { await services.health.importRecentIfDue(into: context, now: Date(), defaults: .standard) }
         // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
         // load in the danger zone + the body agreeing forces a real cutback week (throttled to
         // one/week); otherwise two warning signs just ease *today's* quality session.

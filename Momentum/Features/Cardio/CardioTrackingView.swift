@@ -25,7 +25,16 @@ struct CardioTrackingView: View {
 
     enum Phase { case acquiring, countdown, tracking }
 
-    @Query private var workouts: [Workout]
+    /// The newest few workouts, ONLY to frame the map on the athlete's last route until a live fix
+    /// lands. Unbounded and unsorted, this fetched the entire history and re-sorted it in memory on
+    /// every body pass — and body re-evaluates through the whole recording, because the row being
+    /// captured is itself in the result set.
+    static var recentRoutes: FetchDescriptor<Workout> {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        d.fetchLimit = 5
+        return d
+    }
+    @Query(CardioTrackingView.recentRoutes) private var workouts: [Workout]
     @Environment(\.colorScheme) private var colorScheme
     @Query private var profiles: [UserProfile]   // for max HR → live zone banding
     @State private var phase: Phase = .acquiring
@@ -99,9 +108,12 @@ struct CardioTrackingView: View {
     /// Most recent prior route's location, used to frame the map until a live fix arrives — so we
     /// never show the whole country while waiting for GPS.
     private var lastKnownCoordinate: CLLocationCoordinate2D? {
-        workouts
-            .sorted { $0.startedAt > $1.startedAt }
+        // Never the recording in progress: its `samples` array is the one growing under us, and
+        // faulting it per body pass is exactly the work this lookup must not do.
+        let live = ActiveWorkoutMarker.pendingID
+        return workouts
             .lazy
+            .filter { $0.id != live }
             .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
             .first
             .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }

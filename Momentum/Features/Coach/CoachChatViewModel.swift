@@ -581,9 +581,11 @@ final class CoachChatViewModel {
         guard let w = focused ?? workouts.max(by: { $0.startedAt < $1.startedAt }) else { return nil }
 
         var splitNote: String?
-        if let splits = w.gps?.splits.filter({ !$0.isPartial }).sorted(by: { $0.index < $1.index }),
+        // `splitResults`, not the raw relationship: nothing ever wrote a `Split` row, so this gate
+        // never opened and the coach could not once mention how a run was paced.
+        if let splits = w.gps?.splitResults(type: w.type).filter({ !$0.isPartial }),
            splits.count >= 4 {
-            func pace(_ list: ArraySlice<Split>) -> Double {
+            func pace(_ list: ArraySlice<CardioMetrics.SplitResult>) -> Double {
                 let d = list.reduce(0.0) { $0 + $1.distanceM }, t = list.reduce(0.0) { $0 + $1.durationS }
                 return d > 0 ? t / (d / 1000) : 0
             }

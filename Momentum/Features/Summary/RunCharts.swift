@@ -45,19 +45,14 @@ struct RunAnalysisSection: View {
         return (0..<max).map { pts[Int((Double($0) * stride).rounded())] }
     }
 
-    private static func compute(gps: GPSDetail, health: [(date: Date, bpm: Double)], unitMeters: Double) -> Derived {
-        // Points: accepted fixes reduced to cumulative distance + altitude + instantaneous pace.
-        let accepted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-        var pts: [Pt] = []
-        if let first = accepted.first {
-            var cumulative = 0.0
-            var prev: LocationSample?
-            for s in accepted {
-                if let p = prev { cumulative += Geo.distance(lat1: p.lat, lon1: p.lon, lat2: s.lat, lon2: s.lon) }
-                let pace = s.speedMS > 0.4 ? 1000 / s.speedMS : 0   // near-stopped → 0 = "no pace here"
-                pts.append(Pt(t: s.t.timeIntervalSince(first.t), distanceM: cumulative, altitudeM: s.altitudeM, paceSPerKm: pace))
-                prev = s
-            }
+    private static func compute(gps: GPSDetail, type: WorkoutType,
+                                health: [(date: Date, bpm: Double)], unitMeters: Double) -> Derived {
+        // Points: the canonical engine-consistent replay (`GPSDetail.routePoints`) — moving seconds
+        // and the same distance the headline reports, so these charts and the splits below can no
+        // longer disagree with the run they describe.
+        let pts: [Pt] = gps.routePoints(type: type).map {
+            Pt(t: $0.t, distanceM: $0.cumulativeM, altitudeM: $0.altitudeM,
+               paceSPerKm: $0.speedMS > 0.4 ? 1000 / $0.speedMS : 0)   // near-stopped → 0 = "no pace here"
         }
         // HR: prefer our own live series; fall back to Apple Health for Watch/imported runs.
         let local = gps.hrSamples.filter { $0.bpm > 0 }.sorted { $0.t < $1.t }.map { (date: $0.t, bpm: Double($0.bpm)) }
@@ -100,7 +95,7 @@ struct RunAnalysisSection: View {
             }
         }
         .task(id: derivedKey) {
-            derived = Self.compute(gps: gps, health: healthHRSeries, unitMeters: unitMeters)
+            derived = Self.compute(gps: gps, type: type, health: healthHRSeries, unitMeters: unitMeters)
         }
     }
 

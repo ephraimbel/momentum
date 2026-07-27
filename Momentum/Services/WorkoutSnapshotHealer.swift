@@ -89,6 +89,13 @@ enum WorkoutSnapshotHealer {
     /// image; on failure the previous snapshot is kept and the tile heals later.
     static func rerender(_ workout: Workout, style: MapStyleOption, context: ModelContext) async {
         guard let gps = workout.gps else { return }
+        let id = workout.id
+        // Same in-flight guard as `healIfNeeded`: the save screen's style change and a tile
+        // appearing can both ask for the same workout, and two engines rendering one row raced to
+        // write it.
+        guard !inFlight.contains(id) else { return }
+        inFlight.insert(id)
+        defer { inFlight.remove(id) }
         let coords = gps.routeCoordinates(type: workout.type)
         guard coords.count > 1 else { return }
         while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
