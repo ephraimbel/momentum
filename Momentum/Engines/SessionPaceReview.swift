@@ -68,16 +68,16 @@ enum SessionPaceReview {
         switch verdict {
         case .onPoint:
             return ("Right on your targets",
-                    "You ran the prescription as written — these paces fit you right now, so the plan holds steady.")
+                    "You ran the prescription as written. These paces fit you right now, so we hold them.")
         case .ahead:
             return ("Ahead of your targets",
-                    "You averaged \(meanText) faster than prescribed. Strong sign — keep easy days easy, and your plan paces will step up as this holds.")
+                    "You averaged \(meanText) faster than prescribed. Keep your easy days easy and these targets move up on their own.")
         case .review:
             return ("Targets ran a touch hot",
-                    "You averaged \(meanText) slower than prescribed. One session is just one session — but I can ease your future paces so the reps land the way they should.")
+                    "You averaged \(meanText) slower than prescribed. One session is one session. If you want, I'll ease the targets so the reps land right.")
         case .variable:
             return ("Uneven reps",
-                    "Your reps swung \(spreadText) apart. Even pacing beats fast starts — try running the first rep like you want to run the last.")
+                    "Your reps swung \(spreadText) apart. Run the first one like you want to run the last.")
         }
     }
 }

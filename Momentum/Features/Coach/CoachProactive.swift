@@ -193,7 +193,7 @@ enum CoachProactive {
 
         let card = CoachCardPayload(kind: .easeWeek, label: "Ease this week")
         context.insert(ChatMessage(role: .coach,
-            text: CoachResponder.deDash("A week of low recovery against normal load — worth easing before it costs you."),
+            text: CoachResponder.deDash("A week of low recovery against a normal load. Worth easing before it costs you."),
             createdAt: today, card: card))
         try? context.save()
         AppNotification.post(kind: .coaching, title: "Worth easing this week",
@@ -253,7 +253,7 @@ enum CoachProactive {
         let weekWord = todayStart == comingWeek.start ? "This week" : "Next week"
         let card = CoachCardPayload(kind: .easeWeek, label: "Trim ~15%")
         context.insert(ChatMessage(role: .coach,
-            text: CoachResponder.deDash("\(weekWord) is planned at ~\(String(format: "%.1f", ratio))× what you've actually been doing — trim it to fit?"),
+            text: CoachResponder.deDash("\(weekWord) is planned at ~\(String(format: "%.1f", ratio))× what you've actually been doing . Want me to trim it to fit?"),
             createdAt: today, card: card))
         try? context.save()
         AppNotification.post(kind: .coaching, title: "\(weekWord) is planned heavy",

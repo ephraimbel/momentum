@@ -11,6 +11,17 @@ struct WorkoutRead: Sendable, Equatable {
 
 /// Deterministic per-discipline reads (PRD §8.8 fallback). These render instantly so the moment
 /// never blocks; the server LLM, when configured, can replace `narrative` with a richer one.
+///
+/// **How the coach talks here** (the same rules the server prompt carries, so the two voices are one):
+/// - Lead with the number the athlete just earned, in the words they'd use. "8.0 km at 5:14 pace",
+///   not "Run of 8.0 km at 5:14 /km".
+/// - No trailing appositive. ", a strong top end" / ", right on track" / ", base is building" is the
+///   loudest tell in machine writing: a clause bolted on to sound like a conclusion. Say it as a
+///   sentence or don't say it.
+/// - No filler praise. "Nice work, saved." and "Every step counts." are what something with nothing
+///   to say says. A coach who has nothing to add stops talking, and the numbers are on screen anyway.
+/// - Short sentences. Fragments are fine. Contractions are fine. That's how people speak.
+/// - Never an em dash. `CoachVoiceTests` fails the build if one appears in any of these strings.
 enum WorkoutReadTemplates {
 
     static func read(for workout: Workout, planned: Bool, weightUnit: WeightUnit = .default(),
@@ -32,8 +43,10 @@ enum WorkoutReadTemplates {
     private static func timed(_ workout: Workout, planned: Bool) -> WorkoutRead {
         let mins = Int((workout.durationS / 60).rounded())
         let sport = workout.type.title
-        var narrative = mins > 0 ? "\(sport), \(mins) min." : "\(sport) logged."
-        narrative += planned ? " That's today's session ✓." : " Nice work, saved."
+        var narrative = mins > 0 ? "\(sport), \(mins) minutes." : "\(sport) logged."
+        // Nothing else is known about a timed sport, so nothing else gets said. The old tail
+        // ("Nice work, saved.") was the sound of filling a silence.
+        if planned { narrative += " That's today's session done." }
         return WorkoutRead(narrative: narrative, insights: [], planAdjustment: nil)
     }
 
@@ -41,7 +54,9 @@ enum WorkoutReadTemplates {
 
     private static func strength(_ workout: Workout, weightUnit: WeightUnit, planned: Bool) -> WorkoutRead {
         guard let session = workout.strength else {
-            return WorkoutRead(narrative: "Session saved. Keep stacking days.", insights: [], planAdjustment: nil)
+            // Coaching, not filler: it says what to do next time to get more back.
+            return WorkoutRead(narrative: "Logged. Add your sets next time and I'll track the numbers.",
+                               insights: [], planAdjustment: nil)
         }
         let volume = weightUnit == .lb ? session.totalVolumeKg * Formatters.lbPerKg : session.totalVolumeKg
         let unit = weightUnit == .lb ? "lb" : "kg"
@@ -56,13 +71,13 @@ enum WorkoutReadTemplates {
             }
         }
 
-        // Lead with the concrete fact (the data-anchored line), then the read, then the plan tie-in —
-        // a specific opener earns trust where generic praise ("Strong work.") reads as filler (research).
+        // Lead with the concrete fact. A specific opener earns trust where generic praise reads as
+        // filler, and the top set is named the way lifters say it out loud: "80 kg for 5".
         var narrative = "\(Int(volume)) \(unit) across \(session.totalSets) sets."
         if bestE1RM > 0 {
-            narrative += " \(bestName) topped \(Formatters.weight(kg: bestW, unit: weightUnit)) × \(bestReps), a strong top end."
+            narrative += " Best set: \(bestName) at \(Formatters.weight(kg: bestW, unit: weightUnit)) for \(bestReps)."
         }
-        narrative += planned ? " Counts toward today's plan ✓, right on track." : " Logged and saved."
+        if planned { narrative += " That's today's plan session done." }
 
         var insights = [WorkoutRead.Insight(label: "Volume", value: "\(Int(volume)) \(unit)", note: "")]
         if bestE1RM > 0 {
@@ -75,28 +90,32 @@ enum WorkoutReadTemplates {
 
     private static func cardio(_ workout: Workout, distanceUnit: DistanceUnit, planned: Bool) -> WorkoutRead {
         guard let gps = workout.gps, gps.distanceM > 0 else {
-            return WorkoutRead(narrative: "Session saved. Every step counts.", insights: [], planAdjustment: nil)
+            return WorkoutRead(narrative: "Logged. No distance on this one, so I'm going by time.",
+                               insights: [], planAdjustment: nil)
         }
         let dist = Formatters.distance(meters: gps.distanceM, unit: distanceUnit)
-        let typeWord = (workout.type == .ride) ? "Ride" : (workout.type == .walk ? "Walk" : "Run")
-        let metric: String
-        if workout.type == .ride {
+        // "8.0 km at 5:14 pace." is how an athlete says it. "Run of 8.0 km at 5:14 /km." is how a
+        // form says it: the sport is already obvious from the pace, and the of-construction is
+        // stilted in speech.
+        var narrative: String
+        switch workout.type {
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide:
             let speed = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
-            metric = "at \(Formatters.speed(ms: speed, unit: distanceUnit))"
-        } else {
+            narrative = "\(dist) at \(Formatters.speed(ms: speed, unit: distanceUnit))."
+        case .walk, .hike:
+            narrative = "\(dist) on foot."
+        default:
             let pace = workout.durationS > 0 ? workout.durationS / (gps.distanceM / 1000) : 0
-            metric = "at \(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
+            // No trailing "pace": the formatter already says "/km", and "at 5:14 /km pace" is the
+            // kind of doubled-up phrase nobody says out loud.
+            narrative = "\(dist) at \(Formatters.pace(secPerKm: pace, unit: distanceUnit))."
         }
-
-        var narrative = "\(typeWord) of \(dist) \(metric)."
         if let trend = splitTrend(gps) { narrative += " \(trend)." }
-        // Close the coaching loop: name the prescribed session + how it landed, not just "session ✓".
+        // Close the coaching loop: name the prescribed session and how it landed.
         if planned, let clause = coachingClause(runType: workout.plannedSession?.runType, reps: gps.structuredReps) {
             narrative += " \(clause)"
         } else if planned {
-            narrative += " That's today's session ✓, base is building."
-        } else {
-            narrative += " Nice work, saved."
+            narrative += " That's today's session done."
         }
 
         let insights = [
@@ -125,19 +144,20 @@ enum WorkoutReadTemplates {
         case .race:        name = "race"
         case .freeRun:     return nil
         }
-        var clause = "That's your \(name) done ✓"
+        // One sentence for the session, one for how it went. The old form hung the second half on a
+        // comma (", aerobic base building" / ", the hard work's banked") which is the machine tell
+        // this voice is built to avoid.
+        var clause = "That's the \(name) done."
         let paced = reps.filter { $0.verdict != .noTarget }
         if !paced.isEmpty {
             let on = paced.filter { $0.verdict == .onPace }.count
-            clause += ". \(on) of \(paced.count) reps on pace"
-        } else if rt == .long {
-            clause += ", aerobic base building"
+            clause += " \(on) of \(paced.count) reps on pace."
         } else if rt.isQuality {
-            clause += ", the hard work's banked"
+            clause += " That's the hard work in."
         } else if rt == .recovery || rt == .easy {
-            clause += ", easy as prescribed"
+            clause += " Easy days are what make the hard ones work."
         }
-        return clause + "."
+        return clause
     }
 
     /// "Negative split" if the back half was quicker than the front half.
@@ -154,9 +174,9 @@ enum WorkoutReadTemplates {
             if s.t <= midTime { distFirst += d } else { distSecond += d }
             prev = s
         }
-        if distSecond > distFirst * 1.03 { return "You sped up into a negative split" }
-        if distFirst > distSecond * 1.03 { return "Even, honest effort" }
-        return "Steady throughout"
+        if distSecond > distFirst * 1.03 { return "You ran the second half faster" }
+        if distFirst > distSecond * 1.03 { return "You went out quick and held on" }
+        return "Even the whole way"
     }
 
     /// Strip anything that could read as a medical claim (prompt + post-filter, §8.8).
@@ -164,7 +184,7 @@ enum WorkoutReadTemplates {
         let banned = ["injur", "pain", "diagnos", "medical", "rehab"]
         let lower = text.lowercased()
         if banned.contains(where: { lower.contains($0) }) {
-            return "Session saved, momentum's got the details."
+            return "Logged. I've got the numbers."
         }
         // Em/en dashes read as generic-AI slop; convert to clean sentence punctuation.
         let cleaned = deDash(text)

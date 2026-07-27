@@ -17,7 +17,7 @@ enum CoachingCueBuilder {
     static func restComplete() -> String { "Rest complete. Time for your next set." }
     static func paused() -> String { "Paused." }
     static func resumed() -> String { "Resumed." }
-    static func goalReached() -> String { "Goal reached. Strong work." }
+    static func goalReached() -> String { "Goal reached. Everything from here is extra." }
 
     // MARK: Structured workout (R1)
 
@@ -65,7 +65,7 @@ enum CoachingCueBuilder {
             }
             // A continuous block (tempo, or a progression segment) named by its title.
             let name = step.title.map { "\($0)." } ?? ""
-            return "\(name) \(spokenTarget(step.target)) — hold your effort.".trimmingCharacters(in: .whitespaces)
+            return "\(name) \(spokenTarget(step.target)). Hold your effort.".trimmingCharacters(in: .whitespaces)
         }
     }
 
@@ -88,7 +88,7 @@ enum CoachingCueBuilder {
         return lines[max(index, 0) % lines.count]
     }
 
-    static func workoutComplete() -> String { "Workout complete. Strong session." }
+    static func workoutComplete() -> String { "Workout complete. That's the work done." }
 
     /// A step target spoken naturally: "400 meters" / "1 kilometer" / "90 seconds".
     static func spokenTarget(_ target: WorkoutStep.Target) -> String {

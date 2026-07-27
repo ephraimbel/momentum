@@ -189,15 +189,15 @@ enum WorkoutCompletion {
             services.notifications.notifyPlanUpdated(
                 title: rec == .rest ? "Recovery banked" : "Eased your upcoming sessions",
                 body: rec == .rest
-                    ? "Your load's been climbing — I pulled the next sessions back so it lands. No streak lost."
-                    : "Your load's been climbing — I eased the next sessions ~15%. Still on track.")
+                    ? "Your load's been climbing. I pulled the next sessions back so it lands. No streak lost."
+                    : "Your load's been climbing, so I eased the next sessions about 15%. Still on track.")
         } else if workout.type.discipline == .running,
                   let rec = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context),
                   rec.sessionsUpdated > 0 {
             let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
             services.notifications.notifyPlanUpdated(
                 title: "Your paces just got faster",
-                body: "Strong run — I updated your plan. Easy runs are now ~\(Formatters.pace(secPerKm: easy, unit: unit)).")
+                body: "That run moved your numbers, so I updated the plan. Easy runs are now \(Formatters.pace(secPerKm: easy, unit: unit)).")
         } else if workout.type.isStrengthStyle,
                   let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context) {
             services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
