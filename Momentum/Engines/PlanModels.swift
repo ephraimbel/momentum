@@ -12,9 +12,8 @@ struct ExerciseCatalogItem: Sendable, Equatable {
     let category: ExerciseCategory
     let defaultRestS: Double
     /// How the exercise is measured. The engine MUST see this: without it the catalog looked
-    /// rep-shaped all the way down, so `scheme(…)` happily prescribed "3 × 10–15" for a plank —
-    /// and since Plank is the library's only core-primary exercise, that landed on essentially
-    /// every Full Body and Lower day. Defaulted so existing construction sites stay valid.
+    /// rep-shaped all the way down, so `scheme(…)` happily prescribed "3 × 10–15" for a plank.
+    /// `selectExercise` now uses it to auto-prescribe rep-countable exercises ONLY.
     var trackingMode: TrackingMode = .weightReps
 }
 
@@ -46,10 +45,6 @@ struct GeneratedExercise: Sendable, Equatable {
     var targetRPE: Double?
     var targetPctRM: Double?
     var progression: String   // "linear" | "double" | "percent" | "rpe"
-    /// Seconds to hold (plank) or carry (farmer's walk). Non-nil marks this a DURATION
-    /// prescription: reps are meaningless and every surface reads the hold instead. Rep-based
-    /// lifts leave it nil and behave exactly as before.
-    var targetHoldS: Int? = nil
 }
 
 struct GeneratedSession: Sendable, Equatable {

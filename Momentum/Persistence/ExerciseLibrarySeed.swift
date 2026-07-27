@@ -156,6 +156,14 @@ enum ExerciseLibrarySeed {
             Exercise(name: "Plank", primaryMuscles: [.core],
                      equipment: .bodyweight, category: .isolation,
                      trackingMode: .time, defaultRestS: 60),
+            // The countable forearms option. Without it the Pull day's forearm slot had only
+            // Farmer's Carry to reach for — a distance carry, which the planner now refuses —
+            // and the slot would silently go empty.
+            Exercise(name: "Dumbbell Wrist Curl", primaryMuscles: [.forearms],
+                     equipment: .dumbbell, category: .isolation,
+                     trackingMode: .weightReps, defaultRestS: 60),
+            // Loggable by hand, never auto-prescribed: a carry is measured in distance/time and
+            // the set logger records reps × weight. Same arrangement as Plank above.
             Exercise(name: "Farmer's Carry", primaryMuscles: [.forearms, .core],
                      secondaryMuscles: [.fullBody], equipment: .dumbbell,
                      category: .compound, trackingMode: .distance, defaultRestS: 90),

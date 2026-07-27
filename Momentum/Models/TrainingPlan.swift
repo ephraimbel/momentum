@@ -86,23 +86,18 @@ final class PlannedExercise {
     var targetRPE: Double?
     var targetPctRM: Double?          // % of e1RM (strength-focus)
     var progression: String = "double" // "linear" | "double" | "rpe" | "percent"
-    /// Seconds to hold (plank) or carry (farmer's walk). Non-nil means this is a DURATION
-    /// prescription and the rep range is not the athlete-facing target — read `prescriptionText`
-    /// rather than formatting reps by hand. Optional with no default, so existing plans migrate
-    /// lightweight and simply keep reading as rep-based.
-    var targetHoldS: Int?
 
     init() {}
 
-    /// The one place a prescription becomes words: "3 × 8–12" for a lift, "3 × 45s" for a hold.
-    /// Every surface that shows a planned exercise (Today's confirm sheet, the Plan detail sheet,
-    /// the onboarding reveal) formats through this — they each used to interpolate
+    /// The one place a prescription becomes words: "4 × 8–12". Every surface that shows a
+    /// planned exercise (Today's confirm sheet, the Plan detail sheet, the onboarding reveal)
+    /// formats through this — they each used to interpolate
     /// `targetSets × targetRepLow–targetRepHigh` inline, which is how a plank came to ask for
     /// 10–15 reps in three different places at once.
     var prescriptionText: String {
-        if let hold = targetHoldS { return "\(targetSets) × \(hold)s" }
-        if targetRepLow == targetRepHigh { return "\(targetSets) × \(targetRepLow)" }
-        return "\(targetSets) × \(targetRepLow)–\(targetRepHigh)"
+        targetRepLow == targetRepHigh
+            ? "\(targetSets) × \(targetRepLow)"
+            : "\(targetSets) × \(targetRepLow)–\(targetRepHigh)"
     }
 }
 

@@ -308,7 +308,6 @@ enum PlanService {
                     pe.targetRPE = ge.targetRPE
                     pe.targetPctRM = ge.targetPctRM
                     pe.progression = ge.progression
-                    pe.targetHoldS = ge.targetHoldS
                     return pe
                 }
                 sessions.append(ps)
