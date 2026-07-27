@@ -189,14 +189,21 @@ enum PlanService {
     }
 
     /// Snapshot the exercise library for the engine.
+    ///
+    /// Sorted by name. The fetch is unordered, and `selectExercise` picks the FIRST acceptable
+    /// candidate — so with two equally-valid choices for a muscle slot, which one the athlete got
+    /// depended on SwiftData's row order. A deterministic plan engine (the whole point of §9) can't
+    /// rest on that: the same profile must generate the same plan on every device, every install.
     static func catalog(in context: ModelContext) -> [ExerciseCatalogItem] {
-        let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
+        let all = ((try? context.fetch(FetchDescriptor<Exercise>())) ?? [])
+            .sorted { $0.name < $1.name }
         return all.map { ex in
             ExerciseCatalogItem(
                 name: ex.name,
                 primaryMuscles: ex.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
                 secondaryMuscles: ex.secondaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
-                equipment: ex.equipment, category: ex.category, defaultRestS: ex.defaultRestS)
+                equipment: ex.equipment, category: ex.category, defaultRestS: ex.defaultRestS,
+                trackingMode: ex.trackingMode)
         }
     }
 
@@ -301,6 +308,7 @@ enum PlanService {
                     pe.targetRPE = ge.targetRPE
                     pe.targetPctRM = ge.targetPctRM
                     pe.progression = ge.progression
+                    pe.targetHoldS = ge.targetHoldS
                     return pe
                 }
                 sessions.append(ps)

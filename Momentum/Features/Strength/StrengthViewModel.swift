@@ -29,6 +29,8 @@ final class StrengthViewModel {
         var pctRM: Double?
         var targetSets: Int = 3
         var rpe: Double?
+        /// Seconds per hold/carry. Non-nil means the plan asked for TIME, not reps.
+        var holdS: Int?
     }
     private var plannedPrescription: [UUID: PlannedPrescription] = [:]
     /// Muscle targeting per catalog exercise, captured at add-time — drives the live muscle map.
@@ -212,7 +214,7 @@ final class StrengthViewModel {
             await addExercise(exercise, prescription: PlannedPrescription(
                 repLow: pe.targetRepLow, repHigh: pe.targetRepHigh,
                 scheme: pe.progression, pctRM: pe.targetPctRM,
-                targetSets: pe.targetSets, rpe: pe.targetRPE))
+                targetSets: pe.targetSets, rpe: pe.targetRPE, holdS: pe.targetHoldS))
             guard let rowId = exercises.last?.id else { continue }
             for _ in 1..<max(1, pe.targetSets) { await addSet(rowId: rowId) }
             if let row = exercises.first(where: { $0.id == rowId }) {
@@ -345,8 +347,10 @@ final class StrengthViewModel {
     /// "4 sets · 8–12 reps · RPE 8" or "4 sets · 4–6 reps · 82% 1RM". Nil for free sessions.
     func prescriptionLine(rowId: UUID) -> String? {
         guard let rx = plannedPrescription[rowId] else { return nil }
-        let reps = rx.repLow == rx.repHigh ? "\(rx.repLow) reps" : "\(rx.repLow)–\(rx.repHigh) reps"
-        var parts = ["\(rx.targetSets) sets", reps]
+        // A hold is prescribed in seconds — "3 sets · 1 reps" was the old, nonsensical read.
+        let target = rx.holdS.map { "\($0)s hold" }
+            ?? (rx.repLow == rx.repHigh ? "\(rx.repLow) reps" : "\(rx.repLow)–\(rx.repHigh) reps")
+        var parts = ["\(rx.targetSets) sets", target]
         if let pct = rx.pctRM {
             parts.append("\(Int((pct * 100).rounded()))% 1RM")
         } else if let rpe = rx.rpe {

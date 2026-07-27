@@ -824,10 +824,26 @@ enum PlanEngine {
             allowed.contains($0.equipment) && !used.contains($0.name) && $0.primaryMuscles.contains(muscle)
         }
         let preferred = candidates.filter { $0.category == (preferCompound ? .compound : .isolation) }
-        return preferred.first ?? candidates.first
+        // Prefer something the athlete can COUNT. A rep-based exercise gives the weekly
+        // progression something to push on ("add a rep") in a way a hold never does — hanging
+        // knee raises beat a plank for a plan you're meant to progress through. Timed and
+        // carry-style exercises stay eligible as the fallback when nothing countable fits the
+        // slot (a bodyweight-only athlete's forearm work, say), and `holdScheme` prescribes
+        // those honestly in seconds rather than inventing a rep range.
+        func countable(_ items: [ExerciseCatalogItem]) -> [ExerciseCatalogItem] {
+            items.filter { $0.trackingMode == .weightReps || $0.trackingMode == .repsOnly }
+        }
+        return countable(preferred).first ?? preferred.first
+            ?? countable(candidates).first ?? candidates.first
     }
 
     private static func scheme(for ex: ExerciseCatalogItem, goal: Goal, level: ExperienceLevel, isDeload: Bool) -> GeneratedExercise {
+        // Isometric holds and loaded carries are measured in SECONDS, not reps — you cannot do
+        // "10–15 reps" of a plank. These get a duration prescription before the rep schemes below
+        // are ever consulted.
+        if ex.trackingMode == .time || ex.trackingMode == .distance {
+            return holdScheme(for: ex, level: level, isDeload: isDeload)
+        }
         var sets: Int, low: Int, high: Int, prog: String, pct: Double?, rpe: Double?
         switch (goal, level) {
         case (_, .new):
@@ -842,6 +858,31 @@ enum PlanEngine {
         if isDeload { sets = max(2, sets - 1) }
         return GeneratedExercise(exerciseName: ex.name, targetSets: sets, repLow: low, repHigh: high,
                                  targetRPE: rpe, targetPctRM: pct, progression: prog)
+    }
+
+    /// Duration prescription for a hold or carry: 3 sets, and a hold that starts where a beginner
+    /// can actually finish it. Progression is `linear` on TIME — the honest analogue of adding
+    /// reps — so the plan's existing "make it slightly harder each week" machinery still applies,
+    /// just in the right unit.
+    ///
+    /// `repLow`/`repHigh` are both 1: one hold IS one set, so anything downstream that still
+    /// counts reps (session volume, the checklist prefill) reads a truthful 1 rather than an
+    /// invented 10–15. `targetHoldS` is what every surface actually displays.
+    private static func holdScheme(for ex: ExerciseCatalogItem, level: ExperienceLevel,
+                                   isDeload: Bool) -> GeneratedExercise {
+        var sets = 3
+        var hold: Int = switch level {
+        case .new:  30
+        case .some: 45
+        default:    60
+        }
+        if isDeload {
+            sets = max(2, sets - 1)
+            hold = max(20, Int((Double(hold) * 0.75).rounded()))
+        }
+        return GeneratedExercise(exerciseName: ex.name, targetSets: sets, repLow: 1, repHigh: 1,
+                                 targetRPE: nil, targetPctRM: nil, progression: "linear",
+                                 targetHoldS: hold)
     }
 
     // MARK: Hybrid recovery scheduling (§9.3)

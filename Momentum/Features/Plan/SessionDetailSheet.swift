@@ -234,7 +234,7 @@ struct SessionDetailSheet: View {
                 }
             }
             Spacer(minLength: Theme.Space.sm)
-            Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
+            Text(ex.prescriptionText)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)

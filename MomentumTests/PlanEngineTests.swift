@@ -6,9 +6,11 @@ import Foundation
 struct PlanEngineTests {
 
     func item(_ name: String, _ primary: [MuscleGroup], _ secondary: [MuscleGroup],
-              _ eq: EquipmentType, _ cat: ExerciseCategory) -> ExerciseCatalogItem {
+              _ eq: EquipmentType, _ cat: ExerciseCategory,
+              _ tracking: TrackingMode = .weightReps) -> ExerciseCatalogItem {
         ExerciseCatalogItem(name: name, primaryMuscles: primary, secondaryMuscles: secondary,
-                            equipment: eq, category: cat, defaultRestS: 120)
+                            equipment: eq, category: cat, defaultRestS: 120,
+                            trackingMode: tracking)
     }
 
     var catalog: [ExerciseCatalogItem] {
@@ -23,7 +25,10 @@ struct PlanEngineTests {
          item("Lateral Raise", [.shoulders], [], .dumbbell, .isolation),
          item("Leg Curl", [.hamstrings], [], .machine, .isolation),
          item("Calf Raise", [.calves], [], .machine, .isolation),
-         item("Plank", [.core], [], .bodyweight, .isolation)]
+         item("Hanging Knee Raise", [.core], [.forearms], .bodyweight, .isolation, .repsOnly),
+         item("Lying Leg Raise", [.core], [], .bodyweight, .isolation, .repsOnly),
+         item("Plank", [.core], [], .bodyweight, .isolation, .time),
+         item("Farmer's Carry", [.forearms, .core], [], .dumbbell, .compound, .distance)]
     }
 
     func inputs(disciplines: [Discipline], goal: Goal, days: Int,
@@ -145,6 +150,70 @@ struct PlanEngineTests {
         let buildSets = plan.weeks[0].sessions.first?.strengthTargets.first?.targetSets ?? 0
         let deloadSets = plan.weeks[3].sessions.first?.strengthTargets.first?.targetSets ?? 0
         #expect(deloadSets < buildSets)
+    }
+
+    // MARK: Duration prescriptions — you cannot do 10–15 reps of a plank
+
+    /// A timed hold or loaded carry must be prescribed in SECONDS. The engine used to pick
+    /// sets/reps purely from goal + experience without ever consulting `trackingMode`, so a
+    /// plank came out as "3 × 10–15" — and since Plank is the library's only core-primary
+    /// exercise, that reached essentially every Full Body and Lower day.
+    /// The plan reaches for a rep-countable core exercise, never the plank — a hold gives the
+    /// weekly progression nothing to push on, and "3 × 10–15" of a plank is not a thing.
+    @Test func coreWorkIsPrescribedInRepsNotAsAPlank() {
+        for goal in [Goal.buildMuscle, .getStronger, .generalFitness, .endurance] {
+            for level in [ExperienceLevel.new, .some, .experienced] {
+                let plan = PlanEngine.generate(
+                    profile: inputs(disciplines: [.strength], goal: goal, days: 4, liftExp: level),
+                    catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+                let targets = plan.weeks.flatMap(\.sessions).flatMap(\.strengthTargets)
+                #expect(!targets.contains { $0.exerciseName == "Plank" },
+                        "plank prescribed for goal=\(goal) level=\(level) — a countable core exercise was available")
+                let core = targets.filter { $0.exerciseName == "Hanging Knee Raise" || $0.exerciseName == "Lying Leg Raise" }
+                #expect(!core.isEmpty, "no core work at all for goal=\(goal) level=\(level)")
+                for ex in core {
+                    #expect(ex.targetHoldS == nil, "\(ex.exerciseName) got a hold instead of reps")
+                    #expect(ex.repHigh >= ex.repLow && ex.repLow >= 1)
+                }
+            }
+        }
+    }
+
+    /// The fallback still has to be honest: when only a timed/carry exercise fits a slot, it is
+    /// prescribed in SECONDS. Farmer's Carry is the library's only forearms-primary exercise, so
+    /// this path is live today — removing the plank alone would not have fixed it.
+    @Test func timedExercisesFallBackToHoldsNotReps() {
+        for goal in [Goal.buildMuscle, .getStronger, .generalFitness, .endurance] {
+            for level in [ExperienceLevel.new, .some, .experienced] {
+                let plan = PlanEngine.generate(
+                    profile: inputs(disciplines: [.strength], goal: goal, days: 4, liftExp: level),
+                    catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+                let timed = plan.weeks.flatMap(\.sessions).flatMap(\.strengthTargets)
+                    .filter { $0.exerciseName == "Plank" || $0.exerciseName == "Farmer's Carry" }
+                for ex in timed {
+                    #expect(ex.targetHoldS != nil,
+                            "\(ex.exerciseName) has no hold duration (goal=\(goal) level=\(level))")
+                    #expect((ex.targetHoldS ?? 0) >= 20, "hold too short to be a real prescription")
+                    // One hold is one set — never an invented rep range.
+                    #expect(ex.repLow == 1 && ex.repHigh == 1,
+                            "\(ex.exerciseName) prescribed \(ex.repLow)–\(ex.repHigh) reps")
+                }
+            }
+        }
+    }
+
+    /// Rep-based lifts are untouched by the hold branch.
+    @Test func weightRepExercisesKeepTheirRepRanges() {
+        let plan = PlanEngine.generate(
+            profile: inputs(disciplines: [.strength], goal: .buildMuscle, days: 4),
+            catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let lifts = plan.weeks.flatMap(\.sessions).flatMap(\.strengthTargets)
+            .filter { $0.exerciseName != "Plank" && $0.exerciseName != "Farmer's Carry" }
+        #expect(!lifts.isEmpty)
+        for ex in lifts {
+            #expect(ex.targetHoldS == nil, "\(ex.exerciseName) wrongly got a hold duration")
+            #expect(ex.repHigh >= ex.repLow && ex.repLow >= 1)
+        }
     }
 
     // MARK: Hybrid recovery — the capability no competitor has
@@ -903,5 +972,71 @@ struct PlanEngineTests {
         // Full recovery on kilometre reps is a real 3:00 (2026-07-24 rest-ladder fix — 2:00 was
         // quietly collapsing long VO₂ reps into tempo effort).
         #expect(speedRecovery?.target == .duration(180))
+    }
+}
+
+/// The shipped library, run through the real `PlanService.catalog` mapping — the step the plank
+/// fix actually depends on. A unit test against a hand-built fixture would still pass if the
+/// service forgot to forward `trackingMode`, which is exactly how the bug reached users.
+@MainActor
+struct RealLibraryPrescriptionTests {
+
+    /// Mirrors `PlanService.catalog(in:)` over `ExerciseLibrarySeed.curated`, so a regression in
+    /// either the seed's tracking modes or the catalog mapping fails here.
+    private var catalog: [ExerciseCatalogItem] {
+        ExerciseLibrarySeed.curated.map { ex in
+            ExerciseCatalogItem(
+                name: ex.name,
+                primaryMuscles: ex.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
+                secondaryMuscles: ex.secondaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
+                equipment: ex.equipment, category: ex.category, defaultRestS: ex.defaultRestS,
+                trackingMode: ex.trackingMode)
+        }
+    }
+
+    /// End-to-end on the shipped library: core work is countable, and nothing timed is ever
+    /// handed a rep range. A fixture-only test would still pass if `PlanService.catalog` forgot
+    /// to forward `trackingMode` — which is exactly how this reached users.
+    @Test func shippedLibraryPrescribesCountableCoreWork() {
+        for goal in [Goal.buildMuscle, .getStronger, .generalFitness] {
+            let plan = PlanEngine.generate(
+                profile: PlanInputs(disciplines: [.strength], goal: goal, daysPerWeek: 4,
+                                    equipment: .fullGym, sessionMinutes: 60, raceDate: nil,
+                                    runningExperience: .experienced, liftingExperience: .some),
+                catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+            let names = plan.weeks.flatMap(\.sessions).flatMap(\.strengthTargets).map(\.exerciseName)
+            #expect(!names.contains("Plank"), "shipped library still prescribes a plank for goal=\(goal)")
+        }
+    }
+
+    @Test func shippedLibraryNeverPrescribesRepsForATimedExercise() {
+        let timedNames = Set(ExerciseLibrarySeed.curated
+            .filter { $0.trackingMode == .time || $0.trackingMode == .distance }
+            .map(\.name))
+        #expect(!timedNames.isEmpty, "library has no timed exercises — did the seed change?")
+
+        for goal in [Goal.buildMuscle, .getStronger, .generalFitness, .endurance] {
+            let plan = PlanEngine.generate(
+                profile: PlanInputs(disciplines: [.strength], goal: goal, daysPerWeek: 4,
+                                    equipment: .fullGym, sessionMinutes: 60, raceDate: nil,
+                                    runningExperience: .experienced, liftingExperience: .some),
+                catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+            for ex in plan.weeks.flatMap(\.sessions).flatMap(\.strengthTargets)
+            where timedNames.contains(ex.exerciseName) {
+                #expect(ex.targetHoldS != nil,
+                        "\(ex.exerciseName) prescribed \(ex.repLow)–\(ex.repHigh) reps for goal=\(goal)")
+            }
+        }
+    }
+
+    /// The athlete-facing string — the thing the user actually reported seeing.
+    @Test func planFormatsAHoldInSecondsNotReps() {
+        let plank = PlannedExercise()
+        plank.targetSets = 3; plank.targetRepLow = 1; plank.targetRepHigh = 1; plank.targetHoldS = 45
+        #expect(plank.prescriptionText == "3 × 45s")
+
+        let squat = PlannedExercise()
+        squat.targetSets = 4; squat.targetRepLow = 8; squat.targetRepHigh = 12
+        #expect(squat.prescriptionText == "4 × 8–12")
     }
 }

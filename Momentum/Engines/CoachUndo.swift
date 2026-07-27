@@ -69,6 +69,9 @@ enum CoachUndo {
             var order: Int
             var exerciseID: UUID?
             var targetSets: Int
+            /// Optional, so snapshots written before duration prescriptions existed still decode
+            /// (synthesized `Codable` uses `decodeIfPresent` for optionals) and restore as reps.
+            var targetHoldS: Int?
             var targetRepLow: Int
             var targetRepHigh: Int
             var targetRPE: Double?
@@ -126,6 +129,7 @@ enum CoachUndo {
                             Snapshot.ExerciseState(
                                 order: pe.order, exerciseID: pe.exercise?.id,
                                 targetSets: pe.targetSets,
+                                targetHoldS: pe.targetHoldS,
                                 targetRepLow: pe.targetRepLow, targetRepHigh: pe.targetRepHigh,
                                 targetRPE: pe.targetRPE, targetPctRM: pe.targetPctRM,
                                 progression: pe.progression)
@@ -205,6 +209,7 @@ enum CoachUndo {
                     pe.order = e.order
                     pe.exercise = e.exerciseID.flatMap { exercisesByID[$0] }
                     pe.targetSets = e.targetSets
+                    pe.targetHoldS = e.targetHoldS
                     pe.targetRepLow = e.targetRepLow
                     pe.targetRepHigh = e.targetRepHigh
                     pe.targetRPE = e.targetRPE

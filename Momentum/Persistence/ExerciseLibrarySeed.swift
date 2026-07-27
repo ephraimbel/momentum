@@ -13,10 +13,28 @@ enum ExerciseLibrarySeed {
         let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
         guard all.contains(where: { !$0.isCustom }) == false else {
             dedupe(all, in: context)
+            topUp(in: context)
             return
         }
 
         for ex in curated { context.insert(ex) }
+        try? context.save()
+    }
+
+    /// Insert curated exercises the store is missing.
+    ///
+    /// `seedIfNeeded` only plants the library when the store has NO shared rows, so on every
+    /// existing install a newly-curated exercise would never arrive — the seed would be skipped
+    /// forever and the addition would silently only reach fresh installs. Runs after `dedupe`, so
+    /// legacy names have already been canonicalized and this can't resurrect a renamed row as a
+    /// "missing" one. Matches on name, never touches the user's custom exercises.
+    @MainActor
+    private static func topUp(in context: ModelContext) {
+        let existing = Set(((try? context.fetch(FetchDescriptor<Exercise>())) ?? [])
+            .filter { !$0.isCustom }.map(\.name))
+        let missing = curated.filter { !existing.contains($0.name) }
+        guard !missing.isEmpty else { return }
+        for ex in missing { context.insert(ex) }
         try? context.save()
     }
 
@@ -123,6 +141,18 @@ enum ExerciseLibrarySeed {
                      equipment: .machine, category: .isolation, defaultRestS: 75),
             Exercise(name: "Calf Raise", primaryMuscles: [.calves],
                      equipment: .machine, category: .isolation, defaultRestS: 60),
+            // Core work the plan can actually PRESCRIBE and the athlete can actually progress.
+            // Plank stays in the library (people do planks, and they should be able to log one),
+            // but a hold has no rep count, so the planner reaches for these first — reps give
+            // the progression machinery something to push on week to week.
+            Exercise(name: "Hanging Knee Raise", primaryMuscles: [.core],
+                     secondaryMuscles: [.forearms], equipment: .bodyweight,
+                     category: .isolation, trackingMode: .repsOnly, defaultRestS: 60),
+            // The floor alternative — no bar needed, so athletes training at home still get a
+            // rep-counted core exercise instead of falling through to the plank.
+            Exercise(name: "Lying Leg Raise", primaryMuscles: [.core],
+                     equipment: .bodyweight, category: .isolation,
+                     trackingMode: .repsOnly, defaultRestS: 60),
             Exercise(name: "Plank", primaryMuscles: [.core],
                      equipment: .bodyweight, category: .isolation,
                      trackingMode: .time, defaultRestS: 60),
