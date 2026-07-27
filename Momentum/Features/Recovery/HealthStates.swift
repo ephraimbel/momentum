@@ -33,21 +33,27 @@ struct ConnectRow: View {
         if compact { footerRow } else { prominentCard }
     }
 
+    /// Stacked, not side-by-side. The old row put a four-line paragraph and a pill button in one
+    /// HStack: on a 393pt phone the copy was squeezed into ~170pt (wrapping to six lines) while
+    /// the button floated vertically centred against it. This page's single most important
+    /// action deserves the full-width target and the copy deserves the full width to read in.
     private var prominentCard: some View {
-        HStack(spacing: Theme.Space.md) {
-            healthMark
-            Text("This page runs on a wearable — Apple Watch, Garmin, Oura, or Whoop — connected through Apple Health. Connect it and your sleep, HRV, and resting heart rate start shaping your readiness automatically.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .top, spacing: Theme.Space.md) {
+                healthMark
+                Text("This page runs on a wearable — Apple Watch, Garmin, Oura, or Whoop — connected through Apple Health. Connect it and your sleep, HRV, and resting heart rate start shaping your readiness automatically.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Button(action: onConnect) {
-                Text(connecting ? "Connecting…" : "Connect")
+                Text(connecting ? "Connecting…" : "Connect Apple Health")
                     .font(.rounded(Theme.FontSize.caption, weight: .bold))
                     .foregroundStyle(Theme.background)
-                    .padding(.horizontal, Theme.Space.md)
-                    .padding(.vertical, Theme.Space.sm)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Space.pillV)
                     .background(Capsule().fill(Theme.ink))
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .disabled(connecting)
@@ -137,14 +143,26 @@ extension View {
 
 // MARK: - Wearable disclaimer
 
-/// The honest hardware disclaimer — always visible at the page's end, whatever the connection
-/// state: this page's depth comes from a wearable writing to Apple Health, and without one
-/// readiness still works (training load + check-ins), just with less signal. Plain words, no
-/// warning triangle — expectation-setting, never an error.
+/// The honest source line at the page's end — always present, but it says the right thing.
+///
+/// It used to state the requirement unconditionally: an athlete whose Whoop had been feeding this
+/// page all week still read "Sleep and vitals need a wearable…" under their own charts. Telling
+/// someone to do the thing they already did is the fastest way to look like you aren't listening.
+/// With signal flowing it becomes a provenance line (which is what a source note is for); without
+/// it, the full expectation-setting sentence stands. Plain words either way, no warning triangle.
 struct WearableFootnote: View {
+    /// True once sleep or any vital is actually arriving through Apple Health.
+    var receivingData: Bool = false
+
+    private var text: String {
+        receivingData
+            ? "Sleep and vitals arrive through Apple Health from your connected wearable. Readiness also reads your training load and daily check-ins."
+            : "Sleep and vitals need a wearable — Apple Watch, Garmin, Oura, or Whoop — connected to Apple Health. Without one, readiness still works from your training load and daily check-ins."
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Space.sm) {
-            Text("Sleep and vitals need a wearable — Apple Watch, Garmin, Oura, or Whoop — connected to Apple Health. Without one, readiness still works from your training load and daily check-ins.")
+            Text(text)
                 .font(.rounded(Theme.FontSize.label, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -207,6 +225,10 @@ struct LearnCard: View {
     }
 }
 
+// Previews compile into Release unless gated — and these are built from invented vitals,
+// nights and strain series. No fabricated health data belongs in a shipped binary
+// (production-readiness sweep 2026-07-16; the rest of this family was already gated).
+#if DEBUG
 // MARK: - Previews
 
 #Preview("Connect + Learn") {
@@ -222,3 +244,4 @@ struct LearnCard: View {
     .padding()
     .background(Theme.background)
 }
+#endif

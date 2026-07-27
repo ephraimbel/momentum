@@ -17,6 +17,16 @@ struct AthleteCallout: Identifiable {
 /// readings on the right. Deliberately asymmetric — one anchor number balanced against a list.
 /// No leader lines: the columns carry the data; the body carries the training (worked muscles
 /// glow). Adapts to both modes: light reads as a product render, dark as a luminous stage.
+///
+/// **Dynamic Type.** The brand faces come from `Font.custom(_:size:)`, which already scales
+/// relative to body — but this panel used to cancel that out. Every reading lived in a fixed 30%
+/// column inside a hard 400pt stage, so as the type grew, `minimumScaleFactor(0.55)` shrank it
+/// straight back to fit and the rail's context line (`lineLimit(1)`, 0.75) simply truncated: the
+/// athlete raised their text size and got the same numbers plus an ellipsis. Two changes fix it,
+/// and NEITHER touches the default appearance — the stage is a `@ScaledMetric` (still exactly
+/// 400pt at the default size) so growth has somewhere to go, and the shrink floors are raised to
+/// a safety net instead of a defeat device. The composition, the type sizes, and the 30/40/30
+/// split are the shipped design and stay as drawn.
 struct AthletePanel: View {
     let activation: [MuscleGroup: Double]
     var sex: BodySex = .neutral
@@ -35,20 +45,26 @@ struct AthletePanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The stage grows with the athlete's text setting — 400pt at the default size (exactly what
+    /// it was hard-coded to), taller as the type grows. That headroom is the whole fix: the box
+    /// being fixed was the reason every reading had to shrink back down to fit inside it.
+    @ScaledMetric(relativeTo: .body) private var stageHeight: CGFloat = 400
+
     private var isDark: Bool { colorScheme == .dark }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text("ATHLETE PANEL").font(.rounded(Theme.FontSize.label, weight: .bold))
                     .tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                Spacer()
+                Spacer(minLength: Theme.Space.sm)
                 Text(windowLabel).font(.rounded(10, weight: .bold))
                     .tracking(1.2).foregroundStyle(Theme.inkTertiary.opacity(0.7))
+                    .lineLimit(1).minimumScaleFactor(0.8)
                     .contentTransition(.numericText())
                     .animation(.easeOut(duration: 0.25), value: windowLabel)
             }
-            stage.frame(height: 400)
+            stage.frame(height: stageHeight)
         }
         // Deliberately no card: the panel is built into the canvas — the figure stands in the
         // app itself, not in a box. The platform below grounds it instead.
@@ -75,23 +91,28 @@ struct AthletePanel: View {
                     Spacer(minLength: 0)
                     // Right: the rail — compact readings separated by hairlines. Free tier sees the
                     // labels but the values are locked: the physiology your body carries is Pro.
-                    ZStack {
-                        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                            ForEach(Array(rail.enumerated()), id: \.element.id) { i, c in
-                                if i > 0 {
-                                    Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 0.5)
-                                }
-                                railRow(c)
-                            }
-                        }
-                        .blur(radius: pro ? 0 : 6)
-                        .allowsHitTesting(pro)
-                        if !pro { railLock }
-                    }
-                    .padding(.top, h * 0.05)
-                    .frame(width: w * 0.30, alignment: .topLeading)
+                    lockedRail
+                        .padding(.top, h * 0.05)
+                        .frame(width: w * 0.30, alignment: .topLeading)
                 }
             }
+        }
+    }
+
+    /// The rail plus its Pro treatment.
+    private var lockedRail: some View {
+        ZStack {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                ForEach(Array(rail.enumerated()), id: \.element.id) { i, c in
+                    if i > 0 {
+                        Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 0.5)
+                    }
+                    railRow(c)
+                }
+            }
+            .blur(radius: pro ? 0 : 6)
+            .allowsHitTesting(pro)
+            if !pro { railLock }
         }
     }
 
@@ -172,8 +193,10 @@ struct AthletePanel: View {
                 .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1).minimumScaleFactor(0.8)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
+                // 0.65, not 0.55 — a safety net for the widest value ("4.45 mi") at xxxLarge,
+                // not a licence to cancel the athlete's text setting outright.
                 Text(c.value).font(.display(34, weight: .black)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.55)
+                    .lineLimit(1).minimumScaleFactor(0.65)
                     .foregroundStyle(Theme.ink)
                 if let unit = c.unit {
                     Text(unit).font(.rounded(11, weight: .bold)).foregroundStyle(Theme.inkSecondary)
@@ -199,15 +222,19 @@ struct AthletePanel: View {
                 .lineLimit(1).minimumScaleFactor(0.8)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(c.value).font(.display(17, weight: .black)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.55)
+                    .lineLimit(1).minimumScaleFactor(0.7)
                     .foregroundStyle(Theme.ink)
                 if let unit = c.unit {
                     Text(unit).font(.rounded(10, weight: .bold)).foregroundStyle(Theme.inkSecondary)
                 }
             }
+            // Wraps instead of truncating. The old `lineLimit(1) + 0.75` clipped the context line
+            // at anything past the default text size — it's how "Most worked over the last 7 days"
+            // became "Most worked over the last 7…".
             Text(c.context).font(.rounded(9.5, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.75)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

@@ -117,6 +117,11 @@ struct WeekStatStrip: View {
 
     private var imperial: Bool { distanceUnit.resolved() == .imperial }
 
+    /// Two silent weeks in a row: four zeros with no deltas is a dashboard pretending to be one.
+    /// Say the fact in a line instead. (A zero week AFTER a real one still gets the full grid —
+    /// "0 km, ↓100%" is genuine information, and a down week is allowed to be a down week.)
+    private var silent: Bool { now.sessions == 0 && prev.sessions == 0 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
@@ -124,30 +129,46 @@ struct WeekStatStrip: View {
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
                     .foregroundStyle(Theme.inkTertiary)
                 Spacer(minLength: 0)
-                Text("vs last week")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
+                if !silent {
+                    Text("vs last week")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
             }
-            HStack(alignment: .top, spacing: 0) {
-                column(value: Formatters.distance(meters: now.distanceM, unit: distanceUnit),
-                       label: "distance", delta: pctDelta(now.distanceM, prev.distanceM))
-                column(value: Formatters.duration(s: now.durationS),
-                       label: "time", delta: pctDelta(now.durationS, prev.durationS))
-                column(value: "\(now.sessions)",
-                       label: "sessions", delta: countDelta(now.sessions, prev.sessions))
-                column(value: climbText,
-                       label: "climb", delta: pctDelta(now.elevationM, prev.elevationM))
+            if silent {
+                Text("Nothing logged this week or last — your numbers land here after your next session.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .top, spacing: 0) {
+                    column(value: Formatters.distance(meters: now.distanceM, unit: distanceUnit),
+                           label: "distance", delta: pctDelta(now.distanceM, prev.distanceM))
+                    column(value: Formatters.duration(s: now.durationS),
+                           label: "time", delta: pctDelta(now.durationS, prev.durationS))
+                    column(value: "\(now.sessions)",
+                           label: "sessions", delta: countDelta(now.sessions, prev.sessions))
+                    column(value: climbText,
+                           label: "climb", delta: pctDelta(now.elevationM, prev.elevationM))
+                }
             }
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("This week")
-        .accessibilityValue("\(Formatters.distance(meters: now.distanceM, unit: distanceUnit)), "
-                            + "\(Formatters.duration(s: now.durationS)), \(now.sessions) sessions, "
-                            + "\(climbText) of climb, versus last week")
+        .accessibilityValue(spokenValue)
+    }
+
+    /// Hoisted out of `body`: a ternary over concatenated interpolations pushed the whole view
+    /// body past the type-checker's budget.
+    private var spokenValue: String {
+        guard !silent else { return "nothing logged this week or last" }
+        let far = Formatters.distance(meters: now.distanceM, unit: distanceUnit)
+        let time = Formatters.duration(s: now.durationS)
+        return "\(far), \(time), \(now.sessions) sessions, \(climbText) of climb, versus last week"
     }
 
     private var climbText: String {
@@ -182,8 +203,11 @@ struct WeekStatStrip: View {
     }
 
     /// "+2" — session counts are tiny integers; a percentage would shout about nothing.
+    /// No `prev > 0` guard: unlike a percentage, a count against zero is perfectly well defined,
+    /// and coming back from a blank week ("+3") is the single most encouraging delta on the card —
+    /// it was the one being suppressed.
     private func countDelta(_ now: Int, _ prev: Int) -> String? {
-        guard prev > 0, now != prev else { return nil }
+        guard now != prev else { return nil }
         return now > prev ? "+\(now - prev)" : "−\(prev - now)"
     }
 }
@@ -253,7 +277,7 @@ struct StepsCard: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         // Tap-through anywhere off the plot (the chart's scrub gesture wins inside it).
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
@@ -355,7 +379,7 @@ struct TrendTotalsCard: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Totals")

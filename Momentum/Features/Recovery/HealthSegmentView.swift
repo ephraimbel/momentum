@@ -197,9 +197,11 @@ struct HealthSegmentView: View {
         LearnCard()
             .reveal(model.healthAuthorized ? 0.35 : 0.42)
 
-        // The honest hardware line, always last and always visible: this page's depth needs a
-        // wearable connected to Apple Health — and what still works without one.
-        WearableFootnote()
+        // The honest source line, always last and always visible. It reads as provenance once
+        // signal is actually arriving, and as the hardware requirement when it isn't — so a
+        // connected athlete is never told to connect something.
+        WearableFootnote(receivingData: model.sleepReport != nil
+                         || model.vitals.contains { $0.hasAnyData })
             .reveal(model.healthAuthorized ? 0.42 : 0.49)
     }
 

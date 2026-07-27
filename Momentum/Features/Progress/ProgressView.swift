@@ -121,23 +121,33 @@ struct ProgressScreen: View {
             }
         }
         /// Compact noun for a windowed distance callout's label.
+        ///
+        /// These name ROLLING windows, because that's what `activationDays` measures — so `.week`
+        /// and `.month` must NOT say "THIS WEEK" / "THIS MONTH". They did, and the result was two
+        /// cards visible in one screenful both labelled THIS WEEK with different numbers: the
+        /// Athlete Panel's trailing-7-days ("4.45 mi") sitting directly above the calendar-week
+        /// strip ("0 mi") on a Sunday. Nothing erodes trust in an analytics page faster than it
+        /// contradicting itself in the same glance. The longer windows never claimed a calendar
+        /// boundary, so they read the same as before.
         var distanceNoun: String {
             switch self {
-            case .week: "THIS WEEK"
-            case .month: "THIS MONTH"
+            case .week: "LAST 7 DAYS"
+            case .month: "LAST 30 DAYS"
             case .threeMonths: "3 MONTHS"
             case .sixMonths: "6 MONTHS"
             case .year: "12 MONTHS"
             }
         }
-        /// Natural phrase for a windowed context line ("Most worked …").
+        /// Natural phrase for a windowed context line ("Most worked …"). Rolling, like
+        /// `distanceNoun` — "this week"/"this month"/"this year" were calendar claims these
+        /// windows don't make.
         var windowPhrase: String {
             switch self {
-            case .week: "this week"
-            case .month: "this month"
+            case .week: "over the last 7 days"
+            case .month: "over the last 30 days"
             case .threeMonths: "over 3 months"
             case .sixMonths: "over 6 months"
-            case .year: "this year"
+            case .year: "over 12 months"
             }
         }
         /// "…vs a month ago" phrasing for the VO₂ delta context.
@@ -441,55 +451,19 @@ struct ProgressScreen: View {
         .padding(.top, Theme.Space.sm)
     }
 
+    /// Trends · Health · History — the house `SegmentedCapsule`, so the page bar, the window
+    /// picker below it, and Balance's 7D/30D are one control instead of three lookalikes. The
+    /// selection pill now SLIDES between segments, and VoiceOver finally hears which one is
+    /// active (the hand-rolled bar exposed no `.isSelected` trait at all).
     private var segmentControl: some View {
-        // Slimmed to match the masthead's quiet scale (caption type, 32pt) — the selected pill
-        // stays ink, the track gains the house hairline.
-        HStack(spacing: 3) {
-            ForEach(Segment.allCases) { seg in
-                Button { Haptics.selection(); withAnimation(.easeOut(duration: 0.2)) { segment = seg } } label: {
-                    Text(seg.rawValue)
-                        .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                        .foregroundStyle(segment == seg ? Theme.background : Theme.inkSecondary)
-                        .frame(maxWidth: .infinity).frame(height: 32)
-                        .background { if segment == seg { Capsule().fill(Theme.ink) } }
-                        // Unselected segments have no background fill, so without an explicit
-                        // content shape only the text glyphs are hittable — dead tap zones
-                        // across most of the capsule (audit 2026-07-16).
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(Capsule().fill(Theme.surface))
-        .overlay(Capsule().stroke(Theme.hairline))
+        SegmentedCapsule(items: Segment.allCases, selection: $segment, scale: .page) { $0.rawValue }
     }
 
-    /// Compact 1M · 3M · 6M window switcher for the trend charts — one tap re-windows the weekly
-    /// series (the axis label density and the whole chart block adapt to the wider ranges).
+    /// Compact 1W · 1M · 3M · 6M window switcher for the trend charts — one tap re-windows the
+    /// weekly series (the axis label density and the whole chart block adapt to the wider ranges).
     private var trendRangePicker: some View {
-        HStack(spacing: 2) {
-            ForEach(TrendRange.selectable) { range in
-                let on = trendRange == range
-                Button {
-                    Haptics.selection()
-                    withAnimation(Motion.standard) { trendRange = range }
-                } label: {
-                    Text(range.rawValue)
-                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
-                        .lineLimit(1).fixedSize()
-                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background { if on { Capsule().fill(Theme.ink) } }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(range.accessibilityLabel)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(Capsule().fill(Theme.surface))
+        SegmentedCapsule(items: TrendRange.selectable, selection: $trendRange, scale: .compact,
+                         title: { $0.rawValue }, spokenLabel: { $0.accessibilityLabel })
     }
 
     /// The Health segment — like `trends`/`history`, the segment owns its scroll container
@@ -529,7 +503,10 @@ struct ProgressScreen: View {
                         withAnimation(.easeOut(duration: 0.45)) { proxy.scrollTo(target, anchor: .top) }
                     },
                                  onLockedTap: { paywallController.present(for: .advancedAnalytics) })
-                    .reveal(0)
+                    // `once:` throughout this stack — Progress rebuilds the whole segment on every
+                    // Trends → History → Trends flip, so the six-step entrance cascade replayed on
+                    // every visit. An entrance is a greeting, not a toll.
+                    .reveal(0, once: "trends.panel")
                     // The page reads as a structured report — Endurance / Strength / Coach —
                     // each chapter opened by an editorial masthead, so the two disciplines
                     // never blur into one stream of look-alike cards.
@@ -537,24 +514,28 @@ struct ProgressScreen: View {
                     // athlete actually quotes. This week vs last, distance over time, daily
                     // movement, the odometer — Bevel/Oura discipline, few cards with one clear
                     // answer each. The deep analytics below stay Pro.
-                    trendsSectionHeader("01", "Endurance", "Volume · speed · engine · racing")
-                        .reveal(0.02)
-                    HStack { Spacer(); trendRangePicker }
-                        .reveal(0.02)
+                    // The window picker rides ON the masthead rather than floating in its own
+                    // right-aligned row below it: a control with no visible scope reads as a page
+                    // setting, and it isn't one — it re-windows this chapter (and the body above).
+                    // Three items, like chapters 02 and 03 — the four-item version collided with
+                    // the range picker now sharing this line and truncated to "… · RAC…".
+                    trendsSectionHeader("01", "Endurance", "Volume · speed · engine",
+                                        accessory: { trendRangePicker })
+                        .reveal(0.02, once: "trends.01")
                     if let weekNow = cachedWeekNow, let weekPrev = cachedWeekPrev {
                         WeekStatStrip(now: weekNow, prev: weekPrev, distanceUnit: distanceUnit)
-                            .reveal(0.025)
+                            .reveal(0.025, once: "trends.week")
                             .id("weekStrip")
                     }
-                    distanceChart(insights).reveal(0.03).id("distanceChart")
+                    distanceChart(insights).reveal(0.03, once: "trends.distance").id("distanceChart")
                     StepsCard(days: stepDays, isDaily: trendIsDaily,
                               windowPhrase: trendRange.windowPhrase, animate: animateCharts,
                               onOpen: { trendDetail = stepsDetail })
-                        .reveal(0.04)
+                        .reveal(0.04, once: "trends.steps")
                         .id("steps")
-                    if let totals = cachedTotals {
+                    if let totals = cachedTotals, totals.lifetime.sessions > 0 {
                         TrendTotalsCard(totals: totals, distanceUnit: distanceUnit)
-                            .reveal(0.05)
+                            .reveal(0.05, once: "trends.totals")
                             .id("totals")
                     }
                     // PRO — the fitness read (VO₂max), heart-rate zones, pace/intensity, the
@@ -579,8 +560,11 @@ struct ProgressScreen: View {
                         }
                         StrengthProgressSection(workouts: workouts, weightUnit: weightUnit, pro: isAnalyticsPro).id("strengthTrends")
                         // COACH — the cross-discipline read: today's readiness hand-off, the AI
-                        // coach's verdict, and what Momentum has learned about you.
-                        trendsSectionHeader("03", "Coach", "Readiness · verdict · what we've learned")
+                        // coach's verdict, the receipts (growth · season · record book), and what
+                        // Momentum has learned about you. The subtitle names the receipts because
+                        // they render here — it used to promise only "readiness · verdict" and then
+                        // hand over three cards of measured history under a heading that hid them.
+                        trendsSectionHeader("03", "Coach", "Readiness · verdict · your receipts")
                             .padding(.top, Theme.Space.sm)
                             .id("coachHead")
                         // "How am I right now" is the Health segment's story — Trends keeps only
@@ -590,7 +574,7 @@ struct ProgressScreen: View {
                         coachCard(insights)
                         athleteStory
                     }
-                    .reveal(0.06)
+                    .reveal(0.06, once: "trends.pro")
                     .id("charts")
                     .proLocked(.advancedAnalytics)
                 }
@@ -900,44 +884,50 @@ struct ProgressScreen: View {
         if let mix = intensityMix {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 HStack(alignment: .firstTextBaseline) {
-                    sectionTitle("Intensity mix")
+                    sectionTitle("Intensity mix").accessibilityHidden(true)
                     Spacer()
                     Text("4 WKS").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.1)
                         .foregroundStyle(Theme.inkTertiary)
+                        .accessibilityHidden(true)
+                    // Kept out of the collapsed element below so VoiceOver can still open the
+                    // 80/20 explainer (the card-wide `children: .ignore` used to eat it).
                     MetricInfoButton(explainer: MetricExplainers.intensityMix).padding(.leading, 2)
                 }
-                GeometryReader { geo in
-                    let w = geo.size.width
-                    ZStack(alignment: .leading) {
-                        HStack(spacing: 2) {
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(mix.verdict == .polarized ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.15)))
-                                .frame(width: max(8, w * mix.easyFraction - 1))
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(Theme.ink)
-                                .frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    GeometryReader { geo in
+                        let w = geo.size.width
+                        ZStack(alignment: .leading) {
+                            HStack(spacing: 2) {
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(mix.verdict == .polarized ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.15)))
+                                    .frame(width: max(8, w * mix.easyFraction - 1))
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(Theme.ink)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            // The 80/20 target tick — background-colored so it reads over either segment.
+                            Rectangle().fill(Theme.background).frame(width: 2, height: 22)
+                                .shadow(color: .black.opacity(0.25), radius: 0.5)
+                                .offset(x: w * 0.8)
                         }
-                        // The 80/20 target tick — background-colored so it reads over either segment.
-                        Rectangle().fill(Theme.background).frame(width: 2, height: 22)
-                            .shadow(color: .black.opacity(0.25), radius: 0.5)
-                            .offset(x: w * 0.8)
                     }
+                    .frame(height: 16)
+                    HStack {
+                        Text("\(Int((mix.easyFraction * 100).rounded()))% easy · \(mix.hardCount) hard run\(mix.hardCount == 1 ? "" : "s")")
+                            .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                        Spacer()
+                        Text("80/20 target").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    Text(mix.blurb)
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(height: 16)
-                HStack {
-                    Text("\(Int((mix.easyFraction * 100).rounded()))% easy · \(mix.hardCount) hard run\(mix.hardCount == 1 ? "" : "s")")
-                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
-                    Spacer()
-                    Text("80/20 target").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                Text(mix.blurb)
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Intensity mix over four weeks")
+                .accessibilityValue("\(Int((mix.easyFraction * 100).rounded())) percent easy. \(mix.blurb)")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md).background(card)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Intensity mix over four weeks: \(Int((mix.easyFraction * 100).rounded())) percent easy. \(mix.blurb)")
         }
     }
 
@@ -1092,17 +1082,21 @@ struct ProgressScreen: View {
             // Lazy: a long history otherwise realizes every month section (and decodes every route
             // thumbnail) up front. Sections now materialize as they scroll into view.
             LazyVStack(alignment: .leading, spacing: Theme.Space.md) {
-                historySummary().reveal(0)
+                // A strip of three zeros isn't a summary, it's furniture — day one gets the one
+                // honest line at the bottom of this stack instead.
+                if !workouts.isEmpty {
+                    historySummary().reveal(0, once: "history.summary")
+                }
                 // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a tab).
                 // Rescued from the retired standalone History screen during the lean-cleanup pass.
-                HeatmapHistoryCard(workouts: workouts, distanceUnit: distanceUnit).reveal(0.04)
+                HeatmapHistoryCard(workouts: workouts, distanceUnit: distanceUnit)
+                    .reveal(0.04, once: "history.heatmap")
                 // No `.reveal` on the month sections: the LazyVStack discards row state past its
                 // retention window, so the reveal re-fired from blank on EVERY scroll-back — content
                 // flashed in both directions. The entrance stagger stays on the summary + heatmap.
                 ForEach(monthGroups(visible), id: \.key) { group in
                     VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                        Text(group.key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
-                            .tracking(0.8).foregroundStyle(Theme.inkSecondary).padding(.leading, 2)
+                        monthHeader(group.key, group.items)
                         VStack(spacing: 0) {
                             ForEach(Array(group.items.enumerated()), id: \.element.id) { i, w in
                                 if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
@@ -1149,6 +1143,32 @@ struct ProgressScreen: View {
             .padding(Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
+    }
+
+    /// A month divider that earns its line: the month, and what the month actually came to.
+    /// A bare "JULY 2026" is a label; scrolling back through a year of them told the athlete
+    /// nothing they didn't already know from the row dates. Distance leads (the number they'd
+    /// quote), sessions follow; a distance-free month (all strength) simply drops the first half.
+    private func monthHeader(_ key: String, _ items: [Workout]) -> some View {
+        let meters = items.compactMap { $0.gps?.distanceM }.reduce(0, +)
+        let sessions = "\(items.count) session\(items.count == 1 ? "" : "s")"
+        let summary = meters > 0
+            ? "\(Formatters.distance(meters: meters, unit: distanceUnit)) · \(sessions)"
+            : sessions
+        return HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+            Text(key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(0.8).foregroundStyle(Theme.inkSecondary)
+            Spacer(minLength: Theme.Space.sm)
+            Text(summary)
+                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(key)
+        .accessibilityValue(summary)
+        .accessibilityAddTraits(.isHeader)
     }
 
     /// This-month summary strip: sessions, distance, PRs.
@@ -1463,12 +1483,18 @@ struct ProgressScreen: View {
 
     /// A granularity-agnostic chart point: the distance/pace/load charts plot these, so the same
     /// marks render both the daily "Week" view (7 days) and the rolling weekly ranges.
+    ///
+    /// Identity is the DATE, not a fresh UUID. `trendPoints(_:)` rebuilds this array on every body
+    /// evaluation, so a per-instance UUID handed Charts a brand-new identity for every mark on
+    /// every render — `ForEach` tore the whole plot down and rebuilt it instead of diffing, which
+    /// both cost frames and killed the mark-level animation the bars were written for. A bucket's
+    /// date IS its identity here (one point per day / per week, by construction).
     struct TrendPoint: Identifiable {
-        let id = UUID()
         let date: Date
         let load: Double
         let distanceM: Double
         let avgPaceSPerKm: Double
+        var id: Date { date }
     }
 
     private var trendIsDaily: Bool { trendRange.isDaily }
@@ -1553,7 +1579,12 @@ struct ProgressScreen: View {
     /// An editorial chapter masthead — display-face title, an index numeral, a hairline rule.
     /// The Trends page reads as a structured report (01 Endurance / 02 Strength / 03 Coach)
     /// instead of one continuous stream of cards.
-    private func trendsSectionHeader(_ index: String, _ title: String, _ sub: String) -> some View {
+    ///
+    /// `accessory` sits on the subtitle line, right-aligned — where a chapter-scoped control
+    /// belongs. It stays OUTSIDE the combined header element so its own buttons remain reachable
+    /// (a `children: .combine` header swallows any interactive content nested inside it).
+    private func trendsSectionHeader<A: View>(_ index: String, _ title: String, _ sub: String,
+                                              @ViewBuilder accessory: () -> A = { EmptyView() }) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             HStack(alignment: .lastTextBaseline) {
                 Text(title).font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
@@ -1561,12 +1592,17 @@ struct ProgressScreen: View {
                 Text(index).font(.display(13, weight: .bold)).monospacedDigit()
                     .tracking(1).foregroundStyle(Theme.inkTertiary)
             }
-            Text(sub.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
-                .foregroundStyle(Theme.inkTertiary)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .center, spacing: Theme.Space.sm) {
+                Text(sub.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                    .foregroundStyle(Theme.inkTertiary)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                Spacer(minLength: Theme.Space.sm)
+                accessory()
+            }
             Rectangle().fill(Theme.hairline).frame(height: 1).padding(.top, Theme.Space.xs)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
     }
 
     /// A chart headline's trend chip. Good-direction moves earn the legible green; the other
@@ -1593,16 +1629,22 @@ struct ProgressScreen: View {
                                        @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
-                if headline != nil {
-                    sectionTitle(title.uppercased())
-                } else {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
-                        Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                Group {
+                    if headline != nil {
+                        sectionTitle(title.uppercased())
+                    } else {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
+                            Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        }
                     }
                 }
+                .accessibilityHidden(true)   // the collapsed summary below speaks the title
                 if let explainer {
                     Spacer(minLength: Theme.Space.sm)
+                    // OUTSIDE the collapsed element (the VitalsBoard rule): a card-wide
+                    // `children: .ignore` swallowed every ⓘ on this page, so the science behind
+                    // distance, pace and the season chart was unreachable by VoiceOver entirely.
                     MetricInfoButton(explainer: explainer)
                 }
                 // Depth is a promise, not a mystery (the meal-row rule): the quiet chevron says
@@ -1613,22 +1655,39 @@ struct ProgressScreen: View {
                     Image(systemName: "chevron.forward")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Theme.inkTertiary)
+                        .accessibilityHidden(true)
                 }
             }
-            if let headline {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(headline).font(.display(30, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                    if let headlineUnit {
-                        Text(headlineUnit).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            // Everything data-bearing collapses into ONE spoken summary (the plot itself is hard
+            // to navigate aurally); the header's ⓘ stays its own element above.
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                if let headline {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(headline).font(.display(30, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                        if let headlineUnit {
+                            Text(headlineUnit).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        Spacer(minLength: Theme.Space.sm)
+                        if let delta { deltaChip(delta) }
                     }
-                    Spacer(minLength: Theme.Space.sm)
-                    if let delta { deltaChip(delta) }
+                    Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .padding(.bottom, Theme.Space.xs)
                 }
-                Text(subtitle).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .padding(.bottom, Theme.Space.xs)
+                content()
             }
-            content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(((headline.map { "\($0) \(headlineUnit ?? ""), " } ?? "") + subtitle)
+                .replacingOccurrences(of: "↑", with: "up ")
+                .replacingOccurrences(of: "↓", with: "down ")
+                .replacingOccurrences(of: " · ", with: ", "))
+            .accessibilityAddTraits(onOpen != nil ? .isButton : [])
+            .accessibilityHint(onOpen != nil ? "Shows the full trend" : "")
+            // A tap gesture on the card is invisible to VoiceOver; without this the tap-through
+            // announced itself as a button and then did nothing when activated.
+            .accessibilityAction { onOpen?() }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
@@ -1637,15 +1696,6 @@ struct ProgressScreen: View {
         // (the plot's own selection gesture takes precedence inside it, so scrubbing survives).
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
-        // Collapse the chart into one clean spoken summary (the plot itself is hard to navigate aurally).
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityValue(((headline.map { "\($0) \(headlineUnit ?? ""), " } ?? "") + subtitle)
-            .replacingOccurrences(of: "↑", with: "up ")
-            .replacingOccurrences(of: "↓", with: "down ")
-            .replacingOccurrences(of: " · ", with: ", "))
-        .accessibilityAddTraits(onOpen != nil ? .isButton : [])
-        .accessibilityHint(onOpen != nil ? "Shows the full trend" : "")
     }
 
     // MARK: Weekly muscle coverage
@@ -1665,12 +1715,25 @@ struct ProgressScreen: View {
         }.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
     }
 
+    /// The card eyebrow. Uppercases here rather than at each call site — "Intensity mix",
+    /// "Running fitness", "Heart rate zones" and "Race outlook" were passing Title Case into a
+    /// 1.4-tracked 11pt label, so four cards wore letter-spaced sentence text while every
+    /// neighbour ("THIS WEEK", "TOTALS", "DAILY MOVEMENT", "RECORD BOOK") wore a proper eyebrow.
     private func sectionTitle(_ text: String) -> some View {
-        Text(text).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+        Text(text.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
+            .tracking(1.4).foregroundStyle(Theme.inkTertiary)
     }
 
+    /// ONE card in this family: `Theme.surface` with the house hairline.
+    ///
+    /// Progress was shipping three at once — this one (surface, no edge), the Health/F&F/strength
+    /// cards (surface + hairline), and the essentials cards (surface at 60% + hairline). Scrolling
+    /// Trends therefore crossed three different card weights, and the lighter essentials cards
+    /// read as a different, less finished tier of content than the charts under them. Same fill,
+    /// same edge, everywhere — `healthCard()` already defines exactly this.
     private var card: some View {
         RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
     }
 
     // MARK: - You — what Momentum has learned (ATHLETE-MODEL.md §8)
@@ -1699,7 +1762,12 @@ struct ProgressScreen: View {
         let nudges = Array(AthleteNudges.generate(facts).filter { $0.text.contains(where: \.isNumber) }.prefix(2))
         return VStack(alignment: .leading, spacing: Theme.Space.md) {
             if !deltas.isEmpty { growthCard(deltas).id("growth") }
-            seasonChart.id("season").proLocked(.advancedAnalytics)
+            // NO second `.proLocked` here: `athleteStory` already renders inside the Trends
+            // cluster's single lock, so gating the season chart again stacked two frosted layers
+            // (9pt blur twice, two 55% scrims) and floated a SECOND "unlock with Pro" card over
+            // the first. One unlock opens the whole page — that's the convention, and one lock
+            // is how it should look.
+            seasonChart.id("season")
             RecordsCard(distanceUnit: distanceUnit).id("records")
             if !coachingEvents.isEmpty { coachMoves }
             if !nudges.isEmpty { weeklyDigest(nudges) }
@@ -1821,7 +1889,12 @@ struct ProgressScreen: View {
                 cal.dateInterval(of: .weekOfYear, for: $0.achievedAt)?.start
             })
             let recordWeeks = weeks.filter { prWeeks.contains($0.week) }
-            chartSection("Your season", subtitle: "Weekly \(unit == .imperial ? "miles" : "kilometers") · ● a record week") {
+            // "All time" stated, not implied: every other card on this page names its window
+            // ("4 WKS", "LAST 7 NIGHTS", the range picker) — this one silently ignored the picker
+            // and plotted the whole history, which read as a bug the first time you flipped to 1W.
+            chartSection("Your season",
+                         subtitle: "All time · weekly \(unit == .imperial ? "miles" : "kilometers") · ● a record week",
+                         explainer: MetricExplainers.weeklyDistance) {
                 Chart {
                     ForEach(weeks, id: \.week) { entry in
                         BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
@@ -1889,19 +1962,24 @@ struct ProgressScreen: View {
 
     /// Free-tier anchor: distance, not VO₂max. Everyone gets to see the miles they ran; the
     /// fitness read (and everything the body's rail carries) is the Pro upgrade.
+    ///
+    /// Targets the DISTANCE CHART, not "charts". The free callouts used to scroll into the
+    /// Pro-locked block — a free athlete tapped their own mileage and landed on a frosted
+    /// paywall wall. A free reading must open the free card that explains it.
     private var panelHeroFree: AthleteCallout {
         let context = trendRange == .week && insights.distanceTrendPct >= 3 ? "Trending up" : "Distance covered"
         return AthleteCallout(label: trendRange.distanceNoun,
                               value: Formatters.distance(meters: rangeDistanceM, unit: distanceUnit),
-                              unit: nil, context: context, target: "charts")
+                              unit: nil, context: context, target: "distanceChart")
     }
 
     /// Under the free-tier hero: how many sessions the athlete banked over the range — a windowed
-    /// "how consistent have I been" counterweight to the distance number.
+    /// "how consistent have I been" counterweight to the distance number. Opens the THIS WEEK
+    /// strip, which carries the sessions column.
     private var panelSubFree: AthleteCallout {
         let n = cachedRangeSessions ?? 0
         return AthleteCallout(label: "SESSIONS", value: "\(n)", unit: nil,
-                              context: n == 1 ? "Workout logged" : "Workouts logged", target: "charts")
+                              context: n == 1 ? "Workout logged" : "Workouts logged", target: "weekStrip")
     }
 
     /// The Athlete Panel's anchor stat — VO₂max, the fitness index. Device measurement wins;
@@ -1977,13 +2055,17 @@ struct ProgressScreen: View {
         }
         // Muscle focus over the selected window — falls back to the intensity mix when it was all
         // cardio (whose card needs 28-day run data to mount — same dead-anchor guard).
+        // No window phrase in the rail: these context lines are one clipped line in a ~110pt
+        // column, and the panel's own eyebrow already names the window for everything on it —
+        // "Most worked over the last 7 days" simply truncated to "Most worked over the last 7…".
+        // ("WEEK FOCUS" was wrong at 6M anyway.)
         if let top = rangeMuscleActivation.filter({ $0.key != .fullBody && $0.value > 0 }).max(by: { $0.value < $1.value }) {
             out.append(AthleteCallout(label: "MUSCLE FOCUS", value: top.key.rawValue.capitalized, unit: nil,
-                                      context: "Most worked \(trendRange.windowPhrase)",
+                                      context: "Most worked",
                                       target: cachedHasStrength ? "strengthTrends" : "charts"))
         } else {
-            out.append(AthleteCallout(label: "WEEK FOCUS", value: "Endurance", unit: nil,
-                                      context: "All cardio \(trendRange.windowPhrase)",
+            out.append(AthleteCallout(label: "TRAINING FOCUS", value: "Endurance", unit: nil,
+                                      context: "All cardio",
                                       target: intensityMix != nil ? "intensityMix" : "charts"))
         }
         return out
@@ -2079,10 +2161,12 @@ struct ProgressScreen: View {
         .buttonStyle(.plain)
     }
 
-    /// "This week with Momentum" — proactive nudges the model surfaces on its own (§9).
+    /// Proactive nudges the model surfaces on its own (§9). Titled "WHAT WE NOTICED", not
+    /// "THIS WEEK" — the essentials strip at the top of the same scroll already owns THIS WEEK,
+    /// and two cards wearing one eyebrow made the page look like it had lost its place.
     private func weeklyDigest(_ nudges: [AthleteNudges.Nudge]) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text("THIS WEEK").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            Text("WHAT WE NOTICED").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
             ForEach(nudges) { nudge in
                 HStack(alignment: .top, spacing: Theme.Space.md) {
                     Image(systemName: nudge.kind.systemImage)

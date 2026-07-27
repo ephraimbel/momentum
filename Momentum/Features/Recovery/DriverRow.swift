@@ -328,6 +328,10 @@ struct DriverRow: View {
     }
 }
 
+// Previews compile into Release unless gated — and these are built from invented vitals,
+// nights and strain series. No fabricated health data belongs in a shipped binary
+// (production-readiness sweep 2026-07-16; the rest of this family was already gated).
+#if DEBUG
 // MARK: - Previews
 
 #Preview("Adjusted day") {
@@ -385,3 +389,4 @@ struct DriverRow: View {
     }
     .background(Theme.background)
 }
+#endif

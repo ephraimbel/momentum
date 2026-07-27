@@ -98,31 +98,15 @@ struct BalanceCard: View {
         }
     }
 
+    /// The house `SegmentedCapsule`, same as Progress's page bar and every window picker. This
+    /// card used to invert the convention — a SURFACE-filled pill with ink text, where everywhere
+    /// else the selected pill is ink with knocked-out text — so scrolling from Trends into Health
+    /// crossed two contradictory answers to "which one is on?".
     private var rangePicker: some View {
-        HStack(spacing: 2) {
-            ForEach(BalanceRange.allCases, id: \.self) { r in
-                Button {
-                    guard r != range else { return }
-                    scrub = nil
-                    withAnimation(Motion.reversible) { range = r }
-                } label: {
-                    Text(r.rawValue)
-                        .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
-                        .foregroundStyle(range == r ? Theme.ink : Theme.inkTertiary)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(
-                            Capsule().fill(range == r ? Theme.surface : .clear)
-                                .overlay(Capsule().stroke(range == r ? Theme.hairline : .clear))
-                        )
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Show \(r == .week ? "last seven days" : "last thirty days")")
-                .accessibilityAddTraits(range == r ? [.isSelected] : [])
-            }
-        }
-        .padding(2)
-        .background(Capsule().fill(Theme.background))
+        SegmentedCapsule(items: BalanceRange.allCases, selection: $range, scale: .compact,
+                         title: { $0.rawValue },
+                         spokenLabel: { "Show \($0 == .week ? "last seven days" : "last thirty days")" },
+                         onChange: { _ in scrub = nil })   // a pinned day means nothing in the new window
     }
 
     // MARK: Chart
@@ -726,6 +710,10 @@ private struct SupercompGlint: View {
     }
 }
 
+// Previews compile into Release unless gated — and these are built from invented vitals,
+// nights and strain series. No fabricated health data belongs in a shipped binary
+// (production-readiness sweep 2026-07-16; the rest of this family was already gated).
+#if DEBUG
 // MARK: - Preview
 
 #Preview("Balance — light") {
@@ -764,3 +752,4 @@ private struct BalanceCardPreview: View {
         .background(Theme.background)
     }
 }
+#endif

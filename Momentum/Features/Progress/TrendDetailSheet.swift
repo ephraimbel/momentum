@@ -164,28 +164,8 @@ struct TrendDetailSheet: View {
     // MARK: Range picker — the page picker's exact capsule language
 
     private var rangePicker: some View {
-        HStack(spacing: 2) {
-            ForEach(Range.allCases) { r in
-                let on = range == r
-                Button {
-                    Haptics.selection()
-                    withAnimation(Motion.standard) { range = r }
-                } label: {
-                    Text(r.rawValue)
-                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
-                        .lineLimit(1).fixedSize()
-                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background { if on { Capsule().fill(Theme.ink) } }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(r.phrase)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(Capsule().fill(Theme.surface))
+        SegmentedCapsule(items: Range.allCases, selection: $range, scale: .compact,
+                         title: { $0.rawValue }, spokenLabel: { $0.phrase })
     }
 
     // MARK: The big chart
@@ -370,7 +350,7 @@ struct TrendDetailSheet: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .animation(Motion.standard, value: pts)
         .accessibilityElement(children: .ignore)

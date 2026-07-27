@@ -11,7 +11,11 @@ struct HeatmapHistoryCard: View {
     /// Session cache: the History branch is destroyed on every segment flip, so an uncached build
     /// re-faulted + re-binned the entire GPS history per visit and the card popped in late,
     /// shifting the feed. `Result` is pure values (cells/count/meters) — safe to hold statically.
-    @MainActor private static var cache: (count: Int, result: HeatmapSource.Result)?
+    ///
+    /// Keyed on the CONTENT signature, not the count (the rule the rest of Progress already
+    /// follows): an equal-count edit — delete a mis-logged run, log the real one — left the map
+    /// drawing the deleted route for the whole session.
+    @MainActor private static var cache: (key: Int, result: HeatmapSource.Result)?
     // --heatmap-expand: auto-open the full PersonalHeatmapView on appear (website screenshot).
     @State private var expand = {
         #if DEBUG
@@ -34,13 +38,14 @@ struct HeatmapHistoryCard: View {
         // Keyed on the data, not the mount: a run logged mid-session now refreshes the card
         // (the old `if result == nil` guard froze "N activities" for the view's life), while a
         // cache hit renders instantly on re-visits instead of re-binning the whole history.
-        .task(id: workouts.count) {
-            if let cached = Self.cache, cached.count == workouts.count {
+        .task(id: workouts.contentSignature) {
+            let key = workouts.contentSignature
+            if let cached = Self.cache, cached.key == key {
                 if result == nil { result = cached.result }
                 return
             }
             let built = await HeatmapSource.build(from: workouts)
-            Self.cache = (workouts.count, built)
+            Self.cache = (key, built)
             result = built
         }
         .fullScreenCover(isPresented: $expand) {
