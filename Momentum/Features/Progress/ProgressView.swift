@@ -35,6 +35,8 @@ struct ProgressScreen: View {
     @State private var correcting: LearnedItem?
     @State private var showVO2Info = false
     @State private var showLogWorkout = false
+    /// "Log it manually" inside the composer swaps this sheet for the full form (same beat Today uses).
+    @State private var manualPrefill: LogWorkoutPrefill?
     @State private var signals: RecoverySignals = .empty   // HRV / resting HR / sleep from Apple Health
     /// The strip's cold-path full-blend result (same `ReadinessToday` recipe as deck + hub) —
     /// only consulted when today's cache is empty.
@@ -360,7 +362,16 @@ struct ProgressScreen: View {
         .onAppear { consumePendingSegment() }
         .onChange(of: router.pendingProgressSegment) { _, _ in consumePendingSegment() }
         .sheet(isPresented: $showVO2Info) { vo2InfoSheet.presentationDetents([.medium, .large]) }
-        .sheet(isPresented: $showLogWorkout) { LogWorkoutView() }
+        // History's "+" is the other place an athlete realises a session is missing, so it opens the
+        // SAME composer Today's Log button does — say it or type it, receipt, plan credit. It used
+        // to drop straight into the raw form: no dictation, no receipt, and stricter rules (a
+        // distance demanded for every run), which made the two entry points feel like two apps.
+        .sheet(isPresented: $showLogWorkout) {
+            LogActivityView { prefill in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { manualPrefill = prefill }
+            }
+        }
+        .sheet(item: $manualPrefill) { LogWorkoutView(prefill: $0) }
         .sheet(isPresented: $showAllAdaptations) { adaptationSheet }
         .sheet(item: $correcting) { item in
             if let profile = profiles.first {
@@ -417,7 +428,7 @@ struct ProgressScreen: View {
                         Image(systemName: "plus").font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.ink)
                             .frame(width: 32, height: 32)
                     }
-                    .accessibilityLabel("Add a past workout")
+                    .accessibilityLabel("Log a workout")
                 }
                 NavigationLink { SettingsView() } label: {
                     Image(systemName: "gearshape.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
@@ -1222,6 +1233,11 @@ struct ProgressScreen: View {
     private func feedSubtitle(_ w: Workout) -> String {
         let day = w.startedAt.formatted(.dateTime.weekday(.abbreviated).day())
         let kind = w.plannedSession?.runType?.rawValue.capitalized ?? w.type.title
+        // An untitled workout's title IS its type, so repeating it below read "Weight Training ·
+        // Weight Training". Say the time instead — the one fact the row doesn't already carry.
+        guard kind.caseInsensitiveCompare(feedTitle(w)) != .orderedSame else {
+            return "\(day) · \(w.startedAt.formatted(date: .omitted, time: .shortened))"
+        }
         return "\(day) · \(kind)"
     }
     private func feedStats(_ w: Workout) -> [String] {
@@ -1233,7 +1249,8 @@ struct ProgressScreen: View {
             return [dist, pace, Formatters.duration(s: w.durationS)]
         }
         if let s = w.strength {
-            return ["\(s.exercises.count) exercises", Formatters.duration(s: w.durationS)]
+            let n = s.exercises.count
+            return ["\(n) exercise\(n == 1 ? "" : "s")", Formatters.duration(s: w.durationS)]
         }
         return [Formatters.duration(s: w.durationS)]
     }

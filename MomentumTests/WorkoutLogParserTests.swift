@@ -481,4 +481,65 @@ struct WorkoutLogParserTests {
         #expect(WorkoutLogParser.parse("hello there").isEmpty)
         #expect(!WorkoutLogParser.parse("ran").isEmpty)
     }
+
+    // MARK: - Repeat phrases (the composer's "log it again" chips)
+
+    /// The chips exist to save the athlete retyping their usual session, which only works if the
+    /// sentence the app writes is one the app can read back. Every sport that can produce a phrase
+    /// has to survive the round trip — otherwise a tap fills the field with something that renders
+    /// a wrong receipt, which is worse than no chip at all.
+    @Test func repeatPhraseRoundTripsThroughTheGrammar() throws {
+        let cases: [(WorkoutType, Double, Double)] = [
+            (.run, 45 * 60, 8_046.72),          // 5 miles
+            (.trailRun, 60 * 60, 9_656.06),     // 6 miles
+            (.walk, 30 * 60, 0),
+            (.hike, 90 * 60, 6_437.38),
+            (.ride, 60 * 60, 32_186.9),         // 20 miles
+            (.mountainBikeRide, 45 * 60, 16_093.4),
+            (.gravelRide, 120 * 60, 48_280.3),
+            (.eBikeRide, 30 * 60, 16_093.4),
+            (.strength, 45 * 60, 0),
+            (.crossfit, 30 * 60, 0),
+            (.hiit, 20 * 60, 0),
+            (.yoga, 60 * 60, 0),
+            (.swimming, 30 * 60, 0),
+            (.rowing, 20 * 60, 0),
+            (.tennis, 90 * 60, 0),
+        ]
+        for (type, durationS, distanceM) in cases {
+            let phrase = try #require(
+                WorkoutLogParser.repeatPhrase(type: type, durationS: durationS, distanceM: distanceM,
+                                              distanceUnit: .imperial),
+                "no phrase for \(type)")
+            let read = WorkoutLogParser.parse(phrase, distanceUnit: .imperial)
+            #expect(read.type == type, "\"\(phrase)\" read back as \(String(describing: read.type))")
+            let minutes = try #require(read.durationS, "\"\(phrase)\" lost its duration")
+            #expect(abs(minutes - durationS) < 1, "\"\(phrase)\" read \(minutes)s, wanted \(durationS)s")
+            if distanceM > 0 {
+                let metres = try #require(read.distanceM, "\"\(phrase)\" lost its distance")
+                // Phrases round to the half unit on purpose — a template, not a copy of a receipt.
+                #expect(abs(metres - distanceM) < Formatters.metersPerMile / 2,
+                        "\"\(phrase)\" read \(metres)m, wanted ~\(distanceM)m")
+            }
+        }
+    }
+
+    /// Metric athletes get kilometres, and the phrase still round-trips.
+    @Test func repeatPhraseSpeaksTheAthletesUnit() throws {
+        let phrase = try #require(WorkoutLogParser.repeatPhrase(type: .run, durationS: 30 * 60,
+                                                                distanceM: 5_000, distanceUnit: .metric))
+        #expect(phrase == "Ran 5 km in 30 minutes")
+        let read = WorkoutLogParser.parse(phrase, distanceUnit: .metric)
+        #expect(read.type == .run)
+        #expect(read.distanceM.map { abs($0 - 5_000) < 1 } == true)
+    }
+
+    /// Nothing to describe → no chip (rather than a phrase that logs a zero-minute workout).
+    @Test func repeatPhraseDeclinesAWorkoutTooThinToDescribe() {
+        #expect(WorkoutLogParser.repeatPhrase(type: .run, durationS: 0, distanceM: 5_000,
+                                              distanceUnit: .imperial) == nil)
+        // Sports with no natural sentence form stay off the list entirely.
+        #expect(WorkoutLogParser.repeatPhrase(type: .other, durationS: 45 * 60, distanceM: 0,
+                                              distanceUnit: .imperial) == nil)
+    }
 }

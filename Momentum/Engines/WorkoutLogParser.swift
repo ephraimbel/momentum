@@ -67,8 +67,24 @@ enum WorkoutLogParser {
     /// discipline and parse each segment on its own; a trailing mention with no numbers of its own
     /// ("then a short bike") stays a footnote, not a card. When-words carry forward ("yesterday I
     /// lifted, then ran" — both were yesterday). Capped at 3 — nobody logs four in a breath.
+    /// `parseMulti` plus the sports it deliberately left OFF the receipt — a later clause that named
+    /// a discipline but brought no numbers ("45 min upper body **then went for a run**"). Dropping
+    /// those is right (a bare mention must never mint a spurious card), but dropping them *silently*
+    /// meant the app logged half of what the athlete said and showed no sign of the other half.
+    /// The composer names them in a quiet line instead.
+    struct MultiParse {
+        var results: [Result]
+        /// Disciplines named in a dropped segment, in the order they were said.
+        var unlogged: [WorkoutType]
+    }
+
     static func parseMulti(_ raw: String, weightUnit: WeightUnit = .kg,
                            distanceUnit: DistanceUnit = .metric) -> [Result] {
+        parseMultiDetailed(raw, weightUnit: weightUnit, distanceUnit: distanceUnit).results
+    }
+
+    static func parseMultiDetailed(_ raw: String, weightUnit: WeightUnit = .kg,
+                                   distanceUnit: DistanceUnit = .metric) -> MultiParse {
         let text = preprocess(raw, weightUnit: weightUnit)
         // Every sport-keyword hit, position-sorted, longest-wins, non-overlapping — so
         // "mountain bike ride" is one cycling mention, not three.
@@ -98,11 +114,13 @@ enum WorkoutLogParser {
             discipline = d
         }
         guard !boundaries.isEmpty else {
-            return [parse(text, weightUnit: weightUnit, distanceUnit: distanceUnit)]
+            return MultiParse(results: [parse(text, weightUnit: weightUnit, distanceUnit: distanceUnit)],
+                              unlogged: [])
         }
 
         let cuts = [0] + Array(boundaries.prefix(2))   // ≤3 segments
         var results: [Result] = []
+        var unlogged: [WorkoutType] = []
         for (i, start) in cuts.enumerated() {
             let end = i + 1 < cuts.count ? cuts[i + 1] : text.count
             let seg = String(text[text.index(text.startIndex, offsetBy: start)
@@ -111,13 +129,15 @@ enum WorkoutLogParser {
             // The primary always stands; later segments must bring their own numbers.
             if i == 0 || r.durationS != nil || r.distanceM != nil || !r.exercises.isEmpty {
                 results.append(r)
+            } else if let named = r.type {
+                unlogged.append(named)   // said, understood, and knowingly not logged — say so
             }
         }
         for i in 1..<results.count {
             if results[i].dayOffset == 0 { results[i].dayOffset = results[0].dayOffset }
             if results[i].timeHint == nil { results[i].timeHint = results[0].timeHint }
         }
-        return results
+        return MultiParse(results: results, unlogged: unlogged)
     }
 
     /// Does the text plainly say more than this parse captured? The composer's cue to send the
@@ -458,6 +478,76 @@ enum WorkoutLogParser {
         ("tennis", .tennis, false), ("soccer", .soccer, false),
         ("basketball", .basketball, false), ("golf", .golf, false),
     ]
+
+    /// A sentence this parser is guaranteed to read back as the workout it describes — what the
+    /// composer offers as "log it again" for the sessions the athlete keeps repeating (the gym
+    /// routine, the same evening loop). Typing that out every time is the actual work of logging;
+    /// one tap fills the field and the receipt builds itself.
+    ///
+    /// It lives HERE, next to the vocabulary and the regexes it has to satisfy, so a phrase and the
+    /// grammar can never drift apart — `repeatPhraseRoundTripsThroughTheGrammar` walks every sport
+    /// and asserts each phrase parses back to the same sport, duration and distance.
+    ///
+    /// Rounded on purpose (½ unit, 5 minutes): this is a template for a session about to happen
+    /// again, not a copy of an old one, and "Ran 4.45 miles in 34:55" reads like a receipt someone
+    /// forgot to throw away. Returns nil for a workout too thin to describe.
+    static func repeatPhrase(type: WorkoutType, durationS: Double, distanceM: Double,
+                             distanceUnit: DistanceUnit) -> String? {
+        let minutes = Int((durationS / 60 / 5).rounded()) * 5
+        guard minutes > 0 else { return nil }
+
+        func minutesPhrase() -> String { "\(minutes) minutes" }
+
+        if type.isGPS, distanceM > 0 {
+            let perUnit = distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
+            let value = ((distanceM / perUnit) * 2).rounded() / 2
+            guard value > 0 else { return nil }
+            let number = value.truncatingRemainder(dividingBy: 1) == 0
+                ? String(format: "%.0f", value) : String(format: "%.1f", value)
+            let unitWord = distanceUnit.resolved() == .imperial
+                ? (value == 1 ? "mile" : "miles") : "km"
+            guard let verb = gpsVerb(type) else { return nil }
+            return "\(verb) \(number) \(unitWord) in \(minutesPhrase())"
+        }
+        if type.isGPS, let verb = gpsVerb(type) {
+            return "\(verb) for \(minutesPhrase())"
+        }
+        guard let noun = sessionNoun(type) else { return nil }
+        return "\(minutes) min \(noun)"
+    }
+
+    /// Past-tense verbs the sport table already recognises, so the phrase reads like a person wrote it.
+    private static func gpsVerb(_ type: WorkoutType) -> String? {
+        switch type {
+        case .run: "Ran"
+        case .trailRun: "Trail run"
+        case .walk: "Walked"
+        case .hike: "Hiked"
+        case .ride: "Biked"
+        case .mountainBikeRide: "Mountain bike"
+        case .gravelRide: "Gravel ride"
+        case .eBikeRide: "E-bike"
+        default: nil
+        }
+    }
+
+    /// The noun form for a time-only session ("45 min lift").
+    private static func sessionNoun(_ type: WorkoutType) -> String? {
+        switch type {
+        case .strength: "lift"
+        case .crossfit: "crossfit"
+        case .hiit: "hiit"
+        case .yoga: "yoga"
+        case .pilates: "pilates"
+        case .swimming: "swim"
+        case .rowing: "rowing"
+        case .tennis: "tennis"
+        case .soccer: "soccer"
+        case .basketball: "basketball"
+        case .golf: "golf"
+        default: nil
+        }
+    }
 
     /// Lift words that imply the gym when no sport verb was said ("bench and squats for an hour",
     /// "squatted 225 for 5"). Hints only — they never override an explicit sport.

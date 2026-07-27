@@ -145,6 +145,15 @@ struct LogWorkoutView: View {
         Section("When") {
             DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
+            // One tap for the everyday lengths — the steppers below still handle anything odd.
+            // Reaching 45 minutes used to be nine taps on a stepper, and this form is exactly where
+            // an athlete lands when the composer couldn't work out how long they trained.
+            QuickDurationRow(selected: durationS > 0 ? durationS : nil) { picked in
+                hours = Int(picked) / 3600
+                minutes = (Int(picked) % 3600) / 60
+            }
+            .padding(.vertical, 2)
+            .listRowSeparator(.hidden)
             Stepper(value: $hours, in: 0...12) {
                 HStack {
                     Text("Hours").font(.rounded(Theme.FontSize.body, weight: .medium))

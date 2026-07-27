@@ -20,6 +20,14 @@ struct LogActivityView: View {
     @Environment(Services.self) private var services   // records → Health mirror → funnel, same as a tracked save
     @Query private var profiles: [UserProfile]
     @Query private var library: [Exercise]
+    /// A short window of recent sessions — only to offer them back as one-tap repeats. Bounded:
+    /// this sheet must never pay for the whole history to draw its blank slate.
+    static var recents: FetchDescriptor<Workout> {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        d.fetchLimit = 12
+        return d
+    }
+    @Query(LogActivityView.recents) private var recentWorkouts: [Workout]
 
     /// "Adjust details" hands the frozen parse back to TodayView, which swaps this sheet for the
     /// full manual form pre-filled — one editor in the app, not two.
@@ -38,6 +46,10 @@ struct LogActivityView: View {
     /// An edit REPLACES that card's parse; any change to the text clears all edits (the words are
     /// the source of truth again) and edits freeze the coach's re-reads (the athlete took over).
     @State private var cardEdits: [Int: LogWorkoutPrefill] = [:]
+    /// Durations chosen with one tap on a card's chip row, for the workout the athlete described
+    /// perfectly except for how long it took (every lift, basically). Cleared with the text, like
+    /// every other derived state here — the words are the source of truth.
+    @State private var durationPicks: [Int: Double] = [:]
     /// The card being edited in the nested form sheet.
     @State private var editingCard: EditingCard?
     @State private var saveFailed = false
@@ -69,20 +81,38 @@ struct LogActivityView: View {
     /// body reads this ~6× per render — every keystroke and every live-dictation tick was
     /// re-running the grammar a dozen times exactly during the streaming moment the feature is
     /// built around. A reference box (fields unobserved), the codebase's standard memo idiom.
-    private final class ParseMemo { var key = "\u{0}"; var value: [WorkoutLogParser.Result] = [] }
+    private final class ParseMemo {
+        var key = "\u{0}"
+        var value: [WorkoutLogParser.Result] = []
+        /// Sports the text named without numbers — dropped from the receipt on purpose, surfaced
+        /// in a line so the drop is never silent.
+        var unlogged: [WorkoutType] = []
+    }
     @State private var parseMemo = ParseMemo()
-    private var mergedList: [WorkoutLogParser.Result] {
+    private func refreshMemo() {
         let aiApplies = aiResult != nil && aiReadText == draft
         let key = "\(aiApplies)|\(aiGeneration)|\(draft)"
-        if parseMemo.key != key {
-            var list = WorkoutLogParser.parseMulti(draft, weightUnit: .default(), distanceUnit: distanceUnit)
-            if aiApplies, let ai = aiResult {
-                list = WorkoutParseService.merge(ai: ai, grammar: list)
-            }
-            parseMemo.key = key
-            parseMemo.value = list
+        guard parseMemo.key != key else { return }
+        let parsed = WorkoutLogParser.parseMultiDetailed(draft, weightUnit: .default(),
+                                                         distanceUnit: distanceUnit)
+        var list = parsed.results
+        if aiApplies, let ai = aiResult {
+            list = WorkoutParseService.merge(ai: ai, grammar: list)
         }
+        parseMemo.key = key
+        parseMemo.value = list
+        // A coach read that came back with more cards has already accounted for the mention.
+        parseMemo.unlogged = list.count > parsed.results.count ? [] : parsed.unlogged
+    }
+    private var mergedList: [WorkoutLogParser.Result] {
+        refreshMemo()
         return parseMemo.value
+    }
+    /// Disciplines the athlete said but gave no numbers for. Named out loud below the receipt —
+    /// "45 min upper body then went for a run" used to log the lift and drop the run without a word.
+    private var unloggedMentions: [WorkoutType] {
+        refreshMemo()
+        return parseMemo.unlogged
     }
 
     /// One receipt card per workout in the text — "lifted, then ran 4 miles" is two. A card the
@@ -98,7 +128,14 @@ struct LogActivityView: View {
         let list = mergedList
         let stacked = WorkoutLogParser.stackedDates(for: list)
         return list.indices.map { i in
-            guard let e = cardEdits[i] else { return Card(result: list[i], date: stacked[i], edited: false) }
+            guard let e = cardEdits[i] else {
+                var r = list[i]
+                // A tapped duration chip fills the one gap the words left. It can only ever ADD the
+                // missing number — anything the athlete actually said (or the coach later read)
+                // still wins, so this can't quietly overwrite a fact.
+                if r.durationS == nil, let picked = durationPicks[i] { r.durationS = picked }
+                return Card(result: r, date: stacked[i], edited: false)
+            }
             var r = WorkoutLogParser.Result()
             r.type = e.type
             r.indoor = e.indoor
@@ -148,6 +185,7 @@ struct LogActivityView: View {
                         } else {
                             receipts
                                 .transition(.opacity.combined(with: .offset(y: 12)))
+                            if !unloggedMentions.isEmpty { unloggedLine }
                             editHint
                         }
                         Color.clear.frame(height: 1).id("receiptEnd")
@@ -186,7 +224,8 @@ struct LogActivityView: View {
             }
             .onChange(of: draft) {
                 aiFailed = false
-                cardEdits = [:]   // the words changed — they're the source of truth again
+                cardEdits = [:]      // the words changed — they're the source of truth again
+                durationPicks = [:]  // …and a chip tapped for the old sentence means nothing now
                 scheduleCoachRead()
             }
             // Dictation streams the transcript continuously — hold the coach's read until the
@@ -403,17 +442,53 @@ struct LogActivityView: View {
 
     /// Teaching by doing: each example is tappable and fills the field, so the first receipt the
     /// athlete ever sees is one the grammar is guaranteed to read perfectly.
+    /// The blank slate. An athlete with history gets their own repeats first — logging the same
+    /// gym session or the same evening loop is most of what manual logging IS, and retyping it
+    /// every time was the whole cost. Examples fill the rest (and stand alone on day one), because
+    /// they're also what teaches the grammar.
     private var examples: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("Try one")
+        let repeats = repeatChips
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if !repeats.isEmpty {
+                Text("Log it again")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.inkTertiary)
+                ForEach(repeats, id: \.self) { exampleChip($0) }
+            }
+            Text(repeats.isEmpty ? "Try one" : "Or say anything")
                 .font(.rounded(Theme.FontSize.label, weight: .bold))
                 .tracking(1.2)
                 .foregroundStyle(Theme.inkTertiary)
-            exampleChip("Ran 5 easy miles this morning")
-            exampleChip("Bench pressed 185 for 10 with 5 sets")
-            exampleChip("45 min lift, then ran 4 miles at 9:23 pace")
+                .padding(.top, repeats.isEmpty ? 0 : Theme.Space.sm)
+            ForEach(Array(Self.teachingExamples.prefix(repeats.isEmpty ? 3 : 1)), id: \.self) { exampleChip($0) }
         }
         .padding(.top, Theme.Space.xs)
+    }
+
+    private static let teachingExamples = [
+        "Ran 5 easy miles this morning",
+        "Bench pressed 185 for 10 with 5 sets",
+        "45 min lift, then ran 4 miles at 9:23 pace",
+    ]
+
+    /// The athlete's recent sessions as sentences this parser reads perfectly (`repeatPhrase`) —
+    /// the most recent of each SPORT, newest first. One per sport, not per phrase: deduping on the
+    /// wording alone offered "Ran 4.5 miles in 35 minutes" directly above "…in 40 minutes", which
+    /// spends the whole list on one workout the athlete can retype in three characters anyway.
+    private var repeatChips: [String] {
+        var seen = Set<WorkoutType>()
+        var out: [String] = []
+        for workout in recentWorkouts {
+            guard !seen.contains(workout.type),
+                  let phrase = WorkoutLogParser.repeatPhrase(
+                    type: workout.type, durationS: workout.durationS,
+                    distanceM: workout.gps?.distanceM ?? 0, distanceUnit: distanceUnit) else { continue }
+            seen.insert(workout.type)
+            out.append(phrase)
+            if out.count == 3 { break }
+        }
+        return out
     }
 
     private func exampleChip(_ text: String) -> some View {
@@ -451,55 +526,92 @@ struct LogActivityView: View {
             .padding(.top, Theme.Space.xxs)
     }
 
+    /// The honesty line: a sport named without any numbers is deliberately left off the receipt
+    /// (a bare mention must never mint a card), but it can't just vanish — "45 min upper body then
+    /// went for a run" logged the lift and dropped the run without a word.
+    private var unloggedLine: some View {
+        let names = unloggedMentions.map { $0.title.lowercased() }
+        let list = ListFormatter.localizedString(byJoining: names)
+        return Label("Heard \(list) too — say how long and it gets its own card",
+                     systemImage: "plus.circle")
+            .font(.rounded(Theme.FontSize.caption, weight: .medium))
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The card is a tappable surface rather than a `Button` so the controls INSIDE it (the quick
+    /// duration chips, the Edit pill) can be real buttons — nested buttons never receive their own
+    /// taps. Tapping anywhere else still opens the editor, and VoiceOver reads the receipt line by
+    /// line instead of collapsing the whole thing into one label it can't inspect.
     private func receiptCard(_ index: Int, _ card: Card) -> some View {
-        Button {
-            Haptics.light()
-            // Editing freezes the words: a mic still streaming would rewrite the draft (and
-            // wipe card edits) while the athlete is inside the form.
-            if voice.isRecording { voice.stop() }
-            editingCard = EditingCard(id: index, prefill: prefill(for: card))
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                sportRow(card)
-                    .padding(.bottom, Theme.Space.sm)
-                Rectangle().fill(Theme.hairline).frame(height: 0.5)
-                    .padding(.bottom, Theme.Space.sm)
+        let r = card.result
+        return VStack(alignment: .leading, spacing: 0) {
+            sportRow(index, card)
+                .padding(.bottom, Theme.Space.sm)
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                .padding(.bottom, Theme.Space.sm)
 
-                let r = card.result
-                VStack(spacing: 10) {
-                    metricRow("Duration", r.durationS.map { Formatters.duration(s: $0) })
-                    if r.type?.isGPS ?? false {
-                        metricRow("Distance", r.distanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) })
-                        if let pace = paceLine(r) { metricRow(isBike(r) ? "Avg speed" : "Avg pace", pace) }
-                    }
-                    if let e = r.effort {
-                        metricRow("Effort", "\(effortWord(e)) · \(e)/10")
-                    }
+            VStack(spacing: 10) {
+                metricRow("Duration", r.durationS.map { Formatters.duration(s: $0) })
+                if r.type?.isGPS ?? false {
+                    metricRow("Distance", r.distanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) })
+                    if let pace = paceLine(r) { metricRow(isBike(r) ? "Avg speed" : "Avg pace", pace) }
                 }
-
-                if r.type?.isStrengthStyle ?? false {
-                    exerciseRows(r)
-                }
-
-                if let hint = missingHint(r) {
-                    Text(hint)
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .padding(.top, Theme.Space.sm)
-                }
-
-                if let credit = creditSession(card) {
-                    creditLine(credit, for: card)
-                        .padding(.top, Theme.Space.md)
+                if let e = r.effort {
+                    metricRow("Effort", "\(effortWord(e)) · \(e)/10")
                 }
             }
-            .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+
+            if r.type?.isStrengthStyle ?? false {
+                exerciseRows(r)
+            }
+
+            // The one gap worth closing in place. Everything else routes to the editor; a missing
+            // duration is so common (and so cheap to answer) that it gets answered right here.
+            // The row stays put once tapped — keyed on what the WORDS said, not on the filled card
+            // — so a mis-tapped 20m can be corrected to 45m instead of vanishing on contact.
+            if needsDurationChips(index, card) {
+                QuickDurationRow(selected: durationPicks[index]) { picked in
+                    if voice.isRecording { voice.stop() }   // a live mic would rewrite the sentence under them
+                    durationPicks[index] = picked
+                }
+                .padding(.top, Theme.Space.md)
+            }
+
+            if let hint = missingHint(r) {
+                Text(hint)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .padding(.top, Theme.Space.sm)
+            }
+
+            if let credit = creditSession(card) {
+                creditLine(credit, for: card)
+                    .padding(.top, Theme.Space.md)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(card.result.type?.title ?? "Workout"), tap to adjust details")
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .onTapGesture { openEditor(index, card) }
+    }
+
+    /// Whether this card offers the one-tap durations: it has a sport, the sentence never said how
+    /// long, and the athlete hasn't taken the card into the full editor (where they own every field).
+    private func needsDurationChips(_ index: Int, _ card: Card) -> Bool {
+        guard card.result.type != nil, cardEdits[index] == nil else { return false }
+        let list = mergedList
+        guard index < list.count else { return false }
+        return (list[index].durationS ?? 0) <= 0
+    }
+
+    /// Open the full form on this card. Editing freezes the words: a mic still streaming would
+    /// rewrite the draft (and wipe card edits) while the athlete is inside the form.
+    private func openEditor(_ index: Int, _ card: Card) {
+        Haptics.light()
+        if voice.isRecording { voice.stop() }
+        editingCard = EditingCard(id: index, prefill: prefill(for: card))
     }
 
     /// What the card's editor opens holding — the card as it currently reads.
@@ -508,14 +620,18 @@ struct LogActivityView: View {
         return LogWorkoutPrefill(
             type: r.type ?? .run,
             date: card.date,
-            durationS: r.durationS ?? 45 * 60,
+            // 0, not a friendly 45 minutes: the editor must open holding what the athlete actually
+            // said. Pre-filling a duration nobody uttered meant a Save tap could file three
+            // quarters of an hour of work that never happened — and the form's own Save stays
+            // disabled at 0, so the gap is impossible to miss (its chip row fills it in one tap).
+            durationS: r.durationS ?? 0,
             distanceM: r.distanceM ?? 0,
             indoor: r.indoor,
             effort: r.effort,
             exercises: r.exercises.map { .init(name: $0.name, sets: $0.sets, reps: $0.reps, weightKg: $0.weightKg) })
     }
 
-    private func sportRow(_ card: Card) -> some View {
+    private func sportRow(_ index: Int, _ card: Card) -> some View {
         HStack(spacing: Theme.Space.sm) {
             Image(systemName: card.result.type?.systemImage ?? "questionmark")
                 .font(.system(size: 16, weight: .semibold))
@@ -531,17 +647,22 @@ struct LogActivityView: View {
                     .foregroundStyle(Theme.inkTertiary)
             }
             Spacer()
-            // A real pill, not a whispered gray label — the review step only works if the athlete
-            // can see the card is editable before they log.
-            HStack(spacing: 4) {
-                Image(systemName: "pencil").font(.system(size: 11, weight: .bold))
-                Text("Edit").font(.rounded(Theme.FontSize.caption, weight: .bold))
+            // A real pill AND a real button — it looked tappable but was decoration inside the
+            // card's own button, so VoiceOver had no way to reach the editor at all.
+            Button { openEditor(index, card) } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "pencil").font(.system(size: 11, weight: .bold))
+                    Text("Edit").font(.rounded(Theme.FontSize.caption, weight: .bold))
+                }
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Theme.background))
+                .overlay(Capsule().stroke(Theme.hairline))
+                .contentShape(Capsule())
             }
-            .foregroundStyle(Theme.ink)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(Theme.background))
-            .overlay(Capsule().stroke(Theme.hairline))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Adjust this \(card.result.type?.title.lowercased() ?? "workout")")
         }
     }
 
@@ -667,10 +788,21 @@ struct LogActivityView: View {
 
     // MARK: Confirm bar
 
+    /// What's standing between this receipt and a logged workout, in the order save checks. A
+    /// greyed-out button with the reason buried in a card the athlete may have scrolled past is a
+    /// dead end — the button itself now says the missing word.
+    private var blockingHint: String? {
+        guard !isEmptyParse else { return nil }
+        if cards.contains(where: { $0.result.type == nil }) { return "Pick a sport to log it" }
+        if cards.contains(where: { ($0.result.durationS ?? 0) <= 0 }) { return "Add how long to log it" }
+        return nil
+    }
+
     private var confirmBar: some View {
         VStack(spacing: Theme.Space.sm) {
-            OversizedButton(title: cards.count > 1 ? "Log \(cards.count) workouts" : "Log workout",
-                            systemImage: "checkmark") { save() }
+            OversizedButton(title: blockingHint
+                            ?? (cards.count > 1 ? "Log \(cards.count) workouts" : "Log workout"),
+                            systemImage: canSave ? "checkmark" : nil) { save() }
                 .opacity(canSave ? 1 : 0.35)
                 .disabled(!canSave)
             // The manual path for a blank slate — with cards on screen, tapping a card IS the
@@ -726,7 +858,13 @@ struct LogActivityView: View {
         var workouts: [Workout] = []
         for card in cards {
             let r = card.result
-            guard let type = r.type, let dur = r.durationS else { return }
+            guard let type = r.type, let dur = r.durationS else {
+                // `canSave` should have caught this, but an early return that leaves rows inserted
+                // hands the next unrelated `context.save()` anywhere in the app a phantom workout
+                // to commit. Undo the partial batch before bailing.
+                workouts.forEach { context.delete($0) }
+                return
+            }
             let inputs = r.exercises.map { ex in
                 LogWorkoutBuilder.ExerciseInput(
                     name: ex.name,
