@@ -91,6 +91,42 @@ final class LogComposerUITests: XCTestCase {
         attach(app, "7-repeat-receipt")
     }
 
+    /// One sentence can split into a workout the athlete never meant. Removing it was impossible —
+    /// the only way out was rewriting the text, with the phantom card blocking the log button
+    /// meanwhile. The control appears only when several cards stand (with one, "remove" is Cancel),
+    /// and a removal is one tap to undo.
+    func testASpuriousCardCanBeRemovedAndPutBack() {
+        let app = launch(draft: "45 min upper body then ran 3 miles in 24 minutes")
+
+        // Assert on the receipt's OWN controls, never on a bare sport name: Today sits behind this
+        // sheet with a "Run" pill of its own, and `staticTexts["Run"]` happily matches it.
+        let removeRun = app.buttons["Remove this run from the receipt"]
+        let removeLift = app.buttons["Remove this weight training from the receipt"]
+        XCTAssertTrue(removeRun.waitForExistence(timeout: 20) && removeLift.exists,
+                      "Two cards should each offer a way off the receipt.")
+        let both = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Log 2 workouts'")).firstMatch
+        XCTAssertTrue(both.waitForExistence(timeout: 5), "The sentence holds two workouts.")
+        attach(app, "9-two-cards")
+
+        removeRun.tap()
+
+        // One card left: it logs as ONE workout, and the remove control retires with the ambiguity.
+        let single = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Log workout'")).firstMatch
+        XCTAssertTrue(single.waitForExistence(timeout: 8), "The removed card is still in the batch.")
+        XCTAssertTrue(single.isEnabled, "What survives must still be loggable.")
+        XCTAssertTrue(removeRun.waitForNonExistence(timeout: 5), "The removed card is still on screen.")
+        XCTAssertFalse(removeLift.exists, "With one card left, 'remove' is just Cancel — retire it.")
+
+        let undo = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Undo'")).firstMatch
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "A one-tap removal needs a one-tap undo.")
+        attach(app, "10-card-removed")
+
+        undo.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Log 2 workouts'"))
+            .firstMatch.waitForExistence(timeout: 8), "Undo didn't restore the card.")
+        attach(app, "11-undone")
+    }
+
     /// History is the other place an athlete notices a session is missing, and its "+" used to drop
     /// them into the raw form — no dictation, no receipt, stricter rules — while Today's Log button
     /// opened the composer. One flow, both doors.

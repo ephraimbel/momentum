@@ -50,6 +50,10 @@ struct LogActivityView: View {
     /// perfectly except for how long it took (every lift, basically). Cleared with the text, like
     /// every other derived state here — the words are the source of truth.
     @State private var durationPicks: [Int: Double] = [:]
+    /// Cards the athlete took off the receipt. A sentence can split into a workout they never meant
+    /// ("ran 4 miles then walked the dog back") and the only way out was to rewrite the text —
+    /// with an incomplete phantom card blocking the log button while they worked out why.
+    @State private var dismissedCards: Set<Int> = []
     /// The card being edited in the nested form sheet.
     @State private var editingCard: EditingCard?
     @State private var saveFailed = false
@@ -119,6 +123,10 @@ struct LogActivityView: View {
     /// athlete edited by hand shows its edit; the rest show the parse, with shared time contexts
     /// staggered so the chain reads in the order it happened.
     private struct Card {
+        /// Position in the parsed list — the key every per-card override is filed under
+        /// (`cardEdits`, `durationPicks`, `dismissedCards`), and stable while the text is. NOT the
+        /// position on screen: removing a card leaves the others' keys exactly where they were.
+        var index: Int
         var result: WorkoutLogParser.Result
         var date: Date
         var edited: Bool
@@ -126,15 +134,18 @@ struct LogActivityView: View {
 
     private var cards: [Card] {
         let list = mergedList
+        // Dates are stacked across the FULL list: the chain's time order is a property of the
+        // sentence, so removing the middle card must not slide the others' clocks.
         let stacked = WorkoutLogParser.stackedDates(for: list)
-        return list.indices.map { i in
+        return list.indices.compactMap { i in
+            guard !dismissedCards.contains(i) else { return nil }
             guard let e = cardEdits[i] else {
                 var r = list[i]
                 // A tapped duration chip fills the one gap the words left. It can only ever ADD the
                 // missing number — anything the athlete actually said (or the coach later read)
                 // still wins, so this can't quietly overwrite a fact.
                 if r.durationS == nil, let picked = durationPicks[i] { r.durationS = picked }
-                return Card(result: r, date: stacked[i], edited: false)
+                return Card(index: i, result: r, date: stacked[i], edited: false)
             }
             var r = WorkoutLogParser.Result()
             r.type = e.type
@@ -143,7 +154,7 @@ struct LogActivityView: View {
             r.distanceM = e.distanceM > 0 ? e.distanceM : nil
             r.effort = e.effort
             r.exercises = e.exercises.map { .init(name: $0.name, sets: $0.sets, reps: $0.reps, weightKg: $0.weightKg) }
-            return Card(result: r, date: e.date, edited: true)
+            return Card(index: i, result: r, date: e.date, edited: true)
         }
     }
 
@@ -162,7 +173,12 @@ struct LogActivityView: View {
     }
 
     /// Every card must be complete — the hints on an incomplete card say what's missing.
-    private var canSave: Bool { !isEmptyParse && cards.allSatisfy { cardSaveable($0.result) } }
+    /// `allSatisfy` is vacuously true on an empty list, so the card count is checked explicitly —
+    /// the dismiss control can't empty the receipt today, but a button that looks live and does
+    /// nothing is not a failure mode worth leaving to a UI rule.
+    private var canSave: Bool {
+        !isEmptyParse && !cards.isEmpty && cards.allSatisfy { cardSaveable($0.result) }
+    }
 
     /// The receipt's plan line — computed with the same matcher that will credit on save.
     private func creditSession(_ card: Card) -> PlannedSession? {
@@ -186,6 +202,7 @@ struct LogActivityView: View {
                             receipts
                                 .transition(.opacity.combined(with: .offset(y: 12)))
                             if !unloggedMentions.isEmpty { unloggedLine }
+                            if !dismissedCards.isEmpty { undoRemovedLine }
                             editHint
                         }
                         Color.clear.frame(height: 1).id("receiptEnd")
@@ -224,8 +241,9 @@ struct LogActivityView: View {
             }
             .onChange(of: draft) {
                 aiFailed = false
-                cardEdits = [:]      // the words changed — they're the source of truth again
-                durationPicks = [:]  // …and a chip tapped for the old sentence means nothing now
+                cardEdits = [:]        // the words changed — they're the source of truth again
+                durationPicks = [:]    // …and a chip tapped for the old sentence means nothing now
+                dismissedCards = []    // …nor does a card removed from a receipt that no longer exists
                 scheduleCoachRead()
             }
             // Dictation streams the transcript continuously — hold the coach's read until the
@@ -510,10 +528,14 @@ struct LogActivityView: View {
 
     private var receipts: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            ForEach(Array(cards.enumerated()), id: \.offset) { i, card in
-                receiptCard(i, card)
+            // Keyed by the card's own index, not its position: removing one must not renumber the
+            // rest under SwiftUI (their edits and duration picks are filed under those keys).
+            ForEach(cards, id: \.index) { card in
+                receiptCard(card)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
         }
+        .animation(reduceMotion ? nil : Motion.standard, value: dismissedCards)
     }
 
     /// Names the review step out loud — the receipt is editable before it logs, which a card that
@@ -524,6 +546,23 @@ struct LogActivityView: View {
             .foregroundStyle(Theme.inkTertiary)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.top, Theme.Space.xxs)
+    }
+
+    /// Removing a card is one tap, so putting it back has to be one too — otherwise the only way
+    /// back from a mis-tap is retyping the sentence.
+    private var undoRemovedLine: some View {
+        let n = dismissedCards.count
+        return Button {
+            Haptics.light()
+            withAnimation(reduceMotion ? nil : Motion.standard) { dismissedCards = [] }
+        } label: {
+            Label("\(n) workout\(n == 1 ? "" : "s") removed · Undo", systemImage: "arrow.uturn.backward")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// The honesty line: a sport named without any numbers is deliberately left off the receipt
@@ -543,10 +582,11 @@ struct LogActivityView: View {
     /// duration chips, the Edit pill) can be real buttons — nested buttons never receive their own
     /// taps. Tapping anywhere else still opens the editor, and VoiceOver reads the receipt line by
     /// line instead of collapsing the whole thing into one label it can't inspect.
-    private func receiptCard(_ index: Int, _ card: Card) -> some View {
+    private func receiptCard(_ card: Card) -> some View {
+        let index = card.index
         let r = card.result
         return VStack(alignment: .leading, spacing: 0) {
-            sportRow(index, card)
+            sportRow(card)
                 .padding(.bottom, Theme.Space.sm)
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
                 .padding(.bottom, Theme.Space.sm)
@@ -570,7 +610,7 @@ struct LogActivityView: View {
             // duration is so common (and so cheap to answer) that it gets answered right here.
             // The row stays put once tapped — keyed on what the WORDS said, not on the filled card
             // — so a mis-tapped 20m can be corrected to 45m instead of vanishing on contact.
-            if needsDurationChips(index, card) {
+            if needsDurationChips(card) {
                 QuickDurationRow(selected: durationPicks[index]) { picked in
                     if voice.isRecording { voice.stop() }   // a live mic would rewrite the sentence under them
                     durationPicks[index] = picked
@@ -594,24 +634,35 @@ struct LogActivityView: View {
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .onTapGesture { openEditor(index, card) }
+        .onTapGesture { openEditor(card) }
     }
 
     /// Whether this card offers the one-tap durations: it has a sport, the sentence never said how
     /// long, and the athlete hasn't taken the card into the full editor (where they own every field).
-    private func needsDurationChips(_ index: Int, _ card: Card) -> Bool {
-        guard card.result.type != nil, cardEdits[index] == nil else { return false }
+    private func needsDurationChips(_ card: Card) -> Bool {
+        guard card.result.type != nil, cardEdits[card.index] == nil else { return false }
         let list = mergedList
-        guard index < list.count else { return false }
-        return (list[index].durationS ?? 0) <= 0
+        guard card.index < list.count else { return false }
+        return (list[card.index].durationS ?? 0) <= 0
     }
 
     /// Open the full form on this card. Editing freezes the words: a mic still streaming would
     /// rewrite the draft (and wipe card edits) while the athlete is inside the form.
-    private func openEditor(_ index: Int, _ card: Card) {
+    private func openEditor(_ card: Card) {
         Haptics.light()
         if voice.isRecording { voice.stop() }
-        editingCard = EditingCard(id: index, prefill: prefill(for: card))
+        editingCard = EditingCard(id: card.index, prefill: prefill(for: card))
+    }
+
+    /// Take a card off the receipt. Offered only while more than one stands: with a single card
+    /// "remove it" is just Cancel, and keeping the control off the common case keeps the receipt
+    /// calm — it also means the list can never be emptied, so there's always something to log.
+    private func dismissCard(_ card: Card) {
+        Haptics.light()
+        if voice.isRecording { voice.stop() }
+        withAnimation(reduceMotion ? nil : Motion.standard) {
+            _ = dismissedCards.insert(card.index)
+        }
     }
 
     /// What the card's editor opens holding — the card as it currently reads.
@@ -631,7 +682,7 @@ struct LogActivityView: View {
             exercises: r.exercises.map { .init(name: $0.name, sets: $0.sets, reps: $0.reps, weightKg: $0.weightKg) })
     }
 
-    private func sportRow(_ index: Int, _ card: Card) -> some View {
+    private func sportRow(_ card: Card) -> some View {
         HStack(spacing: Theme.Space.sm) {
             Image(systemName: card.result.type?.systemImage ?? "questionmark")
                 .font(.system(size: 16, weight: .semibold))
@@ -649,7 +700,7 @@ struct LogActivityView: View {
             Spacer()
             // A real pill AND a real button — it looked tappable but was decoration inside the
             // card's own button, so VoiceOver had no way to reach the editor at all.
-            Button { openEditor(index, card) } label: {
+            Button { openEditor(card) } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "pencil").font(.system(size: 11, weight: .bold))
                     Text("Edit").font(.rounded(Theme.FontSize.caption, weight: .bold))
@@ -663,6 +714,19 @@ struct LogActivityView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Adjust this \(card.result.type?.title.lowercased() ?? "workout")")
+            // Only while several cards stand: one sentence can split into a workout the athlete
+            // never meant, and rewriting the text was the only way to get rid of it.
+            if cards.count > 1 {
+                Button { dismissCard(card) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove this \(card.result.type?.title.lowercased() ?? "workout") from the receipt")
+            }
         }
     }
 
