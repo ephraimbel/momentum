@@ -139,12 +139,17 @@ struct ProfileScreen: View {
                     // discipline mix, and consistency live one tap away under "Highlights". The
                     // toggle and grid are plain siblings (no Section header) so the bar scrolls with
                     // the tiles instead of pinning.
-                    ProfileGridTabBar(tab: gridTab)
-                    ProfileGrid(workouts: workouts, stats: stats, awardsShelf: awardsShelf, dataKey: workoutsSignature,
-                                weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
-                                prWorkoutIds: Set(records.compactMap { $0.workout?.id }),
-                                onOpen: { id in immersive = ImmersiveStart(id: id) },
-                                onOpenAwards: { showingAwards = true })
+                    // One child, not two: as siblings the parent's 24pt spacing sat between the tab
+                    // bar and the first tile row, which reads as a gap in the wall now that the
+                    // mosaic is edge to edge. Instagram's tab strip sits a hair above its grid.
+                    VStack(spacing: 0) {
+                        ProfileGridTabBar(tab: gridTab)
+                        ProfileGrid(workouts: workouts, stats: stats, awardsShelf: awardsShelf, dataKey: workoutsSignature,
+                                    weightUnit: weightUnit, distanceUnit: distanceUnit, tab: gridTab.wrappedValue,
+                                    prWorkoutIds: Set(records.compactMap { $0.workout?.id }),
+                                    onOpen: { id in immersive = ImmersiveStart(id: id) },
+                                    onOpenAwards: { showingAwards = true })
+                    }
                 }
             }
             .padding(.top, Theme.Space.md)

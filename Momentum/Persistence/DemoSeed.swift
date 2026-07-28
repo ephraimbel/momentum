@@ -300,16 +300,13 @@ enum DemoSeed {
                 // by timestamp or the snapshot draws a scribble instead of the route.
                 let coords = gps.samples.sorted { $0.t < $1.t }
                     .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                // Same basemap the app renders everywhere (the persisted app-wide style) — seeded
-                // tiles must look like real saves, not a mismatched light map. Portrait tile-native
-                // size + the style stamped, exactly like a real save.
-                // Tiles stay the light persisted basemap even in dark mode: they read as full-colour
-                // "photos" on the dark profile canvas (Instagram-style), and the on-appear snapshot
-                // healer renders light too — matching it avoids a half-light/half-dark grid.
-                let seedStyle = MapStyleOption.persisted
+                // Render each card on the basemap its own run was saved with — the same rule the
+                // healer now follows, so a seeded tile and a real save are indistinguishable.
+                // Portrait tile-native size, exactly like a real save.
+                let seedStyle = gps.mapStyle
                 if let data = await RouteSnapshotter.snapshot(
                     coordinates: coords, size: RouteSnapshotter.workoutTileSize,
-                    styleURI: RouteSnapshotter.tileStyle,
+                    styleURI: seedStyle.styleURI,
                     insets: RouteSnapshotter.workoutTileInsets) {
                     gps.mapSnapshotData = data
                     gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
@@ -319,6 +316,13 @@ enum DemoSeed {
             }
         }
     }
+
+    /// The basemaps seeded runs are saved with, in rotation. Seven entries against a 3-column grid
+    /// means the pattern never lines up into stripes. Curated, not all nine `MapStyleOption`s:
+    /// Dusk and Night bake identically to Realistic (a `StyleURI` can't carry the Standard light
+    /// preset), so including them would just repeat a look.
+    static let cardStyleRotation: [MapStyleOption] =
+        [.standard, .dark, .outdoors, .realistic, .satellite, .streets, .standardSatellite]
 
     // MARK: Marketing (full account)
 
@@ -337,7 +341,8 @@ enum DemoSeed {
         // Build one run post from a real city loop, repeated `laps` times for the long ones. `dense`
         // keeps full route fidelity + HR (the featured tiles we render maps for); the backfill runs
         // downsample and skip HR so seeding 200 posts stays quick.
-        func addRun(city: String, laps: Int, daysAgo: Double, dense: Bool, variant: Int) {
+        func addRun(city: String, laps: Int, daysAgo: Double, dense: Bool, variant: Int,
+                    style: MapStyleOption? = nil) {
             guard let loop = CommunityRoutes.loop(city: city, discipline: .run, nearestKm: 10) else { return }
             let laps = max(1, laps)
             let start = date(daysAgo)
@@ -356,6 +361,11 @@ enum DemoSeed {
                 gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: variant)
                 gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
             }
+            // Each run keeps the basemap it was "saved with" — cards render in their own style
+            // since v5, so rotating here is what gives the grid its range instead of 200 tiles of
+            // the same pale map. Rotation order alternates pale/dark/photographic so neighbouring
+            // tiles never repeat: the mosaic is 3 columns, and 7 shares no factor with 3.
+            gps.mapStyleRaw = (style ?? Self.cardStyleRotation[variant % Self.cardStyleRotation.count]).rawValue
             run.gps = gps
             context.insert(run)
         }
@@ -369,8 +379,16 @@ enum DemoSeed {
             ("Sydney", 1), ("Denver, CO", 2), ("Barcelona", 1), ("Brooklyn, NY", 1),
             ("Cape Town", 2), ("Oakland, CA", 1), ("Nashville, TN", 1), ("Miami, FL", 2),
         ]
+        // The opening composition. The first screenful is the one anybody actually judges (and the
+        // one that gets screenshotted), so these are hand-placed rather than left to the rotation:
+        // pale · photographic · dark in the first row, then a green and a colour, so no two
+        // neighbours share a canvas and the range is legible immediately. Strength tiles land at
+        // days 3.4/10.4/17.4 and break the run of them up further.
+        let opening: [MapStyleOption] = [.standard, .satellite, .dark, .outdoors, .streets,
+                                         .standardSatellite, .realistic, .dark, .standard]
         for (i, spec) in featured.enumerated() {
-            addRun(city: spec.0, laps: spec.1, daysAgo: 1 + Double(i) * 3, dense: true, variant: i)
+            addRun(city: spec.0, laps: spec.1, daysAgo: 1 + Double(i) * 3, dense: true, variant: i,
+                   style: i < opening.count ? opening[i] : nil)
         }
 
         // A few strength sessions threaded into the recent weeks so the grid also shows iridescent
@@ -421,17 +439,18 @@ enum DemoSeed {
                 guard let gps = run.gps else { continue }
                 let coords = gps.samples.sorted { $0.t < $1.t }
                     .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                // Tiles stay the light persisted basemap even in dark mode: they read as full-colour
-                // "photos" on the dark profile canvas (Instagram-style), and the on-appear snapshot
-                // healer renders light too — matching it avoids a half-light/half-dark grid.
-                let seedStyle = MapStyleOption.persisted
+                // Each card on the basemap its own run was saved with — same rule the healer
+                // follows since v5, so a seeded tile is indistinguishable from a real save. This
+                // used to hardcode `.persisted` + `tileStyle` and then WRITE that back over
+                // `mapStyleRaw`, which silently flattened the newest 22 tiles (the whole visible
+                // grid) to one basemap while everything below them stayed varied.
+                let seedStyle = gps.mapStyle
                 if let data = await RouteSnapshotter.snapshot(
                     coordinates: coords, size: RouteSnapshotter.workoutTileSize,
-                    styleURI: RouteSnapshotter.tileStyle,
+                    styleURI: seedStyle.styleURI,
                     insets: RouteSnapshotter.workoutTileInsets) {
                     gps.mapSnapshotData = data
                     gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
-                    gps.mapStyleRaw = seedStyle.rawValue
                     try? context.save()
                 }
             }

@@ -90,7 +90,11 @@ struct CommunityView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if items.isEmpty {
                     // No flash of the empty state during the very first assembly pass.
-                    if assembledOnce { emptyState.padding(.top, Theme.Space.xxl) }
+                    if assembledOnce {
+                        emptyState
+                            .padding(.top, Theme.Space.xxl)
+                            .padding(.horizontal, Theme.Space.md)
+                    }
                 } else {
                     ForEach(items) { item in
                         // Own posts keep an inert byline (no self-profile push from the feed).
@@ -100,7 +104,8 @@ struct CommunityView: View {
                     }
                 }
             }
-            .padding(.horizontal, Theme.Space.md)
+            // No horizontal inset here any more: the card's media is full-bleed, so each card
+            // supplies the page margin to its own TEXT blocks instead (media-first redesign).
             .padding(.top, Theme.Space.md)     // breathing room under the masthead — a more spacious feel
             .padding(.bottom, Theme.Space.xxl)
         }

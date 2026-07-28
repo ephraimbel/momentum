@@ -17,8 +17,33 @@ struct WorkoutTileMedia: View {
     var distanceUnit: DistanceUnit = .auto
     /// Immersive only: lets the pager page host the re-center control for the explorable map.
     var mapCameraHandle: RouteMapCameraHandle? = nil
+    /// Reports which canvas actually got drawn, so an overlay (the grid tile's metric) can pick an
+    /// ink that survives on it. Fires on first resolve and again if the snapshot heal swaps the
+    /// media — a caller can't derive this itself, because "has a snapshot" changes underneath it.
+    var onInkContext: ((InkContext) -> Void)? = nil
 
     enum Style { case tile, immersive }
+
+    /// What an overlay is sitting on.
+    ///
+    /// The distinction that matters: a route snapshot is baked into a persisted image, so its
+    /// luminance is fixed at render time and does NOT follow the athlete's appearance setting —
+    /// `Theme.ink` over one flips to near-white in dark mode and vanishes. Muscle/silhouette/glyph
+    /// sit on Theme tokens and do follow the appearance; a photo is genuinely unknown.
+    enum InkContext { case fixedLight, appearance, photo }
+
+    private func inkContext(for media: Media) -> InkContext {
+        switch media {
+        case .photo:                   .photo
+        case .snapshot:
+            // Since v5 the card is baked in the run's own style, so "snapshot" no longer implies a
+            // pale canvas. A dark or satellite basemap takes the photo treatment (white + halo);
+            // the pale ones keep fixed dark ink. Getting this wrong is invisible in light mode and
+            // illegible in dark — it was already shipped once that way.
+            (workout.gps?.mapStyle.bakesDarkCanvas ?? false) ? .photo : .fixedLight
+        case .muscle, .route, .glyph:  .appearance
+        }
+    }
 
     @Environment(\.modelContext) private var modelContext
     /// Resolved once per tile identity (not per body pass): picking the media re-decodes images,
@@ -47,11 +72,18 @@ struct WorkoutTileMedia: View {
         // finish shows the silhouette, renders + persists the real map here, then re-resolves so the
         // snapshot swaps in. Keyed on identity so a reused lazy cell recomputes for its new workout.
         .task(id: workout.id) {
-            resolved = await computeMedia()
+            let media = await computeMedia()
+            resolved = media
+            onInkContext?(inkContext(for: media))
             let hadSnapshot = workout.gps?.mapSnapshotData != nil
             await WorkoutSnapshotHealer.healIfNeeded(workout, context: modelContext)
-            // If the heal just produced a snapshot, swap it in for the silhouette fallback.
-            if !hadSnapshot, workout.gps?.mapSnapshotData != nil { resolved = await computeMedia() }
+            // If the heal just produced a snapshot, swap it in for the silhouette fallback — and
+            // re-report, because that swap takes the canvas from Theme-backed to fixed light.
+            if !hadSnapshot, workout.gps?.mapSnapshotData != nil {
+                let healed = await computeMedia()
+                resolved = healed
+                onInkContext?(inkContext(for: healed))
+            }
         }
     }
 

@@ -14,6 +14,12 @@ enum Theme {
     static let success = Color(hex: "34C759")  // "done" affordance (logged set ✓) — the one green accent
     static let purple = Color(hex: "7C63F0")   // brand violet — the Pro/marketing accent (paywall, PRO badge)
     static let like = Color(hex: "FF375F")     // warm rose — the social "like" heart (the one warm accent a feed earns)
+    /// Ink for text drawn over a canvas that is deliberately LIGHT in **both** appearances — today
+    /// that means route snapshots, which render on a clean light canvas whatever the athlete's
+    /// appearance setting (decision 2026-07-24). `Theme.ink` there would flip to near-white in dark
+    /// mode and disappear. Same value as light-mode `ink`; not a general-purpose token — reach for
+    /// it only on fixed-appearance surfaces.
+    static let inkOnFixedLight = Color(hex: "0E0E12")
 
     // MARK: Spacing (base 4pt)
     enum Space {

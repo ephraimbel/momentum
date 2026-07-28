@@ -111,6 +111,21 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     /// Realistic's night preset, so Realistic renders as Standard day here regardless, as before.)
     func styleURI(for _: ColorScheme) -> StyleURI { styleURI }
 
+    /// True when a baked snapshot of this style comes back DARK or photographic. Overlay ink on a
+    /// route card keys off this: the pale basemaps take fixed dark ink, these take white-with-a-halo
+    /// (the treatment that survives any luminance). Satellite counts even though imagery varies —
+    /// snow and desert are bright, forest and water are near-black, so it is never safe to assume.
+    ///
+    /// Dusk/Night are NOT here: a `StyleURI` can't carry the Standard light preset (see `styleURI`),
+    /// so they bake as Standard *day*, a light canvas. If `RouteSnapshotter` ever sets
+    /// `lightPreset` on the basemap import, revisit this.
+    var bakesDarkCanvas: Bool {
+        switch self {
+        case .dark, .satellite, .standardSatellite: true
+        case .standard, .realistic, .dusk, .night, .streets, .outdoors: false
+        }
+    }
+
     /// The Standard style's light preset, when this option is one of its moods — applied to
     /// snapshot previews via the style-import config (the URI alone can't express it).
     var standardLightPreset: String? {

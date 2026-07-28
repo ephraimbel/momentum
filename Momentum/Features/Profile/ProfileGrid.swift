@@ -72,7 +72,14 @@ struct ProfileGrid: View {
     /// Called when the athlete opens the full awards gallery.
     var onOpenAwards: () -> Void = {}
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3)
+    /// The gutter is a HAIRLINE, not a spacing token (Instagram measures 1px; we use 2pt so it
+    /// survives dark mode and non-Retina scaling). This is the single biggest reason a photo grid
+    /// reads as "a wall of work" rather than "cards on a page": at 2pt, ~99% of each row's width is
+    /// image, and the gap carries no rhythm or grouping — it exists only to stop two adjacent tiles
+    /// bleeding into each other. Tile corner radius is 0 as a direct CONSEQUENCE: at this gutter,
+    /// even a 4pt radius opens a visible four-pointed star of page background at every junction.
+    static let gutter = 2.0
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: ProfileGrid.gutter), count: 3)
 
     var body: some View {
         // The faces cross-dissolve with a small lift (transform-only) — the parent's withAnimation
@@ -83,65 +90,27 @@ struct ProfileGrid: View {
         }
     }
 
-    // MARK: Grid — the training log as an editorial mosaic
+    // MARK: Grid — one continuous mosaic
 
-    /// Months give the mosaic its rhythm: an endless undifferentiated wall reads as a dump; the
-    /// same tiles under quiet month rules read as a body of work. Grouping walks every workout →
-    /// memoized per data change (reference box — mutating it mid-body is invisible to SwiftUI).
-    private struct MonthGroup: Identifiable {
-        let id: Date          // month start
-        let title: String     // "JULY" / "JULY 2025"
-        let workouts: [Workout]
-        let tileOffset: Int   // running tile index before this group — global entrance stagger
-    }
-    private final class MonthsMemo { var count = -1; var value: [MonthGroup] = [] }
-    @State private var monthsMemo = MonthsMemo()
-    private var monthGroups: [MonthGroup] {
-        if monthsMemo.count != dataKey {
-            let cal = Calendar.current
-            let grouped = Dictionary(grouping: workouts) {
-                cal.dateInterval(of: .month, for: $0.startedAt)?.start ?? $0.startedAt
-            }
-            var offset = 0
-            monthsMemo.value = grouped.keys.sorted(by: >).map { start in
-                let rows = grouped[start] ?? []
-                defer { offset += rows.count }
-                return MonthGroup(id: start, title: Self.monthTitle(start, calendar: cal),
-                                  workouts: rows, tileOffset: offset)
-            }
-            monthsMemo.count = dataKey
-        }
-        return monthsMemo.value
-    }
-
-    private static func monthTitle(_ start: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        let sameYear = calendar.component(.year, from: start) == calendar.component(.year, from: Date())
-        formatter.dateFormat = sameYear ? "MMMM" : "MMMM yyyy"
-        return formatter.string(from: start).uppercased()
-    }
-
+    /// No month rules (owner call 2026-07-28). They were there to give the wall a rhythm, but
+    /// Instagram's grid has no section breaks at all, and once the tiles went edge to edge the
+    /// rules read as chrome cutting the work into pages. `workouts` arrives newest-first from the
+    /// parent's `@Query`, so the mosaic is already in the right order; the date each tile belongs
+    /// to lives on its detail page.
     private var gridContent: some View {
-        LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
-            Color.clear.frame(height: 0)
-                .task {
-                    // Retire the entrance once it has played (stagger + fade ≈ 0.9s).
-                    try? await Task.sleep(for: .seconds(1.2))
-                    didEntrance = true
-                }
-            ForEach(monthGroups) { group in
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    sectionRule(group.title, meta: "\(group.workouts.count)")
-                    LazyVGrid(columns: columns, spacing: Theme.Space.sm) {
-                        ForEach(Array(group.workouts.enumerated()), id: \.element.id) { i, workout in
-                            tileCell(workout, globalIndex: group.tileOffset + i)
-                        }
-                    }
-                }
+        LazyVGrid(columns: columns, spacing: ProfileGrid.gutter) {
+            ForEach(Array(workouts.enumerated()), id: \.element.id) { i, workout in
+                tileCell(workout, globalIndex: i)
             }
         }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.top, Theme.Space.md)
+        // Edge to edge horizontally; the first row sits one gutter under the tab strip's hairline,
+        // so the grid reads as a continuation of it rather than a separate block.
+        .padding(.top, ProfileGrid.gutter)
+        .task {
+            // Retire the entrance once it has played (stagger + fade ≈ 0.9s).
+            try? await Task.sleep(for: .seconds(1.2))
+            didEntrance = true
+        }
     }
 
     /// The first screenful settles in with a quiet stagger; everything below appears instantly
@@ -429,8 +398,14 @@ private struct SettleIn: ViewModifier {
 
 // MARK: - Tile
 
-/// One workout "post": full-bleed media (route map / muscle body / photo / glyph) with a minimal
-/// metric strip over a bottom scrim. Portrait 3:4, rounded — dense but premium.
+/// One workout "post": full-bleed media (route map / muscle body / photo / glyph) under a single
+/// quiet number. Portrait 3:4, SQUARE-cornered, borderless, hairline-gutter — the Instagram grid
+/// read (2026-07-28): uniform shape, no chrome, media edge to edge.
+///
+/// The one thing we keep that Instagram drops is the metric. A photo grid can be text-free because
+/// the photo IS the content; here most tiles are grey route lines, and without the number a
+/// 3-mile shakeout and a 20-mile long run are the same picture. So: the number stays, the sport
+/// icon, the date and the heavy scrim go (owner call 2026-07-28).
 private struct WorkoutTile: View {
     let workout: Workout
     var weightUnit: WeightUnit
@@ -439,16 +414,21 @@ private struct WorkoutTile: View {
     var isPR: Bool = false
     var onOpen: () -> Void
 
+    /// Which canvas the media layer actually drew — drives `metricInk`. Defaults to the
+    /// Theme-backed case, which is what the brief placeholder before resolve is too.
+    @State private var ink: WorkoutTileMedia.InkContext = .appearance
+
     var body: some View {
         Button(action: onOpen) {
             Color.clear
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
-                .overlay { WorkoutTileMedia(workout: workout, style: .tile) }
+                .overlay { WorkoutTileMedia(workout: workout, style: .tile, onInkContext: { ink = $0 }) }
                 .overlay(alignment: .bottom) { metricStrip }
                 .overlay(alignment: .topTrailing) { if isPR { prMark } }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(Theme.hairline))
+                // Square + borderless. Both are required by the hairline gutter: a radius would
+                // punch background stars into every junction, and a stroke on a 2pt gutter reads
+                // as a 4pt double line between neighbours.
+                .clipped()
                 .contentShape(Rectangle())
         }
         .buttonStyle(TilePressStyle())
@@ -467,28 +447,31 @@ private struct WorkoutTile: View {
             .padding(7)
     }
 
+    /// One number, bottom-left. No sport icon, no date, no band — those three were what made the
+    /// mosaic read as a stack of labelled cards instead of a wall of work.
+    ///
+    /// The scrim went with them, which means legibility has to come from the ink — over five very
+    /// different canvases. Rather than guess the backdrop, the media layer reports which one it
+    /// drew (`onInkContext`), so each tile picks ink that's right by construction and re-picks if
+    /// the snapshot heal swaps the canvas mid-flight.
     private var metricStrip: some View {
-        HStack(spacing: 4) {
-            Image(systemName: workout.type.systemImage).font(.system(size: 10, weight: .bold))
-            // The number is the tile's voice — it speaks in the display face, like every hero.
-            Text(metric).font(.display(11.5, weight: .heavy)).monospacedDigit()
-                .shadow(color: .black.opacity(0.35), radius: 1.5, y: 0.5)
-            Spacer(minLength: 4)
-            // A quiet date turns the mosaic into a legible training log at a glance.
-            Text(workout.startedAt, format: .dateTime.month(.abbreviated).day())
-                .font(.rounded(9.5, weight: .semibold)).monospacedDigit()
-                .foregroundStyle(.white.opacity(0.72))
+        Text(metric)
+            .font(.display(11.5, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(metricInk)
+            // A photo is the only unknown canvas, so it's the only one that needs a halo. On our own
+            // canvases the ink already contrasts and a shadow would read as a smudge on a clean map.
+            .shadow(color: .black.opacity(ink == .photo ? 0.55 : 0), radius: 2, y: 0.5)
+            .shadow(color: .black.opacity(ink == .photo ? 0.25 : 0), radius: 5)
+            .padding(.horizontal, 7).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var metricInk: Color {
+        switch ink {
+        case .fixedLight: Theme.inkOnFixedLight   // route snapshot: a light basemap in BOTH appearances
+        case .appearance: Theme.ink               // muscle / silhouette / glyph: Theme-backed canvas
+        case .photo:      .white                  // unknown canvas: white, carried by the halo above
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, Theme.Space.sm).padding(.vertical, Theme.Space.chipV)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // A longer, softer editorial fade — the metric floats on the photo instead of sitting
-        // on a hard band.
-        .background(LinearGradient(stops: [
-            .init(color: .clear, location: 0),
-            .init(color: .black.opacity(0.16), location: 0.45),
-            .init(color: .black.opacity(0.52), location: 1),
-        ], startPoint: .top, endPoint: .bottom).padding(.top, -Theme.Space.lg))
     }
 
     private var metric: String {
@@ -502,14 +485,16 @@ private struct WorkoutTile: View {
     }
 }
 
-/// Tile press feedback: a small transform-only settle (brand rule: animate transforms, never
-/// layout) so the mosaic feels tactile without any chrome.
+/// Tile press feedback: dim only.
+///
+/// The scale-down had to go with the gutter. At 8pt gaps a 0.97 shrink read as a tactile settle;
+/// at 2pt it opens a visible hole around the pressed tile and the mosaic looks like it glitched.
+/// Instagram dims for the same reason. Still transform-only (opacity), still Reduce-Motion-safe.
 private struct TilePressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(configuration.isPressed ? 0.92 : 1)
-            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: configuration.isPressed)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

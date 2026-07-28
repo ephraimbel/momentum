@@ -10,6 +10,18 @@ struct MomentumApp: App {
     @State private var auth: AuthController
     @State private var coach = CoachPresenter()
     @State private var router = AppRouter()          // cross-tab routing mailbox (Health segment, RECOVERY-HUB-PLAN §2)
+    #if DEBUG
+    // Community is back-burnered (2026-07-16) and stays unreachable in Release. These exist ONLY so
+    // the dormant feed can be rendered for design work behind `--community` — nothing in the
+    // shipping app reads them, and every one is UserDefaults-backed with no network on init.
+    // `RemoteFeedStore` keeps a nil backend, so it stays inert and the seeded community is what
+    // renders. Re-injecting these for real is step 1 of docs/COMMUNITY-FEED-REDESIGN.md §6.
+    @State private var follows = FollowStore()
+    @State private var reactions = ReactionStore()
+    @State private var comments = CommentStore()
+    @State private var moderation = ModerationStore()
+    @State private var remoteFeed = RemoteFeedStore()
+    #endif
     // Social stores + backend wiring removed 2026-07-16: Community is back-burnered from v1 —
     // the app ships solo-first (Bevel-for-endurance positioning). The stores, feed, and Supabase
     // social backend all remain in the repo, dormant; re-wire here when community returns.
@@ -91,6 +103,13 @@ struct MomentumApp: App {
             .environment(auth)
             .environment(coach)
             .environment(router)
+            #if DEBUG
+            .environment(follows)
+            .environment(reactions)
+            .environment(comments)
+            .environment(moderation)
+            .environment(remoteFeed)
+            #endif
             .tint(Theme.ink)
             // Ceiling on Dynamic Type. `Font.custom(_:size:)` scales relative to `.body`, so every
             // string in the app grows with the athlete's text-size setting — unbounded, until this.

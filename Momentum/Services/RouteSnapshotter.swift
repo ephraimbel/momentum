@@ -17,11 +17,14 @@ enum RouteSnapshotter {
     /// The route still stays inside the CENTER SQUARE (y 110–770 of the 880), so the 52×52
     /// History thumbnail (a square crop of this portrait image) never clips it.
     static let workoutTileInsets = UIEdgeInsets(top: 180, left: 90, bottom: 180, right: 90)
-    /// The route CARD's canvas — always Mapbox Light, the brand's clean muted monochrome basemap.
-    /// A workout tile is stylized brand art, not a live map: on the colorful Standard/Streets
-    /// basemaps the pastel trace drowned under restaurant pins and street colours ("tacky"), so
-    /// the card renders on the clean canvas where the route reads like a Strava card. The athlete's
-    /// chosen style still drives every INTERACTIVE map (Today, live tracking, the full-screen pager).
+    /// The route card's FALLBACK canvas — Mapbox Light, the brand's clean muted monochrome basemap.
+    ///
+    /// ⚠️ No longer the universal rule. v4 pinned every card here because the athlete's app-wide
+    /// style silently re-skinned all of them, and busy POI-pinned basemaps drowned the pastel trace
+    /// ("tacky"). v5 (2026-07-28, owner call) makes a card render in **the style its run was saved
+    /// with** — which is what the save screen's picker has claimed all along ("saved with the
+    /// workout (grid tile, History, feed post)") while `WorkoutSnapshotHealer` quietly discarded the
+    /// argument and rendered Light anyway. This is now only the floor for a run with no style at all.
     static let tileStyle: StyleURI = .light
     /// Bump when the rendered LOOK changes — the healer re-renders stale-version snapshots so
     /// old workouts pick up the new aesthetic without being reopened.
@@ -29,7 +32,10 @@ enum RouteSnapshotter {
     /// busy POI-pinned basemaps read tacky), solid route-purple trace (was a periwinkle→lilac
     /// gradient — iridescence is earned), generous Strava framing, a weightier stroke, and a soft
     /// dark casing that lifts the pastel trace so it never washes out over pale water.
-    static let renderVersion = 4
+    /// v5 (2026-07-28): the card renders in the run's OWN style rather than always Light, so every
+    /// existing snapshot is stale by definition — the healer re-renders them onto the canvas their
+    /// workout was actually saved with.
+    static let renderVersion = 5
 
     static func snapshot(coordinates: [CLLocationCoordinate2D],
                          size: CGSize = CGSize(width: 640, height: 360),

@@ -57,6 +57,8 @@ enum FeedRouteSnapshots {
 struct FeedRouteMap: View {
     let item: FeedItem
     var height: CGFloat = 200
+    /// 0 in the media-first feed card, where every post is one full-bleed square-cornered frame.
+    var cornerRadius: CGFloat = Theme.Radius.card
     /// True in the post reading view: its map takes the render fast lane and never gives up while
     /// on screen (a feed cell politely queues and stops after a few tries).
     var urgent = false
@@ -86,8 +88,9 @@ struct FeedRouteMap: View {
                         .padding(Theme.Space.xl)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+            .stroke(cornerRadius == 0 ? .clear : Theme.hairline))
         .animation(.easeOut(duration: 0.25), value: image != nil)
         .task(id: "\(item.id)-\(colorScheme == .dark)") {
             #if DEBUG

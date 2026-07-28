@@ -14,6 +14,8 @@ import ImageIO
 struct PhotoCarousel: View {
     let photosData: [Data]
     var height: CGFloat = 200
+    /// 0 in the media-first feed card (full-bleed, square).
+    var cornerRadius: CGFloat = Theme.Radius.card
     /// `.fill` (default) crops each photo to the fixed `height` band — the compact feed/tile look.
     /// `.fit` honors the photo's aspect so the reading view shows the WHOLE image (here `height` is a
     /// max cap, not an exact height).
@@ -31,7 +33,7 @@ struct PhotoCarousel: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 
     private var carousel: some View {
@@ -73,6 +75,8 @@ struct PhotoCarousel: View {
 struct RoutePhotoCarousel: View {
     let item: FeedItem
     var height: CGFloat = 200
+    /// 0 in the media-first feed card (full-bleed, square).
+    var cornerRadius: CGFloat = Theme.Radius.card
     var contentMode: ContentMode = .fill
     /// Reading view only — see `FeedRouteMap.urgent`.
     var urgentRoute = false
@@ -99,7 +103,7 @@ struct RoutePhotoCarousel: View {
         .frame(maxWidth: .infinity)
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $page)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .overlay(alignment: .bottom) { pageDots }
         .accessibilityLabel("Route and \(item.photosData.count) photo\(item.photosData.count == 1 ? "" : "s")")
     }

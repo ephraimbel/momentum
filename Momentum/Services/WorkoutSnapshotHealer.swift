@@ -35,16 +35,23 @@ enum WorkoutSnapshotHealer {
         while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1
         let style = gps.mapStyle
-        // Card on the clean canvas; the workout's own style is stamped for the interactive pager.
+        // The card renders in the run's OWN style (v5) — the save screen's picker promises exactly
+        // this, and until now the promise was empty: the style was stamped onto the workout while
+        // the image was always baked on Light.
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
                                                    size: RouteSnapshotter.workoutTileSize,
-                                                   styleURI: RouteSnapshotter.tileStyle,
+                                                   styleURI: style.styleURI,
                                                    insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
         guard let data else { failed.insert(id); return }
         gps.mapSnapshotData = data
         gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
-        gps.mapStyleRaw = style.rawValue
+        // Only ever STAMP a missing style — never restate one. Healing is about a missing image, so
+        // rewriting the style here reassigns the run's canvas as a side effect: `gps.mapStyle`
+        // resolves nil to the app-wide default, so a tile that healed before its style had been
+        // saved wrote that default back and permanently overwrote the real pick (caught seeding a
+        // varied grid — assignments survived or turned "realistic" depending on render order).
+        if gps.mapStyleRaw == nil { gps.mapStyleRaw = style.rawValue }
         try? context.save()
     }
 
@@ -100,9 +107,11 @@ enum WorkoutSnapshotHealer {
         guard coords.count > 1 else { return }
         while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1
+        // Re-render in the style being applied — this argument used to be accepted and then thrown
+        // away, so changing the style on the save screen updated the stamp and nothing visible.
         let data = await RouteSnapshotter.snapshot(coordinates: coords,
                                                    size: RouteSnapshotter.workoutTileSize,
-                                                   styleURI: RouteSnapshotter.tileStyle,
+                                                   styleURI: style.styleURI,
                                                    insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
         guard let data else { return }
