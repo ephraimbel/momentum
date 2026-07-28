@@ -125,7 +125,7 @@ struct ShareCardContent: View {
 
     private func secondary(_ gps: GPSDetail) -> String {
         let time = Formatters.duration(s: workout.durationS)
-        if workout.type == .ride {
+        if workout.type.isCycling {
             let speed = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
             return "\(time) · \(Formatters.speed(ms: speed, unit: distanceUnit))"
         }

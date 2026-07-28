@@ -167,7 +167,7 @@ private struct ImmersiveWorkoutPage: View {
                 .init(value: Formatters.distance(meters: gps.distanceM, unit: distanceUnit), label: "Distance"),
                 .init(value: Formatters.duration(s: workout.durationS), label: "Time"),
             ]
-            if workout.type == .ride {
+            if workout.type.isCycling {
                 let speed = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
                 cells.append(.init(value: Formatters.speed(ms: speed, unit: distanceUnit), label: "Speed"))
             } else {

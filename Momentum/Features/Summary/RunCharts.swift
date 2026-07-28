@@ -85,8 +85,8 @@ struct RunAnalysisSection: View {
                 if pts.count >= 4 || d.hr.count >= 4 {
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
                         if pts.count >= 4 {
-                            if hasPace, type != .ride { paceCard(pts) }
-                            if d.bars.count >= 2, type != .ride { splitsCard(d.bars) }
+                            if hasPace, !type.isCycling { paceCard(pts) }
+                            if d.bars.count >= 2, !type.isCycling { splitsCard(d.bars) }
                         }
                         if d.hr.count >= 4 { hrCard(d.hr) }
                         if pts.count >= 4, elevRange > 4 { elevationCard(pts, minAlt: altitudes.min() ?? 0) }

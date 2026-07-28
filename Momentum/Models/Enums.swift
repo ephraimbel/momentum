@@ -263,6 +263,18 @@ extension WorkoutType: Identifiable {
     /// are mutually exclusive: `isGPS`, `isStrengthStyle`, `isTimed`.
     var isGPS: Bool { !isStrengthStyle && !isTimed }
 
+    /// Any bike. **Use this, never `== .ride`,** wherever a surface picks speed over pace or hides
+    /// pace-shaped UI: cycling is FOUR cases, and an exact match against `.ride` silently left mountain,
+    /// gravel and e-bike rides reporting a running pace in min/mi across the profile pager, the workout
+    /// summary, splits, trends and share cards. Mirrors `discipline == .cycling` without importing the
+    /// planning vocabulary into display code.
+    var isCycling: Bool {
+        switch self {
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: true
+        default: false
+        }
+    }
+
     /// Maps each sport to one of the four planning/analytics disciplines (§8.7 notes). Trail runs roll
     /// up to running; bike variants to cycling; walk/hike to walking; gym to strength. Timed sports
     /// have no planning discipline (they're never planned) — bucketed by feel, used only inertly.

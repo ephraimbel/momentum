@@ -1263,7 +1263,7 @@ struct ProgressScreen: View {
     private func feedStats(_ w: Workout) -> [String] {
         if let gps = w.gps, gps.distanceM > 0 {
             let dist = Formatters.distance(meters: gps.distanceM, unit: distanceUnit)
-            let pace = w.type == .ride
+            let pace = w.type.isCycling
                 ? Formatters.speed(ms: w.durationS > 0 ? gps.distanceM / w.durationS : 0, unit: distanceUnit)
                 : Formatters.pace(secPerKm: w.durationS > 0 ? w.durationS / (gps.distanceM / 1000) : 0, unit: distanceUnit)
             return [dist, pace, Formatters.duration(s: w.durationS)]

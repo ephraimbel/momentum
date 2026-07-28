@@ -301,7 +301,7 @@ struct CardioSummaryContent: View {
             // pace, and elevation whenever the run has heart-rate data (ours, or backfilled from Health).
             HStack(alignment: .top, spacing: Theme.Space.md) {
                 stat(Formatters.duration(s: workout.durationS), "Time")
-                stat(paceOrSpeed(workout, gps), workout.type == .ride ? "Avg speed" : "Avg pace")
+                stat(paceOrSpeed(workout, gps), workout.type.isCycling ? "Avg speed" : "Avg pace")
                 if let hr = avgHR(gps), hr > 0 { stat("\(hr)", "Avg HR") }
                 stat("\(Int(gps.elevationGainM)) m", "Elevation")
                 if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
@@ -312,7 +312,7 @@ struct CardioSummaryContent: View {
     }
 
     private func paceOrSpeed(_ workout: Workout, _ gps: GPSDetail) -> String {
-        if workout.type == .ride {
+        if workout.type.isCycling {
             let speed = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
             return Formatters.speed(ms: speed, unit: distanceUnit)
         }
