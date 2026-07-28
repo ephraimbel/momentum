@@ -1,70 +1,70 @@
 import SwiftUI
 import AuthenticationServices
 
-/// The entry gate (PRD §8.11), two beats:
-/// 1. **Welcome** — the full-bleed athletic hero with the wordmark and a single "Get started".
-///    Pure brand, no forms (decision 2026-07-10: auth moved off the welcome).
-/// 2. **Sign in** — the app icon centered up top, then the account options: Sign in with Apple
-///    (must accompany any third-party login — App Store 4.8), Continue with Google (Supabase
-///    OAuth web sheet), and a quiet guest path so nobody is ever blocked at the door.
+/// The entry, two beats:
+/// 1. **Welcome** — the full-bleed athletic hero with the wordmark and a single "Get started" that
+///    goes straight into onboarding. **No account is asked for here** (decision 2026-07-27,
+///    supersedes the 2026-07-10 "auth moved off the welcome" half-step and PRD §8.11's
+///    sign-in-first ordering): a login wall on launch is the cheapest place in the funnel to lose
+///    someone, so the account moved to the LAST beat of onboarding, after the paywall. "I already
+///    have an account" is the returning athlete's door and sits right under the primary CTA.
+/// 2. **Account** — `AccountOptionsView`: Sign in with Apple (must accompany any third-party login,
+///    App Store 4.8), Continue with Google (Supabase OAuth web sheet), email + password, and a
+///    quiet guest path so nobody is ever blocked at the door.
 struct SignInView: View {
     @Environment(AuthController.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.dismiss) private var dismiss
 
     /// True when presented as a cover (Settings → guest "more ways to sign in"): skips the
     /// welcome hero and the back chevron dismisses the cover instead of returning to it.
     private let presentedAsSheet: Bool
+    /// Someone has already trained on this device — they signed out, or an Apple credential was
+    /// revoked. The welcome then offers to pick that training back up instead of starting over
+    /// (and, just as importantly, never runs a second athlete through setup on top of it).
+    private let hasLocalProfile: Bool
+    private let existingName: String?
 
-    init(startOnSignInPage: Bool = false) {
+    init(startOnSignInPage: Bool = false, hasLocalProfile: Bool = false, existingName: String? = nil) {
         presentedAsSheet = startOnSignInPage
+        self.hasLocalProfile = hasLocalProfile
+        let trimmed = existingName?.trimmingCharacters(in: .whitespaces) ?? ""
+        self.existingName = trimmed.isEmpty ? nil : trimmed
         var onSignInPage = startOnSignInPage
-        var creating = false
         #if DEBUG
-        // Sim verification deep links: land straight on the sign-in beat (taps are unreliable).
+        // Sim verification deep links: land straight on the account beat (taps are unreliable).
         let args = ProcessInfo.processInfo.arguments
         onSignInPage = onSignInPage || args.contains("--signin-page") || args.contains("--signin-create")
-        creating = args.contains("--signin-create")
         #endif
         _showingSignIn = State(initialValue: onSignInPage)
-        _isCreatingAccount = State(initialValue: creating)
     }
 
     @State private var showingSignIn: Bool
-    @State private var googleInFlight = false
     @State private var welcomeAppeared = false   // drives the lockup's one-time settle-in
-
-    // Email + password (the classic boxes; @handle stays the social username — email only signs in)
-    @State private var email = ""
-    @State private var password = ""
-    @State private var isCreatingAccount: Bool
-    @State private var emailInFlight = false
-    @State private var authMessage: String?
-    /// Failures from the Apple/Google buttons. Deliberately separate from `authMessage`: that one
-    /// renders inside the email block, which sits a full screen above the OAuth buttons — a message
-    /// shown there for a Google failure would land off-screen for anyone who scrolled down to tap it.
-    @State private var oauthMessage: String?
-    @FocusState private var focusedField: Field?
-    private enum Field { case email, password }
 
     var body: some View {
         ZStack {
             if !presentedAsSheet { welcome }
             if showingSignIn {
-                signInPage
+                AccountOptionsView(presentation: presentedAsSheet ? .sheet : .gate,
+                                   hasLocalProfile: hasLocalProfile,
+                                   onBack: { showingSignIn = false })
                     .transition(reduceMotion
                         ? .opacity.animation(.easeOut(duration: 0.2))
                         : .move(edge: .trailing).combined(with: .opacity))
             }
         }
         .animation(.easeOut(duration: 0.28), value: showingSignIn)
-        // Presented from Settings (guest upgrade): a successful sign-in closes the cover.
-        .onChange(of: auth.userID) { _, id in
-            if presentedAsSheet, let id, id != AuthController.guestID { dismiss() }
-        }
     }
 
     // MARK: Beat 1 — the welcome (brand only)
+
+    /// Named after the profile when there is one, so a second person on a hand-me-down phone can
+    /// see whose data they'd be picking up — and "I already have an account" is right underneath.
+    /// Falls back to a plain "Continue" rather than "Continue as me" when the name is blank.
+    private var primaryTitle: String {
+        guard hasLocalProfile else { return "Get started" }
+        return existingName.map { "Continue as \($0)" } ?? "Continue"
+    }
 
     private var welcome: some View {
         ZStack {
@@ -111,7 +111,7 @@ struct SignInView: View {
             .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
             .offset(y: welcomeAppeared || reduceMotion ? 0 : 12)
 
-            // The positioning line sits right above the single CTA, both anchored to the bottom.
+            // The positioning line sits right above the CTA pair, all anchored to the bottom.
             VStack(spacing: Theme.Space.md) {
                 Spacer()
                 Text("From your first 5K to your first ultra.")
@@ -119,21 +119,48 @@ struct SignInView: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
                     .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
-                Button {
-                    Haptics.light()
-                    showingSignIn = true
-                } label: {
-                    Text("Get started")
-                        .font(.rounded(Theme.FontSize.body, weight: .bold))
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity).frame(height: 56)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(.white))
-                        .shadow(color: .black.opacity(0.28), radius: 20, y: 8)   // lifts the CTA off the photo
+                VStack(spacing: Theme.Space.xs) {
+                    Button {
+                        Haptics.light()
+                        // No account either way — setup runs local-only and the account is offered
+                        // on the last beat. With training already on this device we're resuming it,
+                        // not starting a fresh session, so the ownership marker stays put.
+                        if hasLocalProfile { auth.continueAsGuest(celebrate: false) }
+                        else { auth.beginFreshLocalSession() }
+                    } label: {
+                        Text(primaryTitle)
+                            .font(.rounded(Theme.FontSize.body, weight: .bold))
+                            .foregroundStyle(.black)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, Theme.Space.md)
+                            .frame(maxWidth: .infinity).frame(height: 56)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(.white))
+                            .shadow(color: .black.opacity(0.28), radius: 20, y: 8)   // lifts the CTA off the photo
+                    }
+                    .buttonStyle(.plain)
+
+                    // The returning athlete's door — reinstalls, a second device, and the second
+                    // person on a hand-me-down phone all need to reach the account page without
+                    // walking setup first.
+                    Button {
+                        Haptics.light()
+                        showingSignIn = true
+                    } label: {
+                        Text("I already have an account")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)   // must never truncate: it's the only way back in
+                            .frame(maxWidth: .infinity).frame(height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, Theme.Space.xl)
-            .padding(.bottom, Theme.Space.xxl)
+            .padding(.bottom, Theme.Space.lg)
             .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
             .offset(y: welcomeAppeared || reduceMotion ? 0 : 18)
         }
@@ -144,44 +171,114 @@ struct SignInView: View {
             withAnimation(.easeOut(duration: 0.65).delay(0.12)) { welcomeAppeared = true }
         }
     }
+}
 
-    // MARK: Beat 2 — the sign-in page (icon on top, options under)
+// MARK: - The account page
 
-    private var signInPage: some View {
+/// Every way into an account, in one column: email + password, Sign in with Apple, Continue with
+/// Google. Rendered in three places, which is why it's its own view rather than a beat of
+/// `SignInView`:
+///
+/// - `.gate` — beat 2 of the welcome, for someone who already has an account. Back chevron; the
+///   guest door ("Continue without an account") stays open at the bottom.
+/// - `.sheet` — Settings → guest upgrade, presented as a cover. Close button; no guest row (they
+///   already are one), and a successful sign-in dismisses.
+/// - `.onboardingBeat` — the LAST beat of onboarding, after the paywall (2026-07-27). No chrome to
+///   escape through, "Not now" instead of a guest row, and signing in hands back to the flow.
+///   Everything the athlete just built is already on disk, so declining costs them nothing but
+///   cloud backup — and Settings keeps this door open forever.
+struct AccountOptionsView: View {
+    enum Presentation { case gate, sheet, onboardingBeat }
+
+    let presentation: Presentation
+    /// `.gate` only — whether training already lives on this device, so the guest door knows
+    /// whether it is resuming a session or starting a fresh one (see `footer`).
+    var hasLocalProfile = false
+    /// `.gate` only — return to the welcome hero.
+    var onBack: (() -> Void)?
+    /// `.onboardingBeat` only — "Not now"; the athlete stays a guest and enters the app.
+    var onSkip: (() -> Void)?
+    /// `.onboardingBeat` only — a real account landed; hand back to the onboarding flow.
+    var onSignedIn: (() -> Void)?
+
+    @Environment(AuthController.self) private var auth
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var googleInFlight = false
+    // Email + password (the classic boxes; the @handle stays the social username — email only signs in)
+    @State private var email = ""
+    @State private var password = ""
+    @State private var isCreatingAccount: Bool
+    @State private var emailInFlight = false
+    @State private var authMessage: String?
+    /// Failures from the Apple/Google buttons. Deliberately separate from `authMessage`: that one
+    /// renders inside the email block, which sits a full screen above the OAuth buttons — a message
+    /// shown there for a Google failure would land off-screen for anyone who scrolled down to tap it.
+    @State private var oauthMessage: String?
+    @FocusState private var focusedField: Field?
+    private enum Field { case email, password }
+
+    init(presentation: Presentation,
+         hasLocalProfile: Bool = false,
+         onBack: (() -> Void)? = nil,
+         onSkip: (() -> Void)? = nil,
+         onSignedIn: (() -> Void)? = nil) {
+        self.presentation = presentation
+        self.hasLocalProfile = hasLocalProfile
+        self.onBack = onBack
+        self.onSkip = onSkip
+        self.onSignedIn = onSignedIn
+        // On the onboarding beat the athlete has, by definition, just built something new — start
+        // them on Create account rather than making them find the toggle.
+        var creating = presentation == .onboardingBeat
+        #if DEBUG
+        creating = creating || ProcessInfo.processInfo.arguments.contains("--signin-create")
+        #endif
+        _isCreatingAccount = State(initialValue: creating)
+    }
+
+    private var isBeat: Bool { presentation == .onboardingBeat }
+
+    var body: some View {
         ZStack(alignment: .topLeading) {
-            Theme.background.ignoresSafeArea()
+            // The onboarding flow owns its own canvas and padding; don't paint a second one over it.
+            if !isBeat { Theme.background.ignoresSafeArea() }
 
-            Button {
-                Haptics.light()
-                if presentedAsSheet { dismiss() } else { showingSignIn = false }
-            } label: {
-                Image(systemName: presentedAsSheet ? "xmark" : "chevron.left")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(Theme.ink)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            if !isBeat {
+                Button {
+                    Haptics.light()
+                    if presentation == .sheet { dismiss() } else { onBack?() }
+                } label: {
+                    Image(systemName: presentation == .sheet ? "xmark" : "chevron.left")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(presentation == .sheet ? "Close" : "Back")
+                .padding(.leading, Theme.Space.sm)
+                .zIndex(1)   // keep Close/Back above the ScrollView below, or the scroll layer eats its taps
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(presentedAsSheet ? "Close" : "Back")
-            .padding(.leading, Theme.Space.sm)
-            .zIndex(1)   // keep Close/Back above the ScrollView below, or the scroll layer eats its taps
 
             // Scrolls so the whole column stays reachable with the keyboard up on small screens.
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BrandMark(size: 88)
+                    BrandMark(size: isBeat ? 72 : 88)
                         .elevation(Theme.Elevation.float)
-                        .padding(.top, Theme.Space.xxl)
+                        .padding(.top, isBeat ? Theme.Space.sm : Theme.Space.xxl)
 
                     VStack(spacing: Theme.Space.xs) {
-                        Text(isCreatingAccount ? "Create your account" : "Welcome to momentum")
+                        Text(title)
                             .font(.display(26, weight: .black))
                             .foregroundStyle(Theme.ink)
+                            .multilineTextAlignment(.center)
                             .contentTransition(.opacity)
-                        Text("Back up your training, claim your @handle, and join the community.")
+                        Text(subtitle)
                             .font(.rounded(Theme.FontSize.body, weight: .medium))
                             .foregroundStyle(Theme.inkSecondary)
                             .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.top, Theme.Space.lg)
 
@@ -353,29 +450,89 @@ struct SignInView: View {
                         }
                     }
 
-                    // The guest door stays open (guest-first principle) — quiet, never blocking.
-                    // Hidden when a guest opened this from Settings (they're already one).
-                    if !presentedAsSheet {
-                        Button {
-                            Haptics.light()
-                            auth.continueAsGuest()
-                        } label: {
-                            Text("Continue without an account")
-                                .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                                .foregroundStyle(Theme.inkSecondary)
-                                .frame(height: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, Theme.Space.sm)
-                        .padding(.bottom, Theme.Space.xl)
-                    } else {
-                        Spacer().frame(height: Theme.Space.xl)
-                    }
+                    footer
                 }
-                .padding(.horizontal, Theme.Space.xl)
+                .padding(.horizontal, isBeat ? 0 : Theme.Space.xl)
             }
             .scrollDismissesKeyboard(.interactively)
+        }
+        // A real account landed. `.gate` needs nothing — RootView's signed-in branch takes over.
+        .onChange(of: auth.userID) { _, id in
+            guard let id, id != AuthController.guestID else { return }
+            switch presentation {
+            case .sheet: dismiss()
+            case .onboardingBeat: onSignedIn?()
+            case .gate: break
+            }
+        }
+    }
+
+    /// The way out of this screen, which is different in all three places it appears.
+    @ViewBuilder
+    private var footer: some View {
+        switch presentation {
+        case .gate:
+            // The guest door stays open (guest-first principle) — quiet, never blocking.
+            Button {
+                Haptics.light()
+                // This door also leads into setup when there's no training here yet, so it has to
+                // release the prior owner's claim exactly like "Get started" does — otherwise
+                // signing in on the final beat reads as an account switch and wipes the plan the
+                // athlete just built. `AuthController.isOnboarding` is the backstop; this keeps the
+                // cloud-claim marker honest too, so their guest-era data actually uploads.
+                if hasLocalProfile { auth.continueAsGuest() } else { auth.beginFreshLocalSession() }
+            } label: {
+                Text("Continue without an account")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.xl)
+        case .sheet:
+            // Hidden when a guest opened this from Settings (they're already one).
+            Spacer().frame(height: Theme.Space.xl)
+        case .onboardingBeat:
+            // Never `continueAsGuest()` here: they already ARE the guest, so `auth.userID` wouldn't
+            // change and the onChange above would never fire — a dead button on the last screen of
+            // onboarding. Skipping is the flow's business, so hand it straight back.
+            Button {
+                Haptics.light()
+                onSkip?()
+            } label: {
+                Text("Not now")
+                    // Secondary, not tertiary: this is the ONLY way off the last screen of
+                    // onboarding, so it has to stay comfortably readable rather than whisper-quiet.
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.xl)
+        }
+    }
+
+    private var title: String {
+        switch presentation {
+        case .onboardingBeat: "Save your progress"
+        case .gate, .sheet: isCreatingAccount ? "Create your account" : "Welcome to momentum"
+        }
+    }
+
+    private var subtitle: String {
+        // The old line promised an @handle and a community; the handle claim left onboarding and
+        // community is back-burnered (2026-07-16). Say what an account actually does TODAY, and
+        // nothing more: sync is upload-only — there is no download/restore path yet — so any
+        // promise of picking your training up on another phone would be a promise we can't keep.
+        switch presentation {
+        case .onboardingBeat:
+            "An account keeps a backup of your training off this phone. You can also do this later in Settings."
+        case .gate, .sheet:
+            "An account keeps a backup of your training off this phone."
         }
     }
 
@@ -424,7 +581,7 @@ struct SignInView: View {
             if case .failure(let message) = outcome {
                 withAnimation(.easeOut(duration: 0.15)) { authMessage = message }
             }
-            // Success dismisses the gate via auth.userID — nothing to do here.
+            // Success routes through auth.userID (the onChange above) — nothing to do here.
         }
     }
 

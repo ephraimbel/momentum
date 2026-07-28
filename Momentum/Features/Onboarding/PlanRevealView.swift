@@ -15,6 +15,7 @@ struct PlanRevealView: View {
     @State private var barsIn = false       // weekly-volume bars grow up on appear
     @State private var calloutIn = false    // peak-week callout pops in after the bars settle
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
     private var planWeekCount: Int {
@@ -92,7 +93,10 @@ struct PlanRevealView: View {
     // MARK: Brand
 
     private var brandmark: some View {
-        Image("WordmarkBlack")
+        // Onboarding runs unconditionally dark (RootView, 2026-07-28), so in practice this is always
+        // the white mark — kept conditional anyway so the reveal can't render an invisible black
+        // wordmark if it's ever shown on a light canvas. Same idiom as CommunityView's masthead.
+        Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
             .resizable()
             .interpolation(.high)
             .scaledToFit()
@@ -236,7 +240,10 @@ struct PlanRevealView: View {
                                 if i == peakIdx {
                                     Text(peakLabel(maxV))
                                         .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
-                                        .foregroundStyle(.white)
+                                        // `Theme.background`, not `.white`: the capsule is filled
+                                        // with `Theme.ink`, which inverts to near-white in dark —
+                                        // hardcoded white text on it would be invisible.
+                                        .foregroundStyle(Theme.background)
                                         .padding(.horizontal, 7).padding(.vertical, 3)
                                         .background(Capsule().fill(Theme.ink))
                                         .fixedSize()

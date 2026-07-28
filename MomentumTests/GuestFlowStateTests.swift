@@ -124,6 +124,106 @@ struct GuestFlowStateTests {
         #expect(!wiped, "the same account signing back in keeps its own data")
     }
 
+    // ── The welcome's "Get started" (2026-07-27: setup runs before the account) ───
+
+    /// The load-bearing one. Since the account moved to the LAST beat of onboarding, the athlete
+    /// signs in *after* building a profile and plan — so `noteRealSignIn` runs with five minutes of
+    /// their work already on disk. If a prior owner's claim were still on the device, that sign-in
+    /// would read as an account switch and delete everything they just made. "Get started" releases
+    /// the claim up front, when there is nothing to lose.
+    @Test func freshStartReleasesPriorOwnershipSoTheFinalSignInNeverWipes() {
+        freshDefaults()
+        let auth = AuthController(userID: nil)
+        auth.signIn(userID: "apple-user-A", fullName: nil, email: nil)
+        auth.signOut()
+        #expect(UserDefaults.standard.string(forKey: "com.momentum.auth.lastRealUserID") == "apple-user-A")
+
+        auth.beginFreshLocalSession()
+        #expect(auth.isGuest, "setup runs local-only")
+        #expect(UserDefaults.standard.string(forKey: "com.momentum.auth.lastRealUserID") == nil,
+                "the prior owner's claim is released at Get started")
+
+        var wiped = false
+        auth.onAccountSwitch = { wiped = true }
+        auth.signIn(userID: "apple-user-B", fullName: nil, email: nil)
+
+        #expect(!wiped, "signing in on the LAST beat must never delete the plan just built")
+        #expect(auth.userID == "apple-user-B")
+    }
+
+    /// The structural guarantee behind the reorder. The account beat sits at the END of onboarding,
+    /// so a sign-in there lands with a brand-new profile and plan already on disk. It must never be
+    /// read as a hand-me-down account switch — that wipe would delete everything the athlete just
+    /// built and drop them into the app as a nameless "Athlete" with no plan.
+    ///
+    /// This must hold for EVERY route into setup, not just "Get started" — the account page's
+    /// "Continue without an account" is a second one — so the guard is the flow being on screen,
+    /// not the door they came through.
+    @Test func signingInDuringOnboardingNeverWipesTheProfileJustBuilt() {
+        freshDefaults()
+        let auth = AuthController(userID: nil)
+        auth.signIn(userID: "apple-user-A", fullName: nil, email: nil)
+        auth.signOut()
+        auth.continueAsGuest()          // the account page's guest door — does NOT release the claim
+        auth.isOnboarding = true        // …and setup is now on screen, building a profile
+
+        var wiped = false
+        auth.onAccountSwitch = { wiped = true }
+        auth.signIn(userID: "apple-user-B", fullName: nil, email: nil)
+
+        #expect(!wiped, "the plan built during setup must survive the sign-in that ends it")
+        #expect(auth.userID == "apple-user-B")
+        // The claim still transfers, so a genuine switch LATER (from Settings) still wipes.
+        #expect(UserDefaults.standard.string(forKey: "com.momentum.auth.lastRealUserID") == "apple-user-B")
+        // …and account B's data is treated as a fresh cloud claim, so it actually uploads.
+        #expect(!UserDefaults.standard.bool(forKey: "com.momentum.auth.hadCloudSession"))
+    }
+
+    /// The suppression is scoped to the flow: once onboarding is off screen, a different account
+    /// signing in on a shared device still wipes.
+    @Test func wipeResumesOnceOnboardingIsOffScreen() {
+        freshDefaults()
+        let auth = AuthController(userID: nil)
+        auth.signIn(userID: "apple-user-A", fullName: nil, email: nil)
+        auth.signOut()
+        auth.isOnboarding = true
+        auth.isOnboarding = false       // setup finished
+
+        var wiped = false
+        auth.onAccountSwitch = { wiped = true }
+        auth.signIn(userID: "apple-user-B", fullName: nil, email: nil)
+
+        #expect(wiped, "a different account on a shared device must still start from a clean slate")
+    }
+
+    /// A fresh start also re-arms the cloud claim, so the account beat's sign-in re-marks local
+    /// data dirty and uploads what was logged as a guest (`onFirstCloudSession`).
+    @Test func freshStartReArmsTheCloudClaim() {
+        freshDefaults()
+        UserDefaults.standard.set(true, forKey: "com.momentum.auth.hadCloudSession")
+        let auth = AuthController(userID: nil)
+
+        auth.beginFreshLocalSession()
+
+        #expect(!UserDefaults.standard.bool(forKey: "com.momentum.auth.hadCloudSession"))
+    }
+
+    /// It is also a guest entry, so it must not become a billing identity or claim the device.
+    @Test func freshStartOnACleanDeviceIsJustAGuest() {
+        freshDefaults()
+        let auth = AuthController(userID: nil)
+        var reported: [String?] = []
+        auth.onIdentityChange = { reported.append($0) }
+
+        auth.beginFreshLocalSession()
+
+        #expect(auth.isGuest)
+        #expect(reported.allSatisfy { $0 == nil })
+        #expect(UserDefaults.standard.string(forKey: "com.momentum.auth.lastRealUserID") == nil)
+        // Persisted, so a relaunch mid-onboarding resumes instead of re-showing the welcome.
+        #expect(AuthController(userID: nil).isGuest)
+    }
+
     // ── Wipe paths (different real account) ──────────────────────────────────────
 
     @Test func differentAccountSignInWipes() {

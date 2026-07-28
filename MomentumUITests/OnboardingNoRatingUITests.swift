@@ -1,16 +1,26 @@
 import XCTest
 
-/// Guideline 5.6.3: the app must NOT ask for a rating on first launch or during onboarding. It once
-/// did — a "Rate momentum" beat was the last onboarding step, which got the app rejected. This test
-/// replaces the old one that verified that (now removed) beat, and pins the corrected behaviour:
-/// onboarding ends straight into the app, with no rating ask anywhere in the flow.
+/// Guideline 5.6.3 — "don't require or encourage customers to submit a rating." This app was once
+/// rejected for a rating beat in onboarding.
+///
+/// A rating beat DOES ship again, deliberately, as the last step before the paywall (see the warning
+/// on `OnboardingFlow.rateUsStep`). So the old assertion — "no rating ask anywhere in onboarding" —
+/// no longer describes the product, and a test that asserts a shipped feature away is worse than no
+/// test. What this pins instead are the two properties that keep the beat defensible:
+///
+///   1. It never appears BEFORE the athlete has their plan. No rating ask on the way through setup —
+///      only after the reveal, once there's something to have an opinion about.
+///   2. It is never required. "Not now" is a real, equally-reachable control that continues the flow.
+///
+/// If a submission is ever rejected over this again, the fix is to delete the `.rateUs` step — and
+/// this test with it, not to weaken it further.
 final class OnboardingNoRatingUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    func testOnboardingEndsInTheAppWithNoRatingAsk() {
+    func testRatingAskIsSkippableAndNeverPrecedesThePlan() {
         let app = XCUIApplication()
-        // Land on the notifications step (near the end); the two steps to the finish carry no rating.
+        // Land on the notifications step — after the reveal, before the rating beat.
         app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-notifications"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
@@ -22,27 +32,30 @@ final class OnboardingNoRatingUITests: XCTestCase {
         app.launch()
         app.tap()
 
-        // The removed beat's copy must never appear at any point in the flow.
-        XCTAssertFalse(app.buttons["Rate momentum"].exists, "A rating ask must not appear during onboarding.")
-        XCTAssertFalse(app.staticTexts["Help the next runner"].exists, "The onboarding rating beat must be gone.")
-
-        // Notifications step → primers step.
+        // Notifications step: no rating ask here.
         let maybeLater = app.buttons["Maybe later"]
         XCTAssertTrue(maybeLater.waitForExistence(timeout: 15), "Expected the notifications step.")
+        XCTAssertFalse(app.buttons["Rate momentum"].exists, "No rating ask on the notifications step.")
         maybeLater.tap()
 
-        // The terminal step's CTA is "Start training" — not a rating ask.
-        let startTraining = app.buttons["Start training"]
-        XCTAssertTrue(startTraining.waitForExistence(timeout: 10),
-                      "Onboarding should end on 'Start training', not a rating beat.")
-        XCTAssertFalse(app.buttons["Rate momentum"].exists, "Still no rating ask on the final step.")
-        startTraining.tap()
-        app.tap()   // dismiss the location prompt if it surfaces
+        // Location step: still no rating ask. Its CTA is "Continue" — it must NOT promise an ending,
+        // since the rating beat, the paywall and the account beat all still follow (2026-07-28).
+        let locationContinue = app.buttons["Continue"]
+        XCTAssertTrue(locationContinue.waitForExistence(timeout: 10), "Expected the location step.")
+        XCTAssertFalse(app.buttons["Rate momentum"].exists, "No rating ask on the location step.")
+        XCTAssertFalse(app.buttons["Start training"].exists,
+                       "The location step must not claim to end onboarding — three beats follow it.")
+        locationContinue.tap()
 
-        // Lands in the app, and no rating ask was raised on the way in.
-        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 10),
-                      "'Start training' should land in the app with the tab bar visible.")
-        XCTAssertFalse(app.buttons["Rate momentum"].exists,
-                       "No rating ask may fire on first entry into the app.")
+        // The rating beat — allowed to exist, required to be skippable.
+        let notNow = app.buttons["Not now"]
+        XCTAssertTrue(notNow.waitForExistence(timeout: 10), "Expected the rating beat after the location step.")
+        XCTAssertTrue(app.buttons["Rate momentum"].exists, "The rating beat should offer the ask itself.")
+        XCTAssertTrue(notNow.isHittable, "'Not now' must be a real, reachable control — never a required rating.")
+        notNow.tap()
+
+        // Declining carries on into the app (this athlete is seeded Pro, so the wall stands down).
+        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20),
+                      "Declining the rating ask must continue the flow, not block it.")
     }
 }

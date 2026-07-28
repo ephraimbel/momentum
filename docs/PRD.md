@@ -797,7 +797,7 @@ Lean into your edges: Apple Search Ads, content production, build-in-public, cli
 No workout is ever lost: GPS samples and completed sets persist as they occur; crashes/kills recover on relaunch. Rest timers and Live Activities survive backgrounding via scheduled notifications. Graceful degradation when GPS, HR, or network is unavailable. Crash-free sessions > 99.5%.
 
 ### 13.3 Security & privacy
-Health and location data are sensitive. **Sign in with Apple** (anonymous allowed for free tracking, upgradeable). **RLS owner-only** on every Supabase table:
+Health and location data are sensitive. **Sign in with Apple** (anonymous allowed for free tracking, upgradeable). *Ordering, 2026-07-27: the account is asked for on the LAST beat of onboarding, after the paywall — never at launch. The welcome hero enters setup with no credentials, so an athlete is a guest (local-only, no cloud) until they choose otherwise, and "I already have an account" on the welcome is the returning athlete's door.* **RLS owner-only** on every Supabase table:
 ```sql
 alter table workouts enable row level security;
 create policy "own workouts" on workouts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -826,7 +826,7 @@ Unit tests for the deterministic engines (plan generation, progression schemes, 
 ### 13.10 Screen inventory & routing (single NavigationStack per tab; onboarding is a gated fullScreenCover)
 | Screen | Presentation | Pro-gated |
 |---|---|---|
-| OnboardingFlow (→ reveal → paywall → primers) | fullScreenCover | — |
+| OnboardingFlow (→ reveal → notifications → primers → rating → paywall → **account**) | fullScreenCover | — |
 | Today (tab) | tab root | no |
 | ActivityChooser | sheet | no |
 | CardioLive (run/ride/walk) | fullScreenCover | no |

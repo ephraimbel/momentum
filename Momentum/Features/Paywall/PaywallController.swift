@@ -92,6 +92,18 @@ final class PaywallController: PaywallServing {
 
     private(set) var isPro: Bool
 
+    /// When the billing identity last changed. Since 2026-07-27 the account is asked for at the END
+    /// of onboarding, so **every** onboarding purchase is made by an anonymous RevenueCat customer
+    /// and identified afterwards. Logging in from an anonymous id to one RevenueCat has never seen
+    /// aliases and transfers the purchase; logging in to one it already knows (a reinstall, a second
+    /// device) does not — that customer's info carries no entitlement, and RevenueCat delivers it
+    /// twice (logIn's return *and* `customerInfoStream`). Believing either would lock out an athlete
+    /// who just paid. Keyed on the identity change rather than the purchase, so it covers a Restore
+    /// just as well, and however long the athlete deferred signing in. See `apply`.
+    private var identityChangedAt: Date?
+    /// A receipt reconciliation is deciding the entitlement — hold off on downgrading until it does.
+    private var reconciling = false
+
     /// True once onboarding reached the hard paywall without a subscription — the app re-presents
     /// the gate on every launch until the athlete is entitled, so force-quitting the paywall is
     /// never a bypass. Cleared the moment any purchase/restore lands.
@@ -100,6 +112,16 @@ final class PaywallController: PaywallServing {
     }
     /// The locked feature that triggered the paywall — drives the host sheet. `nil` ⇒ not shown.
     var presentedFeature: Feature?
+
+    /// A HARD gate was let go because the App Store could not be reached (see `PaywallView`'s
+    /// store-unreachable escape). Deliberately **not persisted** and never written to
+    /// `onboardingGatePending`: the athlete gets this launch, and the wall comes straight back on the
+    /// next one. Without it, an athlete who finished onboarding offline — or during a StoreKit /
+    /// RevenueCat outage, or against a mis-configured offering — had no purchase to make, no receipt
+    /// to restore, and no way to close the wall. The app was simply unusable, and force-quitting only
+    /// re-raised the same gate. That is also exactly the state an App Review device on a flaky
+    /// network lands in, which is a 2.1 rejection.
+    var storeUnreachableDeferral = false
     /// Display offering; replaced with the store's localized prices once `configure()` loads them.
     private(set) var offering: PaywallOffering = .standard
 
@@ -155,7 +177,11 @@ final class PaywallController: PaywallServing {
         if args.contains("--paywall-pricing-down") { pricingIsLive = false; return }
         // Hermetic runs never reach the store, so the placeholder prices ARE the intended truth
         // here — mark pricing live or the marketing-screenshot builds would render the retry state.
-        if args.contains("--seed-demo") || args.contains("--debug-pro")
+        // `--debug-free` belongs here for the same reason as the rest: a run that forces the FREE
+        // tier is a run about the paywall, and reaching the real store means the trial CTA opens a
+        // StoreKit sandbox sheet no UI test can answer (and that lands over screenshots). Forced-free
+        // + the local purchase seam is what makes the gate → purchase → unlock path testable at all.
+        if args.contains("--seed-demo") || args.contains("--debug-pro") || args.contains("--debug-free")
             || args.contains("--ui-test-route") { pricingIsLive = true; return }   // no billing network → no sandbox stomp
         // A dev-unlocked install (persisted --debug-pro) is hermetic on EVERY launch, not just
         // flagged ones — otherwise the first plain launch reconciles the sandbox account's
@@ -215,6 +241,19 @@ final class PaywallController: PaywallServing {
         if Self.isRunningUnitTests { grantLocally(); return .purchased }
         #endif
         #if canImport(RevenueCat)
+        // The SDK is LINKED but `configure()` deliberately skips it on hermetic runs (--seed-demo,
+        // --debug-pro, --ui-test-route, a dev-unlocked install). `Purchases.shared` traps when it was
+        // never configured, so tapping the CTA on those runs crashed the app outright — an annoyance
+        // when the paywall was dismissible, a permanent lockout now that onboarding's is hard. Fall
+        // back to the same local seam used when the SDK isn't linked at all. Release never grants:
+        // an unconfigured SDK there is a real failure, not a test seam.
+        guard Purchases.isConfigured else {
+            #if DEBUG
+            grantLocally(); return .purchased
+            #else
+            return .failed("We couldn't reach the App Store. Check your connection and try again.")
+            #endif
+        }
         do {
             guard let package = try await package(for: product) else {
                 // No matching package means the offering never loaded — the prices on screen are
@@ -256,7 +295,10 @@ final class PaywallController: PaywallServing {
         if Self.isRunningUnitTests { return isPro }   // no network in the unit-test host
         #endif
         #if canImport(RevenueCat)
-        if let info = try? await Purchases.shared.restorePurchases() { apply(info) }
+        // Same trap as `purchase`: Restore is the OTHER way out of the hard gate, so it must never
+        // be the thing that crashes an athlete who already paid.
+        if Purchases.isConfigured,
+           let info = try? await Purchases.shared.restorePurchases() { apply(info) }
         #endif
         return isPro
     }
@@ -276,6 +318,7 @@ final class PaywallController: PaywallServing {
     func identify(userID: String?) {
         #if canImport(RevenueCat)
         guard Purchases.isConfigured else { return }   // hermetic DEBUG paths never configured the SDK
+        identityChangedAt = Date()   // arms the anti-downgrade reconciliation in `apply`
         Task {
             if let userID {
                 if let result = try? await Purchases.shared.logIn(userID) { apply(result.customerInfo) }
@@ -330,8 +373,28 @@ final class PaywallController: PaywallServing {
         return current?.availablePackages.first { $0.storeProduct.productIdentifier == product.id }
     }
 
-    private func apply(_ info: CustomerInfo) {
-        setPro(info.entitlements[Self.entitlementID]?.isActive == true)
+    /// `authoritative` = this info came from re-reading the device receipt, so it decides, full stop.
+    private func apply(_ info: CustomerInfo, authoritative: Bool = false) {
+        let active = info.entitlements[Self.entitlementID]?.isActive == true
+        // An identity change must never take Pro away — see `identityChangedAt`. `setPro(false)`
+        // persists to `entitlementKey`, which `SiriMealLogger` reads out-of-process too, so a wrong
+        // downgrade silently breaks more than the paywall. The receipt is the arbiter: restore and
+        // apply whatever it actually says. Ordinary expiry (no identity change in play) is untouched
+        // and still downgrades immediately.
+        if !active, isPro, !authoritative {
+            if reconciling { return }   // a reconciliation is already deciding this
+            if let changed = identityChangedAt, Date().timeIntervalSince(changed) < 120 {
+                reconciling = true
+                Task {
+                    defer { reconciling = false }
+                    if let receipt = try? await Purchases.shared.restorePurchases() {
+                        apply(receipt, authoritative: true)
+                    }
+                }
+                return
+            }
+        }
+        setPro(active)
     }
     #endif
 

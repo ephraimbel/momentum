@@ -70,8 +70,10 @@ struct OnboardingFlow: View {
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
         .animation(Motion.travel, value: vm.step)
         .onAppear {
-            // Signed-in athletes (Apple/Google at the gate) shouldn't retype what they just told
-            // us — prefill the name. Guests keep the clean field (nothing to inherit).
+            // A returning athlete who came in through "I already have an account" shouldn't retype
+            // what they just told us — prefill the name. The guest-first path (2026-07-27) has no
+            // identity yet, so this is quietly a no-op there and the name step opens clean; the
+            // account beat backfills it afterwards if they left it blank.
             if vm.name.isEmpty, let known = auth.displayName, !known.isEmpty { vm.name = known }
             #if DEBUG
             let args = ProcessInfo.processInfo.arguments
@@ -142,6 +144,7 @@ struct OnboardingFlow: View {
             }
             // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
             if args.contains("--onboarding-rate") { vm.step = .rateUs }
+            if args.contains("--onboarding-account") { vm.step = .account }
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
             if args.contains("--onboarding-metrics") { vm.activities = [.run]; vm.step = .metrics }
@@ -165,11 +168,14 @@ struct OnboardingFlow: View {
         // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
-        // The onboarding_complete paywall (PRD §10) — the FINAL gate, shown from the last step's
-        // "Start training" after every opt-in. Honest + skippable: dismissing it (subscribed or not)
-        // enters the app, so it's always the last thing the athlete sees in onboarding.
-        .fullScreenCover(isPresented: $showPaywall, onDismiss: { onComplete() }) {
-            PaywallView(feature: .fullPlan, hard: false)
+        // The onboarding_complete paywall (PRD §10) — shown from the rating beat's hand-off, after
+        // every opt-in. **HARD since 2026-07-28** (user call): no close affordance, no swipe-away.
+        // The only ways forward are the trial, a subscription, or Restore — so this cover can only
+        // dismiss once an entitlement lands, which makes `onDismiss` a post-purchase hand-off to the
+        // `.account` beat rather than a "they skipped it" path. `finishOnboarding` arms
+        // `onboardingGatePending` first so force-quitting the wall isn't a way around it.
+        .fullScreenCover(isPresented: $showPaywall, onDismiss: { goToAccountBeat() }) {
+            PaywallView(feature: .fullPlan, hard: true)
         }
     }
 
@@ -280,6 +286,7 @@ struct OnboardingFlow: View {
         case .notifications: notificationsStep
         case .primers: primersStep
         case .rateUs: rateUsStep
+        case .account: accountStep
         }
     }
 
@@ -844,6 +851,12 @@ struct OnboardingFlow: View {
                         vm.raceDate = date
                     }
                 }
+                // Forced rather than inherited: a sheet gets its own hosting controller, and whether
+                // a `colorScheme` override propagates into one is a SwiftUI implementation detail
+                // that's varied across releases. Onboarding is unconditionally dark, so this sheet
+                // is too — stated here, at the onboarding call site only, because the SAME sheet is
+                // presented from the Plan tab, where it must follow the athlete's appearance setting.
+                .environment(\.colorScheme, .dark)
             }
 
             ForEach(Array(RaceDistance.allCases.enumerated()), id: \.element) { i, d in
@@ -1257,25 +1270,36 @@ struct OnboardingFlow: View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
             BrandMark(size: 96)
+            // This beat is ONLY about location. It used to read "You're all set" / "Start training"
+            // from when it genuinely ended onboarding — three beats (rateUs → paywall → account) have
+            // since been added after it, so that copy promised a finish the flow doesn't deliver and
+            // made everything past it feel like an ambush. Headline and CTA both stay neutral: if
+            // this ever becomes the last step again, that's the moment to promise an ending.
             VStack(spacing: Theme.Space.sm) {
-                Text("You're all set")
+                Text("Map your runs")
                     .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
-                Text("We use your location to map your runs and rides. Allow it and your map opens right where you are.")
+                Text("We use your location to trace your route and open the map right where you are.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .reveal(0.15)
             Spacer()
-            // Hands off to `rateUs`, which is now the last beat before the paywall (2026-07-26).
-            OversizedButton(title: "Start training") { goNext() }
+            // Hands off to `rateUs`, which is the last beat before the paywall (2026-07-26).
+            OversizedButton(title: "Continue") { goNext() }
                 .reveal(0.3)
         }
         // Ask for location only AFTER this page is visibly on screen — the athlete reads WHY (their
         // map centered on them) first, THEN the system prompt appears. The brief beat also guarantees
         // the prior notifications prompt has cleared, so the two never stack (user report 2026-07-24).
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { locator.requestAuthorization() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                // Tapping Continue inside the 0.55s window used to fire the system prompt over the
+                // NEXT beat (the rating ask), which reads as a random permission grab on a screen
+                // that says nothing about location. Only ask if this step is still the one on screen.
+                guard vm.step == .primers else { return }
+                locator.requestAuthorization()
+            }
         }
     }
 
@@ -1284,8 +1308,8 @@ struct OnboardingFlow: View {
     /// ⚠️ App Review guideline 5.6.3 — "don't require or encourage customers to submit a rating" —
     /// and this app has already been rejected once for a rating beat in onboarding. This ships at
     /// the owner's explicit, informed direction. If a submission comes back rejected, delete the
-    /// `.rateUs` case from `Step` and this view; `primersStep`'s button goes back to
-    /// `if paywall.isPro { onComplete() } else { showPaywall = true }` and nothing else changes.
+    /// `.rateUs` case from `Step` and this view; `primersStep`'s button calls `finishOnboarding()`
+    /// directly and nothing else changes (the paywall → `.account` hand-off is unaffected).
     ///
     /// Skippable by design: "Not now" is a real, equally-reachable control, and the native alert is
     /// Apple's own `requestReview` (the only sanctioned way to open it) — we never fake stars, never
@@ -1362,10 +1386,52 @@ struct OnboardingFlow: View {
         }
     }
 
-    /// Where onboarding actually ends: the paywall gate (or straight through for entitled athletes).
-    /// Was inline in `primersStep` before `.rateUs` was inserted between them.
+    /// The last beat (2026-07-27): the account, offered — never required.
+    ///
+    /// The athlete has been a guest for this whole flow, and everything they built is already on
+    /// disk (`finish()` ran back at `.building`), so declining costs them nothing but cloud backup
+    /// and Settings keeps the door open forever. This is deliberately in-flow content rather than
+    /// another cover: the paywall cover has to dismiss before this can show, and a cover raised
+    /// from another cover's teardown is exactly the presentation race this file already works
+    /// around twice.
+    private var accountStep: some View {
+        AccountOptionsView(
+            presentation: .onboardingBeat,
+            onSkip: { onComplete() },
+            onSignedIn: {
+                // Nothing else ever writes the account's name onto the profile — do it here when
+                // onboarding left the field blank (`OnboardingViewModel.finish` is the only other
+                // writer, and it can no longer prefill from auth: there was no account yet).
+                if let known = auth.displayName, !known.isEmpty,
+                   let profile, profile.displayName.trimmingCharacters(in: .whitespaces).isEmpty {
+                    profile.displayName = known
+                    try? context.save()
+                }
+                // Let the Apple/Google sheet finish dismissing before this cover tears down — two
+                // modals resolving on one frame is the stuck-screen bug `rateUsStep` already
+                // works around above.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onComplete() }
+            })
+    }
+
+    /// Where onboarding actually ends: the paywall gate (or straight through for entitled athletes),
+    /// then the account beat. Was inline in `primersStep` before `.rateUs` was inserted between them.
     private func finishOnboarding() {
-        if paywall.isPro { onComplete() } else { showPaywall = true }
+        if paywall.isPro { goToAccountBeat(); return }
+        // Arm the relaunch gate BEFORE presenting: a wall a force-quit walks around is a soft wall
+        // with extra steps. `RootView` re-raises it on every launch until an entitlement lands, and
+        // `setPro(true)` clears it the moment one does.
+        paywall.onboardingGatePending = true
+        showPaywall = true
+    }
+
+    /// Hand off to the final account beat — unless there's already a real account on this device
+    /// (they came in through "I already have an account" at the welcome, or a demo/UI-test launch
+    /// arg is driving the flow as `demo-user`). Asking someone to sign in twice is worse than not
+    /// asking at all.
+    private func goToAccountBeat() {
+        if auth.isSignedIn, !auth.isGuest { onComplete(); return }
+        goNext()
     }
 
     // MARK: Scaffolding

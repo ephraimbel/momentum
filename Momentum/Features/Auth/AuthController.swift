@@ -35,7 +35,8 @@ final class AuthController {
 
     /// Fired when a DIFFERENT real account signs in on a device that still holds a prior real
     /// account's local data (shared/hand-me-down device). The host wipes local SwiftData so the new
-    /// person starts on a clean slate + re-onboards; guest→real upgrade and first sign-in never fire it.
+    /// person starts on a clean slate + re-onboards; guest→real upgrade, first sign-in, and a fresh
+    /// local session started at the welcome (`beginFreshLocalSession`) never fire it.
     var onAccountSwitch: (() -> Void)?
 
     /// Fires whenever the signed-in identity changes: the account id on sign-in, `nil` on sign-out
@@ -48,6 +49,10 @@ final class AuthController {
     /// silently, with nothing failing to point at it.
     var onIdentityChange: ((String?) -> Void)?
 
+    /// True while onboarding owns the screen. Set by `RootView` from its `showOnboarding` state;
+    /// nothing observes it, so it can't participate in a view-invalidation loop.
+    @ObservationIgnored var isOnboarding = false
+
     /// Record a real-account sign-in and, if it differs from the account whose data is on this device,
     /// fire `onAccountSwitch` (wipe + re-onboard). First-ever sign-in (`prior == nil`) and a guest
     /// upgrade (guests never write `lastRealUserIDKey`) both carry local data over, as intended.
@@ -56,6 +61,14 @@ final class AuthController {
         UserDefaults.standard.set(incoming, forKey: Self.lastRealUserIDKey)
         guard let prior, prior != incoming else { return }
         UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)   // new account = a fresh cloud claim
+        // Never wipe while setup is on screen. Since 2026-07-27 the account is the LAST beat of
+        // onboarding, so this runs with the athlete's brand-new profile and plan already on disk —
+        // and onboarding only runs at all when there was no profile to begin with, so by
+        // construction there is no prior owner's training here to protect. Without this guard,
+        // signing in on that beat deletes the five minutes of work they just did and drops them
+        // into the app as a nameless "Athlete" with no plan. The marker above is still updated, so
+        // a genuine account switch later (from Settings, on a shared device) still wipes.
+        guard !isOnboarding else { return }
         onAccountSwitch?()
     }
 
@@ -85,6 +98,13 @@ final class AuthController {
             UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
             if let client = SupabaseClientProvider.client { Task { try? await client.auth.signOut() } }
             return
+        }
+        // Walk onboarding as a real GUEST — the shipping path since 2026-07-27, where the account
+        // is the last beat. Must be checked BEFORE `--onboarding` below: that one signs in as
+        // `demo-user`, and a real account correctly makes the account beat self-skip, so it can't
+        // reach the very screen this arg exists to verify.
+        if ProcessInfo.processInfo.arguments.contains("--onboarding-guest") {
+            userID = Self.guestID; return
         }
         // Demos + UI tests skip the gate so seeded flows run straight to the app.
         // `--onboarding` also signs in (without seeding a profile) so the onboarding flow can be
@@ -174,14 +194,36 @@ final class AuthController {
 
     /// Enter the app without an account — local-only (no cloud backup/sync/social). The athlete can
     /// Sign in with Apple later from Settings and keep everything they've logged.
-    func continueAsGuest() {
+    ///
+    /// `celebrate: false` for the welcome's "Get started", where nothing has succeeded yet — the
+    /// success haptic belongs to a door the athlete deliberately chose, not to entering setup.
+    func continueAsGuest(celebrate: Bool = true) {
         userID = Self.guestID
         displayName = nil
         email = nil
         UserDefaults.standard.set(Self.guestID, forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
-        Haptics.success()
+        if celebrate { Haptics.success() }
+    }
+
+    /// The welcome's "Get started" — begin setup with no account (2026-07-27: the account moved to
+    /// the END of onboarding, so nobody has to leave the app to start).
+    ///
+    /// Releases any prior real account's claim on this device FIRST. Without that, an athlete who
+    /// onboards here and then signs in on the final beat trips `noteRealSignIn`'s account-switch
+    /// wipe — deleting the profile and plan they just spent five minutes building. Releasing the
+    /// marker makes that sign-in read as what it actually is: a first sign-in, which carries local
+    /// data over.
+    ///
+    /// Only reachable with no local profile: the welcome offers "Get started" only when
+    /// `profiles.isEmpty`, and "Continue as …" otherwise. So there is no other owner's training
+    /// here to protect — and the wipe still fires normally for the door that does need it (a
+    /// different account signing in over data that exists).
+    func beginFreshLocalSession() {
+        UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
+        UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)   // a fresh cloud claim
+        continueAsGuest(celebrate: false)
     }
 
     func signOut() {

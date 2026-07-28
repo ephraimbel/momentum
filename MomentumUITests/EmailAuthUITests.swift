@@ -20,13 +20,14 @@ final class EmailAuthUITests: XCTestCase {
         app.launchArguments = ["--uitest-password"]
         app.launch()   // otherwise unmodified: the real gate, the real network
 
-        // Beat 1 → Beat 2
-        let getStarted = app.buttons["Get started"]
-        XCTAssertTrue(getStarted.waitForExistence(timeout: 10), "welcome beat should show on a fresh install")
-        getStarted.tap()
+        // Beat 1 → Beat 2. The welcome's primary CTA goes into setup with no account
+        // (2026-07-27); the account page is reached through the returning-athlete door.
+        let returning = app.buttons["I already have an account"]
+        XCTAssertTrue(returning.waitForExistence(timeout: 10), "welcome beat should show on a fresh install")
+        returning.tap()
 
         let emailField = app.textFields["Email"]
-        XCTAssertTrue(emailField.waitForExistence(timeout: 5), "email box should be on the sign-in page")
+        XCTAssertTrue(emailField.waitForExistence(timeout: 5), "email box should be on the account page")
         attach(app, "signin-page")
 
         // Flip to create-account mode

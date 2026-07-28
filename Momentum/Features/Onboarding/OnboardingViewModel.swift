@@ -146,14 +146,18 @@ final class OnboardingViewModel {
         // 2026-07-16) follows `name`, both before any training questions.
         // `experience` doubles as the running pace question (2026-07-24), so there's no separate
         // `calibration` step any more — runners are asked their level once.
-        // `rateUs` is the last beat, between `primers` and the paywall (user call 2026-07-26).
+        // `rateUs` sits between `primers` and the paywall (user call 2026-07-26).
+        // `account` is the LAST beat, AFTER the paywall (user call 2026-07-27): the sign-in/sign-up
+        // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
+        // someone. Setup now runs local-only (guest) and the account is offered once there's a plan
+        // worth saving. Skippable — `AccountOptionsView(.onboardingBeat)`.
         // ⚠️ App Review guideline 5.6.3 says not to solicit ratings before real engagement, and this
         // app was rejected under exactly that rule for a rating beat in onboarding. Shipping it again
         // is a deliberate, informed decision by the owner — if a submission is rejected, this step is
         // the first thing to pull (delete the case; the flow closes over it with no other changes).
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
-             health, intensity, building, reveal, notifications, primers, rateUs
+             health, intensity, building, reveal, notifications, primers, rateUs, account
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -189,8 +193,9 @@ final class OnboardingViewModel {
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
         // `.health` is an opt-in consent beat (like notifications), not an answerable question.
-        // `.rateUs` isn't one either — it must not add a phantom notch to the progress bar.
-        steps.filter { ![.health, .building, .reveal, .notifications, .primers, .rateUs].contains($0) }
+        // `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
+        // bar (which would then never reach 100% on the last question).
+        steps.filter { ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 

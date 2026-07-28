@@ -529,8 +529,11 @@ struct SettingsView: View {
     }
 
     private var accountFooter: String? {
+        // No cross-device claim: sync is upload-only — there is no download/restore path yet, so
+        // "sync across devices" was a promise the app can't keep. Same wording as the account beat
+        // at the end of onboarding (AccountOptionsView.subtitle) — keep the two honest together.
         auth.isGuest
-            ? "Back up your training and sync across devices. Keeps everything you've logged so far."
+            ? "Keep a backup of your training off this phone. Everything you've logged so far comes with you."
             : nil
     }
 

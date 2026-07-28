@@ -13,6 +13,12 @@ struct PaywallView: View {
     /// forward are starting the trial, subscribing, or restoring. Contextual gates elsewhere stay
     /// dismissible; trust copy (plain renewal terms, one-tap restore) is identical in both modes.
     var hard: Bool = false
+    /// Called INSTEAD of dismissing when the athlete becomes entitled. A host that needs to keep this
+    /// cover on screen and swap to another beat supplies it — the relaunch gate does, to hand off to
+    /// the account beat. The alternative (let the paywall dismiss, then re-present the same cover from
+    /// `onDismiss`) is timing-dependent: under load SwiftUI drops the re-presentation and the athlete
+    /// silently skips the beat. Everyone else leaves this nil and the paywall closes itself as before.
+    var onEntitled: (() -> Void)?
 
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
@@ -29,6 +35,13 @@ struct PaywallView: View {
     /// Set when a purchase genuinely fails (not when the athlete cancels) — a tap that does nothing
     /// and says nothing is how you lose someone who was trying to pay.
     @State private var purchaseError: String?
+    /// Store-side failures this session: a pricing fetch that came back empty, or a purchase the
+    /// store rejected. A CANCELLED purchase is not a failure and never counts, so the escape below
+    /// can't be conjured up by opening the StoreKit sheet and backing out of it twice.
+    @State private var storeFailures = 0
+    /// Two store failures is enough to call it: on a HARD gate, offer a way past it. Not a bypass —
+    /// `onboardingGatePending` is untouched, so the wall returns on the next launch.
+    private var storeUnreachable: Bool { hard && storeFailures >= 2 }
 
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
@@ -92,6 +105,7 @@ struct PaywallView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Theme.Space.sm) {
                 cta
+                if storeUnreachable { storeUnreachableEscape }
                 fineprint
             }
             .padding(.horizontal, Theme.Space.xl)
@@ -132,7 +146,7 @@ struct PaywallView: View {
                 purchaseError = nil
                 Task {
                     working = true; _ = await paywall.restore(); working = false
-                    if paywall.isPro { dismiss() } else { nothingToRestore = true }
+                    if paywall.isPro { finishEntitled() } else { nothingToRestore = true }
                 }
             }
             Button("Not now", role: .cancel) { purchaseError = nil }
@@ -325,6 +339,7 @@ struct PaywallView: View {
                     await paywall.reloadPricing()
                     working = false
                     if !paywall.pricingIsLive {
+                        storeFailures += 1
                         purchaseError = "We couldn't load pricing from the App Store. Check your connection and try again."
                     }
                     return
@@ -337,9 +352,10 @@ struct PaywallView: View {
                 case .cancelled:
                     break                                   // they changed their mind — say nothing
                 case .failed(let message):
+                    storeFailures += 1
                     purchaseError = message
                 }
-                if paywall.isPro { dismiss() }
+                if paywall.isPro { finishEntitled() }
             }
         } label: {
             Text(ctaTitle)
@@ -380,7 +396,7 @@ struct PaywallView: View {
             Button("Restore") {
                 Task {
                     working = true; _ = await paywall.restore(); working = false
-                    if paywall.isPro { dismiss() } else { nothingToRestore = true }
+                    if paywall.isPro { finishEntitled() } else { nothingToRestore = true }
                 }
             }
             Text("·")
@@ -403,6 +419,28 @@ struct PaywallView: View {
             return "\(product.trialDays) days free, then \(product.priceText)/yr · cancel anytime"
         }
         return "\(product.priceText)/mo · cancel anytime"
+    }
+
+    /// Entitlement landed. A host that keeps this cover on screen for a following beat handles it via
+    /// `onEntitled`; otherwise the paywall closes itself, which is what every contextual gate wants.
+    private func finishEntitled() {
+        if let onEntitled { onEntitled() } else { dismiss() }
+    }
+
+    /// The only way past a hard gate that isn't a purchase — and it appears only once the store has
+    /// actually failed twice. The wording is the whole point: this is a deferral, not a free pass,
+    /// and saying so is cheaper than an athlete discovering it themselves next launch.
+    private var storeUnreachableEscape: some View {
+        Button {
+            paywall.storeUnreachableDeferral = true
+            dismiss()
+        } label: {
+            Text("Continue — we'll ask again next time")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 
     private var closeButton: some View {
