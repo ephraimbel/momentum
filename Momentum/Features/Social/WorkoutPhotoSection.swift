@@ -18,7 +18,7 @@ struct WorkoutPhotoSection: View {
 
     private var photosData: [Data] { workout.orderedPhotosData }
     private var remaining: Int { Workout.photoCap - photosData.count }
-    private static var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    private static var cameraAvailable: Bool { CameraPicker.isAvailable }
 
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
@@ -183,35 +183,5 @@ struct WorkoutPhotoSection: View {
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         return resized.jpegData(compressionQuality: quality) ?? data
-    }
-}
-
-/// The system camera, presented full screen — a capture lands through `onCapture` exactly like a
-/// library pick. Guarded by `isSourceTypeAvailable(.camera)` at the call site (Simulator has none).
-private struct CameraPicker: UIViewControllerRepresentable {
-    var onCapture: (UIImage) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraPicker
-        init(_ parent: CameraPicker) { self.parent = parent }
-
-        func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage { parent.onCapture(image) }
-            parent.dismiss()
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
     }
 }

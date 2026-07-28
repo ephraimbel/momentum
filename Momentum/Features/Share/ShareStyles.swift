@@ -82,12 +82,22 @@ private struct ShareRoute: View {
 struct PhotoTrioCard: View {
     let workout: Workout
     let stats: ShareStats
-    let photo: UIImage?
+    let media: ShareMedia?
     let size: CGSize
+    /// Crop the athlete set by panning and pinching the preview.
+    var transform: MediaTransform = .identity
+    /// Media aspect, resolved off the render path; drives the crop clamp.
+    var mediaAspect: CGFloat = 1
+    /// How large the athlete wants the stat block and route drawn over their own picture.
+    var overlayScale: CGFloat = 1
+    /// Draw the overlay ONLY, over transparency — the video exporter composites this on top of the
+    /// moving frames itself, so baking a still backdrop in would hide the clip.
+    var mediaHidden: Bool = false
 
     var body: some View {
         ZStack {
-            ShareBackdrop(photo: photo, size: size)
+            ShareBackdrop(media: media, transform: transform, aspect: mediaAspect,
+                          size: size, hidden: mediaHidden)
             // Legibility scrim — only where the type lives.
             LinearGradient(stops: [.init(color: .clear, location: 0.45),
                                    .init(color: .black.opacity(0.55), location: 1)],
@@ -99,6 +109,10 @@ struct PhotoTrioCard: View {
                         .frame(height: size.height * 0.30)
                         .padding(.horizontal, size.width * 0.16)
                         .padding(.top, size.height * 0.12)
+                        // Anchored to its own outer edge so growing the overlay pushes it INWARD.
+                        // Scaling the whole composition about centre instead walks the route off
+                        // the top of the card and the stats off the bottom.
+                        .scaleEffect(overlayScale, anchor: .top)
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: size.height * 0.016) {
@@ -114,6 +128,7 @@ struct PhotoTrioCard: View {
                     .padding(.horizontal, size.width * 0.06)
                 }
                 .padding(.bottom, size.height * 0.10)
+                .scaleEffect(overlayScale, anchor: .bottom)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -144,12 +159,17 @@ struct PhotoTrioCard: View {
 struct PhotoStackCard: View {
     let workout: Workout
     let stats: ShareStats
-    let photo: UIImage?
+    let media: ShareMedia?
     let size: CGSize
+    var transform: MediaTransform = .identity
+    var mediaAspect: CGFloat = 1
+    var overlayScale: CGFloat = 1
+    var mediaHidden: Bool = false
 
     var body: some View {
         ZStack {
-            ShareBackdrop(photo: photo, size: size)
+            ShareBackdrop(media: media, transform: transform, aspect: mediaAspect,
+                          size: size, hidden: mediaHidden)
             Color.black.opacity(0.28)   // quiet full veil so center type always reads
 
             VStack(spacing: size.height * 0.030) {
@@ -181,23 +201,51 @@ struct PhotoStackCard: View {
                 Spacer(minLength: 0)
             }
             .shadow(color: .black.opacity(0.3), radius: size.width * 0.008, y: 1)
+            // Stacked is composed about the centre, so it scales about the centre.
+            .scaleEffect(overlayScale)
         }
         .frame(width: size.width, height: size.height)
     }
 }
 
-/// Full-bleed photo, or a quiet brand canvas when there's no photo yet.
+/// Full-bleed media under the overlay — a still, a looping clip, or a quiet brand canvas when the
+/// athlete hasn't chosen anything yet.
+///
+/// The crop is applied here and NOWHERE else, so the composer preview and the exported file cannot
+/// disagree about it: the media is laid out at its aspect-filled size, scaled and offset in canvas
+/// units, then clipped to the card. The preview differs from the export only by the uniform
+/// `scaleEffect` the composer wraps the whole card in.
 private struct ShareBackdrop: View {
-    let photo: UIImage?
+    let media: ShareMedia?
+    var transform: MediaTransform = .identity
+    var aspect: CGFloat = 1
     let size: CGSize
+    /// True while rendering the overlay pass for a video export — the clip itself is composited by
+    /// AVFoundation, so this pass must leave the backdrop fully transparent.
+    var hidden: Bool = false
+
+    /// Aspect-filled size before the athlete's zoom, in canvas units.
+    private var fill: CGSize {
+        MediaTransform.identity.filledSize(aspect: aspect, canvas: size)
+    }
 
     var body: some View {
-        if let photo {
-            Image(uiImage: photo)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: size.width, height: size.height)
-                .clipped()
+        if hidden {
+            Color.clear
+        } else if let media {
+            Group {
+                switch media {
+                case .image(let ui):
+                    Image(uiImage: ui).resizable().scaledToFill()
+                case .video(let url):
+                    LoopingVideoView(url: url)
+                }
+            }
+            .frame(width: fill.width, height: fill.height)
+            .scaleEffect(transform.scale)
+            .offset(transform.offset)
+            .frame(width: size.width, height: size.height)
+            .clipped()
         } else {
             ZStack {
                 Color.black
