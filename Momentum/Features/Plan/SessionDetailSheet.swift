@@ -227,12 +227,7 @@ struct SessionDetailSheet: View {
 
     private func exerciseRow(_ ex: PlannedExercise) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                if let w = StrengthSuggest.label(for: ex, profile: profile) {
-                    Text("Start \(w)").font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
-                }
-            }
+            Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
             Spacer(minLength: Theme.Space.sm)
             Text(ex.prescriptionText)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)

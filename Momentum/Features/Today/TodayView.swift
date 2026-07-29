@@ -664,20 +664,14 @@ struct TodayView: View {
         }
     }
 
-    /// One prescribed exercise: name + suggested start weight on the left, sets × reps on the right
+    /// One prescribed exercise: name on the left, sets × reps on the right — no weight; the athlete
+    /// picks a load they can hit the rep range with, and the plan calibrates from what they log
     /// (mirrors SessionDetailSheet's row so the prescription reads identically everywhere).
     private func confirmExerciseRow(_ ex: PlannedExercise) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ex.exercise?.name ?? "Exercise")
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .lineLimit(1)
-                if let w = StrengthSuggest.label(for: ex, profile: profiles.first) {
-                    Text("Start \(w)")
-                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-            }
+            Text(ex.exercise?.name ?? "Exercise")
+                .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                .lineLimit(1)
             Spacer(minLength: Theme.Space.sm)
             Text(ex.prescriptionText)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
