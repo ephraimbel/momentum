@@ -33,7 +33,7 @@ export default function Support() {
 
         <h2>Contact us</h2>
         <p>
-          Email <a href="mailto:support@momentumco.app">support@momentumco.app</a> with your question. If
+          Email <a href="mailto:support@momentum.run">support@momentum.run</a> with your question. If
           it&apos;s about a specific workout or your plan, a quick note on what you expected vs. what
           happened helps us sort it fast.
         </p>
@@ -74,7 +74,7 @@ export default function Support() {
 
         <h2>Still stuck?</h2>
         <p>
-          Email <a href="mailto:support@momentumco.app">support@momentumco.app</a> and we&apos;ll get you
+          Email <a href="mailto:support@momentum.run">support@momentum.run</a> and we&apos;ll get you
           moving again.
         </p>
       </main>

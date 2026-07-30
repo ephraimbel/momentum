@@ -3,6 +3,8 @@ import PhoneFrame from "@/components/PhoneFrame";
 import Reveal from "@/components/Reveal";
 import RaceCalc from "@/components/RaceCalc";
 import Nav from "@/components/Nav";
+import Cinema from "@/components/Cinema";
+import { athleteBlur } from "@/components/athleteBlur";
 
 export default function Home() {
   return (
@@ -12,10 +14,13 @@ export default function Home() {
         <Hero />
         <Proof />
         <Pillars />
+        <CinemaStandard />
         <Gallery />
         <DeepDives />
+        <DistanceMarquee />
         <Predictor />
         <Goals />
+        <Seasons />
         <Manifesto />
         <Principles />
         <Pricing />
@@ -27,18 +32,129 @@ export default function Home() {
   );
 }
 
+/** The first cinematic statement — the fog pack. Photography stays monochrome (the brand is ink
+ *  and paper); the single iridescent word is the earned accent. */
+function CinemaStandard() {
+  return (
+    <Cinema
+      src="/athletes/cinema-pack.jpg"
+      blur={athleteBlur["cinema-pack.jpg"]}
+      alt="A pack of marathoners emerging from morning fog"
+    >
+      <Reveal>
+        <p className="eyebrow eyebrow-light">The long game</p>
+        <h2 className="display cinema-title">
+          The work compounds.
+        </h2>
+        <p className="lede cinema-lede">
+          Every run measured. Every signal read. Every week adapted. momentum turns consistency
+          into fitness — and tells you the truth the whole way there.
+        </p>
+      </Reveal>
+    </Cinema>
+  );
+}
+
+/** Distance ticker — outline display type drifting past, Cadence-style. Decorative; hidden from
+ *  assistive tech, paused under reduce-motion. */
+function DistanceMarquee() {
+  const row = ["5K", "10K", "HALF", "MARATHON", "50K ULTRA"];
+  const items = [...row, ...row, ...row, ...row];
+  return (
+    <div className="marquee" aria-hidden>
+      <div className="marquee-track">
+        {items.map((t, i) => (
+          <span key={i}>
+            {t}
+            <em>·</em>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Editorial season trio — the macrocycle as photography: base, build, peak. */
+function Seasons() {
+  const cards = [
+    {
+      src: "/athletes/season-base.jpg",
+      blur: athleteBlur["season-base.jpg"],
+      alt: "A lone runner on a misty forest road",
+      n: "01",
+      h: "Base",
+      p: "Where the engine is built. Easy volume, laid down patiently.",
+    },
+    {
+      src: "/athletes/season-build.jpg",
+      blur: athleteBlur["season-build.jpg"],
+      alt: "An athlete driving hard up a tree-lined road",
+      n: "02",
+      h: "Build",
+      p: "Where the work sharpens. Threshold, intervals, race-pace rehearsal.",
+    },
+    {
+      src: "/athletes/season-peak.jpg",
+      blur: athleteBlur["season-peak.jpg"],
+      alt: "Sprinters at full flight on an indoor track",
+      n: "03",
+      h: "Peak",
+      p: "Where it all shows up. Fresh legs, honest paces, race day.",
+    },
+  ];
+  return (
+    <section className="section" id="seasons" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head">
+            <p className="eyebrow">The season, periodized</p>
+            <h2 className="display">Base. Build. Peak.</h2>
+            <p className="lede">
+              momentum plans in real training blocks — and labels every week with why it exists.
+            </p>
+          </div>
+        </Reveal>
+        <div className="seasons">
+          {cards.map((c, i) => (
+            <Reveal key={c.h} delay={i * 110}>
+              <figure className="season">
+                <div className="season-media">
+                  <Image
+                    src={c.src}
+                    alt={c.alt}
+                    fill
+                    sizes="(max-width: 760px) 92vw, 30vw"
+                    quality={88}
+                    placeholder="blur"
+                    blurDataURL={c.blur}
+                    style={{ objectFit: "cover" }}
+                  />
+                </div>
+                <figcaption>
+                  <span className="season-n">{c.n}</span>
+                  <h4>{c.h}</h4>
+                  <p>{c.p}</p>
+                </figcaption>
+              </figure>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 
 function Hero() {
   return (
     <section className="hero" id="top">
-      {/* Living iridescent field: two slowly-drifting pastel layers behind everything (incl. the
-          transparent nav), masked to melt into white as the hero meets the page below. */}
-      <div className="hero-aura" aria-hidden />
-      {/* The self-drawing route — the app's welcome motif, redrawn across the header. */}
+      {/* No background wash here by design — see the `.hero-aura` note in globals.css. The surface
+          is flat white; the route below is the only motif. */}
+      {/* The self-drawing route — the app's welcome motif. Kept clear of the text column: it runs
+          under the trust strip, then climbs behind the phone. It used to cut across the lede. */}
       <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
-        <path d="M -60 470 C 180 380 260 560 470 470 S 760 300 980 400 S 1280 540 1520 380" />
+        <path d="M -60 706 C 200 692 520 730 860 664 S 1180 448 1520 388" />
       </svg>
-      <div className="hero-runner" aria-hidden />
       <div className="wrap hero-grid">
         <div>
           <p className="eyebrow rise rise-1">The adaptive running coach</p>
@@ -116,10 +232,10 @@ function Pillars() {
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">Why momentum</p>
-            <h2 className="display">Built by runners, for runners.</h2>
+            <h2 className="display">Training science first. AI where it helps.</h2>
             <p className="lede">
-              Your paces, loads, and progressions come from plan algorithms built by runners. Testable,
-              bounded, honest. The coach explains the plan; it never invents your numbers.
+              Your paces, loads, and progressions come from a deterministic training engine — testable,
+              bounded, honest. The AI explains the plan; it never invents your numbers.
             </p>
           </div>
         </Reveal>
@@ -262,7 +378,7 @@ function DeepDives() {
 
         <div className="duo flip">
           <div className="duo-media">
-            <PhoneFrame small src="/shots/progress.png" alt="Progress trends: estimated VO2 max gauge and personalized heart-rate zones" />
+            <PhoneFrame small src="/shots/progress.png" alt="Your vitals: HRV, resting heart rate, respiratory rate, and wrist temperature, each within your personal normal range" />
           </div>
           <div>
             <p className="eyebrow">Your body, measured</p>
@@ -314,6 +430,35 @@ function DeepDives() {
           </div>
           <div className="duo-media">
             <PhoneFrame small src="/shots/heatmap-dark.png" alt="Personal heatmap tracing running routes across a dark city map" />
+          </div>
+        </div>
+
+        <div className="duo flip">
+          <div className="duo-media">
+            <PhoneFrame small src="/shots/fuel.png" alt="Fuel dashboard: daily calories with carbs, protein, fat, and sodium rings and a plain-language meal log" />
+          </div>
+          <div>
+            <p className="eyebrow">Fuel, not a diet</p>
+            <h3>Eat to train — floors to hit, never numbers to fear.</h3>
+            <p>
+              Tell momentum what you ate in a sentence and it reads the carbs, protein, fat, and
+              sodium — then shows what today&apos;s training actually asks for. More carbs on a
+              long-run day, always fueling, never dieting.
+            </p>
+            <ul>
+              <li>
+                <span className="tick" aria-hidden />
+                Log a meal in plain words — no barcodes, no weighing
+              </li>
+              <li>
+                <span className="tick" aria-hidden />
+                Targets that move with your plan, not a one-size calorie cap
+              </li>
+              <li>
+                <span className="tick" aria-hidden />
+                Floors to hit, never ceilings to fear — with a RED-S-aware guard
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -416,16 +561,17 @@ function Pricing() {
             <div className="plan plan-pro">
               <span className="plan-badge">7-day free trial</span>
               <h3>momentum Pro</h3>
+              {/* Must match PaywallController.swift (monthlyPrice 14.99 / annualPrice 109.99) —
+                  this page quoted Runna's $19.99/$119.99 for months while the app charged less. */}
               <div className="plan-price">
-                $59.99 <small>/ year</small>
+                $109.99 <small>/ year</small>
               </div>
               <p className="plan-cycle">
-                7 days free, then $59.99/year (under $5/month) · or $9.99/month, cancel anytime
+                7 days free, then $109.99/year (about $9/month) · or $14.99/month, cancel anytime
               </p>
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
-                <li><span className="tick" aria-hidden />Coach chat, post-run reads &amp; voice guidance</li>
-                <li><span className="tick" aria-hidden />Fueling &amp; calorie tracking, keyed to your training</li>
+                <li><span className="tick" aria-hidden />AI coach, post-run reads &amp; voice guidance</li>
                 <li><span className="tick" aria-hidden />Recovery-aware training &amp; the injury loop</li>
                 <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
                 <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
@@ -444,11 +590,23 @@ function Manifesto() {
     <section className="section" id="method">
       <div className="wrap">
         <Reveal>
-        <div className="manifesto">
-          <div className="aura-m" aria-hidden />
-          <p className="eyebrow">The method</p>
+        <div className="manifesto manifesto-photo">
+          <div className="manifesto-media" aria-hidden>
+            <Image
+              src="/athletes/cinema-leaders.jpg"
+              alt=""
+              fill
+              sizes="(max-width: 1100px) 96vw, 1100px"
+              quality={88}
+              placeholder="blur"
+              blurDataURL={athleteBlur["cinema-leaders.jpg"]}
+              style={{ objectFit: "cover", objectPosition: "center 30%" }}
+            />
+          </div>
+          <div className="manifesto-shade" aria-hidden />
+          <p className="eyebrow eyebrow-light">The method</p>
           <h2 className="display">
-            No red days. No guilt loops. <span className="iri-text-dark">Only momentum.</span>
+            No red days. No guilt loops. Only momentum.
           </h2>
           <div className="manifesto-grid">
             <div>
@@ -490,7 +648,7 @@ function Principles() {
     },
     {
       title: "Real math, not vibes",
-      body: "Every pace, load, and zone comes from plan algorithms built by runners, for runners: VDOT paces, training-load guardrails, personalized zones. The coach writes the explanation; it never invents the numbers.",
+      body: "Every pace, load, and zone comes from a deterministic, tested engine — VDOT paces, training-load guardrails, personalized zones. The AI writes the explanation; it never invents the numbers.",
     },
     {
       title: "Your training stays yours",
@@ -527,7 +685,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "momentum Pro — the full adaptive plan, coach chat, fueling, voice guidance, and advanced analytics — is $59.99/year (under $5 a month) with a 7-day free trial, or $9.99/month.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
@@ -539,7 +697,7 @@ function FAQ() {
     },
     {
       q: "How is momentum different from other running apps?",
-      a: "The plan adapts after every run, protectively. Recovery signals, workload guardrails, and an injury-aware loop reshape your week within tested bounds. Plan algorithms built by runners, for runners, with a coach that explains every change in plain language and never invents your numbers.",
+      a: "The plan adapts after every run, protectively. Recovery signals, workload guardrails, and an injury-aware loop reshape your week within tested bounds — and the coach explains every change in plain language. AI narrates; it never invents your numbers.",
     },
     {
       q: "What happens to my data?",
@@ -576,20 +734,29 @@ function FAQ() {
 
 function FinalCTA() {
   return (
-    <section className="cta" id="download">
-      <div className="aura aura-3" aria-hidden style={{ left: "50%", transform: "translateX(-50%)", bottom: -260 }} />
-      <div className="wrap">
-        <h2 className="display">
-          keep <span className="iri-text">moving.</span>
-        </h2>
-        <p className="lede center">
-          Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
-        </p>
-        <a className="btn btn-ink" href="#">
-           Download on the App Store
-        </a>
-      </div>
-    </section>
+    <div id="download">
+      <Cinema
+        src="/athletes/cinema-dusk.jpg"
+        blur={athleteBlur["cinema-dusk.jpg"]}
+        alt="A lone runner silhouetted at dusk, reflected in still water"
+        tall
+        anchor="bottom"
+      >
+        <Reveal>
+          <div className="cta-cinema">
+            <h2 className="display cinema-title">
+              keep moving.
+            </h2>
+            <p className="lede cinema-lede">
+              Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
+            </p>
+            <a className="btn btn-paper" href="#">
+               Download on the App Store
+            </a>
+          </div>
+        </Reveal>
+      </Cinema>
+    </div>
   );
 }
 
