@@ -282,6 +282,36 @@ enum DemoSeed {
             }
         }
 
+        // --seed-dense-history: pack the trailing 16 weeks (the consistency graph's exact window)
+        // with light training days so the profile's Consistency card reads like a daily athlete
+        // (~4 of 5 days lit) instead of the 5-week starter history above. Composes with the other
+        // seeds — the graph counts DAYS, so overlaps with the history above just merge.
+        if ProcessInfo.processInfo.arguments.contains("--seed-dense-history") {
+            var drng = SeededRNG(11)
+            for daysAgo in 0..<112 {
+                guard drng.double(0, 1) < 0.8 else { continue }   // ~4 in 5 days active
+                let start = Date().addingTimeInterval(Double(-daysAgo) * 86_400 - 8 * 3600
+                                                      + drng.double(-3600, 3600))
+                if daysAgo % 5 == 4 {
+                    let sw = Workout(); sw.type = .strength; sw.startedAt = start
+                    sw.durationS = 2_400 + drng.double(0, 900)
+                    sw.strength = strengthSession(lifts: lifts, week: Double(daysAgo) / 7)
+                    context.insert(sw)
+                } else {
+                    let run = Workout(); run.type = .run; run.startedAt = start
+                    let dist = 5_000 + drng.double(0, 9_000)
+                    let pace = 285 + drng.double(0, 40)
+                    run.durationS = dist / 1000 * pace
+                    let gps = GPSDetail(); gps.distanceM = dist
+                    gps.avgPaceSPerKm = pace
+                    gps.elevationGainM = 20 + drng.double(0, 90)
+                    gps.samples = loopSamples(start: start, variant: daysAgo)
+                    run.gps = gps
+                    context.insert(run)
+                }
+            }
+        }
+
         // --seed-ultra-run: one finished 50K (~6:20/km, ten days back) with real accepted samples,
         // so the record-book backfill mints the Fastest 50K row through the genuine pipeline
         // (fastest-window over the samples — never a hand-planted PersonalRecord).

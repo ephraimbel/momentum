@@ -365,6 +365,31 @@ final class WatchCardioModel: NSObject {
         demoStart = Date()
         running = true
         heartRateBPM = 128
+        #if DEBUG
+        // `--watch-demo-warm`: open MID-RUN instead of at 0:00. The demo otherwise accumulates in
+        // real time, so every live-page screenshot showed "0:05 · 0.01 mi" — true, and useless.
+        // Everything here is the state that same run would have reached on its own.
+        if ProcessInfo.processInfo.arguments.contains("--watch-demo-warm") {
+            let warm: TimeInterval = 28 * 60 + 42
+            demoStart = Date().addingTimeInterval(-warm)
+            demoTick = Int(warm)
+            distanceM = 5_180
+            activeEnergyKcal = 341
+            heartRateBPM = 148
+            hrSum = 143 * 1_600; hrTicks = 1_600
+            maxObservedHR = 166
+            timeInZone = [96, 402, 830, 289, 105]   // sums to `warm`
+            // Three laps banked, partway into the fourth. The lap CURSORS matter as much as the
+            // splits: leaving them at zero makes the next tick see the whole run as one lap and
+            // record a 28-minute "split" (which is exactly what the first cut printed).
+            let laps = (distanceM / splitLengthM).rounded(.down)
+            splits = splitLengthM > 1_200 ? [548, 532, 525] : [340, 331, 326]
+            lastSplitS = splits.last ?? 0
+            lapStartDistance = laps * splitLengthM
+            lapStartElapsed = warm - (distanceM - lapStartDistance) / distanceM * warm
+            route = (0...Int(warm)).map { Self.demoCoordinate(tick: $0) }
+        }
+        #endif
         startMetronome()
     }
 

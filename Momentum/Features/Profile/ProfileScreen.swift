@@ -194,6 +194,15 @@ struct ProfileScreen: View {
         // The REAL follower count, refreshed whenever the screen appears (a follow-back can land
         // any time). Guests/offline keep the honest 0 — `followCounts` returns nil, not a guess.
         .task {
+            #if DEBUG
+            // --seed-follows-active: the screenshot-run "established account" — a plausible
+            // follower count to pair with the seeded following slice. DEBUG-only fiction; the
+            // shipping path below never fabricates.
+            if ProcessInfo.processInfo.arguments.contains("--seed-follows-active") {
+                followerCount = 1_284
+                return
+            }
+            #endif
             guard CommunityAccess.enabled else { return }
             if let counts = await services.social.followCounts() {
                 followerCount = counts.followers

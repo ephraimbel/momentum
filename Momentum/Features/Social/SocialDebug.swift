@@ -15,8 +15,15 @@ enum SocialDebug {
     /// `--seed-follows`: start the run already following a few known community athletes, so the
     /// profile's Following count, the Following list, and the Friends wall can all be verified by
     /// screenshot without driving taps (the real tap path is covered by `FollowFlowUITests`).
+    /// `--seed-follows-active` follows a large deterministic slice of the community instead (~an
+    /// eighth of the directory) — the "established account" look for screenshot runs.
     static func seededFollows() -> Set<String> {
-        guard ProcessInfo.processInfo.arguments.contains("--seed-follows") else { return [] }
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--seed-follows-active") {
+            let all = CommunityDirectory.all().map(\.handle)
+            return Set(all.enumerated().compactMap { i, h in i % 8 == 0 ? h : nil })
+        }
+        guard args.contains("--seed-follows") else { return [] }
         return ["mayaruns", "coachtheo", "joonw973"]
     }
     #endif
