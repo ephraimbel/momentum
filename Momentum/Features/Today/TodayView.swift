@@ -12,6 +12,7 @@ struct TodayView: View {
     @Environment(Services.self) private var services
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router   // morning readout → Progress · Health
+    @Environment(ModerationStore.self) private var moderation   // globe dots honor blocks (community)
     @Query private var profiles: [UserProfile]
     // Coach-button badge: only the newest coach message matters, so fetch exactly that instead of
     // materializing the whole thread on Today (the map re-evaluates this body constantly).
@@ -37,8 +38,16 @@ struct TodayView: View {
 
     // Defaults to Run (map-first home). `--ui-test-strength` opens straight into strength so the
     // strength-logging UI test can drive the set logger deterministically (no picker navigation).
-    @State private var activity: WorkoutType =
-        debugFlag("--ui-test-strength") ? .strength : .run
+    @State private var activity: WorkoutType = {
+        #if DEBUG
+        // --today-sport <raw> opens on any sport (face verification: tennis badge, unlocated
+        // cardio, …); --ui-test-strength remains the strength shorthand the UI tests use.
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "--today-sport"), args.indices.contains(i + 1),
+           let sport = WorkoutType(rawValue: args[i + 1]) { return sport }
+        #endif
+        return debugFlag("--ui-test-strength") ? .strength : .run
+    }()
     /// Set the moment the athlete picks a sport themselves. Until then the picker follows today's
     /// plan; afterwards it stays where they put it for the rest of the session.
     @State private var pickerIsAthletesChoice = false
@@ -70,7 +79,6 @@ struct TodayView: View {
     // other map surface (run screen, heatmap). Realistic (Mapbox Standard 3D) is the default.
     @AppStorage(MapStyleOption.storageKey) private var mapStyle: MapStyleOption = .realistic
     @State private var showNotifications = false
-    @State private var showProfile = false
     @State private var showLogWorkout = false
     /// The offline-log composer (say/type what you did → receipt → confirm).
     @State private var showLogActivity = false
@@ -88,9 +96,25 @@ struct TodayView: View {
     /// True once the map backdrop has been mounted — it then stays warm for the session (a
     /// strength-only athlete who never shows the map never pays for it).
     @State private var mapWasShown = false
-    /// The header streak, computed once per data change instead of on every body evaluation
-    /// (the map re-evaluates the body constantly while panning).
-    @State private var cachedStreak: Int?
+    /// The newest GPS fix from history, memoized (non-observed box, invisible to SwiftUI): the raw
+    /// form sorted the whole workout table AND faulted a run's thousands of `LocationSample` rows
+    /// on every body evaluation — and the map re-evaluates body constantly while panning.
+    private final class HistoryFixMemo {
+        var count = -1
+        var coord: CLLocationCoordinate2D?
+    }
+    @State private var historyFixMemo = HistoryFixMemo()
+    /// The globe's athlete dots, snapshotted when world mode opens — the directory filter ran
+    /// ~3× per render (annotations + subtitle + legend) through the whole ~950-entry list while
+    /// the camera was mid-flight.
+    @State private var globeDots: [CommunityAthlete] = []
+    /// "A recovery adaptation landed today", memoized per (events, day) — the raw `contains` did
+    /// per-element calendar math over the whole CoachingEvent table on every readout render.
+    private final class AdaptedTodayMemo {
+        var key: Int = .min
+        var value = false
+    }
+    @State private var adaptedTodayMemo = AdaptedTodayMemo()
     /// Today's pending plan session, memoized for the same reason (see `pendingToday`).
     @State private var cachedPendingToday: PlannedSession?
     @State private var pendingTodayToken: Int = 0
@@ -234,7 +258,13 @@ struct TodayView: View {
             // separate screen. Once the map has been shown it stays MOUNTED (hidden behind the
             // strength home) — tearing the engine down on a strength switch made returning to a
             // cardio sport re-download the style and repopulate tiles: seconds of blank map.
-            let mapActive = isCardio || worldMode || marketingHero
+            // The map leads only when it has SOMEWHERE to stand — a live fix, granted permission,
+            // or the athlete's own GPS history. A brand-new install with location undecided used
+            // to fall back to a zoom-3 world camera, which read as "the globe randomly popped up"
+            // on every cardio sport (owner report 2026-07-30, first seen on e-bike). Until a
+            // location exists, the sport home leads; Start asks for location contextually and the
+            // map takes over the moment it can center.
+            let mapActive = (isCardio && canCenterMap) || worldMode || marketingHero
             if mapActive || mapWasShown {
                 mapLayer.opacity(mapActive ? 1 : 0).allowsHitTesting(mapActive)
             }
@@ -255,9 +285,9 @@ struct TodayView: View {
             // body reads stay cheap. Every appear, so plan-tab edits show the moment you return.
             refreshPendingToday()
             matchPickerToTodaysPlan()
-            // Refresh the Home Screen widget's snapshot whenever Today surfaces — the write is
-            // change-guarded, so an identical snapshot never wakes the widget.
-            WidgetBridge.publish(profile: profiles.first, workouts: workouts)
+            #if DEBUG
+            if debugFlag("--sport-picker") { showSportPicker = true }   // picker face verification
+            #endif
             if isCardio || worldMode || marketingHero { mapWasShown = true }
             // Marketing hero frames the course in `.onStyleLoaded` (once tiles are ready). Return here
             // so the puck-follow / last-known camera logic below never steals the camera.
@@ -282,7 +312,7 @@ struct TodayView: View {
             if locator.isAuthorized { locator.refreshLocation() }
         }
         // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
-        .onChange(of: workouts.count) { cachedStreak = nil; lastBootstrap = nil; bootstrapIfNeeded() }
+        .onChange(of: workouts.count) { lastBootstrap = nil; bootstrapIfNeeded() }
         // Any signature change (new plan, session added/removed, workout landed, day rollover)
         // re-snapshots the deck's plan row.
         .onChange(of: currentPendingToken) { refreshPendingToday() }
@@ -379,12 +409,9 @@ struct TodayView: View {
         } message: {
             Text("We'll start with a short recovery run and easy miles — quality work returns once you're settled.")
         }
-        // The profile opens as a FULL page pushed onto the tab's stack — a real destination with a
-        // back chevron (ProfileScreen's own header), not a sheet (user call 2026-07-16; the sheet
-        // read as a popup once Profile lost its tab to Fuel).
-        .navigationDestination(isPresented: $showProfile) {
-            ProfileScreen(showsBackButton: true)
-        }
+        // No profile destination lives here any more: the header avatar SELECTS the Profile tab
+        // (see `headerCard`). A push would be a second instance of the same screen, and that is
+        // what cost it the Community slider.
     }
 
     /// The expensive appear-time orchestration (plan reconciliation, reminders, inbox posts,
@@ -408,14 +435,18 @@ struct TodayView: View {
         // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
         services.notifications.scheduleWeeklyCheckIn()
         let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
-        cachedStreak = stats.currentStreak
-        let plannedToday = !PlanCoaching.todaySessions(plan, on: Date()).isEmpty
+        // One `todaySessions` pass for the whole bootstrap (it filters the full session list).
+        let sessionsToday = PlanCoaching.todaySessions(plan, on: Date())
         let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
         services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
-                                                   isPlannedDayToday: plannedToday,
+                                                   isPlannedDayToday: !sessionsToday.isEmpty,
                                                    hasWorkedOutToday: workedOutToday)
+        // The Home Screen widget snapshot rides the throttled pass (it builds its own ProfileStats
+        // full-history walk — running it on EVERY tab re-visit blocked first paint). The write is
+        // change-guarded, so an identical snapshot never wakes the widget.
+        WidgetBridge.publish(profile: profiles.first, workouts: workouts)
         // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
-        if let s = PlanCoaching.todaySessions(plan, on: Date()).first {
+        if let s = sessionsToday.first {
             AppNotification.post(kind: .reminder, title: "Today's session is ready",
                                  body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
         }
@@ -443,6 +474,13 @@ struct TodayView: View {
         }
         // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
         Task { await services.sync.sync(workouts, in: context) }
+        // The community publish sweep rides the same moment (docs/COMMUNITY-FEED-REDESIGN.md §6):
+        // posts for newly-SHARED workouts go up, privacy-downgrades come down, `postPublishedAt`
+        // stamps on success only so failures retry next pass. Inert while community is off, and a
+        // no-op when the backend is dark (guard inside the sweep).
+        if CommunityAccess.enabled {
+            Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
+        }
         // Pull anything the athlete's devices mirrored into Apple Health since the last sweep —
         // Watch runs, Garmin rides, a Strava re-sync. Self-throttled (15 min) and incremental, so
         // this is a no-op on almost every pass; without it wearable workouts only ever arrived when
@@ -474,12 +512,21 @@ struct TodayView: View {
             worldMode = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { enterWorld() }
         }
+        // --enter-world: press the globe button from WHATEVER state the launch args produced —
+        // unlike --world (which pre-mounts the map at init), this exercises the never-mounted
+        // path: `--ui-test-strength --enter-world` reproduces the strength-day glitch exactly
+        // (sim taps can't reach the button reliably enough to verify a 2.4 s camera animation).
+        if ProcessInfo.processInfo.arguments.contains("--enter-world") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { enterWorld() }
+        }
         // --notifications: open the bell inbox for verification.
         if ProcessInfo.processInfo.arguments.contains("--notifications") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showNotifications = true }
         }
+        // --today-profile: press the header avatar. Routes through the SAME mailbox the button
+        // writes, so this verifies the real tab jump rather than a harness-only presentation.
         if ProcessInfo.processInfo.arguments.contains("--today-profile") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showProfile = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { router.pendingTab = .profile }
         }
         if ProcessInfo.processInfo.arguments.contains("--sportpicker") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSportPicker = true }
@@ -725,14 +772,23 @@ struct TodayView: View {
 
     /// Best guess at where the athlete is before a live fix lands — a cached fix, else their most
     /// recent route's neighborhood — so the cardio map never opens on the whole world.
+    /// Whether the Today map has anything meaningful to frame. Without this, the only camera left
+    /// is the world view — and Today never shows the globe uninvited (world mode is a deliberate
+    /// zoom-out, not a fallback).
+    private var canCenterMap: Bool { locator.isAuthorized || lastKnownCoordinate != nil }
+
     private var lastKnownCoordinate: CLLocationCoordinate2D? {
         if let live = locator.lastLocation { return live }
-        return workouts
-            .sorted { $0.startedAt > $1.startedAt }
-            .lazy
-            .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
-            .first
-            .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        if historyFixMemo.count != workouts.count {
+            historyFixMemo.count = workouts.count
+            historyFixMemo.coord = workouts
+                .sorted { $0.startedAt > $1.startedAt }
+                .lazy
+                .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
+                .first
+                .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        }
+        return historyFixMemo.coord
     }
 
     private var mapLayer: some View {
@@ -745,8 +801,8 @@ struct TodayView: View {
             // (city-level, fuzzed) location. Tap one to open that athlete. Honest presence — the real
             // community only, no fabricated crowd. Gated on `mapShowsGlobe` (not `worldMode`) so the dots
             // aren't added/removed mid-fly — a map content change interrupts the camera animation.
-            if mapShowsGlobe {
-                CircleAnnotationGroup(communityAthletes) { athlete in
+            if mapShowsGlobe, CommunityAccess.enabled {
+                CircleAnnotationGroup(globeDots) { athlete in
                     CircleAnnotation(centerCoordinate: CLLocationCoordinate2D(latitude: athlete.lat, longitude: athlete.lon))
                         .circleColor(StyleColor(UIColor(Theme.route)))
                         .circleRadius(6)
@@ -791,8 +847,13 @@ struct TodayView: View {
     /// land, soft clouds and an atmospheric halo over black space (globe projection at low zoom). It's
     /// brighter and livelier than satellite imagery (whose oceans read dark). The one place we leave the
     /// monochrome basemap — a *world* view should feel alive. The street map keeps the chosen explore style.
+    ///
+    /// The day preset is PINNED (user call 2026-07-30): a bare `.standard` lets the SDK adapt the
+    /// light preset to the system appearance, so dark-mode athletes got a blacked-out night Earth —
+    /// but this globe is a physical object, not a UI surface. Like the medallion badges, it doesn't
+    /// re-anodize with the theme: Earth from space is lit by the sun, in either appearance.
     private var activeMapboxStyle: MapboxMaps.MapStyle {
-        if mapShowsGlobe { return .standard }
+        if mapShowsGlobe { return .standard(lightPreset: .day) }
         // Marketing hero in dark: the Standard *night* preset dims overlaid route annotations to
         // near-black. The flat Dark basemap renders the periwinkle route at full brightness, so the
         // hero's route pops — the website header's whole point. (Light mode is unaffected.)
@@ -819,8 +880,23 @@ struct TodayView: View {
                             .frame(height: 236)
                             .frame(maxWidth: .infinity)
                         lastStrengthReadout
+                    } else if activity.isGPS {
+                        // A cardio sport before any location exists: the sport leads, never a
+                        // world-zoom map (owner call 2026-07-30 — "just show the icon, and they
+                        // can log it"). One quiet line says how the map arrives; the deck below
+                        // already carries Start and Log.
+                        VStack(spacing: Theme.Space.lg) {
+                            sportBadge
+                            Text("Your map arrives with your first start —\nor log a session from below.")
+                                .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, Theme.Space.xl)
                     } else {
-                        BrandMark(size: 124).padding(.top, Theme.Space.xl)   // timed sports show the brand mark
+                        // Timed sports lead with THEIR OWN icon, not the app's (owner call
+                        // 2026-07-30) — tennis day looks like tennis.
+                        sportBadge.padding(.top, Theme.Space.xl)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -830,6 +906,30 @@ struct TodayView: View {
             }
             .scrollIndicators(.hidden)
         }
+    }
+
+    /// The sport's identity mark for non-map faces: its own glyph floating over a soft iridescent
+    /// glow (owner ask 2026-07-30 — "a glow right behind the icon, very subtle"). Not a chip: no
+    /// circle, no hairline — just the brand's five hues swept into a halo and blurred until they
+    /// read as light coming from behind the mark. Static by construction (Reduce Motion safe);
+    /// opacity tuned per scheme so it breathes on white and doesn't curdle on warm charcoal.
+    private var sportBadge: some View {
+        Image(systemName: activity.systemImage)
+            .font(.system(size: 54, weight: .bold))
+            .foregroundStyle(Theme.ink)
+            .frame(width: 148, height: 148)
+            .background {
+                // The brand hues are pastels — on charcoal they average out to a gray fog unless
+                // the chroma is pushed back up; on white they need no help.
+                Circle()
+                    .fill(AngularGradient(colors: Theme.iridescent + [Theme.iridescent[0]],
+                                          center: .center))
+                    .frame(width: 165, height: 165)
+                    .blur(radius: 38)
+                    .saturation(colorScheme == .dark ? 2.6 : 1.25)
+                    .opacity(colorScheme == .dark ? 0.38 : 0.8)
+            }
+            .accessibilityLabel(activity.title)
     }
 
     @ViewBuilder
@@ -918,16 +1018,36 @@ struct TodayView: View {
         HStack(spacing: Theme.Space.sm) {
             AvatarView(photo: profiles.first?.avatarData, name: profiles.first?.displayName ?? "", size: 44)
                 .background(Circle().fill(.regularMaterial).padding(-3))
-                .mapSafeTap("Your profile") { Haptics.light(); showProfile = true }
+                // A second DOOR to the Profile tab, never a second profile screen (fix 2026-07-30).
+                // This used to push its own `ProfileScreen(showsBackButton: true)` onto Today's
+                // stack, and being a push rather than the tab root is exactly what suppressed the
+                // Profile ↔ Community slider — the athlete tapped their own face and landed on a
+                // profile with no way through to the community wall, plus a back chevron implying
+                // they were somewhere else. Routing through `AppRouter.pendingTab` (the shell's
+                // cross-tab mailbox) makes this button and the tab-bar item the identical
+                // destination: one live screen, one set of state.
+                .mapSafeTap("Your profile") { Haptics.light(); router.pendingTab = .profile }
             bellButton
             Spacer(minLength: Theme.Space.xs)
             activitySelector
             Spacer(minLength: Theme.Space.xs)
             coachButton
-            StreakChip(days: cachedStreak ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan).currentStreak)
+            globeButton
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
+    }
+
+    /// The whole planet, one tap from home (owner call, 2026-07-29: the globe took the streak
+    /// chip's slot — the streak still lives in the widget and Progress). Same glass circle language
+    /// as the bell and coach; `enterWorld()` flies the SAME map out to the satellite globe, so it
+    /// reads as a zoom, not a screen change. Athlete dots up there stay gated on `CommunityAccess`
+    /// — until real users exist, a globe of dots is a fabricated crowd.
+    private var globeButton: some View {
+        Image(systemName: "globe")
+            .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
+            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .mapSafeTap("See the world") { enterWorld() }
     }
 
     /// The coach, one tap from home — same glass circle language as the bell. Free to talk; plan
@@ -997,7 +1117,12 @@ struct TodayView: View {
         HStack(spacing: 6) {
             Image(systemName: activity.systemImage).font(.system(size: 15, weight: .bold))
             Text(activityShortLabel).font(.rounded(Theme.FontSize.body, weight: .bold)).lineLimit(1)
-            Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
+            // The selector glyph, not chevron.down: the picker slides UP, so a down-arrow pointed
+            // the wrong way (owner catch 2026-07-30). This is iOS's standard "tap to choose"
+            // mark (popup pickers, Menu labels) — it promises a choice, not a direction.
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Theme.inkSecondary)
         }
         .fixedSize()
         .foregroundStyle(Theme.ink)
@@ -1081,9 +1206,17 @@ struct TodayView: View {
 
     /// A recovery adaptation (eased day / cutback week) recorded today — the readout wears the receipt.
     private var adaptedToday: Bool {
-        coachingEvents.contains {
-            ($0.kind == .ease || $0.kind == .recover) && Calendar.current.isDateInToday($0.date)
+        var h = Hasher()
+        h.combine(coachingEvents.count)
+        h.combine(Calendar.current.startOfDay(for: Date()))
+        let key = h.finalize()
+        if adaptedTodayMemo.key != key {
+            adaptedTodayMemo.key = key
+            adaptedTodayMemo.value = coachingEvents.contains {
+                ($0.kind == .ease || $0.kind == .recover) && Calendar.current.isDateInToday($0.date)
+            }
         }
+        return adaptedTodayMemo.value
     }
 
     /// Tap-through from the morning readout → Progress → Health. One-shot mailbox: RootView
@@ -1139,10 +1272,10 @@ struct TodayView: View {
 
     /// The morning check-in nudge — one quiet line, gone the moment today's answered (or an injury is
     /// already active, which outranks it).
-    @ViewBuilder
     private var checkinChip: some View {
-        if DailyCheckin.today(in: checkins) == nil, profiles.first?.activeInjuryArea == nil {
-            Button { Haptics.light(); showCheckin = true } label: {
+        // No re-guard: `utilityLine` is the only caller and has already proven both conditions —
+        // the duplicate `DailyCheckin.today` here was a second full-table scan per render.
+        Button { Haptics.light(); showCheckin = true } label: {
                 HStack(spacing: Theme.Space.sm) {
                     Image(systemName: "sun.max.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
                     Text("How are you feeling today?")
@@ -1157,10 +1290,9 @@ struct TodayView: View {
                     Capsule().stroke(Theme.hairline)
                 }
                 .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Morning check-in — how are you feeling today? Takes ten seconds.")
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Morning check-in — how are you feeling today? Takes ten seconds.")
     }
 
     /// While an injury is active: the plan's protective state + the way back — "feeling better?" is the
@@ -1359,10 +1491,14 @@ struct TodayView: View {
 
     // MARK: World globe (the Today map zoomed out)
 
-    /// Community back-burnered from v1 (2026-07-16): the globe stays — a beautiful zoom-out of
-    /// YOUR world — but the seeded community pins are gone with the rest of the social layer.
-    /// Restore `CommunityDirectory.all()` (moderation-filtered) when community returns.
-    private var communityAthletes: [CommunityAthlete] { [] }
+    /// The athletes on the globe. Empty in the solo app — until real users exist a globe of dots
+    /// is a fabricated crowd — and the moderation-filtered directory behind `CommunityAccess`
+    /// (restored 2026-07-29, exactly as the back-burner stub prescribed). Blocked athletes vanish
+    /// from the planet too, not just the feed: a block is a block everywhere.
+    private var communityAthletes: [CommunityAthlete] {
+        guard CommunityAccess.enabled else { return [] }
+        return CommunityDirectory.all().filter { !moderation.isBlocked($0.handle) }
+    }
     private var onMap: Bool { profiles.first?.appearOnMap ?? false }
 
     /// Slide the cards away and fly the camera from the street all the way out to the globe. Mapbox's
@@ -1370,12 +1506,33 @@ struct TodayView: View {
     /// of a flat linear zoom.
     private func enterWorld() {
         Haptics.light()
+        // Snapshot the globe's dots once per entry — filtering the ~950-athlete directory through
+        // the blocklist on every mid-flight render was 3 full passes per frame.
+        globeDots = communityAthletes
         let target = lastKnownCoordinate ?? CLLocationCoordinate2D(latitude: 20, longitude: 0)
         let globe = Viewport.camera(center: target, zoom: 1.3, pitch: 0)
+        // On a strength day the map has never MOUNTED (the strength home replaces it, and
+        // `mapWasShown` only flips for cardio) — SwiftUI inserts it in this very transaction, and
+        // a viewport animation scheduled against a Map that doesn't exist yet is dropped on the
+        // floor: the map appeared already parked at the globe, no zoom-out, mid-load flash (owner
+        // report 2026-07-30). Mount it first at the street camera and give the insertion one beat;
+        // the same cinematic fly then runs from the street exactly as it does from the cardio map.
+        let needsMount = !mapWasShown
+        mapWasShown = true
+        if needsMount, case .idle = viewport {
+            // Belt-and-braces: onAppear normally seeds this, but the fly must never start from
+            // `.idle` (an uninitialized camera flies from nowhere).
+            viewport = .camera(center: target, zoom: 13.5, pitch: 0)
+        }
         withAnimation(Motion.reversible) { worldMode = true }
         mapShowsGlobe = true   // satellite earth; set before the fly so it's loaded as we pull back
         if reduceMotion {
             viewport = globe
+        } else if needsMount {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                guard worldMode else { return }   // exited again within the mount beat
+                withViewportAnimation(.fly(duration: 2.4)) { viewport = globe }
+            }
         } else {
             withViewportAnimation(.fly(duration: 2.4)) { viewport = globe }
         }
@@ -1454,7 +1611,7 @@ struct TodayView: View {
     /// Honest presence only — never a fabricated crowd, and never a sad "0 in the community" while
     /// the community layer is back-burnered. No real numbers → no subtitle at all.
     private var worldSubtitle: String? {
-        let count = communityAthletes.count
+        let count = globeDots.count
         if count > 0 {
             let base = "\(count) in the Momentum community"
             return liveCount > 0 ? "\(base) · \(liveCount) live now" : base
@@ -1466,14 +1623,19 @@ struct TodayView: View {
     private var worldBottomChrome: some View {
         VStack(spacing: Theme.Space.md) {
             // The dot legend only makes sense when there are dots (community is back-burnered).
-            if !communityAthletes.isEmpty {
+            if !globeDots.isEmpty {
                 HStack(spacing: Theme.Space.sm) {
                     Circle().fill(Theme.route).frame(width: 8, height: 8)
                     Text("Community").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(.white.opacity(0.75))
                     Spacer(minLength: 0)
                 }
             }
-            worldOptInRow
+            // Presence opt-in is a community feature: with community off there is no map to
+            // appear on, and a solo athlete tapping "Appear on the map" would be opting into an
+            // audience of nobody — a promise the app can't keep (CommunityAccess is the one gate).
+            if CommunityAccess.enabled {
+                worldOptInRow
+            }
         }
         .padding(Theme.Space.lg)
         .padding(.bottom, Theme.Space.lg)
@@ -1543,6 +1705,10 @@ struct TodayView: View {
     private func matchPickerToTodaysPlan() {
         guard !pickerIsAthletesChoice, !marketingHero else { return }
         guard !debugFlag("--ui-test-strength") else { return }   // the UI test pins its own sport
+        #if DEBUG
+        // --today-sport pins the picker the same way a tester's own tap would.
+        guard !ProcessInfo.processInfo.arguments.contains("--today-sport") else { return }
+        #endif
         guard let session = pendingToday else { return }
         activity = WorkoutType.forPlanned(session)
     }

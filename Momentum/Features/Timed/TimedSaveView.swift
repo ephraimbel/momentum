@@ -11,11 +11,23 @@ struct TimedSaveView: View {
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
     @Query private var workouts: [Workout]
+    @Query private var profiles: [UserProfile]
     private var workout: Workout? { workouts.first { $0.id == workoutId } }
 
     @State private var title = ""
     @State private var desc = ""
     @State private var effort: Int?
+    /// The calorie readout — Health-measured when the Watch has numbers for the window, estimated
+    /// otherwise, and always the athlete's to overtype (owner ask 2026-07-30).
+    @State private var kcal: Double?
+    /// True while the shown number is the wearable's own measurement. Cleared the moment the
+    /// athlete types their own — and used to keep a Health-sourced number from being mirrored BACK
+    /// into Health as a second energy sample (double-counting the Move ring).
+    @State private var kcalFromHealth = false
+    /// The athlete typed this number themselves (this screen or a prior save) — the subtitle says so.
+    @State private var kcalEdited = false
+    /// Who sees this session on the community wall — see `CardioSaveView.privacy`.
+    @State private var privacy: WorkoutPrivacy = .private
     /// Plays after SAVE — see `CardioSaveView.celebrating` (user call 2026-07-23).
     @State private var celebrating = false
     @State private var confirmDiscard = false
@@ -29,7 +41,8 @@ struct TimedSaveView: View {
             ScrollView {
                 if let workout {
                     VStack(spacing: Theme.Space.lg) {
-                        TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true)
+                        TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true,
+                                            showsCalories: false)
                         editor
                     }
                     .padding(Theme.Space.md)
@@ -76,7 +89,14 @@ struct TimedSaveView: View {
             title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
             desc = workout.note
             effort = workout.perceivedEffort
-            // The share moment starts from the athlete's chosen default (never silently public).
+            prefillCalories(workout)
+            // The share moment starts from the athlete's chosen default (never silently
+            // public); a workout that already carries a choice (recovery re-save) keeps it.
+            if CommunityAccess.enabled {
+                privacy = workout.privacy == .private
+                    ? profiles.first.map(SocialPrivacy.defaultVisibility) ?? .private
+                    : workout.privacy
+            }
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
@@ -102,6 +122,12 @@ struct TimedSaveView: View {
                 .focused($focus, equals: .desc)
             Divider().overlay(Theme.hairline)
             effortRow
+            Divider().overlay(Theme.hairline)
+            calorieRow
+            if CommunityAccess.enabled {
+                Divider().overlay(Theme.hairline)
+                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
+            }
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -132,6 +158,60 @@ struct TimedSaveView: View {
         }
     }
 
+    /// Calories over the session — tap the number to type your own. The subtitle is honest about
+    /// where the number came from: the Watch's measurement, our estimate, or the athlete's own entry.
+    private var calorieRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Calories")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                Text(kcalFromHealth ? "From Apple Health"
+                     : kcalEdited ? "Your entry"
+                     : "Estimated — tap to adjust")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer()
+            TypableNumber(display: kcal.map { "\(Int($0))" } ?? "—", minWidth: 58,
+                          axID: "calorie-value") { typed in
+                guard let v = Double(typed.filter(\.isNumber)), v > 0 else { return }
+                kcal = min(v, 9_999)
+                kcalFromHealth = false
+                kcalEdited = true
+            }
+            Text("KCAL")
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// Seed the calorie readout, then try to upgrade it to the Watch's own measurement. The finish
+    /// path (`WorkoutRunner`) has already stamped the deterministic estimate on the workout — so a
+    /// stored value only counts as the ATHLETE'S OWN when it differs from what the estimator would
+    /// say (a recovery re-save of their edit). Their number always stands; the estimate yields to
+    /// a Health measurement over the session window.
+    private func prefillCalories(_ workout: Workout) {
+        let estimate = CalorieEstimator.kcal(for: workout, bodyMassKg: profiles.first?.bodyMassKg)
+        let existing = workout.calories
+        kcal = (existing ?? 0) > 0 ? existing : estimate
+        if let existing, existing > 0, existing != estimate {   // athlete-entered — keep it
+            kcalEdited = true
+            return
+        }
+        let start = workout.startedAt
+        let duration = workout.durationS > 0 ? workout.durationS : workout.elapsedS
+        let end = start.addingTimeInterval(max(1, duration))
+        Task {
+            if let measured = await services.health.measuredActiveEnergy(start: start, end: end),
+               measured >= 1 {
+                kcal = measured.rounded()
+                kcalFromHealth = true
+            }
+        }
+    }
+
     private var effortLabel: String {
         guard let e = effort else { return "Tap to rate" }
         switch e {
@@ -152,9 +232,28 @@ struct TimedSaveView: View {
         workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
         workout.perceivedEffort = effort
+        workout.calories = kcal
+        // Community builds only — the solo app never touches privacy (see CardioSaveView). The
+        // remembered-default write rides the same `context.save()` below.
+        if CommunityAccess.enabled {
+            workout.privacy = privacy
+            if let p = profiles.first, p.defaultWorkoutVisibility != privacy.rawValue {
+                p.defaultWorkoutVisibility = privacy.rawValue
+            }
+        }
+        // Re-dirty for sync, for the same reason `FinishedWorkoutReader.commit` does
+        // (StrengthSaveView): the finish flow dismisses the live screen — waking Today's throttled
+        // sweep — BEFORE this editor appears, so the un-named workout has usually been uploaded and
+        // stamped already. Without this, the title, note and effort typed here never leave the
+        // device. Cardio and strength both route through `commit`; this screen writes directly, and
+        // was the one path that never cleared it.
+        workout.syncedAt = nil
         do { try context.save() } catch { saveFailed = true; return }
         let saved = workout
-        Task { await services.health.save(saved) }   // mirror to Apple Health
+        // Mirror to Apple Health — but a Health-measured calorie number stays out of the mirror
+        // (its samples are already there; writing them again would double the Move ring).
+        let energyIsOurs = !kcalFromHealth
+        Task { await services.health.save(saved, includeEnergy: energyIsOurs) }
         // Timed sessions move the streak, session-count, and time-of-day awards (deferred).
         AwardsBook.syncSoon()
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)

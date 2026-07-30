@@ -116,10 +116,10 @@ function Pillars() {
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">Why momentum</p>
-            <h2 className="display">Training science first. AI where it helps.</h2>
+            <h2 className="display">Built by runners, for runners.</h2>
             <p className="lede">
-              Your paces, loads, and progressions come from a deterministic training engine — testable,
-              bounded, honest. The AI explains the plan; it never invents your numbers.
+              Your paces, loads, and progressions come from plan algorithms built by runners. Testable,
+              bounded, honest. The coach explains the plan; it never invents your numbers.
             </p>
           </div>
         </Reveal>
@@ -417,15 +417,15 @@ function Pricing() {
               <span className="plan-badge">7-day free trial</span>
               <h3>momentum Pro</h3>
               <div className="plan-price">
-                $109.99 <small>/ year</small>
+                $59.99 <small>/ year</small>
               </div>
               <p className="plan-cycle">
-                7 days free, then $109.99/year (about $9/month) · or $14.99/month, cancel anytime
+                7 days free, then $59.99/year (under $5/month) · or $9.99/month, cancel anytime
               </p>
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
-                <li><span className="tick" aria-hidden />AI coach, post-run reads &amp; voice guidance</li>
-                <li><span className="tick" aria-hidden />AI fueling &amp; calorie tracking, keyed to your training</li>
+                <li><span className="tick" aria-hidden />Coach chat, post-run reads &amp; voice guidance</li>
+                <li><span className="tick" aria-hidden />Fueling &amp; calorie tracking, keyed to your training</li>
                 <li><span className="tick" aria-hidden />Recovery-aware training &amp; the injury loop</li>
                 <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
                 <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
@@ -490,7 +490,7 @@ function Principles() {
     },
     {
       title: "Real math, not vibes",
-      body: "Every pace, load, and zone comes from a deterministic, tested engine — VDOT paces, training-load guardrails, personalized zones. The AI writes the explanation; it never invents the numbers.",
+      body: "Every pace, load, and zone comes from plan algorithms built by runners, for runners: VDOT paces, training-load guardrails, personalized zones. The coach writes the explanation; it never invents the numbers.",
     },
     {
       title: "Your training stays yours",
@@ -527,7 +527,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, fueling, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
+      a: "momentum Pro — the full adaptive plan, coach chat, fueling, voice guidance, and advanced analytics — is $59.99/year (under $5 a month) with a 7-day free trial, or $9.99/month.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
@@ -539,7 +539,7 @@ function FAQ() {
     },
     {
       q: "How is momentum different from other running apps?",
-      a: "The plan adapts after every run, protectively. Recovery signals, workload guardrails, and an injury-aware loop reshape your week within tested bounds — and the coach explains every change in plain language. AI narrates; it never invents your numbers.",
+      a: "The plan adapts after every run, protectively. Recovery signals, workload guardrails, and an injury-aware loop reshape your week within tested bounds. Plan algorithms built by runners, for runners, with a coach that explains every change in plain language and never invents your numbers.",
     },
     {
       q: "What happens to my data?",

@@ -47,6 +47,43 @@ struct VoiceLevelBars: View {
     }
 }
 
+/// `VoiceLevelBars` bound to the transcriber itself — THE leaf that reads `voice.level`.
+///
+/// The level publishes from the audio tap at ~45 Hz; any view whose body reads it re-renders at
+/// that rate. When the read sat in a composer page's own body (fuel · log · coach chat), the
+/// ENTIRE page invalidated 45×/sec for the whole dictation (2026-07-30 perf audit) — so the read
+/// lives here, in a 34 pt leaf, and the page re-renders only on words landing.
+struct MicLevelBars: View {
+    var voice: VoiceTranscriber
+    var tint: Color = .white
+
+    var body: some View {
+        VoiceLevelBars(level: voice.level, tint: tint)
+    }
+}
+
+/// The composer field's iridescent focus ring, breathing with the voice while dictating — same
+/// leaf-isolation rule as `MicLevelBars`: this is the only other place `voice.level` is read.
+/// Static (`restingOpacity`) when not recording or under Reduce Motion; never self-pulsing.
+struct DictationGlowStroke<S: Shape>: View {
+    let shape: S
+    var voice: VoiceTranscriber
+    /// The ring's opacity while typing (not dictating) — composers dim it for an empty draft.
+    var restingOpacity: Double
+    var lineWidth: CGFloat = 1.5
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        shape
+            .stroke(LinearGradient(colors: Theme.iridescent,
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: lineWidth)
+            .opacity(voice.isRecording && !reduceMotion
+                     ? 0.55 + 0.45 * voice.level
+                     : restingOpacity)
+    }
+}
+
 /// The words as they land — sits exactly where the composer's TextField sits and always shows
 /// the TAIL of the dictation (head-truncated), so the athlete watches their newest words arrive
 /// no matter how long they talk. The composer swaps back to its TextField on stop; the full text

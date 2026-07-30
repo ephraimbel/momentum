@@ -218,6 +218,11 @@ final class CoachChatService {
             let plannedBrief: String?
             let splitNote: String?
             let repsNote: String?
+            /// Pre-formatted in the athlete's own unit, for the same reason `WorkoutDigest` carries
+            /// them: the raw fields above are SI, the prompt never said so, and a model asked to be
+            /// specific about a number it has to convert will sometimes just relabel it instead.
+            let distanceLabel: String?
+            let avgPaceLabel: String?
         }
 
         @MainActor init(_ c: CoachResponder.Context) {
@@ -273,7 +278,13 @@ final class CoachChatService {
                                distanceM: $0.distanceM, durationS: $0.durationS,
                                avgPaceSPerKm: $0.avgPaceSPerKm, avgHR: $0.avgHR,
                                rpe: $0.perceivedEffort, plannedBrief: $0.plannedBrief,
-                               splitNote: $0.splitNote, repsNote: $0.repsNote)
+                               splitNote: $0.splitNote, repsNote: $0.repsNote,
+                               distanceLabel: $0.distanceM.map {
+                                   Formatters.distance(meters: $0, unit: c.distanceUnit)
+                               },
+                               avgPaceLabel: $0.avgPaceSPerKm.flatMap {
+                                   $0 > 0 ? Formatters.pace(secPerKm: $0, unit: c.distanceUnit) : nil
+                               })
             }
             memoryCategories = MemoryCategory.allCases.map(\.rawValue)
             fueling = c.fueling

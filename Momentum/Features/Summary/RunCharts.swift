@@ -76,7 +76,13 @@ struct RunAnalysisSection: View {
     // MARK: Body
 
     var body: some View {
-        Group {
+        ZStack {
+            // A zero-size anchor so the `.task` below always runs. `derived` starts nil, so without
+            // it this view is EMPTY on first render — and a lifecycle modifier on an empty view
+            // never fires, so the task that fills `derived` never ran and the whole section (pace,
+            // splits, heart rate, elevation) silently rendered nothing on every run. The same trap
+            // is called out and anchored the same way in `TimeInZonesCard`.
+            Color.clear.frame(width: 0, height: 0)
             if let d = derived {
                 let pts = d.pts
                 let hasPace = pts.contains { $0.paceSPerKm > 0 }

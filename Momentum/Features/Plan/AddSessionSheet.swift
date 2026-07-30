@@ -48,7 +48,10 @@ struct AddSessionSheet: View {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                    if onOpenLibrary != nil { libraryRow }
+                    if onOpenLibrary != nil {
+                        libraryRow
+                        orDivider
+                    }
                     daySection
                     activitySection
                     if isGPS { goalSection } else { durationSection }   // strength-style gets a duration too
@@ -78,7 +81,11 @@ struct AddSessionSheet: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("Plan a session")
+            // "Add a session", not "Plan a session": the sheet lives ON the plan page, where
+            // "plan" is already the page's name (circular), and everything around it speaks
+            // add — the + that opened it, the rest rows' "tap to add", the CTA "Add to plan".
+            // One verb from tap to commit.
+            Text("Add a session")
                 .font(.display(30, weight: .black))
                 .foregroundStyle(Theme.ink)
             Spacer()
@@ -128,6 +135,20 @@ struct AddSessionSheet: View {
         .accessibilityHint("Pick a guided running workout")
     }
 
+    /// The typographic seam between the two ways in: the guided library above, the manual form
+    /// below. Without it the library card read as just another form field.
+    private var orDivider: some View {
+        HStack(spacing: Theme.Space.md) {
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+            Text("OR BUILD YOUR OWN")
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                .foregroundStyle(Theme.inkTertiary)
+                .fixedSize()
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+        }
+        .accessibilityHidden(true)
+    }
+
     // MARK: Day strip
 
     private var daySection: some View {
@@ -166,10 +187,14 @@ struct AddSessionSheet: View {
 
     private func dayBadge(_ day: Date) -> some View {
         let on = Calendar.current.isDate(day, inSameDayAs: date)
+        let isToday = Calendar.current.isDateInToday(day)
         return Button { Haptics.selection(); date = day } label: {
             VStack(spacing: 3) {
-                Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                // Today says so — a strip of interchangeable weekday names made the athlete
+                // count badges to find "now", the one date the sheet opens on.
+                Text(isToday ? "TODAY" : day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
                     .font(.rounded(Theme.FontSize.label, weight: .bold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
                 Text(day.formatted(.dateTime.day()))
                     .font(.display(20, weight: .heavy)).monospacedDigit()
             }
@@ -185,31 +210,72 @@ struct AddSessionSheet: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
     }
 
-    // MARK: Activity — any sport via the full picker
+    // MARK: Activity — quick picks for the sports people actually plan, the full picker one tap away
+
+    /// The four sports that cover nearly every hand-planned session. The old design was a single
+    /// "Run · Tap to change" card that cost a full sheet hop to pick *strength* — the second most
+    /// common choice. A sport picked through "More" joins the grid as its own selected chip, so
+    /// the choice is always visible in place.
+    private static let quickSports: [WorkoutType] = [.run, .strength, .ride, .walk]
 
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             label("Activity")
-            Button { Haptics.light(); showSportPicker = true } label: {
-                HStack(spacing: Theme.Space.md) {
-                    Image(systemName: sport.systemImage).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 44, height: 44)
-                        .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(sport.title).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                        Text("Tap to change").font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                }
-                .padding(Theme.Space.md)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3),
+                      spacing: Theme.Space.sm) {
+                ForEach(Self.quickSports, id: \.self) { sportChip($0) }
+                if !Self.quickSports.contains(sport) { sportChip(sport) }
+                moreChip
             }
-            .buttonStyle(.plain)
         }
+    }
+
+    /// Chip-width titles: "Weight Training" truncated to "Weight Trai…" in a third-of-the-row
+    /// chip, and the Plan board already calls that day "Strength" everywhere.
+    private func chipTitle(_ t: WorkoutType) -> String {
+        t == .strength ? "Strength" : t.title
+    }
+
+    private func sportChip(_ t: WorkoutType) -> some View {
+        let on = sport == t
+        return Button { Haptics.selection(); sport = t } label: {
+            HStack(spacing: 6) {
+                Image(systemName: t.systemImage).font(.system(size: 13, weight: .bold))
+                Text(chipTitle(t)).font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.75)
+            }
+            .foregroundStyle(on ? Theme.background : Theme.ink)
+            .frame(maxWidth: .infinity).frame(height: 44)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Theme.surface)
+                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
+        .accessibilityLabel(chipTitle(t))
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    /// Every other sport — swim, row, yoga, tennis, the whole Strava-style list — via the full picker.
+    private var moreChip: some View {
+        Button { Haptics.light(); showSportPicker = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "ellipsis").font(.system(size: 13, weight: .bold))
+                Text("More").font(.rounded(Theme.FontSize.body, weight: .semibold))
+            }
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(maxWidth: .infinity).frame(height: 44)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card)
+                    .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("More activities")
+        .accessibilityHint("Opens the full activity picker")
     }
 
     // MARK: Goal — distance for GPS sports
@@ -217,9 +283,10 @@ struct AddSessionSheet: View {
     private var goalSection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             label("Goal")
-            HStack(spacing: Theme.Space.sm) {
-                goalButton(.open, "Open")
-                goalButton(.distance, "Distance")
+            // The house segmented control — two full-width 52 pt slabs for a binary choice was
+            // this sheet inventing its own grammar (and out-shouting the day strip above it).
+            SegmentedCapsule(items: [GoalKind.open, .distance], selection: $goalKind) {
+                $0 == .open ? "Open" : "Distance"
             }
             if goalKind == .distance { distanceStepper }
         }
@@ -230,9 +297,8 @@ struct AddSessionSheet: View {
     private var durationSection: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             label("Goal")
-            HStack(spacing: Theme.Space.sm) {
-                goalButton(.open, "Open")
-                goalButton(.distance, "Duration")
+            SegmentedCapsule(items: [GoalKind.open, .distance], selection: $goalKind) {
+                $0 == .open ? "Open" : "Duration"
             }
             if goalKind == .distance { minutesStepper }
         }
@@ -253,22 +319,6 @@ struct AddSessionSheet: View {
         }
         .padding(.top, Theme.Space.xs)
         .animation(.snappy(duration: 0.2), value: goalMinutes)
-    }
-
-    private func goalButton(_ kind: GoalKind, _ title: String) -> some View {
-        let on = goalKind == kind
-        return Button { Haptics.selection(); goalKind = kind } label: {
-            Text(title)
-                .font(.rounded(Theme.FontSize.body, weight: .bold))
-                .frame(maxWidth: .infinity).frame(height: 52)
-                .foregroundStyle(on ? Theme.background : Theme.ink)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline)
-                }
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
     }
 
     private var distanceStepper: some View {
@@ -297,12 +347,46 @@ struct AddSessionSheet: View {
 
     // MARK: Add bar
 
+    /// The receipt-before-commit: one quiet line of exactly what Add will create ("Today · Run ·
+    /// 5 mi"), so the button never asks for trust. It re-reads live as the choices above change —
+    /// the whole form summarized where the thumb already is.
     private var addBar: some View {
-        OversizedButton(title: "Add to plan", systemImage: "plus") { add() }
-            .padding(.horizontal, Theme.Space.lg)
-            .padding(.top, Theme.Space.sm)
-            .padding(.bottom, Theme.Space.sm)
-            .momentumGlass(in: Rectangle(), stroke: false)
+        // Built once per pass — the eager accessibility argument + animation key re-ran the whole
+        // formatter chain three times over.
+        let receipt = receiptLine
+        return VStack(spacing: Theme.Space.sm + 2) {
+            Text(receipt)
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(1).minimumScaleFactor(0.85)
+                .contentTransition(.opacity)
+                .animation(.easeOut(duration: 0.15), value: receipt)
+                .accessibilityLabel("Adding \(receipt)")
+            OversizedButton(title: "Add to plan", systemImage: "plus") { add() }
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.sm)
+        .padding(.bottom, Theme.Space.sm)
+        // The page's own canvas, not a glass band — the bar reads as part of the sheet, no seam.
+        // A plain background (rather than none) still matters: this is a safe-area inset over a
+        // ScrollView, so on small screens/large type the form would otherwise scroll visibly
+        // through the button.
+        .background(Theme.background)
+    }
+
+    private var receiptLine: String {
+        let day = Calendar.current.isDateInToday(date)
+            ? "Today" : date.formatted(.dateTime.weekday(.abbreviated).day())
+        var parts = [day, chipTitle(sport)]
+        if goalKind == .distance {
+            if isGPS {
+                let v = goalValue.formatted(.number.precision(.fractionLength(goalValue == goalValue.rounded() ? 0 : 1)))
+                parts.append("\(v) \(unitLabel)")
+            } else {
+                parts.append("\(Int(goalMinutes)) min")
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Helpers

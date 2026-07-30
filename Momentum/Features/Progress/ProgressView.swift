@@ -178,7 +178,6 @@ struct ProgressScreen: View {
     // the fallback keeps the very first frame correct before the task lands.
     @State private var cachedStats: ProfileStats?
     @State private var cachedInsights: ProgressInsights?
-    @State private var cachedRecovery: RecoveryModel?
     /// Workouts whose History row earned the PR badge — precomputed (detection fetches the full
     /// history per call; running it per visible row made History scrolling stutter).
     @State private var prBadgeIDs: Set<UUID>?
@@ -238,7 +237,8 @@ struct ProgressScreen: View {
 
     private var stats: ProfileStats { cachedStats ?? ProfileStats(workouts: workouts, plan: profiles.first?.plan) }
     private var insights: ProgressInsights { cachedInsights ?? ProgressInsights(workouts: workouts) }
-    private var recovery: RecoveryModel { cachedRecovery ?? RecoveryModel(workouts: workouts) }
+    // (`recovery`/`cachedRecovery` deleted 2026-07-30 — the recovery cluster left this page in
+    // 7d1b6ce, but its RecoveryModel full-history walk kept running on every data change.)
     private var athleteFacts: AthleteFacts { cachedFacts ?? AthleteModelEngine(workouts: workouts, plan: plan).facts }
     private var weekVolumes: [(week: Date, meters: Double)] { cachedWeekVolumes ?? computeWeekVolumes() }
 
@@ -260,7 +260,6 @@ struct ProgressScreen: View {
         #endif
         cachedStats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
         cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
-        cachedRecovery = RecoveryModel(workouts: workouts)
         // PR badges come from the persisted shelf (save-time persist + idempotent backfill keep it
         // complete) — ONE fetch. The old per-workout detector pass re-fetched history and faulted
         // every GPS sample per workout (O(n²)·samples on the main actor): THE Progress cold-open
@@ -1200,8 +1199,22 @@ struct ProgressScreen: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Workouts grouped by month, newest first.
+    /// Workouts grouped by month, newest first. Memoized (non-observed box, token-guarded like
+    /// the Plan board's week map): `Date.formatted` per workout per History body pass was the
+    /// section's biggest per-render cost. The token is the CONTENT signature + the visible count,
+    /// so a delete/edit recomputes fresh on the same frame — the cache can never serve a
+    /// cascade-deleted model.
+    private final class MonthGroupsMemo {
+        var token = 0
+        var groups: [(key: String, items: [Workout])] = []
+    }
+    @State private var monthMemo = MonthGroupsMemo()
     private func monthGroups(_ source: [Workout]) -> [(key: String, items: [Workout])] {
+        var h = Hasher()
+        h.combine(aggregateKey)
+        h.combine(source.count)
+        let token = h.finalize()
+        if monthMemo.token == token { return monthMemo.groups }
         let sorted = source.sorted { $0.startedAt > $1.startedAt }
         let fmt = Date.FormatStyle.dateTime.month(.wide).year()
         var order: [String] = []
@@ -1211,7 +1224,10 @@ struct ProgressScreen: View {
             if map[key] == nil { order.append(key) }
             map[key, default: []].append(w)
         }
-        return order.map { ($0, map[$0] ?? []) }
+        let groups = order.map { ($0, map[$0] ?? []) }
+        monthMemo.token = token
+        monthMemo.groups = groups
+        return groups
     }
 
     private func workoutFeedRow(_ w: Workout) -> some View {
@@ -2314,6 +2330,15 @@ private struct HistoryFeedThumb: View {
     @Environment(\.modelContext) private var context
     @State private var image: UIImage?
 
+    /// Row-thumb LRU: a lazily-realized row that scrolls back into view re-faulted the 1320×1760
+    /// external-storage blob and re-decoded it every time. Bounded (NSCache evicts under pressure),
+    /// value-typed, keyed by workout id.
+    @MainActor private static let thumbs: NSCache<NSUUID, UIImage> = {
+        let c = NSCache<NSUUID, UIImage>()
+        c.countLimit = 200
+        return c
+    }()
+
     var body: some View {
         Group {
             if let image {
@@ -2332,16 +2357,25 @@ private struct HistoryFeedThumb: View {
             }
         }
         .task(id: workout.id) {
+            let key = workout.id as NSUUID
+            if let hit = Self.thumbs.object(forKey: key) {
+                image = hit
+                return
+            }
             // Snapshots persist at 1320×1760px; decode a row-sized thumbnail via ImageIO off the
             // main actor instead of a full-res bitmap per 52pt row (156 ≈ 52pt @3x).
             if let data = workout.gps?.mapSnapshotData,
                let img = await ImageDownsampler.thumbnail(data, maxPixel: 156) {
                 image = img
+                Self.thumbs.setObject(img, forKey: key)
             } else {
                 // No (or unreadable) snapshot — self-heal, then pick up the freshly-rendered one.
                 await WorkoutSnapshotHealer.healIfNeeded(workout, context: context)
                 if let data = workout.gps?.mapSnapshotData,
-                   let img = await ImageDownsampler.thumbnail(data, maxPixel: 156) { image = img }
+                   let img = await ImageDownsampler.thumbnail(data, maxPixel: 156) {
+                    image = img
+                    Self.thumbs.setObject(img, forKey: key)
+                }
             }
         }
     }

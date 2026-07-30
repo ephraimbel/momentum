@@ -152,9 +152,11 @@ struct PlanEngineInvariantTests {
 
     @Test func everyRunwayEveryLevelEveryDistanceHoldsInvariants() {
         let catalog = catalogFixture()
+        // 50K appears at three runways — crash build, the honest 16-week floor's neighborhood,
+        // and a long patient block — since the catalog now offers real 50K ultras (2026-07-30).
         let races: [(Double?, Int?)] = [(nil, nil), (5_000, 2), (5_000, 10), (10_000, 8), (21_097, 12),
-                                        (42_195, 2), (42_195, 16), (50_000, 20), (42_195, 30),
-                                        (42_195, 52), (42_195, 60)]
+                                        (42_195, 2), (42_195, 16), (50_000, 8), (50_000, 20), (50_000, 32),
+                                        (42_195, 30), (42_195, 52), (42_195, 60)]
         for (raceM, weeksOut) in races {
             for exp in [ExperienceLevel.new, .some, .experienced] {
                 for days in [2, 3, 4, 5, 6] {

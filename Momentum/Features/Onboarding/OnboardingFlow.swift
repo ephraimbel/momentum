@@ -23,6 +23,8 @@ struct OnboardingFlow: View {
     @Environment(\.requestReview) private var requestReview
     @State private var rateStarsIn = false
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
+    /// The curated look picked on the identity beat (ring in the strip); cleared by a photo pick.
+    @State private var onboardingPreset: AvatarPreset?
     // Resumes a draft when a prior onboarding was interrupted before the profile was created;
     // fresh otherwise. See OnboardingDraft.
     @State private var vm = OnboardingViewModel.resuming()
@@ -81,6 +83,14 @@ struct OnboardingFlow: View {
             // user actually takes: select female → the anatomy beats render her body).
             if args.contains("--onboarding-female") { vm.sex = .female }
             if args.contains("--onboarding-identity") { vm.name = "Maya"; vm.step = .identity }
+            // --onboarding-identity-preset <case>: land on the beat with a look staged (ring +
+            // updated avatar), for sim verification — tiles are unreachable by simctl.
+            if let i = args.firstIndex(of: "--onboarding-identity-preset"), i + 1 < args.count,
+               let preset = AvatarPreset(rawValue: args[i + 1]) {
+                vm.name = "Maya"; vm.step = .identity
+                vm.avatarData = AvatarPreset.bake(preset, name: vm.name)
+                onboardingPreset = preset
+            }
             // Pre-set a handle so the field's taken/available state renders deterministically
             // (sim can't type): pair with a row for that handle in the backend to see ✗ + chips.
             if args.contains("--onboarding-identity-taken") { vm.name = "Maya"; vm.handle = "maya"; vm.step = .identity }
@@ -337,35 +347,83 @@ struct OnboardingFlow: View {
         }
     }
 
-    /// A face for the work — the profile photo, optional and quiet (no permission pressure
-    /// mid-flow). The @handle claim that used to live here left with the community back-burner
-    /// (2026-07-16); the step stays for the photo, which the profile page and share cards use.
+    /// A face for the work — a photo, or one of the curated looks, both optional and quiet (no
+    /// permission pressure mid-flow). The @handle claim RETURNED with the community launch
+    /// (2026-07-29): the same `HandleField` Edit Profile uses — live Supabase availability (anon
+    /// RPC, works for guests), tap-to-use suggestions, and the database's unique index as the
+    /// real arbiter at claim time.
     private var identityStep: some View {
-        questionScaffold("Make it yours", subtitle: "A photo for your profile — optional, and only ever yours.") {
-            HStack(spacing: Theme.Space.md) {
-                AvatarView(photo: vm.avatarData, name: vm.name.isEmpty ? "You" : vm.name, size: 56)
-                PhotosPicker(selection: $pickedOnboardingAvatar, matching: .images) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(vm.avatarData == nil ? "Add a photo" : "Change photo")
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                        Text("Optional — you can always add one later.")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        questionScaffold("Make it yours", subtitle: "Your @handle, a photo, a look. All optional, all changeable later.") {
+            // The @handle leads, on its OWN card (owner call 2026-07-29 — inside the avatar card
+            // it read as buried, and it's the identity the whole community keys on). Seeded from
+            // the name so most people just tap Continue; the field checks Supabase live and
+            // offers alternates if taken.
+            HandleField(handle: $vm.handle, backend: services.social,
+                        suggestions: HandleSuggester.candidates(name: vm.name, email: nil, seed: 7),
+                        boxed: true, showsOfflineHint: true)
+                .onAppear {
+                    if vm.handle.isEmpty, !vm.name.isEmpty {
+                        vm.handle = SocialPrivacy.normalizedHandle(
+                            HandleSuggester.baseHandle(name: vm.name, email: nil))
                     }
                 }
-                Spacer(minLength: 0)
+                .reveal(cascade(0))
+            VStack(spacing: 0) {
+                HStack(spacing: Theme.Space.md) {
+                    AvatarView(photo: vm.avatarData, name: vm.name.isEmpty ? "You" : vm.name, size: 56)
+                    PhotosPicker(selection: $pickedOnboardingAvatar, matching: .images) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(vm.avatarData == nil ? "Add a photo" : "Change photo")
+                                .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                            Text("Optional — you can always add one later.")
+                                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(Theme.Space.md)
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                    .padding(.horizontal, Theme.Space.md)
+                // The full 4×3 system, not a scrolling strip: a strip hid eight of the twelve
+                // looks (owner call, 2026-07-29). Same grid grammar as Profile → Edit — one world
+                // per row (light · charcoal · lavender), so the choice reads at a glance. No
+                // ScrollView means no clipping, so the selection ring renders whole for free.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm),
+                                         count: 4),
+                          spacing: Theme.Space.md) {
+                    ForEach(AvatarPreset.allCases) { preset in
+                        Button {
+                            vm.avatarData = AvatarPreset.bake(preset,
+                                                              name: vm.name.isEmpty ? "You" : vm.name)
+                            onboardingPreset = preset
+                            Haptics.selection()
+                        } label: {
+                            PresetAvatarView(preset: preset,
+                                             name: vm.name.isEmpty ? "You" : vm.name, size: 56)
+                                .overlay {
+                                    if onboardingPreset == preset {
+                                        Circle().stroke(Theme.ink, lineWidth: 2).padding(-3)
+                                    }
+                                }
+                        }
+                        .buttonStyle(PressableScaleStyle(scale: 0.94))
+                        .accessibilityLabel("Avatar look \(preset.rawValue)")
+                    }
+                }
+                .padding(Theme.Space.md)
             }
-            .padding(Theme.Space.md)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
             }
-            .reveal(cascade(0))
+            .reveal(cascade(1))
         }
         .onChange(of: pickedOnboardingAvatar) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self) {
                     vm.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
+                    onboardingPreset = nil   // the photo wins over any look picked earlier
                     Haptics.success()
                 }
             }
@@ -577,6 +635,29 @@ struct OnboardingFlow: View {
                     .reveal(cascade(i / 2))
                 }
             }
+            // The explicit way through for the healthy majority (owner ask 2026-07-30): without
+            // it, a grid of selectable areas reads like a question you must answer.
+            Button {
+                Haptics.success()
+                withAnimation(Motion.lively) { vm.injuryAreas.removeAll() }
+                goNext()
+            } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 16, weight: .bold))
+                    Text("No injuries — I'm all clear")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                }
+                .foregroundStyle(Theme.ink)
+                .frame(maxWidth: .infinity).frame(height: 52)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            }
+            .buttonStyle(.plain)
+            .reveal(cascade((InjuryArea.allCases.count + 1) / 2))
             if !vm.injuryAreas.isEmpty {
                 Text("We'll ease the impact around \(vm.injuryAreas.count == 1 ? "this area" : "these areas") and watch for early warning signs.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
@@ -784,9 +865,10 @@ struct OnboardingFlow: View {
                     // and nobody should tap 30 times to reach their real time.
                     Button { Haptics.light(); adjustTime(-vm.benchmark.step) } label: { metricStep("minus") }
                         .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
-                    Text(Formatters.duration(s: vm.recentRunSeconds))
-                        .font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                        .frame(minWidth: 84).contentTransition(.numericText())
+                    // Tap the time to TYPE it — "21:45", "1:38:20", or bare digits ("2145").
+                    TypableNumber(display: Formatters.duration(s: vm.recentRunSeconds),
+                                  keyboard: .numbersAndPunctuation, minWidth: 84,
+                                  commit: { commitTypedRaceTime($0) })
                     Button { Haptics.light(); adjustTime(vm.benchmark.step) } label: { metricStep("plus") }
                         .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
                 }
@@ -799,6 +881,38 @@ struct OnboardingFlow: View {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
+    }
+
+    /// Typed race time. Accepts "21:45", "1:38:20", bare minutes ("22"), or run-on digits
+    /// ("2145" → 21:45). Where an entry is ambiguous ("330" — 3m30s or 3h30m?), the benchmark's own
+    /// plausible range decides: whichever reading lands inside it wins, so a marathoner's "330"
+    /// means 3:30:00 and a miler's means 3:30.
+    private func commitTypedRaceTime(_ raw: String) {
+        let normalized = raw.replacingOccurrences(of: ".", with: ":").replacingOccurrences(of: " ", with: ":")
+        let parts = normalized.split(separator: ":").compactMap { Int($0) }
+        var candidates: [Double] = []
+        switch parts.count {
+        case 1:
+            let n = parts[0]
+            if n >= 100 {   // run-on digits: "2145" → 21:45; "13820" → 1:38:20
+                if n >= 10_000 { candidates.append(Double((n / 10_000) * 3600 + ((n / 100) % 100) * 60 + n % 100)) }
+                candidates.append(Double((n / 100) * 60 + n % 100))
+            }
+            candidates.append(Double(n) * 60)          // bare minutes
+            candidates.append(Double(n) * 3600)        // bare hours ("3" for a marathon)
+        case 2:
+            candidates.append(Double(parts[0] * 60 + parts[1]))          // mm:ss
+            candidates.append(Double(parts[0] * 3600 + parts[1] * 60))   // h:mm
+        case 3:
+            candidates.append(Double(parts[0] * 3600 + parts[1] * 60 + parts[2]))
+        default: break
+        }
+        guard !candidates.isEmpty else { return }
+        let range = vm.benchmark.range
+        let seconds = candidates.first(where: { range.contains($0) })
+            ?? min(range.upperBound, max(range.lowerBound, candidates[0]))
+        vm.calibrationMode = .time
+        vm.recentRunSeconds = seconds
     }
 
     private func adjustTime(_ delta: Double) {
@@ -972,7 +1086,10 @@ struct OnboardingFlow: View {
     // Weight is entered in the athlete's stored unit (kg elsewhere, lb in the US/UK) so onboarding
     // matches what the app shows afterward (finish() sets profile.weightUnit = WeightUnit.default()),
     // but is always STORED in kg (SI). Mirrors the runVolume step's km/mi localization.
-    private var useMetricWeight: Bool { WeightUnit.default() == .kg }
+    private var useMetricWeight: Bool {
+        vm.weightUnitChoice.map { $0 == WeightUnit.kg.rawValue } ?? (WeightUnit.default() == .kg)
+    }
+    private var useMetricHeight: Bool { vm.heightMetricChoice ?? useMetricWeight }
     private var enteredMassKg: Double { vm.bodyMassKg ?? 72.5748 }        // default ≈ 160 lb ≈ 72.6 kg
     private var weightDisplayValue: Int {
         Int((useMetricWeight ? enteredMassKg : enteredMassKg * Formatters.lbPerKg).rounded())
@@ -981,12 +1098,21 @@ struct OnboardingFlow: View {
     private var metricsStep: some View {
         questionScaffold("A bit about you", subtitle: "Optional — sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
             sexSelector.reveal(cascade(0))
-            metricRow("Age", "\(ageDisplay)", { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
+            metricRow("Age", "\(ageDisplay)",
+                      typed: { if let a = Int($0.filter(\.isNumber)) { setAge(a) } },
+                      { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
             // Height feeds the BMR that drives your fuel targets — the same Mifflin–St Jeor the Fuel
             // page uses; without it that estimate leans on an assumed 172 cm. Weight sits below it,
             // the two body figures together.
-            metricRow("Height", heightDisplay, { adjustHeight(-1) }, { adjustHeight(1) }).reveal(cascade(2))
+            metricRow("Height", heightDisplay,
+                      units: (["ft·in", "cm"], useMetricHeight ? 1 : 0, { vm.heightMetricChoice = $0 == 1 }),
+                      keyboard: .numbersAndPunctuation,
+                      typed: { commitTypedHeight($0) },
+                      { adjustHeight(-1) }, { adjustHeight(1) }).reveal(cascade(2))
             metricRow("Weight", "\(weightDisplayValue) \(useMetricWeight ? "kg" : "lb")",
+                      units: (["lb", "kg"], useMetricWeight ? 1 : 0,
+                              { vm.weightUnitChoice = ($0 == 1 ? WeightUnit.kg : WeightUnit.lb).rawValue }),
+                      typed: { commitTypedWeight($0) },
                       { adjustWeight(useMetricWeight ? -2 : -5) }, { adjustWeight(useMetricWeight ? 2 : 5) }).reveal(cascade(3))
         }
     }
@@ -998,20 +1124,50 @@ struct OnboardingFlow: View {
     /// adjusts it, so skipping the step keeps the honest fallback rather than fabricating a height.
     private var enteredHeightCm: Double { vm.heightCm ?? FuelReadiness.fallbackHeightCm }
     private var heightDisplay: String {
-        if useMetricWeight { return "\(Int(enteredHeightCm.rounded())) cm" }
+        if useMetricHeight { return "\(Int(enteredHeightCm.rounded())) cm" }
         let inches = Int((enteredHeightCm / 2.54).rounded())
         return "\(inches / 12)′\(inches % 12)″"
     }
     /// Nudge height by `delta` in the DISPLAYED unit (cm metric / inches imperial). Imperial steps
     /// in whole inches so the shown value never drifts off a clean foot-inch reading.
     private func adjustHeight(_ delta: Double) {
-        if useMetricWeight {
+        if useMetricHeight {
             vm.heightCm = min(230, max(120, (enteredHeightCm + delta).rounded()))
         } else {
             let inches = min(90, max(48, (enteredHeightCm / 2.54).rounded() + delta))
             vm.heightCm = inches * 2.54
         }
     }
+    /// Typed height in the DISPLAYED unit: metric takes plain centimeters ("178"); imperial takes
+    /// "5'10", "5 10", or bare inches ("70"). Bounds mirror the steppers'.
+    private func commitTypedHeight(_ raw: String) {
+        let cleaned = raw.replacingOccurrences(of: "″", with: "").replacingOccurrences(of: "\u{2032}", with: "'")
+        if useMetricHeight {
+            guard let cm = Double(cleaned.filter { $0.isNumber || $0 == "." }) else { return }
+            vm.heightCm = min(230, max(120, cm.rounded()))
+            return
+        }
+        let parts = cleaned.split { !$0.isNumber }.compactMap { Int($0) }
+        let inches: Int?
+        switch parts.count {
+        case 1: inches = parts[0] >= 36 ? parts[0] : parts[0] * 12   // "70" = inches; "5" = 5 feet
+        case 2: inches = parts[0] * 12 + parts[1]                    // "5 10" / "5'10"
+        default: inches = nil
+        }
+        guard let inches else { return }
+        vm.heightCm = Double(min(90, max(48, inches))) * 2.54
+    }
+
+    /// Typed weight in the DISPLAYED unit (kg or lb), same bounds as the steppers.
+    private func commitTypedWeight(_ raw: String) {
+        guard let value = Double(raw.filter { $0.isNumber || $0 == "." }) else { return }
+        if useMetricWeight {
+            vm.bodyMassKg = min(181, max(36, value.rounded()))
+        } else {
+            vm.bodyMassKg = min(400, max(80, value.rounded())) * Formatters.kgPerLb
+        }
+    }
+
     /// Nudge stored bodyMass by `delta` in the DISPLAYED unit (kg or lb), rounding + clamping in that
     /// unit so the shown number steps cleanly (2 kg / 5 lb); always persists kg.
     private func adjustWeight(_ delta: Double) {
@@ -1042,18 +1198,35 @@ struct OnboardingFlow: View {
         }
     }
 
-    private func metricRow(_ label: String, _ value: String, _ minus: @escaping () -> Void, _ plus: @escaping () -> Void) -> some View {
-        HStack(spacing: Theme.Space.md) {
+    /// One metric row: label · optional unit toggle · − [value] +. The value is TYPABLE when the
+    /// caller passes `typed` (owner ask 2026-07-30 — steppers stay, but tapping the number opens a
+    /// keyboard for the exact figure); the caller parses + clamps the raw text.
+    private func metricRow(_ label: String, _ value: String,
+                           units: (options: [String], index: Int, set: (Int) -> Void)? = nil,
+                           keyboard: UIKeyboardType = .numberPad,
+                           typed: ((String) -> Void)? = nil,
+                           _ minus: @escaping () -> Void, _ plus: @escaping () -> Void) -> some View {
+        // A row with a unit toggle carries five elements — tighter spacing and a slimmer value
+        // well keep it on one line (the first cut wrapped "Height" to two lines).
+        HStack(spacing: units == nil ? Theme.Space.md : Theme.Space.sm) {
             Text(label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-            Spacer()
+                .lineLimit(1).fixedSize()
+            if let units { unitToggle(units.options, selected: units.index, set: units.set).fixedSize() }
+            Spacer(minLength: 4)
             // Repeats on press-and-hold — a high-mileage athlete adjusting from the seeded default
             // to their real number shouldn't need dozens of taps.
             Button { Haptics.light(); minus() } label: { metricStep("minus") }.buttonStyle(.plain)
                 .buttonRepeatBehavior(.enabled)
                 .accessibilityLabel("Decrease \(label)")
-            Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                .frame(minWidth: 76).contentTransition(.numericText())
-                .accessibilityLabel("\(label), \(value)")
+            if let typed {
+                TypableNumber(display: value, keyboard: keyboard,
+                              minWidth: units == nil ? 76 : 58, commit: typed)
+                    .accessibilityLabel("\(label), \(value)")
+            } else {
+                Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    .frame(minWidth: 76).contentTransition(.numericText())
+                    .accessibilityLabel("\(label), \(value)")
+            }
             Button { Haptics.light(); plus() } label: { metricStep("plus") }.buttonStyle(.plain)
                 .buttonRepeatBehavior(.enabled)
                 .accessibilityLabel("Increase \(label)")
@@ -1061,6 +1234,31 @@ struct OnboardingFlow: View {
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
         .animation(.snappy(duration: 0.2), value: value)
+    }
+
+    /// The compact unit switch (ft·in|cm, lb|kg) — two small capsule segments beside the label,
+    /// quiet until you need them (owner ask 2026-07-30: unit choice belongs to the athlete, not
+    /// the locale).
+    private func unitToggle(_ options: [String], selected: Int, set: @escaping (Int) -> Void) -> some View {
+        HStack(spacing: 2) {
+            ForEach(Array(options.enumerated()), id: \.offset) { i, option in
+                let on = i == selected
+                Button { if !on { Haptics.selection(); set(i) } } label: {
+                    Text(option)
+                        .font(.rounded(10, weight: .bold))
+                        .lineLimit(1).fixedSize()
+                        .foregroundStyle(on ? Theme.background : Theme.inkTertiary)
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Theme.background))
+        .overlay(Capsule().stroke(Theme.hairline))
     }
 
     private func metricStep(_ s: String) -> some View {
@@ -1094,8 +1292,10 @@ struct OnboardingFlow: View {
         return questionScaffold("Chasing a time?",
                                 subtitle: "Optional — your goal for the \(raceLabel). We'll point the plan at it.") {
             metricRow("Hours", "\(vm.goalHours)",
+                      typed: { if let h = Int($0.filter(\.isNumber)) { vm.goalHours = min(9, max(0, h)) } },
                       { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(9, vm.goalHours + 1) }).reveal(cascade(0))
             metricRow("Minutes", String(format: "%02d", vm.goalMinutes),
+                      typed: { if let m = Int($0.filter(\.isNumber)) { vm.goalMinutes = min(59, max(0, m)) } },
                       { vm.goalMinutes = (vm.goalMinutes + 55) % 60 }, { vm.goalMinutes = (vm.goalMinutes + 5) % 60 }).reveal(cascade(1))
             if let t = vm.goalFinishTimeS, let m = vm.raceDistance?.meters, m > 0 {
                 Text("That's about \(Formatters.pace(secPerKm: t / (m / 1000), unit: .auto)) — a strong target.")

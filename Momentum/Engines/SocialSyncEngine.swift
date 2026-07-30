@@ -72,6 +72,9 @@ enum SocialSyncEngine {
         let createdAt: Date
         /// Optional for wire back-compat: absent until the server migration lands.
         var authorPro: Bool? = nil
+        /// Trailing column (2026-07-30): the post's real comment count, blocked-filtered. Optional
+        /// for the same back-compat reason as `authorPro`.
+        var commentCount: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -93,6 +96,7 @@ enum SocialSyncEngine {
             case viewerReacted = "viewer_reacted"
             case createdAt = "created_at"
             case authorPro = "author_pro"
+            case commentCount = "comment_count"
         }
     }
 
@@ -124,7 +128,8 @@ enum SocialSyncEngine {
             baseReactions: max(0, row.reactionCount - (row.viewerReacted ? 1 : 0)),
             photosData: photos,
             avatarData: avatar,
-            aiRead: row.aiRead)
+            aiRead: row.aiRead,
+            remoteCommentCount: row.commentCount)
     }
 
     /// The publish sweep (runs opportunistically with the workout sync): which workouts need a

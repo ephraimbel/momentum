@@ -1,48 +1,41 @@
 import XCTest
 
-/// Verifies the Slice-0 social surface: open the profile, edit it, flip a privacy toggle, and see the
-/// profile's privacy summary reflect the opt-in (PRD §11, docs/SOCIAL-LAYER.md).
+/// The profile identity round-trip: edit the bio, save, and see the profile carry it (PRD §11,
+/// docs/SOCIAL-LAYER.md).
+///
+/// Rewritten 2026-07-30. The previous version drove Progress → "Profile" → "Edit" and asserted an
+/// "Appear on the map" toggle inside the editor — three surfaces that no longer exist: the profile
+/// is its own tab, the button reads "Edit profile", and the map opt-in moved to Today's prompt. It
+/// had been failing against the shipping app rather than testing it.
 final class SocialProfileUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    func testEditProfilePrivacyRoundTrip() {
+    func testEditProfileBioRoundTrip() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-route"]
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
-                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
-            }
-            return false
-        }
+        // `--profile-edit` opens the editor directly — the same hook the avatar-strip verification
+        // uses, and steadier than driving the header button.
+        app.launchArguments = ["--seed-demo", "--profile-tab", "--profile-edit"]
         app.launch()
-        app.tap()
 
-        // Progress tab → Profile.
-        let progress = app.tabBars.buttons["Progress"]
-        XCTAssertTrue(progress.waitForExistence(timeout: 15), "Progress tab not found.")
-        progress.tap()
+        XCTAssertTrue(app.navigationBars["Edit Profile"].waitForExistence(timeout: 25), "Editor didn't open.")
 
-        let profileButton = app.buttons["Profile"]
-        XCTAssertTrue(profileButton.waitForExistence(timeout: 5), "Profile entry not found.")
-        profileButton.tap()
-
-        // Profile screen has Edit.
-        let edit = app.buttons["Edit"]
-        XCTAssertTrue(edit.waitForExistence(timeout: 5), "Profile didn't open.")
-        edit.tap()
-
-        XCTAssertTrue(app.navigationBars["Edit Profile"].waitForExistence(timeout: 5), "Editor didn't open.")
-
-        // Force the map opt-in ON (deterministic regardless of any persisted state from prior runs).
-        let mapToggle = app.switches["Appear on the map"]
-        XCTAssertTrue(mapToggle.waitForExistence(timeout: 5), "Map toggle not found.")
-        if (mapToggle.value as? String) == "0" { mapToggle.tap() }
+        // The Bio field, cleared and retyped — a value the profile header renders verbatim.
+        // Queried by identifier, not placeholder: the placeholder stops matching once the field
+        // holds a value, which made this pass on a clean container and fail on every rerun.
+        let bio = app.textFields["field-Bio"]
+        XCTAssertTrue(bio.waitForExistence(timeout: 5), "Bio field missing from the editor.")
+        bio.tap()
+        // XCUITest has no "clear field": select whatever is there and type over it.
+        bio.press(forDuration: 1.2)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        let marker = "Chasing the long run."
+        bio.typeText(marker)
 
         app.buttons["Done"].tap()
 
-        // The profile's privacy summary should now mention the map.
-        let onMap = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] 'map'")).firstMatch
-        XCTAssertTrue(onMap.waitForExistence(timeout: 5), "Privacy summary didn't reflect the map opt-in.")
+        // Saved and shown on the profile itself.
+        XCTAssertTrue(app.staticTexts[marker].waitForExistence(timeout: 10),
+                      "Edited bio didn't reach the profile header.")
     }
 }

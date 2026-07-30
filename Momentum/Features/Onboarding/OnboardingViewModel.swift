@@ -39,6 +39,10 @@ final class OnboardingViewModel {
     var preferredDays: Set<Int> = []                // Calendar weekday 1…7; empty → auto-spread
     var sex: BiologicalSex? = nil
     var heightCm: Double? = nil
+    /// Explicit unit choices from the metrics page (owner ask 2026-07-30) — nil = locale default.
+    /// Weight choice persists to the profile at finish; height choice is a display preference.
+    var weightUnitChoice: String? = nil     // WeightUnit rawValue ("kg" | "lb")
+    var heightMetricChoice: Bool? = nil     // true = cm, false = ft·in
     var birthYear: Int? = nil
     var bodyMassKg: Double? = nil
 
@@ -379,9 +383,10 @@ final class OnboardingViewModel {
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
         profile.crossTraining = extraActivities.map { $0.workoutType.rawValue }
-        // Default display units to the athlete's locale (lb + miles in the US/UK) so the whole app
-        // matches the imperial figures they just entered. Distance stays `auto` (locale-resolved).
-        profile.weightUnit = WeightUnit.default().rawValue
+        // Display units: the athlete's explicit choice from the metrics page wins; otherwise the
+        // locale default (lb + miles in the US/UK) so the app matches the figures they entered.
+        // Distance stays `auto` (locale-resolved).
+        profile.weightUnit = weightUnitChoice ?? WeightUnit.default().rawValue
         profile.sex = sex?.rawValue
         profile.heightCm = heightCm
         profile.birthYear = birthYear

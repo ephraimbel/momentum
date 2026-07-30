@@ -38,8 +38,19 @@ protocol SocialBackending: AnyObject {
     func publicAvatarURL(path: String) -> URL?
 
     // Graph + engagement
-    func setFollow(handle: String, following: Bool) async
+    /// Push one follow/unfollow. Returns whether the server actually took it — `false` for a
+    /// guest, an unreachable network, or a handle with no server profile (a seeded community
+    /// athlete). `FollowStore` keeps unconfirmed writes so a pull can't silently undo them.
+    @discardableResult
+    func setFollow(handle: String, following: Bool) async -> Bool
     func pullFollowing() async -> Set<String>?
+    /// Who follows the viewer, as displayable rows. nil = unavailable (guest/offline/dark) — the
+    /// Followers list then says so honestly rather than showing a fabricated crowd. Distinct from
+    /// `followCounts`, which is head-only: this is the list behind the number.
+    func pullFollowers() async -> [AthleteHit]?
+    /// The viewer's REAL follower/following counts (the profile's social line). nil when
+    /// unavailable — the UI keeps its honest local numbers rather than fabricating.
+    func followCounts() async -> (followers: Int, following: Int)?
     func setReaction(postID: UUID, reacted: Bool) async
     func pushComment(_ comment: Comment) async
     func deleteComment(id: UUID) async
@@ -144,8 +155,10 @@ extension SocialBackending {
 }
 
 /// Previews, tests, guests-without-config: social stays local, nothing leaves the device.
+/// Non-final on purpose: test spies subclass it and override the one or two calls under test
+/// rather than re-conforming to the whole protocol.
 @MainActor
-final class StubSocialBackend: SocialBackending {
+class StubSocialBackend: SocialBackending {
     var isAvailable: Bool { false }
     var viewerIsPro: Bool { false }
     func pushProfile(_ dto: SocialSyncEngine.ProfileDTO) async throws {}
@@ -158,8 +171,10 @@ final class StubSocialBackend: SocialBackending {
     func searchAthletes(query: String, limit: Int) async -> [AthleteHit]? { nil }
     func signedPhotoURLs(paths: [String]) async -> [String: URL] { [:] }
     func publicAvatarURL(path: String) -> URL? { nil }
-    func setFollow(handle: String, following: Bool) async {}
+    func setFollow(handle: String, following: Bool) async -> Bool { false }
     func pullFollowing() async -> Set<String>? { nil }
+    func pullFollowers() async -> [AthleteHit]? { nil }
+    func followCounts() async -> (followers: Int, following: Int)? { nil }
     func setReaction(postID: UUID, reacted: Bool) async {}
     func pushComment(_ comment: Comment) async {}
     func deleteComment(id: UUID) async {}
@@ -418,18 +433,23 @@ final class SupabaseSocialBackend: SocialBackending {
         return row?.id
     }
 
-    func setFollow(handle: String, following: Bool) async {
+    /// Reports whether the write landed, so an offline/guest follow stays pending locally instead
+    /// of being silently pruned by the next successful pull.
+    func setFollow(handle: String, following: Bool) async -> Bool {
         guard let client, let session = await session(),
-              let followee = await profileID(forHandle: handle) else { return }
-        if following {
-            struct Row: Encodable { let follower_id: UUID; let followee_id: UUID }
-            _ = try? await client.from("follows")
-                .upsert(Row(follower_id: session.user.id, followee_id: followee)).execute()
-        } else {
-            _ = try? await client.from("follows").delete()
-                .eq("follower_id", value: session.user.id)
-                .eq("followee_id", value: followee).execute()
-        }
+              let followee = await profileID(forHandle: handle) else { return false }
+        do {
+            if following {
+                struct Row: Encodable { let follower_id: UUID; let followee_id: UUID }
+                _ = try await client.from("follows")
+                    .upsert(Row(follower_id: session.user.id, followee_id: followee)).execute()
+            } else {
+                _ = try await client.from("follows").delete()
+                    .eq("follower_id", value: session.user.id)
+                    .eq("followee_id", value: followee).execute()
+            }
+            return true
+        } catch { return false }
     }
 
     func pullFollowing() async -> Set<String>? {
@@ -445,6 +465,53 @@ final class SupabaseSocialBackend: SocialBackending {
                 .eq("follower_id", value: session.user.id)
                 .execute().value
             return Set(rows.map(\.followee.handle).filter { !$0.isEmpty })
+        } catch { return nil }
+    }
+
+    /// The list behind the follower count — the exact mirror of `pullFollowing`, joining the
+    /// FOLLOWER's profile instead of the followee's (`follows_read` RLS admits rows where the
+    /// viewer is either side, so this needs no extra policy).
+    func pullFollowers() async -> [AthleteHit]? {
+        guard let client, let session = await session() else { return nil }
+        struct Row: Decodable {
+            let follower: Profile
+            struct Profile: Decodable {
+                let handle: String
+                let display_name: String?
+                let location: String?
+                let avatar_path: String?
+            }
+            enum CodingKeys: String, CodingKey { case follower = "profiles" }
+        }
+        do {
+            let rows: [Row] = try await client.from("follows")
+                .select("profiles!follows_follower_id_fkey(handle,display_name,location,avatar_path)")
+                .eq("followee_id", value: session.user.id)
+                .execute().value
+            return rows.compactMap { row in
+                let p = row.follower
+                guard !p.handle.isEmpty else { return nil }
+                return AthleteHit(handle: p.handle,
+                                  displayName: (p.display_name?.isEmpty == false ? p.display_name! : "Athlete"),
+                                  location: p.location, avatarPath: p.avatar_path)
+            }
+        } catch { return nil }
+    }
+
+    /// Head-only count queries — `follows_read` RLS admits every row where the viewer is either
+    /// side, so counting "rows where I'm the followee" is exactly the real follower count.
+    func followCounts() async -> (followers: Int, following: Int)? {
+        guard let client, let session = await session() else { return nil }
+        do {
+            let followers = try await client.from("follows")
+                .select("*", head: true, count: .exact)
+                .eq("followee_id", value: session.user.id)
+                .execute().count ?? 0
+            let following = try await client.from("follows")
+                .select("*", head: true, count: .exact)
+                .eq("follower_id", value: session.user.id)
+                .execute().count ?? 0
+            return (followers, following)
         } catch { return nil }
     }
 

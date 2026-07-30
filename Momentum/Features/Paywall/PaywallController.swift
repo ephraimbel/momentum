@@ -36,14 +36,17 @@ struct PaywallOffering: Sendable, Equatable {
     var monthlyPriceValue: Double = monthlyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Shipped pricing (decision 2026-07-14, matches the website): $14.99/mo with no trial —
-    /// deliberately below Runna's (~$17.99/mo) to win the price-comparison shopper — and $109.99/yr
-    /// with a 7-day trial. These two numbers are the **single source**: the monthly/annual
-    /// `priceText`, the annual per-month, and `annualSavingsPercent` all derive from them, so the
-    /// savings label can never fall out of step with a price change. Live store prices (loadOffering)
-    /// replace the display strings once RevenueCat is wired.
-    static let monthlyPrice = 14.99
-    static let annualPrice = 109.99
+    /// Shipped pricing (decision 2026-07-29, matches the website): $9.99/mo with no trial and
+    /// $59.99/yr with a 7-day free trial (trial on ANNUAL ONLY — owner call 2026-07-30; the trial
+    /// is the annual's nudge, monthly stays the plain commitment-free option). Deliberately
+    /// mass-market — half Runna's annual (~$119.99), a notch under Strava's (~$79.99) — because the
+    /// hard paywall makes the annual price the conversion funnel; the marketing line is "a full
+    /// adaptive plan for under $5 a month". These two numbers are the **single source**: the
+    /// monthly/annual `priceText`, the annual per-month, and `annualSavingsPercent` all derive from
+    /// them, so the savings label can never fall out of step with a price change. Live store prices
+    /// (loadOffering) replace the display strings once RevenueCat is wired.
+    static let monthlyPrice = 9.99
+    static let annualPrice = 59.99
 
     static let standard = PaywallOffering(
         monthly: .init(id: "momentum_pro_monthly", period: .monthly,
@@ -54,8 +57,8 @@ struct PaywallOffering: Sendable, Equatable {
 
     /// Percent saved by paying yearly instead of 12× monthly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
-    /// (live once the store loads), never a hand-written label. Currently **40%**: $109.99 vs
-    /// 12 × $14.99 = $179.88 is 38.85%, which rounds up to 40%.
+    /// (live once the store loads), never a hand-written label. Currently **50%**: $59.99 vs
+    /// 12 × $9.99 = $119.88 is 49.96%, which rounds to 50%.
     var annualSavingsPercent: Int {
         let monthlyYear = 12 * monthlyPriceValue
         guard monthlyYear > 0 else { return 0 }
@@ -341,8 +344,11 @@ final class PaywallController: PaywallServing {
               let m = current.monthly?.storeProduct, let a = current.annual?.storeProduct else { return }
         // StoreKit expresses a 7-day trial as (value: 1, unit: .week) — convert to DAYS, or the
         // badge/CTA read "1-day free trial" (shipped-bug class: .value read without .unit).
-        let trial: Int = {
-            guard let intro = a.introductoryDiscount, intro.paymentMode == .freeTrial else { return 0 }
+        // Read per-product, never hardcoded: the store is the truth for which plan carries an
+        // offer (today: annual only), and a hardcoded 0 is exactly how a store-side offer would
+        // silently never display.
+        func trialDays(of product: StoreProduct) -> Int {
+            guard let intro = product.introductoryDiscount, intro.paymentMode == .freeTrial else { return 0 }
             let p = intro.subscriptionPeriod
             switch p.unit {
             case .day: return p.value
@@ -351,7 +357,7 @@ final class PaywallController: PaywallServing {
             case .year: return p.value * 365
             @unknown default: return p.value
             }
-        }()
+        }
         // Annual per-month in the product's own locale/currency (falls back to the plain formatter).
         let perMonth: String = {
             let monthly = a.price / 12
@@ -360,9 +366,9 @@ final class PaywallController: PaywallServing {
         }()
         offering = PaywallOffering(
             monthly: .init(id: m.productIdentifier, period: .monthly,
-                           priceText: m.localizedPriceString, perMonthText: nil, trialDays: 0),
+                           priceText: m.localizedPriceString, perMonthText: nil, trialDays: trialDays(of: m)),
             annual: .init(id: a.productIdentifier, period: .annual,
-                          priceText: a.localizedPriceString, perMonthText: perMonth, trialDays: trial),
+                          priceText: a.localizedPriceString, perMonthText: perMonth, trialDays: trialDays(of: a)),
             monthlyPriceValue: NSDecimalNumber(decimal: m.price).doubleValue,
             annualPriceValue: NSDecimalNumber(decimal: a.price).doubleValue)
         pricingIsLive = true   // only now are the numbers on screen the store's

@@ -31,6 +31,13 @@ final class TrainingPlan {
     /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from `blockStart`) —
     /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
     var weekPhases: [String] = []
+    /// Self-coached mode (owner call 2026-07-30): the athlete writes their own weeks — the plan is
+    /// their container (Today deck, credits, add-a-session, the board all keep working), and the
+    /// coach NEVER prescribes or rewrites inside it: no generation, no tune proposals, no renewal
+    /// prompts, no auto-adapt/rebuild-week/pace-recalibration. Missed sessions still roll forward
+    /// (moving their own day is no-shame scheduling, not coaching). Cleared implicitly when a
+    /// coached plan is built — `PlanService.persist` mints a fresh TrainingPlan. Additive/defaulted.
+    var isSelfCoached: Bool = false
     /// Pace-recalibration evidence ledger (the multi-run confirmation rule): one strong run banks a
     /// candidate 5k-equivalent here; a second qualifying run within 14 days confirms and applies.
     /// The standard is 2–3 confirming sessions before raising fitness — never off one great day.

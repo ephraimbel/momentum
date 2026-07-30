@@ -22,3 +22,9 @@ Package.resolved
 Secrets.plist
 .env
 Secrets.xcconfig
+
+# Obsidian vault + personal notes living in the repo dir
+.obsidian/
+*.canvas
+*.base
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md

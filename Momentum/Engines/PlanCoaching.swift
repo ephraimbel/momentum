@@ -14,13 +14,6 @@ enum PlanCoaching {
             .sorted { $0.date < $1.date }
     }
 
-    static func weekSessions(_ plan: TrainingPlan?, containing date: Date, calendar: Calendar = .current) -> [PlannedSession] {
-        guard let plan, let interval = calendar.dateInterval(of: .weekOfYear, for: date) else { return [] }
-        return plan.sessions
-            .filter { interval.contains($0.date) }
-            .sorted { $0.date < $1.date }
-    }
-
     /// Link a finished workout to its planned session.
     static func markComplete(_ session: PlannedSession, with workout: Workout, in context: ModelContext) {
         session.completedWorkout = workout
@@ -200,7 +193,8 @@ enum PlanCoaching {
         let recentlyAdapted = plan.lastAdaptedAt.map {
             (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) < 7
         } ?? false
-        if movedCount >= 3, !recentlyAdapted, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
+        if movedCount >= 3, !recentlyAdapted, !plan.isSelfCoached,
+           let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
             let unit = displayUnit(in: context)
             // Comeback paces: time away costs fitness, so the assumed 5k eases ~2% BEFORE the week
             // is softened (the converted easy sessions then price at the eased fitness). Recalibration
@@ -361,6 +355,7 @@ enum PlanCoaching {
     static func recalibratePaces(from workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                                  in context: ModelContext, calendar: Calendar = .current) -> Recalibration? {
         guard let plan, workout.type.discipline == .running, let gps = workout.gps else { return nil }
+        guard !plan.isSelfCoached else { return nil }   // their targets are theirs — never rewritten
         let dist = gps.distanceM, time = workout.durationS, current = plan.p5kSPerKm
         // Need a meaningful distance to extrapolate a 5k from — Riegel off a 400 m rep is noise.
         guard dist >= 2000, time > 0, current > 0 else { return nil }
@@ -489,7 +484,7 @@ enum PlanCoaching {
     @discardableResult
     static func autoAdapt(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                           in context: ModelContext, calendar: Calendar = .current) -> ProgressInsights.Recommendation? {
-        guard let plan else { return nil }
+        guard let plan, !plan.isSelfCoached else { return nil }   // self-coached: we never touch it
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
 
@@ -558,7 +553,7 @@ enum PlanCoaching {
     @discardableResult
     static func adaptToEffort(_ workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                               in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
-        guard let plan, workout.type.discipline == .running else { return nil }
+        guard let plan, !plan.isSelfCoached, workout.type.discipline == .running else { return nil }
         let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort, runType: workout.plannedSession?.runType)
         let rec: ProgressInsights.Recommendation
         switch outcome {
@@ -594,7 +589,7 @@ enum PlanCoaching {
     /// Returns `nil` when there's nothing to offer. Deterministic — this is what `apply` would do.
     static func proposeAdjustment(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                                   calendar: Calendar = .current) -> Proposal? {
-        guard let plan else { return nil }
+        guard let plan, !plan.isSelfCoached else { return nil }   // no load proposals on their plan
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
         // Only the consent-required direction. ease/rest are auto-applied; hold/start are advisory.

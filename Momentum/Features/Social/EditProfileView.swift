@@ -14,13 +14,19 @@ struct EditProfileView: View {
     let profile: UserProfile
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
 
     @State private var pickedAvatar: PhotosPickerItem?
+    /// The preset chosen this visit (ring in the strip). Cleared when a photo is picked or removed.
+    @State private var selectedPreset: AvatarPreset?
     @State private var saveFailed = false
     // The staged copies — seeded from the profile once per presentation (the sheet view is
     // created fresh each time it's shown, so State(initialValue:) is the right seed point).
     @State private var name: String
+    @State private var handle: String
     @State private var bio: String
+    /// Where you train out of — optional by design (see `SocialPrivacy.granularity(forCity:current:)`).
+    @State private var city: String
     @State private var sex: String?
     @State private var birthYear: Int?
     @State private var heightCm: Double?
@@ -30,7 +36,9 @@ struct EditProfileView: View {
     init(profile: UserProfile) {
         self.profile = profile
         _name = State(initialValue: profile.displayName)
+        _handle = State(initialValue: profile.handle)
         _bio = State(initialValue: profile.bio)
+        _city = State(initialValue: profile.city)
         _sex = State(initialValue: profile.sex)
         _birthYear = State(initialValue: profile.birthYear)
         _heightCm = State(initialValue: profile.heightCm)
@@ -62,6 +70,23 @@ struct EditProfileView: View {
                 Text("Something went wrong writing to storage. Your edits are still here — try Done again.")
             }
             .onChange(of: pickedAvatar) { _, item in Task { await loadAvatar(item) } }
+            #if DEBUG
+            // --pick-preset <case> [--pick-preset-save]: stage a preset look (and optionally Done)
+            // for sim verification — the sheet's tiles are unreachable by simctl, and the window's
+            // device bezels defeat coordinate clicking.
+            .task {
+                let args = ProcessInfo.processInfo.arguments
+                guard let i = args.firstIndex(of: "--pick-preset"), i + 1 < args.count,
+                      let preset = AvatarPreset(rawValue: args[i + 1]) else { return }
+                try? await Task.sleep(for: .milliseconds(600))
+                avatarData = AvatarPreset.bake(preset, name: name.isEmpty ? "You" : name)
+                selectedPreset = preset
+                if args.contains("--pick-preset-save") {
+                    try? await Task.sleep(for: .milliseconds(900))
+                    save()
+                }
+            }
+            #endif
         }
     }
 
@@ -81,17 +106,54 @@ struct EditProfileView: View {
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
             if avatarData != nil {
                 Button("Remove photo", role: .destructive) {
-                    avatarData = nil; Haptics.medium()
+                    avatarData = nil; selectedPreset = nil; Haptics.medium()
                 }
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
             }
+            presetStrip
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The curated looks — one tap stages the baked PNG exactly like a picked photo, so Cancel
+    /// discards it and Done persists it with zero extra plumbing. The ring marks the tile chosen
+    /// THIS visit; a photo pick clears it (the photo wins).
+    private var presetStrip: some View {
+        VStack(spacing: Theme.Space.sm) {
+            Text("OR PICK A LOOK")
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
+                .foregroundStyle(Theme.inkTertiary)
+                .padding(.top, Theme.Space.sm)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm),
+                                     count: 4),
+                      spacing: Theme.Space.sm) {
+                ForEach(AvatarPreset.allCases) { preset in
+                    Button {
+                        guard let png = AvatarPreset.bake(preset, name: name.isEmpty ? "You" : name)
+                        else { return }
+                        avatarData = png
+                        selectedPreset = preset
+                        Haptics.selection()
+                    } label: {
+                        PresetAvatarView(preset: preset,
+                                         name: name.isEmpty ? "You" : name, size: 56)
+                            .overlay {
+                                if selectedPreset == preset {
+                                    Circle().stroke(Theme.ink, lineWidth: 2).padding(-3)
+                                }
+                            }
+                    }
+                    .buttonStyle(PressableScaleStyle(scale: 0.94))
+                    .accessibilityLabel("Avatar look \(preset.rawValue)")
+                }
+            }
+        }
     }
 
     private func loadAvatar(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
         avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
+        selectedPreset = nil   // the photo wins over any preset picked earlier this visit
         Haptics.success()
     }
 
@@ -101,7 +163,18 @@ struct EditProfileView: View {
         VStack(spacing: 0) {
             field("Name", text: $name, placeholder: "Your name")
             divider
+            // The @handle — same field onboarding claims with (live Supabase availability +
+            // suggestions); the unique index at save time is the real arbiter, and a lost race
+            // posts the deduped "handle taken" notification from claimProfile.
+            HandleField(handle: $handle, backend: services.social,
+                        suggestions: HandleSuggester.candidates(name: name, email: nil, seed: 7))
+            divider
             field("Bio", text: $bio, placeholder: "A line about you", axis: .vertical)
+            divider
+            // Where you train out of — it rides in your byline ("@handle · Austin, TX") on your own
+            // posts and on your profile. Blank is a real answer: filling this in IS the opt-in
+            // (SocialPrivacy.granularity), so no city ever ships on a default nobody chose.
+            field("Location", text: $city, placeholder: "City (optional)")
         }
         .padding(.horizontal, Theme.Space.lg)
         .background(card)
@@ -196,9 +269,16 @@ struct EditProfileView: View {
 
     private func field(_ label: String, text: Binding<String>, placeholder: String, axis: Axis = .horizontal) -> some View {
         HStack(alignment: .top) {
-            Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary).frame(width: 56, alignment: .leading)
+            // 72pt fits the longest label ("Location") without truncating; every row shares the
+            // gutter so the fields stay in one column.
+            Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary).frame(width: 72, alignment: .leading)
             TextField(placeholder, text: text, axis: axis)
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                // A stable handle for tests: a TextField's accessibility label is its placeholder
+                // only while it's EMPTY — once it holds a value, the placeholder query stops
+                // matching, so a round-trip test passes on a fresh install and fails on a second
+                // run (2026-07-30). The identifier doesn't move.
+                .accessibilityIdentifier("field-\(label)")
         }
         .padding(.vertical, 12)
     }
@@ -221,7 +301,13 @@ struct EditProfileView: View {
     /// The ONLY place staged edits touch the model — Cancel and interactive dismiss never reach it.
     private func save() {
         profile.displayName = name.trimmingCharacters(in: .whitespaces)
+        profile.handle = SocialPrivacy.normalizedHandle(handle)
         profile.bio = bio.trimmingCharacters(in: .whitespaces)
+        let trimmedCity = city.trimmingCharacters(in: .whitespaces)
+        profile.city = trimmedCity
+        // Typing a location opts you in at city precision; clearing it takes it back off the wire.
+        profile.locationGranularity = SocialPrivacy
+            .granularity(forCity: trimmedCity, current: profile.locationGranularity).rawValue
         profile.sex = sex
         profile.birthYear = birthYear
         profile.heightCm = heightCm
@@ -233,6 +319,14 @@ struct EditProfileView: View {
             context.rollback()
             saveFailed = true
             return
+        }
+        // The public projection follows the edit (name, bio, avatar — including a freshly-picked
+        // preset bake): re-claim on the backend so other athletes see the change now, not at the
+        // next cold launch. Fire-and-forget; guests/dark builds no-op inside.
+        if CommunityAccess.enabled {
+            let saved = profile
+            let ctx = context
+            Task { await services.social.claimProfile(saved, in: ctx) }
         }
         Haptics.success()
         dismiss()

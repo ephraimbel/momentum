@@ -51,7 +51,7 @@ struct PlanRevealView: View {
                 reflectionChips.reveal(0.24)
                 if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.27) }
                 weeklyVolumeCard.reveal(0.30)
-                if vm.intensity == .podium, vm.running { podiumOutlook.reveal(0.33) }
+                if vm.intensity == .podium, vm.running { podiumOutlook.reveal(0.33).id("podium") }
                 fullPlanList.id("plan")
             }
             .frame(maxWidth: .infinity)
@@ -65,6 +65,13 @@ struct PlanRevealView: View {
             if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-plan") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation { proxy.scrollTo("plan", anchor: .top) }
+                }
+            }
+            // --reveal-scroll-podium: frame the Podium outlook card (its iridescent border is a
+            // design surface that needs screenshot verification).
+            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-podium") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation { proxy.scrollTo("podium", anchor: .center) }
                 }
             }
         }
@@ -334,7 +341,11 @@ struct PlanRevealView: View {
             .padding(Theme.Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(IridescentMaterial(), lineWidth: 1.5))
+            // strokeBorder, not stroke: a centered stroke overhangs the card by half its width, and
+            // the scroll view clips that overhang on the left/right (full-width card) but not
+            // top/bottom (open spacing) — the border rendered 0.75pt on the sides and 1.5pt+glow
+            // above/below (owner report 2026-07-30). Inset fully inside, it's uniform everywhere.
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(IridescentMaterial(), lineWidth: 1.5))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

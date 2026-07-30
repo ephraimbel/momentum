@@ -12,6 +12,7 @@ struct RootView: View {
     @Environment(AppRouter.self) private var router           // cross-tab mailbox — RootView owns pendingTab
     @Environment(Services.self) private var services          // crash-recovery completion runs the live pipeline
     @Environment(\.modelContext) private var context
+    @Environment(\.colorScheme) private var colorScheme   // the tab-bar monogram bakes it in
     // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
     // and set was persisted as it happened — this prompt is how they come back.
     @State private var recoveredWorkout: Workout?
@@ -36,6 +37,9 @@ struct RootView: View {
         return .today
     }()
     @State private var showOnboarding = false
+    /// The athlete's photo, drawn as the Profile tab's icon. Nil until rendered, and while nil the
+    /// tab falls back to its SF Symbol — so a profile with no photo behaves exactly as before.
+    @State private var profileTabIcon: UIImage?
     /// Second phase of the onboarding hard gate: they subscribed from the RELAUNCH wall (having
     /// force-quit onboarding at the paywall), so they never reached onboarding's `.account` beat and
     /// would otherwise land in the app as a paying permanent guest — anonymous to RevenueCat, with
@@ -60,12 +64,6 @@ struct RootView: View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--health-e2e") {
             HealthE2EView()
-        } else if ProcessInfo.processInfo.arguments.contains("--community") {
-            // Design-only door onto the dormant Community feed (back-burnered 2026-07-16, still
-            // unreachable in Release — there is no AppTab case and no other entry point). Rendered
-            // at the root rather than as a cover: this chain is already at the documented
-            // 4-presentation-modifier ceiling. Pair with --seed-demo for a populated feed.
-            NavigationStack { CommunityView() }
         } else {
             mainBody
         }
@@ -276,6 +274,13 @@ struct RootView: View {
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingFlow {
                 showOnboarding = false
+                // Claim the just-picked identity (@handle, name, avatar) on the backend NOW —
+                // waiting for the next cold launch's claim would leave the handle unprotected
+                // for the whole first session. No-op for guests/dark builds; a lost race posts
+                // the deduped "handle taken" notification.
+                if CommunityAccess.enabled, let fresh = profiles.first {
+                    Task { await services.social.claimProfile(fresh, in: context) }
+                }
                 // The coach says hello the moment there's a plan to explain — a quiet seed the
                 // Today button badges, offered at the peak-curiosity moment. Once ever.
                 if profiles.first?.plan != nil { CoachProactive.seedPlanIntro(in: context) }
@@ -348,9 +353,28 @@ struct RootView: View {
                     recoveredWorkout = pending
                     showRecoveryPrompt = true
                 }
+                #if DEBUG
+                // --save-screen: present the save editor on the newest seeded GPS workout — the
+                // only sim-reachable door to the share-visibility row (a real one needs a live run).
+                if ProcessInfo.processInfo.arguments.contains("--save-screen") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        var newest = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+                        newest.fetchLimit = 20
+                        if let w = (try? context.fetch(newest))?.first(where: { $0.type.isGPS }) {
+                            recoverySave = PresentedWorkout(id: w.id, type: w.type)
+                        }
+                    }
+                }
+                #endif
                 // Heal recent workouts whose route snapshot failed to render at finish — History
                 // thumbnails recover on launch instead of showing bare silhouettes forever.
                 Task { await WorkoutSnapshotHealer.sweep(in: context) }
+                // Claim/refresh the athlete's public identity once per launch (handle, name, bio,
+                // avatar, Pro checkmark) — the community-era hook restored with the launch wiring
+                // (2026-07-29). No-op for guests and dark builds (`isAvailable` gate inside).
+                if CommunityAccess.enabled, let profile = profiles.first {
+                    Task { await services.social.claimProfile(profile, in: context) }
+                }
                 // Mint the record book on LAUNCH, not on a tab visit. This is one-shot (versioned
                 // flag) and dedupes per (type, workout), but it used to run only inside
                 // `ProgressView` — so an athlete who imported a history from Apple Health and went
@@ -410,16 +434,63 @@ struct RootView: View {
     private var tabs: some View {
         TabView(selection: $selection) {
             ForEach(AppTab.allCases) { tab in
-                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                Tab(value: tab) {
                     tabContent(tab)
+                } label: {
+                    tabLabel(tab)
                 }
             }
         }
         .background(Theme.background)
+        // The bar condenses on scroll-down and restores on scroll-up (iOS 26 native; no-op below).
+        .minimizingTabBar()
+        // Rendered here, never in `body`: this view re-evaluates continuously under a panning
+        // Mapbox map, and the redraw is keyed so it only reruns when the photo or the selection
+        // actually changes.
+        .task(id: ProfileIconKey(avatar: profiles.first?.avatarData,
+                                 name: profiles.first?.displayName ?? "",
+                                 scheme: colorScheme,
+                                 selected: selection == .profile)) {
+            profileTabIcon = ProfileTabIcon.make(from: profiles.first?.avatarData,
+                                                 name: profiles.first?.displayName ?? "",
+                                                 colorScheme: colorScheme,
+                                                 selected: selection == .profile)
+        }
         // Publish the athlete's own body figure once (and on any sex change), so every muscle map —
         // including the ones inside covers, which don't inherit the environment — shows the right
         // anatomy. `.task(id:)` re-fires when the sex changes, keeping Profile → Edit live.
         .task(id: profiles.first?.sex) { AthleteFigure.sex = BodySex(profileSex: profiles.first?.sex) }
+    }
+
+    /// The Instagram-style tab item: outline glyph at rest, its filled sibling when selected, the
+    /// athlete's own photo for Profile, and **no visible caption** — the icons carry the bar, which
+    /// is most of what makes that bar read clean. Names still exist for assistive tech: the empty
+    /// visible text is paired with an explicit `accessibilityLabel`, so VoiceOver announces
+    /// "Progress", not silence.
+    @ViewBuilder
+    private func tabLabel(_ tab: AppTab) -> some View {
+        let selected = selection == tab
+        Label {
+            // The REAL title, then `.iconOnly` below to hide it. An empty caption was tried first
+            // and broke selection outright — with five identical empty titles the UIKit bridge
+            // collapsed tab identity and every launch landed on Profile. The title is identity;
+            // the label style is presentation.
+            Text(tab.title)
+        } icon: {
+            if tab == .profile, let icon = profileTabIcon {
+                // Pre-rendered `.alwaysOriginal` UIImage so the bar cannot tint the photo into a
+                // silhouette (see `ProfileTabIcon`); its selected ring is baked into the render.
+                Image(uiImage: icon)
+            } else {
+                Image(systemName: selected ? tab.selectedImage : tab.systemImage)
+            }
+        }
+        // The bar upgrades every SF Symbol to `.fill` on its own, which would erase the
+        // outline-at-rest half of the state change. Opting out here is what lets `map` actually
+        // render as an outline until it is chosen.
+        .environment(\.symbolVariants, .none)
+        .labelStyle(.iconOnly)
+        .accessibilityLabel(tab.title)
     }
 
     @ViewBuilder
@@ -437,6 +508,15 @@ struct RootView: View {
         case .profile: ProfileScreen()
         }
     }
+}
+
+/// What the profile tab icon depends on. A struct rather than two `.task(id:)` modifiers so the
+/// redraw fires once when either half changes, not twice.
+private struct ProfileIconKey: Equatable {
+    let avatar: Data?
+    let name: String
+    let scheme: ColorScheme
+    let selected: Bool
 }
 
 #Preview {

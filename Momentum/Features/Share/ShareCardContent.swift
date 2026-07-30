@@ -158,8 +158,20 @@ struct RouteSilhouette: Shape {
     var maxPoints: Int = 120
 
     func path(in rect: CGRect) -> Path {
-        let coords = Self.downsample(self.coords, to: maxPoints)
-        guard coords.count > 1 else { return Path() }
+        let pts = Self.points(coords, in: rect, maxPoints: maxPoints)
+        guard pts.count > 1 else { return Path() }
+        var path = Path()
+        path.move(to: pts[0])
+        pts.dropFirst().forEach { path.addLine(to: $0) }
+        return path
+    }
+
+    /// The projected screen points — shared with `RouteEndpointMarks` so a start/finish mark lands
+    /// exactly on the drawn line rather than on a second, subtly different projection.
+    static func points(_ coords: [CLLocationCoordinate2D], in rect: CGRect,
+                       maxPoints: Int = 120) -> [CGPoint] {
+        let coords = downsample(coords, to: maxPoints)
+        guard coords.count > 1 else { return [] }
         let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
         let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
         // A degree of longitude spans cos(latitude) of a degree of latitude on the ground —
@@ -170,13 +182,10 @@ struct RouteSilhouette: Shape {
         let spanLon = max((maxLon - minLon) * cosLat, 1e-6), spanLat = max(maxLat - minLat, 1e-6)
         let scale = min(rect.width / spanLon, rect.height / spanLat) * 0.92
         let midLon = (minLon + maxLon) / 2, midLat = (minLat + maxLat) / 2
-        var path = Path()
-        for (i, c) in coords.enumerated() {
-            let p = CGPoint(x: rect.midX + (c.longitude - midLon) * cosLat * scale,
-                            y: rect.midY - (c.latitude - midLat) * scale)
-            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+        return coords.map { c in
+            CGPoint(x: rect.midX + (c.longitude - midLon) * cosLat * scale,
+                    y: rect.midY - (c.latitude - midLat) * scale)
         }
-        return path
     }
 
     /// Keep endpoints; evenly sample the middle down to `max` points.

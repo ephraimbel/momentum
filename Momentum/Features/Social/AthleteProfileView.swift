@@ -17,24 +17,28 @@ struct AthleteProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingReport = false
     @State private var gridTab: ProfileGridTab = .grid
+    /// Set by tapping the social line — pushes this athlete's Followers|Following lists.
+    @State private var graphFace: AthleteFollowListView.Face?
+    #if DEBUG
+    @MainActor private static var didOpenDebugGraph = false
+    #endif
     /// The grid's posts: feed post(s) + deterministic history for sample athletes (cached), or
     /// exactly what a real athlete shared. Loaded once on appear.
     @State private var gridPosts: [FeedItem] = []
 
-    private var records: (prs: [(name: String, e1RMKg: Double)], longestRunM: Double, longestDurationS: Double) {
-        athlete.personalRecords
-    }
-
     var body: some View {
+        ScrollViewReader { scroll in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                 Group {
                     identity
-                    followButton
                     if !athlete.bio.isEmpty {
+                        // Centered under the identity block, TikTok-style (owner call 2026-07-30) —
+                        // the whole header is a centered column, so a left-flushed bio read as a bug.
                         Text(athlete.bio)
                             .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity, alignment: .center).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.horizontal, Theme.Space.md)
@@ -48,13 +52,40 @@ struct AthleteProfileView: View {
                 } header: {
                     ProfileGridTabBar(tab: $gridTab)
                 }
+                Color.clear.frame(height: 1).id("athlete-face-end")
             }
             .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
         .navigationBarHidden(true)
+        #if DEBUG
+        // --athlete-highlights: land on the Highlights face (pairs with --athlete-profile
+        // [handle]); --athlete-scroll additionally jumps to the bottom — together they make every
+        // section of the visited-profile design screenshot-verifiable.
+        .onAppear {
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("--athlete-highlights") {
+                gridTab = .highlights
+            }
+            if args.contains("--athlete-scroll") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                    withAnimation(nil) { scroll.scrollTo("athlete-face-end", anchor: .bottom) }
+                }
+            }
+            // --athlete-graph: push the Followers list (screenshot verification; one-shot — this
+            // onAppear re-fires when the list pops, and re-arming would trap the back button).
+            if args.contains("--athlete-graph"), !Self.didOpenDebugGraph {
+                Self.didOpenDebugGraph = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { graphFace = .followers }
+            }
+        }
+        #endif
+        }
         .safeAreaInset(edge: .top) { header }
+        .navigationDestination(item: $graphFace) { face in
+            AthleteFollowListView(athlete: athlete, initialFace: face)
+        }
         .onAppear { if gridPosts.isEmpty { gridPosts = CommunityDirectory.gridPosts(for: athlete) } }
         .confirmationDialog("Report \(athlete.name)?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
@@ -98,11 +129,15 @@ struct AthleteProfileView: View {
 
     private var identity: some View {
         VStack(spacing: Theme.Space.md) {
-            AvatarView(photo: athlete.avatarData, name: athlete.name, size: 76, imageName: athlete.communityAvatarAsset)
+            AvatarView(photo: athlete.avatarData, name: athlete.name, size: 76,
+                       imageName: athlete.communityAvatarAsset, preset: athlete.communityPreset)
             VStack(spacing: 3) {
                 HStack(spacing: 6) {
                     Text(athlete.name).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-                    if athlete.isSample { communityBadge }
+                    // Sample members seal by the same deterministic draw their bylines use, so a
+                    // sealed post never opens an unsealed profile (or vice versa). Real network
+                    // athletes stay unsealed until the server actually knows their entitlement.
+                    if athlete.isSample, CommunityGenerator.isPro(handle: athlete.handle) { proSeal }
                 }
                 HStack(spacing: 6) {
                     Text("@\(athlete.handle)")
@@ -114,21 +149,49 @@ struct AthleteProfileView: View {
                     }
                 }
             }
-            socialTrio
+            socialLine
+            statsTrio
+            followButton
         }
         .frame(maxWidth: .infinity)
     }
 
-    /// The same posts · followers · following strip the athlete sees on their own profile.
-    /// Sample athletes carry deterministic sample counts (their entire presence is seeded content,
-    /// clearly badged); real network athletes show only counts we actually know.
-    private var socialTrio: some View {
-        HStack(spacing: 0) {
-            trioCell("\(max(gridPosts.count, athlete.posts.count))", "Posts")
+    /// The same quiet "N Followers · M Following" line the athlete's OWN profile leads with,
+    /// in the same position (above the trio) — one identity structure everywhere (owner call
+    /// 2026-07-29), and TAPPABLE like the own profile's (owner ask 2026-07-30): it pushes this
+    /// athlete's Followers|Following lists. Sample athletes carry deterministic sample counts;
+    /// real network athletes show only counts we actually know.
+    private var socialLine: some View {
+        Button { graphFace = .followers } label: {
+            HStack(spacing: 5) {
+                Text("\(followerCount)").font(.rounded(Theme.FontSize.body, weight: .bold))
+                    .monospacedDigit().foregroundStyle(Theme.ink)
+                Text("Followers").font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
+                Text("\(followingCount)").font(.rounded(Theme.FontSize.body, weight: .bold))
+                    .monospacedDigit().foregroundStyle(Theme.ink)
+                Text("Following").font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(followerCount) followers, \(followingCount) following")
+        .accessibilityHint("Shows \(athlete.name)'s followers and following")
+    }
+
+    /// Workouts · distance · streak — the athletic ledger in the own profile's exact trio grammar
+    /// (different content, same structure).
+    private var statsTrio: some View {
+        let dist = Formatters.wholeDistance(meters: athlete.totalDistanceM, unit: distanceUnit)
+        return HStack(spacing: 0) {
+            trioCell("\(athlete.totalWorkouts)", "Workouts")
             trioDivider
-            trioCell("\(followerCount)", "Followers")
+            trioCell("\(dist.value)", dist.unit)
             trioDivider
-            trioCell("\(followingCount)", "Following")
+            trioCell("\(athlete.dayStreak)", "Streak")
         }
         .padding(.horizontal, Theme.Space.xl)
     }
@@ -147,51 +210,61 @@ struct AthleteProfileView: View {
         Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 28)
     }
 
-    /// Deterministic per-athlete sample counts (stable across launches — hashed from the handle),
-    /// plus the viewer's own follow. Scaled by the athlete's body of work so a 12-workout beginner
-    /// and a 900-workout veteran don't look socially identical (a coherence tell). Real athletes:
-    /// only what we actually know.
+    /// Sample counts come from the SHARED derivation (`sampleFollowerCount` — the same numbers
+    /// size the pushed lists, so tapping "141 Followers" opens a list of exactly 141), plus the
+    /// viewer's own follow. Real athletes: only what we actually know.
     private var followerCount: Int {
         let mine = follows.isFollowing(athlete.handle) ? 1 : 0
         guard athlete.isSample else { return mine }
-        let seed = athlete.handle.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }
-        return 20 + athlete.totalWorkouts / 6 + seed % 220 + mine
+        return athlete.sampleFollowerCount + mine
     }
 
     private var followingCount: Int {
-        guard athlete.isSample else { return 0 }
-        let seed = athlete.handle.utf8.reduce(7) { ($0 &* 17 &+ Int($1)) & 0xFFFF }
-        return 15 + seed % 320
+        athlete.isSample ? athlete.sampleFollowingCount : 0
     }
 
+    /// Sits exactly where "Edit profile" sits on the athlete's own page — the one action pill
+    /// under the identity. Filled ink while unfollowed (it IS the page's action), hairline once
+    /// following (the quiet state, like Edit).
     private var followButton: some View {
         let following = follows.isFollowing(athlete.handle)
         return Button { follows.toggle(athlete.handle); Haptics.light() } label: {
-            Label(following ? "Following" : "Follow", systemImage: following ? "checkmark" : "plus")
-                .font(.rounded(Theme.FontSize.body, weight: .bold))
-                .frame(maxWidth: .infinity).frame(height: 48)
+            Text(following ? "Following" : "Follow")
+                .font(.rounded(Theme.FontSize.body, weight: .semibold))
                 .foregroundStyle(following ? Theme.ink : Theme.background)
+                .padding(.horizontal, Theme.Space.xl)
+                .padding(.vertical, 8)
                 .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card)
-                        .fill(following ? AnyShapeStyle(Theme.surface) : AnyShapeStyle(Theme.ink))
-                    if following { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                    if following {
+                        Capsule().stroke(Theme.hairline, lineWidth: 1)
+                    } else {
+                        Capsule().fill(Theme.ink)
+                    }
                 }
+                .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableScaleStyle(scale: 0.97))
         .accessibilityLabel(following ? "Following \(athlete.name). Tap to unfollow." : "Follow \(athlete.name)")
     }
 
-    private var communityBadge: some View {
-        Text("Momentum").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4).foregroundStyle(Theme.ink)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Capsule().fill(IridescentMaterial()).opacity(0.55))
-            .overlay(Capsule().stroke(Theme.hairline))
-            .accessibilityLabel("Momentum community")
+    /// The purple Verified-Pro seal — the SAME mark the athlete's own profile and every feed
+    /// byline use (owner call 2026-07-30; replaces the old iridescent "Momentum" pill, which was
+    /// the pre-redesign badge language). Sized to sit beside the 26pt display name exactly as on
+    /// the own-profile header.
+    private var proSeal: some View {
+        Image(systemName: "checkmark.seal.fill")
+            .font(.system(size: 19, weight: .semibold))
+            .foregroundStyle(Theme.purple)
+            .accessibilityLabel("Verified Pro")
     }
 
-    // MARK: Grid — their posts in the same 3-column tile grammar as the athlete's own grid
+    // MARK: Grid — their posts in the SAME edge-to-edge wall the community and own profile use
+    // (owner call 2026-07-29: one grid grammar everywhere; the old rounded padded tiles were the
+    // pre-redesign look). Tap → the same full-bleed vertical pager as the wall.
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3)
+    /// A tapped tile → the pager opens on it.
+    private struct PagerStart: Identifiable { let id: UUID }
+    @State private var pagerStart: PagerStart?
 
     @ViewBuilder
     private var postGrid: some View {
@@ -203,18 +276,17 @@ struct AthleteProfileView: View {
             }
             .frame(maxWidth: .infinity).padding(.vertical, Theme.Space.xxl)
         } else {
-            LazyVGrid(columns: columns, spacing: Theme.Space.sm) {
-                ForEach(gridPosts) { post in
-                    // Pushed (isPushed) — the tab's stack provides the bar; the detail must not nest
-                    // its own NavigationStack (that rendered the reading view cut off).
-                    NavigationLink { PostDetailView(item: post, isPushed: true) } label: {
-                        PostTile(item: post)
-                    }
-                    .buttonStyle(.plain)
-                }
+            CommunityFeedGrid(items: gridPosts, zoomNamespace: nil) { id in
+                pagerStart = PagerStart(id: id)
             }
-            .padding(.horizontal, Theme.Space.md)
-            .padding(.top, Theme.Space.md)
+            .fullScreenCover(item: $pagerStart) { start in
+                // Sliced from the tapped tile (the wall's rule): page one is guaranteed to be the
+                // post you tapped. `ownHandle: athlete.handle` keeps the byline inert — you're
+                // already ON their profile; a byline push here would stack the page on itself.
+                let index = gridPosts.firstIndex(where: { $0.id == start.id }) ?? 0
+                CommunityPager(items: Array(gridPosts[index...]), startID: start.id,
+                               ownHandle: athlete.handle)
+            }
         }
     }
 
@@ -222,44 +294,19 @@ struct AthleteProfileView: View {
 
     @ViewBuilder
     private var highlightsContent: some View {
+        // The own-profile Highlights grammar, verbatim (owner call 2026-07-30: EVERY profile wears
+        // the redesign): reveal cascade top-down, editorial section rules, count-up heroes, the
+        // PenRule, hairline-divided lifetime cells, headlined consistency card with axes.
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
             if athlete.isSample {
-                section("Lifetime") {
-                    // Distance is the hero only for distance sports — a lifter/yogi headlining
-                    // "4,200 km covered" contradicted their whole profile. Their body of work is
-                    // the session count.
-                    VStack(alignment: .leading, spacing: 2) {
-                        if athlete.primaryType.isGPS, athlete.totalDistanceM > 0 {
-                            Text(Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit))
-                                .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                                .lineLimit(1).minimumScaleFactor(0.6)
-                            Text("distance covered")
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                        } else {
-                            Text("\(athlete.totalWorkouts)")
-                                .font(.display(40, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                                .lineLimit(1).minimumScaleFactor(0.6)
-                            Text("workouts logged")
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                section("How they train") {
-                    DisciplineBreakdown(counts: athlete.disciplineCounts)
-                        .padding(Theme.Space.lg).background(card)
-                }
-                section("Consistency") {
-                    ConsistencyHeatmap(countingDays: athlete.consistencyDays,
-                                       dayMinutes: athlete.consistencyMinutes)
-                        .padding(Theme.Space.lg).background(card)
-                }
-                if !records.prs.isEmpty || records.longestRunM > 0 || records.longestDurationS > 0 {
-                    section("Personal records") {
-                        PRShelf(strengthPRs: records.prs, longestRunM: records.longestRunM,
-                                longestDurationS: records.longestDurationS, weightUnit: weightUnit, distanceUnit: distanceUnit)
-                    }
-                }
+                lifetimeSection.reveal(0)
+                trainSection.reveal(0.08)
+                consistencySection.reveal(0.16)
+                // No "Personal records" section — the awards shelf superseded the PR cards
+                // app-wide (owner call 2026-07-30; PRShelf deleted): the medallions already carry
+                // the same milestones, derived from the same numbers. Every profile now reads
+                // Lifetime / How they train / Consistency / Awards, exactly like the own page.
+                awardsSection.reveal(0.24)
             } else {
                 // Real athletes: we don't invent a body of work. Their grid speaks for them.
                 Text("Highlights appear as \(athlete.name) shares more.")
@@ -272,10 +319,135 @@ struct AthleteProfileView: View {
         .padding(.top, Theme.Space.lg)
     }
 
-    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text(title.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+    /// The editorial stat block, same as the own profile: one count-up hero, the PenRule, then the
+    /// supporting figures hairline-divided, set straight on the canvas (no card). Distance is the
+    /// hero only for distance sports — a lifter/yogi headlining "4,200 km covered" contradicted
+    /// their whole profile; their body of work is the session count.
+    private var lifetimeSection: some View {
+        section("Lifetime") {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if athlete.primaryType.isGPS, athlete.totalDistanceM > 0 {
+                        CountUpNumber(value: athlete.totalDistanceM,
+                                      format: { Formatters.distance(meters: $0, unit: distanceUnit) },
+                                      font: .display(40, weight: .black))
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                            .accessibilityLabel("Distance covered")
+                            .accessibilityValue(Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit))
+                        Text("distance covered")
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    } else {
+                        CountUpNumber(value: Double(athlete.totalWorkouts),
+                                      format: { "\(Int($0.rounded()))" },
+                                      font: .display(40, weight: .black))
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                            .accessibilityLabel("Workouts logged")
+                            .accessibilityValue("\(athlete.totalWorkouts)")
+                        Text("workouts logged")
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                PenRule(delay: 0.3)
+                HStack(spacing: 0) {
+                    // Lifetime, like every other number in this block — derived from distance +
+                    // session mix so it can never contradict them (see `lifetimeDurationS`).
+                    lifetimeCell(Formatters.duration(s: athlete.lifetimeDurationS), "Time moving")
+                    lifetimeDivider
+                    lifetimeCell("\(athlete.totalWorkouts)", "Sessions")
+                    if athlete.dayStreak > 0 {
+                        lifetimeDivider
+                        lifetimeCell("\(athlete.dayStreak)", "Day streak")
+                    }
+                }
+            }
+        }
+    }
+
+    private var trainSection: some View {
+        section("How they train") {
+            DisciplineBreakdown(counts: athlete.disciplineCounts)
+                .padding(Theme.Space.lg).background(card)
+        }
+    }
+
+    /// The same headlined consistency card as the own profile: the one number that summarizes the
+    /// grid, then the full heatmap with month/weekday axes.
+    private var consistencySection: some View {
+        let today = StreakCalculator.localDay(Date())
+        let active = (0..<(16 * 7)).filter { athlete.consistencyDays.contains(today - $0) }.count
+        return section("Consistency") {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    CountUpNumber(value: Double(active), format: { "\(Int($0.rounded()))" },
+                                  font: .display(22, weight: .black), delay: 0.15)
+                        .accessibilityLabel("Active days, last 16 weeks")
+                        .accessibilityValue("\(active)")
+                    Text("active days · last 16 weeks")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                ConsistencyHeatmap(countingDays: athlete.consistencyDays,
+                                   dayMinutes: athlete.consistencyMinutes, showsAxes: true)
+            }
+            .padding(Theme.Space.lg).background(card)
+        }
+    }
+
+    private func lifetimeCell(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.display(18, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.8)
                 .foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var lifetimeDivider: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 30)
+            .padding(.trailing, Theme.Space.md)
+    }
+
+    /// The athlete's trophy case — the own profile's awards shelf, verbatim (3-up medallions,
+    /// settle-in entrance, "N of M" meta on the rule). Cells derive from the athlete's own
+    /// records/stats (`communityAwards`), so this section and "Personal records" always agree.
+    /// No "All awards" row: that navigates the viewer's OWN awards book.
+    @ViewBuilder
+    private var awardsSection: some View {
+        let shelf = athlete.communityAwards
+        // A section rule over an empty shelf reads as a broken page. Every athlete has at least a
+        // chase cell today (the endurance ladder always has a value), but the shelf is derived —
+        // one future ladder change shouldn't be able to ship an empty header.
+        if !shelf.cells.isEmpty {
+            section("Awards", meta: "\(shelf.earnedCount) of \(AwardsCatalog.all.count)") {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm), count: 3),
+                          spacing: Theme.Space.md) {
+                    ForEach(Array(shelf.cells.enumerated()), id: \.element.id) { i, cell in
+                        AwardCell(award: cell.award, earnedAt: cell.earnedAt, progress: cell.progress)
+                            .modifier(SettleIn(delay: 0.28 + Double(i) * 0.05))
+                    }
+                }
+            }
+        }
+    }
+
+    /// The own profile's editorial section header, verbatim: small tracked label with a hairline
+    /// extending to the margin and optional right-aligned meta ("6 of 45"). One header language
+    /// across every profile.
+    private func section<Content: View>(_ title: String, meta: String? = nil,
+                                        @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(spacing: Theme.Space.sm) {
+                Text(title.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                    .foregroundStyle(Theme.inkTertiary)
+                    .fixedSize()
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                if let meta {
+                    Text(meta)
+                        .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(Theme.inkTertiary)
+                        .fixedSize()
+                }
+            }
             content()
         }
     }
@@ -286,125 +458,5 @@ struct AthleteProfileView: View {
     }
 }
 
-// MARK: - Post tile (a FeedItem in the own-grid's tile grammar)
 
-/// One shared workout as a grid tile — identical grammar to the own profile's `WorkoutTile`
-/// (3:4, radius 12, hairline, bottom metric strip) so visited grids read as the same product.
-/// Media priority mirrors `WorkoutTileMedia`: photo → muscle map → route silhouette → glyph.
-private struct PostTile: View {
-    let item: FeedItem
-
-    var body: some View {
-        Color.clear
-            .aspectRatio(3.0 / 4.0, contentMode: .fit)
-            .overlay { media }
-            .overlay(alignment: .bottom) { metricStrip }
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline))
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(item.type.title), \(metric)")
-    }
-
-    @ViewBuilder
-    private var media: some View {
-        if let data = item.photoData, let ui = UIImage(data: data) {
-            Image(uiImage: ui).resizable().scaledToFill()
-        } else if let muscles = item.muscles, !muscles.isEmpty {
-            ZStack {
-                Theme.surface
-                // A community post shows ANOTHER athlete's body — pin to neutral so it never
-                // inherits the viewer's own figure (when community returns, use the author's sex).
-                MuscleMapView(activation: muscles, sex: .neutral, forceStatic: true)
-                    .padding(Theme.Space.sm)
-            }
-        } else if let route = routeCoords, route.count > 1 {
-            // The route over its REAL map — a cached STATIC snapshot (never a live engine), sharing the
-            // feed's snapshot cache + 4-render cap so a whole grid renders a few at a time then scrolls
-            // as plain images. A silhouette shows instantly and crossfades to the map when it lands.
-            RouteTileMap(item: item, coords: route)
-        } else {
-            ZStack {
-                LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: item.type.systemImage)
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(Theme.ink.opacity(0.85))
-            }
-        }
-    }
-
-    private var routeCoords: [CLLocationCoordinate2D]? {
-        item.routeLatLon?.compactMap { pair in
-            pair.count == 2 ? CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1]) : nil
-        }
-    }
-
-    private var metricStrip: some View {
-        HStack(spacing: 4) {
-            Image(systemName: item.type.systemImage).font(.system(size: 10, weight: .bold))
-            Text(metric).font(.rounded(11, weight: .bold)).monospacedDigit()
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, Theme.Space.sm).padding(.vertical, Theme.Space.chipV)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LinearGradient(colors: [.clear, .black.opacity(0.45)], startPoint: .top, endPoint: .bottom))
-    }
-
-    /// The stat line's headline number (it reads "5.2 mi · 8:41 /mi" — the tile shows the first).
-    private var metric: String {
-        item.statLine.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespaces) ?? item.statLine
-    }
-}
-
-// MARK: - Route tile map (a grid cell's real map, rendered once and cached)
-
-/// A profile-grid cell's route drawn over its **real map**, using the same shared, cached, rate-capped
-/// `FeedRouteSnapshots` engine as the feed — so the map behind the route matches the feed exactly and a
-/// grid of ~15 tiles renders a few at a time (never a live Mapbox engine per cell) then scrolls as plain
-/// images. The route silhouette shows instantly and crossfades to the snapshot when it lands, so a cell
-/// is never blank and never stalls. Portrait size fits the 3:4 tile; the shared cache means a post seen
-/// in both feed and grid renders at most once per appearance.
-private struct RouteTileMap: View {
-    let item: FeedItem
-    let coords: [CLLocationCoordinate2D]
-
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var image: UIImage?
-
-    var body: some View {
-        ZStack {
-            Theme.background
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
-            } else {
-                // The route's shape, instantly — the cell never looks blank while the map renders.
-                RouteSilhouette(coords: coords)
-                    .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .padding(Theme.Space.md)
-            }
-        }
-        .animation(.easeOut(duration: 0.25), value: image != nil)
-        .task(id: "\(item.id)-\(colorScheme == .dark)") {
-            #if DEBUG
-            // UI tests keep the instant silhouette: XCUITest realizes every lazy grid cell at once,
-            // and dozens of queued render engines starve the main thread (mirrors FeedRouteMap).
-            if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
-            #endif
-            for attempt in 0..<3 {
-                if Task.isCancelled { return }
-                // routeWidth 6: this 300pt-wide render displays in a ~112pt tile (0.37×), so 6 reads
-                // ~2.2pt — visually matched to the feed's thin 3-on-420 line, never a fat marker.
-                if let rendered = await FeedRouteSnapshots.image(
-                    post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
-                    size: CGSize(width: 300, height: 400), routeWidth: 6) {
-                    image = rendered
-                    return
-                }
-                try? await Task.sleep(for: .seconds(Double(attempt + 1) * 2))
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
 

@@ -105,6 +105,10 @@ enum DataManager {
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything
         WidgetBridge.clear()          // the Home Screen widget must not keep the deleted streak
         ReadinessTodayCache.clear()   // nor the strip open on the deleted athlete's score
+        // A set-aside store is still this athlete's training history, sitting outside SwiftData
+        // where none of the wipes above can see it. Leaving it would make "delete" a lie and would
+        // let Settings offer the previous owner's runs to whoever signs in next.
+        PersistenceController.purgeQuarantine()
         try? context.save()
     }
 
@@ -146,6 +150,7 @@ enum DataManager {
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything
         WidgetBridge.clear()          // the Home Screen widget must not keep the deleted streak
         ReadinessTodayCache.clear()   // nor the strip open on the deleted athlete's score
+        PersistenceController.purgeQuarantine()   // see the sync variant — "delete" must mean it
     }
 }
 

@@ -35,13 +35,30 @@ enum RouteSnapshotter {
     /// v5 (2026-07-28): the card renders in the run's OWN style rather than always Light, so every
     /// existing snapshot is stale by definition — the healer re-renders them onto the canvas their
     /// workout was actually saved with.
-    static let renderVersion = 5
+    /// v7 (2026-07-30): the workout tile is CLEAN — no start/finish marks. (v6 briefly baked them
+    /// into every persisted snapshot; the owner's call is that a grid of thumbnails stays a grid of
+    /// shapes and the marks belong to the opened route, so the healer re-renders v6 images back to
+    /// an unmarked tile.)
+    static let renderVersion = 7
+
+    /// Start/finish mark size **in the rendered image's point space**, for the surfaces that carry
+    /// marks at all.
+    ///
+    /// **Grids don't** (owner call 2026-07-30): a wall of thumbnails is a wall of shapes, and marks
+    /// on every 130pt tile read as clutter — you see where a run began and ended when you open it.
+    /// So `endpointDiameter` defaults to nil (no marks) and only the full-view surfaces pass one.
+    enum EndpointMark {
+        /// Full-bleed pages and full-width cards, rendered at roughly display size (1:1, so this is
+        /// the on-screen size — deliberately small, to match the live map's marks).
+        static let fullBleed: CGFloat = 13
+    }
 
     static func snapshot(coordinates: [CLLocationCoordinate2D],
                          size: CGSize = CGSize(width: 640, height: 360),
                          styleURI: StyleURI = .light,
                          insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
-                         routeWidth: CGFloat = 8) async -> Data? {
+                         routeWidth: CGFloat = 8,
+                         endpointDiameter: CGFloat? = nil) async -> Data? {
         guard coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
@@ -107,6 +124,14 @@ enum RouteSnapshotter {
                     ctx.setLineWidth(routeWidth); ctx.setStrokeColor(routeColor.cgColor)
                     ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
                     ctx.strokePath()
+                    // Where the run began and where it ended (owner call 2026-07-30) — only on the
+                    // surfaces that ask (full views, never grid thumbnails). These sit at the ends
+                    // of the DRAWN path, which `clippingEnds` has already pulled ~200m in from the
+                    // athlete's door, so the marks add no location the image wasn't showing.
+                    if let endpointDiameter {
+                        RouteEndpoints.draw(in: ctx, start: pts[0], finish: pts[pts.count - 1],
+                                            diameter: endpointDiameter)
+                    }
                 }, completion: { result in
                     switch result {
                     case .success(let image): finish(image.pngData())

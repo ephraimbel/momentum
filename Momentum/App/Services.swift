@@ -103,7 +103,12 @@ protocol HealthServing: AnyObject {
     /// Request Health read/write permission (opt-in). Returns whether workout-sharing is granted.
     func requestAuthorization() async -> Bool
     /// Save a completed workout to Apple Health (best-effort, de-duplicated, never blocks).
-    func save(_ workout: Workout) async
+    /// `includeEnergy: false` skips the active-energy sample — for a workout whose calorie number
+    /// was READ from Health in the first place (writing it back would double-count the Move ring).
+    func save(_ workout: Workout, includeEnergy: Bool) async
+    /// The wearable's own active-energy total (kcal) inside one window — what the Watch measured
+    /// during exactly the minutes the athlete was playing. nil = no samples (absent, never zero).
+    func measuredActiveEnergy(start: Date, end: Date) async -> Double?
     /// Read the athlete's latest body mass + resting HR (for personalizing estimates). nils if N/A.
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
     /// Read recovery signals wearables mirror into Health — HRV, resting HR, and last night's sleep,
@@ -129,6 +134,12 @@ protocol HealthServing: AnyObject {
     /// shows its quiet connect line instead of a fabricated flatline.
     func dailySteps(daysBack: Int) async -> [(day: Date, steps: Double)]
 }
+
+extension HealthServing {
+    /// The common save — every calorie the workout carries is ours to mirror.
+    func save(_ workout: Workout) async { await save(workout, includeEnergy: true) }
+}
+
 @MainActor
 protocol SyncServing: AnyObject {
     /// Push dirty (never-synced) workouts to the cloud and stamp them synced (PRD §8.9). No-op until

@@ -10,7 +10,7 @@ final class SettingsProCardUITests: XCTestCase {
 
     func testProCardShowsAppIcon() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo"]
+        app.launchArguments = ["--reset-store", "--seed-demo"]
         app.launch()
 
         app.buttons["Profile"].firstMatch.tap()
@@ -24,7 +24,12 @@ final class SettingsProCardUITests: XCTestCase {
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_procard.png"))
 
         // Coach chat opens from here and carries the brand mark in its empty state.
-        app.staticTexts["Open coach chat"].firstMatch.tap()
+        // The row is a Button labelled "Coach chat" (`actionRow`). This asked for a StaticText
+        // called "Open coach chat", a string that exists nowhere in the app, so the suite had been
+        // failing on its own wording rather than on anything the athlete would notice.
+        let coachRow = app.buttons["Coach chat"].firstMatch
+        XCTAssertTrue(coachRow.waitForExistence(timeout: 5), "Coach chat row missing from Settings.")
+        coachRow.tap()
         let field = app.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 10), "Coach chat didn't open.")
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_coachchat.png"))
@@ -34,7 +39,7 @@ final class SettingsProCardUITests: XCTestCase {
     /// tapped unit and persist through the profile (which the whole app reads).
     func testUnitSwitchingSelectsKilometersAndKilograms() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--settings"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--settings"]
         app.launch()
 
         let km = app.buttons["Km distance"].firstMatch

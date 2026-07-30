@@ -34,9 +34,60 @@ final class CoachChatViewModel {
         self.health = health
         seedGreetingIfEmpty()
         suggestions = computeSuggestions()
+        (heroTitle, heroSubline) = computeHero()
     }
 
     var canSend: Bool { !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isResponding }
+
+    /// The fresh-thread landing's two lines: a time-of-day greeting with the athlete's first name,
+    /// and one short sentence that proves the coach already knows today (the session, or the rest
+    /// day). Stored for the same reason as `suggestions` — building them reads the plan, and the
+    /// landing's body re-evaluates on every keystroke into the composer.
+    private(set) var heroTitle = "Hello."
+    private(set) var heroSubline = "Ask me anything about your training."
+
+    private func computeHero() -> (String, String) {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let daypart = (5..<12).contains(hour) ? "Morning" : (12..<17).contains(hour) ? "Afternoon" : "Evening"
+        let profile = fetchProfile()
+        let first = profile?.displayName.split(separator: " ").first.map(String.init) ?? ""
+        let title = first.isEmpty ? "\(daypart)." : "\(daypart), \(first)."
+        guard let plan = profile?.plan else { return (title, "Ask me anything about your training.") }
+        let today = PlanCoaching.todaySessions(plan, on: Date())
+        let phrase: String
+        if let open = today.first(where: { $0.status != .completed }) {
+            if open.discipline == .strength { phrase = "Strength day." }
+            else if let run = open.runType { phrase = Self.dayPhrase(run) }
+            else {
+                switch open.discipline {
+                case .cycling: phrase = "Ride day."
+                case .walking: phrase = "Walk day."
+                default: phrase = "Run day."
+                }
+            }
+        } else if !today.isEmpty {
+            phrase = "Today's work is done."
+        } else {
+            phrase = "Rest day."
+        }
+        return (title, phrase + " Ask me anything.")
+    }
+
+    private static func dayPhrase(_ run: RunType) -> String {
+        switch run {
+        case .easy: "Easy day."
+        case .long: "Long run day."
+        case .tempo: "Tempo day."
+        case .intervals: "Interval day."
+        case .recovery: "Recovery day."
+        case .race: "Race day."
+        case .fartlek: "Fartlek day."
+        case .hills: "Hill day."
+        case .strides: "Strides day."
+        case .progression: "Progression day."
+        case .freeRun: "Run day."
+        }
+    }
 
     /// Starter chips that read the athlete's situation: a fresh workout, a race on the horizon, an
     /// active injury — then the evergreen questions fill the rest. Always exactly four.
@@ -438,6 +489,7 @@ final class CoachChatViewModel {
         try? context.save()
         seedGreetingIfEmpty()
         suggestions = computeSuggestions()   // the reset thread re-reads the athlete's situation
+        (heroTitle, heroSubline) = computeHero()
     }
 
     // MARK: - Persistence

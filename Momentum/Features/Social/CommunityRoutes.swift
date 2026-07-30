@@ -24,8 +24,31 @@ enum CommunityRoutes {
               let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode([String: CityEntry].self, from: data)
         else { return [:] }
-        return decoded
+        // Re-measure every loop from its SHIPPED points. The fetch stored the Directions API's
+        // road-network length, but the bundled geometry is simplified — up to ~30% shorter than
+        // the road it traces — and the DRAWN shape is what a post's tile shows. Stats must agree
+        // with the map the athlete is looking at (CommunityContentAuditTests measures exactly
+        // this), so the drawn length is the honest one.
+        return decoded.mapValues { entry in
+            CityEntry(run: entry.run.map(remeasured), ride: entry.ride.map(remeasured))
+        }
     }()
+
+    private static func remeasured(_ loop: Loop) -> Loop {
+        Loop(km: lengthKm(loop.pts), pts: loop.pts)
+    }
+
+    /// Flat-earth polyline length — exact to well under 1% at city scale.
+    private static func lengthKm(_ pts: [[Double]]) -> Double {
+        guard pts.count > 1 else { return 0 }
+        var meters = 0.0
+        for i in 1..<pts.count where pts[i].count >= 2 && pts[i - 1].count >= 2 {
+            let mLat = (pts[i][0] - pts[i - 1][0]) * 111_132.0
+            let mLon = (pts[i][1] - pts[i - 1][1]) * 111_320.0 * cos(pts[i - 1][0] * .pi / 180)
+            meters += (mLat * mLat + mLon * mLon).squareRoot()
+        }
+        return meters / 1000
+    }
 
     /// A deterministic real loop for a city + discipline; nil when the city isn't bundled
     /// (callers fall back to no map rather than a fake one).
@@ -34,6 +57,14 @@ enum CommunityRoutes {
         let pool = isRide(discipline) ? entry.ride : entry.run
         guard !pool.isEmpty else { return nil }
         return pool[rng.int(0...(pool.count - 1))]
+    }
+
+    /// The full bundle, exposed for the realism-audit tests: every routed post's polyline must be
+    /// one of these street-fetched loops, which is what makes over-water routes impossible.
+    static var auditCities: [String] { Array(byCity.keys) }
+    static func auditLoops(city: String) -> [Loop] {
+        guard let entry = byCity[city] else { return [] }
+        return entry.run + entry.ride
     }
 
     /// The bundled loop closest to a target distance — for hand-curated featured posts whose

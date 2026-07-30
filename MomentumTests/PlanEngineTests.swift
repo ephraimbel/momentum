@@ -783,13 +783,16 @@ struct PlanEngineTests {
             && !w.sessions.contains { $0.intervals?.contains("Time trial") == true } }
         #expect(!buildWeeks.isEmpty)
         for week in buildWeeks {
-            let quality = week.sessions.filter { $0.isHardRun && $0.runType != .long }
-            #expect(quality.count == 2, "build week \(week.index): expected two quality days, got \(quality.count)")
-            // The two stimuli differ, and the days are never back-to-back (running-only week has room).
-            if quality.count == 2 {
-                #expect(quality[0].intervals != quality[1].intervals)
-                #expect(abs(quality[0].dayOffset - quality[1].dayOffset) >= 2,
-                        "build week \(week.index): quality days adjacent")
+            // Two hard STIMULI per build week — and exactly two. On the rotation weeks where the
+            // long run carries a race-pace finish, that long run IS the second stimulus (Pfitzinger
+            // pairs LT + RP-long); the engine must never stack a third standalone quality on top
+            // (the triple-hard-week bug the 2026-07-29 audit caught).
+            let hard = week.sessions.filter(\.isHardRun).sorted { $0.dayOffset < $1.dayOffset }
+            #expect(hard.count == 2, "build week \(week.index): expected two hard days, got \(hard.count)")
+            if hard.count == 2 {
+                #expect(hard[0].intervals != hard[1].intervals)
+                #expect(abs(hard[0].dayOffset - hard[1].dayOffset) >= 2,
+                        "build week \(week.index): hard days adjacent")
             }
             // The week still fills exactly the athlete's day budget.
             #expect(week.sessions.count == 5)

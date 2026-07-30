@@ -14,19 +14,28 @@ private struct ProLockModifier: ViewModifier {
     let active: Bool
     @Environment(PaywallController.self) private var paywall
 
+    @ViewBuilder
     func body(content: Content) -> some View {
         let locked = active && !paywall.isEntitled(to: feature)
-        content
-            // Show the FULL gated content, frosted — a locked plan or trends page must read as a WHOLE
-            // thing being withheld (every day, every chart), not a half-empty teaser. The scrim keeps the
-            // unlock card crisp on any section, in light or dark.
-            .blur(radius: locked ? 9 : 0)
-            .clipped()                        // contain the blur's soft edge at the section bounds
-            .overlay { if locked { Theme.background.opacity(0.55).allowsHitTesting(false) } }
-            .allowsHitTesting(!locked)
-            .overlay { if locked { lockOverlay } }
-            .accessibilityElement(children: locked ? .ignore : .contain)
-            .accessibilityLabel(locked ? "Locked — unlock \(feature.displayName) with Pro" : "")
+        if locked {
+            content
+                // Show the FULL gated content, frosted — a locked plan or trends page must read as a
+                // WHOLE thing being withheld (every day, every chart), not a half-empty teaser. The
+                // scrim keeps the unlock card crisp on any section, in light or dark.
+                .blur(radius: 9)
+                .clipped()                    // contain the blur's soft edge at the section bounds
+                .overlay { Theme.background.opacity(0.55).allowsHitTesting(false) }
+                .allowsHitTesting(false)
+                .overlay { lockOverlay }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Locked — unlock \(feature.displayName) with Pro")
+        } else {
+            // Untouched when unlocked — the zero-radius blur + clip still cost a compositing pass
+            // on the largest subtrees of the app (the whole plan board, the whole trends stack).
+            // The two branches ARE different structural identities, so state below resets when the
+            // lock flips — acceptable: that happens once, at purchase.
+            content
+        }
     }
 
     /// Keep the card in view no matter how tall the gated section is: center it within the top band of

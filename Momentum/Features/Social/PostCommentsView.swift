@@ -19,11 +19,15 @@ struct PostCommentsView: View {
 
     private var profile: UserProfile? { profiles.first }
 
-    /// Seeded + user comments, moderation-filtered, oldest → newest.
+    /// Comments, moderation-filtered, oldest → newest. Seeds join ONLY on badged community posts —
+    /// a real athlete's thread is exactly what was actually written (pulled + the viewer's own);
+    /// fabricated comments on a real person's post crossed the honesty line (caught 2026-07-30).
     private var visible: [Comment] {
-        (CommunityComments.seed(for: item.id, postDate: item.date, reactions: item.baseReactions,
-                                type: item.type, authorHandle: item.authorHandle)
-            + comments.comments(for: item.id))
+        let seeded = item.isCommunity
+            ? CommunityComments.seed(for: item.id, postDate: item.date, reactions: item.baseReactions,
+                                     type: item.type, authorHandle: item.authorHandle)
+            : []
+        return (seeded + comments.comments(for: item.id))
             .filter(moderation.isVisible)
             .sorted { $0.date < $1.date }
     }
@@ -73,7 +77,8 @@ struct PostCommentsView: View {
                    let athlete = CommunityDirectory.athlete(handle: h) { shownAthlete = athlete }
             } label: {
                 AvatarView(photo: comment.isCommunity ? nil : profile?.avatarData, name: comment.authorName, size: 30,
-                           imageName: comment.isCommunity ? comment.authorHandle.flatMap { CommunityAvatars.assetName(forHandle: $0) } : nil)
+                           imageName: comment.isCommunity ? comment.authorHandle.flatMap { CommunityAvatars.assetName(forHandle: $0) } : nil,
+                           preset: comment.isCommunity ? comment.authorHandle.flatMap { CommunityAvatars.preset(forHandle: $0) } : nil)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("View \(comment.authorName)'s profile")

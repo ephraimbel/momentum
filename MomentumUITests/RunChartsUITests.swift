@@ -22,10 +22,17 @@ final class RunChartsUITests: XCTestCase {
         // The detail scrolls; charts live below the route map. Swipe up to reveal them.
         let splits = app.staticTexts["SPLITS"]
         XCTAssertTrue(splits.waitForExistence(timeout: 15), "Run detail didn't open.")
-        app.swipeUp(); app.swipeUp()
+
+        // PACE and ELEVATION only — never "SPLITS". That string is BOTH a chart title and the
+        // header of the plain splits list below, and it was already asserted above as the
+        // "detail opened" guard, so `|| splits.exists` made this assertion unfailable. It passed
+        // green for weeks while `RunAnalysisSection` rendered nothing at all (its `.task` hung off
+        // a view that starts empty, so it never fired). A chart test must name a chart.
+        let pace = app.staticTexts["PACE"], elevation = app.staticTexts["ELEVATION"]
+        let deadline = Date().addingTimeInterval(10)
+        while !pace.exists, !elevation.exists, Date() < deadline { app.swipeUp(); usleep(300_000) }
         dump(app, "verify_runcharts")
-        // Chart section titles are present.
-        XCTAssertTrue(app.staticTexts["PACE"].exists || app.staticTexts["ELEVATION"].exists || splits.exists,
-                      "No analysis charts rendered.")
+        XCTAssertTrue(pace.exists, "Pace chart missing from run detail.")
+        XCTAssertTrue(elevation.exists, "Elevation chart missing from run detail.")
     }
 }

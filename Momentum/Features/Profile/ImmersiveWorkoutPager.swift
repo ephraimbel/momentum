@@ -15,6 +15,10 @@ struct ImmersiveWorkoutPager: View {
     let startID: UUID
     var weightUnit: WeightUnit = .default()
     var distanceUnit: DistanceUnit = .auto
+    /// Who these pages belong to — drawn over the media exactly the way the community pager draws
+    /// everyone else's (owner call 2026-07-30). The grid tile stays chip-free (your own wall doesn't
+    /// need to tell you whose it is); opening the content is where the identity belongs.
+    var byline: WorkoutByline? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -28,7 +32,7 @@ struct ImmersiveWorkoutPager: View {
                         ForEach(workouts) { workout in
                             ImmersiveWorkoutPage(
                                 workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
-                                isFirst: workout.id == startID,
+                                byline: byline, isFirst: workout.id == startID,
                                 topInset: geo.safeAreaInsets.top, bottomInset: geo.safeAreaInsets.bottom,
                                 onClose: { dismiss() })
                             .frame(width: geo.size.width, height: fullHeight)
@@ -57,12 +61,53 @@ struct ImmersiveWorkoutPager: View {
     }
 }
 
+// MARK: - Whose content this is
+
+/// The athlete's own byline for a full-bleed page: photo, name, Pro seal, "@handle · City". Built
+/// once at presentation time from the live `UserProfile` (a value, so paging never faults the model),
+/// and it reads the SAME public projection the community feed publishes — `SocialPrivacy` decides
+/// whether a location may appear at all, so your own post can't show more than a follower sees.
+struct WorkoutByline: Equatable {
+    var name: String
+    var handle: String?
+    var location: String?
+    var avatarData: Data?
+    var isPro: Bool = false
+
+    init(name: String, handle: String? = nil, location: String? = nil,
+         avatarData: Data? = nil, isPro: Bool = false) {
+        self.name = name
+        self.handle = handle
+        self.location = location
+        self.avatarData = avatarData
+        self.isPro = isPro
+    }
+
+    init(profile: UserProfile?, isPro: Bool = false) {
+        self.init(name: FeedAssembler.displayName(profile),
+                  handle: profile.flatMap { $0.handle.isEmpty ? nil : $0.handle },
+                  location: profile.flatMap(SocialPrivacy.publicLocation),
+                  avatarData: profile?.avatarData,
+                  isPro: isPro)
+    }
+
+    /// "@handle · Austin, TX" — the community pager's second line, same order, same separator.
+    /// Empty when the athlete has neither (a brand-new account shows just their name).
+    var secondLine: String {
+        var parts: [String] = []
+        if let handle { parts.append("@\(handle)") }
+        if let location, !location.isEmpty { parts.append(location) }
+        return parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - One page
 
 private struct ImmersiveWorkoutPage: View {
     let workout: Workout
     var weightUnit: WeightUnit
     var distanceUnit: DistanceUnit
+    var byline: WorkoutByline?
     var isFirst: Bool
     var topInset: CGFloat
     var bottomInset: CGFloat
@@ -74,18 +119,41 @@ private struct ImmersiveWorkoutPage: View {
     /// pinch-explores away from the fitted overview, and answers its tap.
     @State private var mapCamera = RouteMapCameraHandle()
 
+    /// The cover rule applied to your own posts: the session's visual (live route map, muscle
+    /// map) is page one and photos page behind it — flipped by "Photo as cover". In a paged
+    /// context the route page drops its camera handle (a pannable map inside a horizontal pager
+    /// fights the swipe); the single-media page keeps the fully explorable map exactly as before.
+    private var mediaPages: [FullBleedPage] {
+        let photos = workout.orderedPhotosData.map { FullBleedPage.photo($0) }
+        guard !photos.isEmpty else { return [] }
+        let primary = [FullBleedPage.primary(AnyView(
+            WorkoutTileMedia(workout: workout, style: .immersive, distanceUnit: distanceUnit)
+                .allowsHitTesting(false)))]
+        return workout.coverIsPhoto ? photos + primary : primary + photos
+    }
+
     var body: some View {
         ZStack {
-            WorkoutTileMedia(workout: workout, style: .immersive,
-                             distanceUnit: distanceUnit, mapCameraHandle: mapCamera)
+            let pages = mediaPages
+            if pages.count > 1 {
+                // The counter pill sits BELOW the top-right share control's row.
+                FullBleedMediaPager(pages: pages, pillTopPadding: topInset + 52)
+            } else {
+                WorkoutTileMedia(workout: workout, style: .immersive,
+                                 distanceUnit: distanceUnit, mapCameraHandle: mapCamera)
+            }
 
-            // Soft light scrims keep ink controls legible over any media (photos, maps, muscle art).
+            // Soft light scrims keep ink controls legible over any media (photos, maps, muscle
+            // art). Eased (SoftScrim), not two-stop — a linear fade "ends in a line" over dark
+            // basemaps (owner report 2026-07-29, first seen on the community pager).
             VStack(spacing: 0) {
-                LinearGradient(colors: [Theme.background.opacity(0.92), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: topInset + 120)
+                SoftScrim.top(Theme.background)
+                    .frame(height: topInset + 150)
                 Spacer(minLength: 0)
-                LinearGradient(colors: [.clear, Theme.background.opacity(0.94)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: bottomInset + 300)
+                // As tall as the community pager's: this overlay now stacks byline + title + note +
+                // stats, and at 300 a busy basemap's POI labels bled up through the byline.
+                SoftScrim.bottom(Theme.background)
+                    .frame(height: bottomInset + 430)
             }
 
             VStack(spacing: 0) {
@@ -143,15 +211,71 @@ private struct ImmersiveWorkoutPage: View {
         .padding(.bottom, Theme.Space.md)
     }
 
+    /// The community pager's composition, on your own work: who → what → the note you wrote → the
+    /// numbers. Without a byline (previews) the date carries the top line on its own.
     private var statsOverlay: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text(workout.startedAt.formatted(.dateTime.weekday(.wide).month().day()))
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            if let byline {
+                bylineRow(byline)
+            } else {
+                Text(workout.startedAt.formatted(.dateTime.weekday(.wide).month().day()))
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            }
             Text(workout.title.isEmpty ? workout.type.title : workout.title)
                 .font(.display(28, weight: .black)).foregroundStyle(Theme.ink).lineLimit(2)
+            if !workout.note.isEmpty {
+                Text(workout.note)
+                    .font(.rounded(Theme.FontSize.body, weight: .regular))
+                    .foregroundStyle(Theme.inkSecondary).lineLimit(2)
+            }
             StatGrid(cells: metricCells, valueSize: 24, leading: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Photo · name · Pro seal · date, then "@handle · City" — the community byline exactly, minus
+    /// the tap: this profile is the one you came from, so it stays inert (the same rule
+    /// `CommunityPager` applies to your own posts on the wall).
+    private func bylineRow(_ author: WorkoutByline) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            AvatarView(photo: author.avatarData, name: author.name, size: 40)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text(author.name)
+                        .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .lineLimit(1).layoutPriority(1)
+                    if author.isPro {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.purple)
+                            .accessibilityLabel("Verified Pro")
+                    }
+                    // Full ink, never tertiary: this line sits over arbitrary media and tertiary
+                    // gray vanished against a pale sky even under the scrim (community pager's
+                    // lesson, 2026-07-30). Hierarchy comes from weight.
+                    Text("· \(dateLabel)")
+                        .font(.rounded(15, weight: .regular)).foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                }
+                if !author.secondLine.isEmpty {
+                    Text(author.secondLine)
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary).lineLimit(1)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The byline's date. The community fills this slot with "3 minutes ago", but your own logbook
+    /// wants the calendar date — "16 weeks ago" is useless when you're looking back at a build — and
+    /// it picks up the year as soon as the session isn't from this one.
+    private var dateLabel: String {
+        let cal = Calendar.current
+        let sameYear = cal.component(.year, from: workout.startedAt) == cal.component(.year, from: Date())
+        return sameYear
+            ? workout.startedAt.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+            : workout.startedAt.formatted(.dateTime.month(.abbreviated).day().year())
     }
 
     private var metricCells: [StatGrid.Cell] {

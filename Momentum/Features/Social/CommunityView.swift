@@ -10,13 +10,14 @@ import SwiftData
 struct CommunityView: View {
     @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
+    /// Saved-route count for the wall strip's library door (the door hides at zero).
+    @Query private var savedRoutes: [SavedRoute]
     @Environment(FollowStore.self) private var follows
     @Environment(ModerationStore.self) private var moderation
     @Environment(RemoteFeedStore.self) private var remoteFeed
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.colorScheme) private var colorScheme
     /// Last `is_pro` value published to the backend — lets the entitlement-change hook below
     /// skip the initial appearance (launch's `claimProfile` already stamped it).
     @State private var lastPublishedPro: Bool?
@@ -24,19 +25,76 @@ struct CommunityView: View {
     @State private var selectedAthlete: CommunityAthlete?
     /// Fresh community posts minted by pull-to-refresh (CommunityPulse) — session-scoped.
     @State private var pulsed: [FeedItem] = []
-    @State private var showingSearch = false
-    /// The masthead avatar → the athlete's own FULL profile page (pushed, back chevron).
-    @State private var showOwnProfile = false
+    /// The in-place athlete-search face. Owned by the HOST (ProfileScreen's header magnifier
+    /// toggles it) so chrome and content share one state; the empty state's "Find athletes"
+    /// writes the same binding.
+    @Binding private var searching: Bool
+    /// A tapped tile → the community pager opens on it (Identifiable for `.fullScreenCover(item:)`).
+    private struct PagerStart: Identifiable { let id: UUID }
+    @State private var immersive: PagerStart?
+    /// Instagram-style progressive reveal (owner ask 2026-07-29): the wall renders a WINDOW of
+    /// the assembled feed and grows it a page at a time when you reach the bottom — thousands of
+    /// posts without ever materializing thousands of tiles.
+    @State private var visibleCount = 30
+    /// One load = 12 posts — four rows of the 3-wide grid, the Instagram page (owner call
+    /// 2026-07-30: "loads another twelve… just continuous"). Small pages keep each reveal
+    /// imperceptible; the near-end prefetch below keeps them coming before the bottom is reached.
+    private static let windowStep = 12
+    /// How deep the Global well reaches into the assembled feed. Starts at one page's worth of
+    /// scrolling and DEEPENS by `wellStep` whenever the reveal window catches up to it (owner ask
+    /// 2026-07-30: the wall must never dead-end — reaching the bottom loads more, like pull-to-
+    /// refresh in reverse). The cap exists so a cold open never sorts/filters thousands of rows it
+    /// may never show; growth is demand-driven.
+    @State private var wellCap = 400
+    private static let wellStep = 400
     #if DEBUG
-    @State private var debugDetailPost: FeedItem?
+    /// --saved-routes: push the library directly (sim verification; the strip link needs a tap).
+    @State private var debugSavedRoutes = false
     #endif
+    /// Grid tile → pager zoom (the same Instagram open the profile grid ships).
+    @Namespace private var tileZoom
 
     private var profile: UserProfile? { profiles.first }
     private var scope: CommunityScope { CommunityScope(rawValue: scopeRaw) ?? .everyone }
 
-    init() {
-        // `--reset-social` starts UI tests from the default scope, like the social stores.
-        SocialDebug.resetIfRequested(.standard, keys: ["community.feedScope"])
+    // Hosted inside ProfileScreen behind the Profile ↔ Community slider (2026-07-29). The host's
+    // header carries all identity chrome (slider, magnifier, gear), so this view is pure content:
+    // the grid wall, the floating scope pill, and the pager. (The old `embedded` flag was stored
+    // but never read — deleted 2026-07-30.)
+
+    /// Once-per-process gate for the init-time debug writes below. A view INIT re-runs on every
+    /// parent re-evaluation, and a UserDefaults write there fires KVO even when the value is
+    /// unchanged — every `@AppStorage("community.feedScope")` reader invalidates, the tree
+    /// re-evaluates, the parent re-inits this view, and the write fires again: a self-sustaining
+    /// invalidation storm that saturated the main thread from launch (App body ~345 evals/sec,
+    /// diagnosed 2026-07-29 via `_printChanges`; it presented as the "blank wall / frozen
+    /// entrance / generic tab icon" launches). View inits must stay PURE — one-shot side effects
+    /// only, and only behind this flag.
+    @MainActor private static var didApplyLaunchArgs = false
+    /// One-shot for the DEBUG athlete-profile hooks — see the `onAppear` note: this view's
+    /// `onAppear` re-fires on every pop, so an unguarded hook re-pushes forever.
+    @MainActor private static var didOpenDebugAthlete = false
+
+    init(searching: Binding<Bool> = .constant(false)) {
+        self._searching = searching
+        _items = State(initialValue: Self.sessionFeed)
+        _assembledOnce = State(initialValue: !Self.sessionFeed.isEmpty)
+        if !Self.didApplyLaunchArgs {
+            Self.didApplyLaunchArgs = true
+            // `--reset-social` starts UI tests from the default scope, like the social stores.
+            SocialDebug.resetIfRequested(.standard, keys: ["community.feedScope"])
+            #if DEBUG
+            // --feed-global / --feed-friends: force a scope for sim verification — the scope is
+            // @AppStorage (sticky across launches), and outside writes race cfprefsd; a ONE-SHOT
+            // in-process write is the form that lands without looping (see didApplyLaunchArgs).
+            if ProcessInfo.processInfo.arguments.contains("--feed-global") {
+                UserDefaults.standard.set(CommunityScope.everyone.rawValue, forKey: "community.feedScope")
+            }
+            if ProcessInfo.processInfo.arguments.contains("--feed-friends") {
+                UserDefaults.standard.set(CommunityScope.following.rawValue, forKey: "community.feedScope")
+            }
+            #endif
+        }
     }
 
     /// Own workouts feeding the assembler — bounded so photo/route blobs of a long history never all
@@ -47,14 +105,26 @@ struct CommunityView: View {
     /// ~950 community items) is far too heavy to run per body evaluation — profiling showed the
     /// main thread saturated with `FeedItem` copies, which also starved accessibility (XCUITest
     /// timeouts). Rebuilt via `.task(id: feedKey)` only when an actual input changes.
-    @State private var items: [FeedItem] = []
-    @State private var assembledOnce = false
+    ///
+    /// Seeded from the SESSION CACHE below: the slider tears this view down on every face switch,
+    /// and re-assembling from empty made each return to Community open on a blank beat before the
+    /// wall popped in ("feels glitchy" — owner report 2026-07-29). Stale-while-revalidate: last
+    /// session's wall renders on the first frame, the task refreshes it in place.
+    @State private var items: [FeedItem]
+    @State private var assembledOnce: Bool
+    /// The feedKey the assembly task last ran for — lets `onAppear` tell a genuine revisit apart
+    /// from the first pass of a fresh instance (where assembling again would double the work).
+    @State private var lastAssembledKey = ""
+    /// "N moving now" — snapshotted per instance; the generator built a Calendar + 24-entry curve
+    /// + RNG on every render of the wall header.
+    @State private var movingNowCount = CommunityGenerator.movingNow()
+    @MainActor private static var sessionFeed: [FeedItem] = []
 
     /// Cheap change signature over every feed input; a change re-runs the assembly task.
     private var feedKey: String {
         "\(scopeRaw)|\(workouts.count)|\(pulsed.count)|\(remoteFeed.items.count)|" +
         "\(follows.following.count)|\(moderation.blockedHandles.count)|\(moderation.reportedPosts.count)|" +
-        "\(profile?.handle ?? "")"
+        "\(profile?.handle ?? "")|\(wellCap)"
     }
 
     /// Assembled once per relevant change (the community seed is ~950 athletes' posts — never filter
@@ -69,14 +139,16 @@ struct CommunityView: View {
         // a thousand-row LazyVStack bloats memory and grinds accessibility for a tail nobody
         // scrolls to. Follows are exempt from the cap (scoped from the FULL stream) so a followed
         // athlete's post never disappears behind it.
-        let assembled = (pulsed + FeedAssembler.feed(userWorkouts: Array(shared), profile: profile,
-                                                     community: CommunityFeed.seed(),
-                                                     viewerIsPro: paywall.isEntitled(to: .fullPlan)))
-            .sorted { $0.date > $1.date }
+        // `FeedAssembler.feed` already returns date-sorted rows — the re-sort (a second full pass
+        // over ~2,900 fat structs) is only needed when pulse posts actually merged in.
+        let base = FeedAssembler.feed(userWorkouts: Array(shared), profile: profile,
+                                      community: CommunityFeed.seed(),
+                                      viewerIsPro: paywall.isEntitled(to: .fullPlan))
+        let assembled = (pulsed.isEmpty ? base : (pulsed + base).sorted { $0.date > $1.date })
             .filter(moderation.isVisible)
         let local = scope == .following
             ? FeedAssembler.scoped(assembled, following: follows.following)
-            : Array(assembled.prefix(60))
+            : Array(assembled.prefix(wellCap))   // demand-deepened well; the WINDOW reveals it 30 at a time
         // Own published posts come back in the remote feed too — the local copy wins (it has the
         // full-resolution photos and needs no signing round trip).
         let localIDs = Set(local.map(\.id))
@@ -86,55 +158,56 @@ struct CommunityView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if items.isEmpty {
-                    // No flash of the empty state during the very first assembly pass.
-                    if assembledOnce {
-                        emptyState
-                            .padding(.top, Theme.Space.xxl)
-                            .padding(.horizontal, Theme.Space.md)
-                    }
-                } else {
-                    ForEach(items) { item in
-                        // Own posts keep an inert byline (no self-profile push from the feed).
-                        FeedPostCard(item: item, onOpenAuthor: item.authorHandle == profile?.handle
-                            ? nil
-                            : { handle in openAthlete(handle) })
-                    }
-                }
+        Group {
+            if searching {
+                // In-place search (owner ask 2026-07-29): the header magnifier opens a search bar
+                // where the wall was — no sheet hop — and Cancel returns to the grid.
+                FindAthletesView(onOpen: { handle in
+                    withAnimation(.easeOut(duration: 0.2)) { searching = false }
+                    openAthlete(handle)
+                }, embedded: true, onCancel: {
+                    withAnimation(.easeOut(duration: 0.2)) { searching = false }
+                })
+                .transition(.opacity)
+            } else {
+                gridFace
+                    .transition(.opacity)
             }
-            // No horizontal inset here any more: the card's media is full-bleed, so each card
-            // supplies the page margin to its own TEXT blocks instead (media-first redesign).
-            .padding(.top, Theme.Space.md)     // breathing room under the masthead — a more spacious feel
-            .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
         .navigationBarHidden(true)
-        .safeAreaInset(edge: .top) { header }
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
-        .navigationDestination(isPresented: $showOwnProfile) { ProfileScreen(showsBackButton: true) }
-        .sheet(isPresented: $showingSearch) {
-            FindAthletesView { handle in
-                showingSearch = false
-                // Let the sheet finish dismissing before the navigation push lands.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { openAthlete(handle) }
-            }
-        }
-        .refreshable {
-            pulsed = CommunityPulse.refreshed(pulsed)
-            await remoteFeed.refresh(scope: remoteScope)
+        #if DEBUG
+        .navigationDestination(isPresented: $debugSavedRoutes) { SavedRoutesView() }
+        #endif
+        // The TikTok moment: a tile zooms into the full-bleed vertical pager. Byline taps push
+        // the athlete's profile INSIDE the pager's own NavigationStack — over the post, back
+        // swipes home (the old dismiss-pause-push read as a glitch, owner report 2026-07-29).
+        .fullScreenCover(item: $immersive) { start in
+            // Sliced FROM the tapped post: page one is the post you tapped BY CONSTRUCTION, and
+            // swiping continues deeper down the feed (TikTok's grid-open). The old whole-array +
+            // scrollTo broke silently once the well hit 400 — the lazy stack couldn't jump, so
+            // every tile opened page one ("everyone is Bianca", owner report 2026-07-29).
+            CommunityPager(items: pagerSlice(from: start.id), startID: start.id,
+                           ownHandle: profile?.handle)
+                .navigationTransition(.zoom(sourceID: start.id, in: tileZoom))
         }
         .task(id: feedKey) {
             // Assemble off the render path — runs on appear and whenever an input signature moves.
             items = assembleFeed()
             assembledOnce = true
+            lastAssembledKey = feedKey
+            Self.sessionFeed = items
         }
         // Tab revisits rebuild too: a share-visibility toggle elsewhere changes no count in
-        // `feedKey`, but the athlete expects the feed to reflect it when they come back.
+        // `feedKey`, but the athlete expects the feed to reflect it when they come back. Only on
+        // a REAL revisit though — on a fresh instance (every slider flip creates one) the task
+        // above hasn't stamped the key yet, and running here too assembled the whole feed TWICE
+        // back to back (2026-07-30 perf audit).
         .onAppear {
-            guard assembledOnce else { return }   // first pass belongs to the task above
+            guard assembledOnce, lastAssembledKey == feedKey else { return }
             items = assembleFeed()
+            Self.sessionFeed = items
         }
         .task(id: scopeRaw) {
             // Refetch whenever the scope changes — Following and Everyone are different server
@@ -160,28 +233,274 @@ struct CommunityView: View {
         // post detail.
         .onAppear {
             let args = ProcessInfo.processInfo.arguments
-            if args.contains("--athlete-profile"), selectedAthlete == nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    selectedAthlete = CommunityDirectory.all().first
+            // ONE-SHOT (both athlete hooks). This `onAppear` re-fires whenever the pushed profile is
+            // popped — and `selectedAthlete` is nil again by then — so without the flag, navigating
+            // BACK instantly re-pushed the same athlete. That made the wall look stuck and any test
+            // that leaves the profile impossible to write (found 2026-07-30 by the follow-flow test).
+            if !Self.didOpenDebugAthlete {
+                if let i = args.firstIndex(of: "--athlete-profile") {
+                    // Optional trailing handle ("--athlete-profile joonw973") opens that exact member —
+                    // generated athletes included — so per-handle traits (e.g. the Pro-seal draw) are
+                    // verifiable deterministically. Bare flag keeps opening the first directory athlete.
+                    let handle = args.indices.contains(i + 1) && !args[i + 1].hasPrefix("--") ? args[i + 1] : nil
+                    Self.didOpenDebugAthlete = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        selectedAthlete = handle.flatMap { CommunityDirectory.athlete(handle: $0) }
+                            ?? CommunityDirectory.all().first
+                    }
                 }
-            }
-            // --athlete-profile-strength: first GENERATED strength-primary athlete — verifies the
-            // non-runner profile coherence (sport-led grid, workouts-logged hero, no distance claim).
-            if args.contains("--athlete-profile-strength"), selectedAthlete == nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    selectedAthlete = CommunityDirectory.all().dropFirst(8)
-                        .first { $0.posts.first?.type.isStrengthStyle == true }
+                // --athlete-profile-strength: first GENERATED strength-primary athlete — verifies the
+                // non-runner profile coherence (sport-led grid, workouts-logged hero, no distance claim).
+                if args.contains("--athlete-profile-strength") {
+                    Self.didOpenDebugAthlete = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        selectedAthlete = CommunityDirectory.all().dropFirst(8)
+                            .first { $0.posts.first?.type.isStrengthStyle == true }
+                    }
                 }
             }
             if args.contains("--find-athletes") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showingSearch = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { searching = true }
+            }
+            // --seed-saved-route: bookmark the first routed post so the strip's Saved door and
+            // the library render for sim verification (taps can't drive the pager reliably).
+            // --saved-routes additionally pushes the library itself.
+            if args.contains("--seed-saved-route") || args.contains("--saved-routes") {
+                Task { @MainActor in
+                    for _ in 0..<20 {
+                        if let post = items.first(where: { $0.routeLatLon != nil }) {
+                            if savedRoutes.isEmpty {
+                                modelContext.insert(SavedRoute(
+                                    postID: post.id, title: post.title, authorName: post.authorName,
+                                    authorHandle: post.authorHandle, city: post.location,
+                                    km: 8.8, pts: post.routeLatLon ?? [], mapStyle: post.mapStyle))
+                                try? modelContext.save()
+                            }
+                            if args.contains("--saved-routes") {
+                                try? await Task.sleep(for: .milliseconds(400))
+                                debugSavedRoutes = true
+                            }
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(300))
+                    }
+                }
+            }
+            // --open-post <index>: open the pager on a SPECIFIC tile — verifies the tapped tile
+            // and page one always agree (taps are unreliable in the sim).
+            if let i = args.firstIndex(of: "--open-post"), args.indices.contains(i + 1),
+               let index = Int(args[i + 1]) {
+                Task { @MainActor in
+                    for _ in 0..<30 {
+                        if items.indices.contains(index) {
+                            visibleCount = max(visibleCount, min(index + Self.windowStep, items.count))
+                            try? await Task.sleep(for: .milliseconds(600))
+                            immersive = PagerStart(id: items[index].id)
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(300))
+                    }
+                }
+            }
+            // --open-first-post-dark: first DARK-basemap post — the scrim-over-dark-map case.
+            if args.contains("--open-first-post-dark") {
+                Task { @MainActor in
+                    for _ in 0..<30 {
+                        if let dark = items.first(where: { $0.mapStyle == .dark && $0.routeLatLon != nil }) {
+                            try? await Task.sleep(for: .milliseconds(600))
+                            immersive = PagerStart(id: dark.id)
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(300))
+                    }
+                }
             }
             if args.contains("--open-first-post") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { debugDetailPost = items.first }
+                // Waits for assembly rather than firing at a fixed delay — a cold seed build can
+                // outlast any guess, and a missed one-shot reads as "the pager is broken". The
+                // extra settle beat lets the grid lay out and register the zoom SOURCE first:
+                // presenting a `.zoom` cover whose matchedTransitionSource doesn't exist yet
+                // leaves the cover stuck semi-transparent (a real tap can never race this).
+                Task { @MainActor in
+                    for _ in 0..<30 {
+                        if let first = items.first {
+                            try? await Task.sleep(for: .milliseconds(600))
+                            immersive = PagerStart(id: first.id)
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(300))
+                    }
+                }
             }
         }
-        .fullScreenCover(item: $debugDetailPost) { post in NavigationStack { PostDetailView(item: post) } }
         #endif
+    }
+
+    /// The wall: header → Friends | Global text tabs → tiles, one structured column (the stacked
+    /// floating-pill arrangement read as chrome piled on chrome — owner call 2026-07-29). The tabs
+    /// strip is a safe-area inset with its own hairline, and the grid starts one gutter below it —
+    /// the profile grid's exact relationship to its Grid/Highlights bar.
+    private var gridFace: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                if items.isEmpty {
+                    // No flash of the empty state during the very first assembly pass.
+                    if assembledOnce {
+                        emptyState
+                            .padding(.top, Theme.Space.xxl)
+                            .padding(.horizontal, Theme.Space.md)
+                    }
+                } else {
+                    pulseStrip
+                    CommunityFeedGrid(items: Array(items.prefix(visibleCount)),
+                                      zoomNamespace: tileZoom,
+                                      onTileAppear: { index in
+                                          // The Instagram trick: the next page is requested when a
+                                          // tile TWO ROWS from the end scrolls in, not when the
+                                          // bottom is hit — by the time the athlete gets there, the
+                                          // next 12 already exist and the scroll never stalls.
+                                          if index >= visibleCount - 6 { loadNextPage() }
+                                      }) { id in
+                        immersive = PagerStart(id: id)
+                    }
+                    // Reaching the bottom loads more, always (owner ask 2026-07-30 — the mirror of
+                    // pull-to-refresh): grow the local window a page (the Instagram reveal), DEEPEN
+                    // the well itself once the window catches up to its cap (the assembled feed is
+                    // thousands of posts deep — the wall must never dead-end), and pull the next
+                    // REMOTE page as the well runs low (cursor-driven; `loadMore` guards
+                    // scope/cursor/in-flight, and a dark backend no-ops).
+                    //
+                    // The spinner below is honest, not theater: the instant local reveal still
+                    // lands the same frame (no artificial delay), and the spinner marks the beats
+                    // that ARE async — the well re-assembly and the remote fetch. It hides only at
+                    // the feed's true end, which is the one place scrolling should quietly stop.
+                    bottomLoader
+                        .onAppear { loadNextPage() }   // backstop for a scroll that outruns prefetch
+                        .padding(.bottom, Theme.Space.xxl)
+                }
+            }
+            #if DEBUG
+            // --wall-scroll <index>: jump the wall to a tile index for sim verification — content
+            // audits need to SEE deep rows, and simctl can't scroll.
+            .onAppear {
+                let args = ProcessInfo.processInfo.arguments
+                if let i = args.firstIndex(of: "--wall-scroll"), args.indices.contains(i + 1),
+                   let index = Int(args[i + 1]) {
+                    // Waits for assembly (the --open-first-post lesson): a one-shot delay races
+                    // the cold seed build and silently no-ops. Grows the reveal window first —
+                    // a tile outside it doesn't exist to scroll to.
+                    Task { @MainActor in
+                        for _ in 0..<20 {
+                            if !items.isEmpty {
+                                visibleCount = max(visibleCount, min(index + Self.windowStep, items.count))
+                                try? await Task.sleep(for: .milliseconds(500))
+                                let target = items.indices.contains(index) ? items[index] : items[items.count - 1]
+                                withAnimation { proxy.scrollTo(target.id, anchor: .top) }
+                                return
+                            }
+                            try? await Task.sleep(for: .milliseconds(300))
+                        }
+                    }
+                }
+            }
+            #endif
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            CommunityScopeTabs(scopeRaw: $scopeRaw)
+        }
+        .refreshable {
+            pulsed = CommunityPulse.refreshed(pulsed)
+            await remoteFeed.refresh(scope: remoteScope)
+        }
+    }
+
+    /// One page of continuous scroll: reveal the next 12 tiles (instant — a state flip over
+    /// already-assembled items), and keep the slower feeders primed WELL ahead of the reveal —
+    /// the well deepens and the next remote page fetches while there are still ~4 pages in hand,
+    /// so their async cost lands behind rows the athlete hasn't reached yet. Idempotent per state:
+    /// a burst of near-end tile appearances in one frame advances at most one page, because the
+    /// first advance moves the threshold the rest are compared against.
+    private func loadNextPage() {
+        if visibleCount < items.count {
+            visibleCount = min(visibleCount + Self.windowStep, items.count)
+        }
+        let remaining = items.count - visibleCount
+        // (`items.count >= wellCap` proves the assembled feed still had more; once assembly
+        // returns fewer than the cap, the seed is exhausted and the cap stops growing.)
+        if scope == .everyone, items.count >= wellCap, remaining <= Self.windowStep * 4 {
+            wellCap += Self.wellStep
+        }
+        if remaining <= Self.windowStep * 4 {
+            Task { await remoteFeed.loadMore(scope: remoteScope) }
+        }
+    }
+
+    /// True while scrolling further down can still produce content: window not fully revealed,
+    /// the well still at its cap (deeper posts exist), or a remote page in flight.
+    private var hasMoreBelow: Bool {
+        visibleCount < items.count
+            || (scope == .everyone && items.count >= wellCap)
+            || remoteFeed.isLoading
+    }
+
+    /// The bottom-of-wall beat: a small quiet spinner while there's more to come, nothing at the
+    /// true end. Doubles as the on-appear sentinel that drives the window/well/remote growth.
+    @ViewBuilder
+    private var bottomLoader: some View {
+        if hasMoreBelow {
+            ProgressView()
+                .controlSize(.small)
+                .tint(Theme.inkTertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Theme.Space.lg)
+                .accessibilityLabel("Loading more")
+        } else {
+            Color.clear.frame(height: 1)
+        }
+    }
+
+    /// The live line above the wall — ONE centered fact (owner call 2026-07-30: the old
+    /// "2,863 athletes · 217 moving now" pairing read as clutter, and only the moving count is a
+    /// live claim). The saved-route door keeps its trailing spot, overlaid so the pulse line stays
+    /// perfectly centered whether or not the bookmark is there.
+    private var pulseStrip: some View {
+        ZStack {
+            HStack(spacing: 6) {
+                LiveDot()
+                Text("\(movingNowCount.formatted()) moving now")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity)
+            if !savedRoutes.isEmpty {
+                HStack {
+                    Spacer()
+                    NavigationLink { SavedRoutesView() } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bookmark.fill").font(.system(size: 10, weight: .bold))
+                            Text("Saved \(savedRoutes.count)")
+                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                        }
+                        .foregroundStyle(Theme.inkSecondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(savedRoutes.count) saved routes")
+                }
+            }
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.top, Theme.Space.sm)
+        .padding(.bottom, Theme.Space.xs)
+    }
+
+    /// The feed from the tapped post onward — from the FULL well, not the reveal window, so the
+    /// pager keeps going past what the wall had rendered.
+    private func pagerSlice(from id: UUID) -> [FeedItem] {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return items }
+        return Array(items[index...])
     }
 
     private var remoteScope: FeedScope { scope == .following ? .following : .everyone }
@@ -200,79 +519,6 @@ struct CommunityView: View {
         }
     }
 
-    // MARK: Header (custom — matches Profile/Progress)
-
-    private var header: some View {
-        VStack(spacing: 0) {
-            // Centered brand wordmark — the monochrome "momentum" logo, swapping black/white with the
-            // appearance so it reads on either canvas (Substack-style masthead, decision 2026-07-15).
-            // The athlete's own avatar sits top-left (Substack's pattern mirrored) and opens the FULL
-            // profile page, pushed with a back chevron — never a sheet (user call 2026-07-16).
-            Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
-                .resizable().scaledToFit()
-                .frame(height: 17)   // quiet masthead scale (Substack-like) — 30 read as a billboard
-                .frame(maxWidth: .infinity)
-                .padding(.top, Theme.Space.sm)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityLabel("Momentum")
-                .overlay(alignment: .leading) {
-                    Button { showOwnProfile = true } label: {
-                        AvatarView(photo: profile?.avatarData, name: profile?.displayName ?? "", size: 34)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.leading, Theme.Space.md)
-                    .accessibilityLabel("Your profile")
-                }
-            // A real search field (opens athlete search) — the masthead's second row.
-            Button { showingSearch = true } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                    Text("Search athletes")
-                        .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Theme.Space.md).frame(height: 42)
-                .background(Capsule().fill(Theme.surface))
-                .overlay(Capsule().stroke(Theme.hairline))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, Theme.Space.md)
-            .padding(.top, Theme.Space.md)
-            .accessibilityLabel("Find athletes")
-            scopeBar
-        }
-        .background(Theme.background)
-    }
-
-    /// Following | Everyone — the only "algorithm" is who you chose to follow.
-    private var scopeBar: some View {
-        HStack(spacing: 0) {
-            ForEach(CommunityScope.allCases, id: \.self) { s in
-                Button {
-                    withAnimation(.easeOut(duration: 0.2)) { scopeRaw = s.rawValue }
-                } label: {
-                    VStack(spacing: Theme.Space.sm) {
-                        Text(s.label).font(.rounded(Theme.FontSize.body, weight: .semibold))
-                        ZStack {
-                            Color.clear.frame(height: 2)
-                            if scope == s { Capsule().fill(Theme.ink).frame(height: 2) }
-                        }
-                    }
-                    .foregroundStyle(scope == s ? Theme.ink : Theme.inkTertiary)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(s.label)
-                .accessibilityAddTraits(scope == s ? [.isSelected] : [])
-            }
-        }
-        .padding(.top, Theme.Space.md)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
-    }
-
     // MARK: Empty state (Following with no follows yet — no-shame, one obvious next step)
 
     private var emptyState: some View {
@@ -285,7 +531,7 @@ struct CommunityView: View {
                 .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
             Button {
-                showingSearch = true
+                withAnimation(.easeOut(duration: 0.2)) { searching = true }
             } label: {
                 Text("Find athletes")
                     .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.background)
@@ -304,8 +550,8 @@ enum CommunityScope: String, CaseIterable {
     case following, everyone
     var label: String {
         switch self {
-        case .following: "Following"
-        case .everyone: "Global"   // rawValue stays "everyone" (persisted); label is the Substack-style "Global"
+        case .following: "Friends"   // relabeled from "Following" with the grid redesign (2026-07-29)
+        case .everyone: "Global"     // rawValue stays "everyone" (persisted); label is the Substack-style "Global"
         }
     }
 }

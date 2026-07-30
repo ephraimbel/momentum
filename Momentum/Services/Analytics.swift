@@ -20,6 +20,10 @@ enum AnalyticsEvent: Equatable {
     case shareCreated(style: String)
     case spotsViewed(count: Int)
     case spotSelected(kind: String)
+    /// A launch could not open the SwiftData store and moved it aside. Rare by construction and
+    /// invisible without this event — the only signal that a shipped migration broke somebody's
+    /// install. `recovered` is false when the store had to be removed to make the app launchable.
+    case storeQuarantined(recovered: Bool)
 
     /// The canonical event name (PRD §13.5).
     var name: String {
@@ -38,6 +42,7 @@ enum AnalyticsEvent: Equatable {
         case .shareCreated:      "share_created"
         case .spotsViewed:       "spots_viewed"
         case .spotSelected:      "spot_selected"
+        case .storeQuarantined:  "store_quarantined"
         }
     }
 
@@ -58,6 +63,7 @@ enum AnalyticsEvent: Equatable {
         case .shareCreated(let s):             ["style": s]
         case .spotsViewed(let n):              ["count": String(n)]
         case .spotSelected(let k):             ["kind": k]
+        case .storeQuarantined(let r):         ["recovered": String(r)]
         }
     }
 }

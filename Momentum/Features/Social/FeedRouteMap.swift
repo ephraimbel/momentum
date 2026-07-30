@@ -18,15 +18,29 @@ enum FeedRouteSnapshots {
     private static let maxConcurrentRenders = 4
     private static var active = 0
 
+    /// Circuit breaker (2026-07-29): on a cold Mapbox cache (fresh install) a whole burst of
+    /// renders can fail together — and a wall of retrying tiles then spawns engine after engine
+    /// until their event traffic starves the main thread (observed as the community grid frozen
+    /// mid-entrance). After a run of consecutive failures the snapshotter goes quiet for a beat:
+    /// callers get instant nils, their retry loops wind down, and the next wave tries against a
+    /// warmer cache. Any success closes the breaker.
+    private static var consecutiveFailures = 0
+    private static var quietUntil: Date?
+
     /// `routeWidth` is per-surface (in the snapshot's point space): the default 3 reads ~2.6pt on a
     /// full-width feed/reading card — Strava-thin; the profile grid renders a smaller image into a
     /// smaller tile and passes a proportionally larger width. Part of the cache key: the same post
     /// rendered for two surfaces must not collide.
     static func image(post: UUID, coordinates: [CLLocationCoordinate2D],
                       style: MapStyleOption, scheme: ColorScheme, size: CGSize,
-                      urgent: Bool = false, routeWidth: CGFloat = 3) async -> UIImage? {
-        let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))"
+                      urgent: Bool = false, routeWidth: CGFloat = 3,
+                      endpointDiameter: CGFloat? = nil) async -> UIImage? {
+        // nil = no start/finish marks, which is what a GRID tile wants (owner call 2026-07-30);
+        // full views opt in. It's part of the cache key for the same reason `routeWidth` is: the
+        // wall and the pager render the same post differently and must not share an image.
+        let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))|e\(endpointDiameter.map { Int($0) } ?? 0)"
         if let hit = cache[key] { return hit }
+        if let quietUntil, Date() < quietUntil { return nil }   // breaker open — no new engines
         return await withCheckedContinuation { continuation in
             waiters[key, default: []].append(continuation)
             guard !inFlight.contains(key) else { return }   // join the in-flight render
@@ -41,10 +55,24 @@ enum FeedRouteSnapshots {
                 active += 1
                 let data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
                                                            styleURI: style.styleURI(for: scheme),
-                                                           routeWidth: routeWidth)
+                                                           routeWidth: routeWidth,
+                                                           endpointDiameter: endpointDiameter)
                 active -= 1
                 let image = data.flatMap(UIImage.init(data:))
-                if let image { cache[key] = image }
+                if let image {
+                    cache[key] = image
+                    consecutiveFailures = 0
+                } else {
+                    consecutiveFailures += 1
+                    // 10 / 15s (was 6 / 30s): the tighter first cut also silenced sessions where
+                    // renders were merely SLOW — a run of timeouts parked the whole wall on
+                    // silhouettes for half a minute at a time. The breaker's job is only to stop
+                    // an engine-spawn spiral, so trip late and recover fast.
+                    if consecutiveFailures >= 10 {
+                        quietUntil = Date().addingTimeInterval(15)
+                        consecutiveFailures = 0
+                    }
+                }
                 (waiters.removeValue(forKey: key) ?? []).forEach { $0.resume(returning: image) }
                 inFlight.remove(key)
             }
@@ -52,71 +80,6 @@ enum FeedRouteSnapshots {
     }
 }
 
-/// The feed post's route media: an instant route-silhouette placeholder, crossfading to the cached
-/// map snapshot when it lands. Never a live map engine.
-struct FeedRouteMap: View {
-    let item: FeedItem
-    var height: CGFloat = 200
-    /// 0 in the media-first feed card, where every post is one full-bleed square-cornered frame.
-    var cornerRadius: CGFloat = Theme.Radius.card
-    /// True in the post reading view: its map takes the render fast lane and never gives up while
-    /// on screen (a feed cell politely queues and stops after a few tries).
-    var urgent = false
 
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var image: UIImage?
-
-    var body: some View {
-        // The media is an OVERLAY of a fixed-size clear box, so the image can never participate in
-        // layout: a `scaledToFill` image reports its scaled (oversized) width up the tree, which made
-        // the reading view's whole column wider than the screen the instant the map landed — every
-        // header/stat shifted half off-screen (user report 2026-07-15). The box is the layout; the
-        // image just paints inside it and clips.
-        Color.clear
-            .frame(height: height)
-            .frame(maxWidth: .infinity)
-            .background(Theme.surface)
-            .overlay {
-                if let image {
-                    Image(uiImage: image).resizable().scaledToFill()
-                        .transition(.opacity)
-                } else if let coords = item.routeCoordinates, coords.count > 1 {
-                    // The route's shape, instantly — the page never looks stalled while tiles land.
-                    RouteSilhouette(coords: coords)
-                        .stroke(Theme.route.opacity(0.7),
-                                style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                        .padding(Theme.Space.xl)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: cornerRadius)
-            .stroke(cornerRadius == 0 ? .clear : Theme.hairline))
-        .animation(.easeOut(duration: 0.25), value: image != nil)
-        .task(id: "\(item.id)-\(colorScheme == .dark)") {
-            #if DEBUG
-            // UI tests keep the instant silhouette: XCUITest's accessibility snapshot realizes
-            // EVERY lazy feed row at once, and a hundred queued Mapbox render engines starve the
-            // main thread until queries time out. Real scrolling only ever realizes a handful.
-            if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
-            #endif
-            guard let coords = item.routeCoordinates, coords.count > 1 else { return }
-            // Failed renders retry with backoff — a transient tile hiccup must not leave the card
-            // a silhouette for the rest of the session. The urgent (reading-view) map retries for
-            // as long as it's on screen: giving up after 3 while a cold-launch backlog drained left
-            // the post's hero permanently blank (user report 2026-07-15).
-            var attempt = 0
-            while !Task.isCancelled, urgent || attempt < 3 {
-                if let rendered = await FeedRouteSnapshots.image(
-                    post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
-                    size: CGSize(width: 420, height: height + 40), urgent: urgent) {
-                    image = rendered
-                    return
-                }
-                attempt += 1
-                try? await Task.sleep(for: .seconds(min(Double(attempt) * 2, 6)))
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)   // the post card carries the description
-    }
-}
+// (The `FeedRouteMap` view deleted 2026-07-30 — only the dormant card-feed used it.
+// `FeedRouteSnapshots` above stays: the wall, pager, and athlete grids all render through it.)

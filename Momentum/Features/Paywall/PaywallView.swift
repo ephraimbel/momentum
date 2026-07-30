@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// The Pro paywall (PRD §10) — full-screen and unmistakably premium (user direction 2026-07-10):
-/// the brand's animated iridescence flows softly through the whole canvas, the wordmark sits
-/// centered up top, and the FULL feature list spells out everything free is missing. **Trust stays
-/// a feature:** two plans, the 7-day trial on annual only, renewal terms in plain language before
-/// purchase, one-tap restore. Reduce Motion freezes the flow; legibility always wins (the wash is
-/// masked down where text lives).
+/// The Pro paywall (PRD §10) — full-screen and unmistakably premium: a BRIGHT light canvas where
+/// the brand's animated iridescence drifts softly through the whole surface (user call 2026-07-29;
+/// the original dark-cinematic look went murky), the wordmark sits centered up top, and the FULL
+/// feature list spells out everything free is missing. **Trust stays a feature:** two plans, the
+/// 7-day trial on annual only, renewal terms in plain language before purchase, one-tap restore.
+/// Reduce Motion freezes the flow; legibility always wins (the wash is masked down where text lives).
 struct PaywallView: View {
     /// The locked feature that brought the user here — frames the subheadline.
     var feature: Feature = .aiCoach
@@ -54,8 +54,8 @@ struct PaywallView: View {
     // former utility rows (voice/metronome + watch/share) merge into one to make room.
     private static let features: [(String, String)] = [
         ("figure.run", "Your full adaptive training plan"),
-        ("brain.head.profile", "AI coach chat & post-run reads"),
-        ("fork.knife", "AI fueling & calorie tracking"),
+        ("brain.head.profile", "Coach chat & post-run reads"),
+        ("fork.knife", "Fueling & calorie tracking"),
         ("gauge.with.needle", "Pace insights & session reviews"),
         ("waveform.path.ecg", "Recovery & injury-aware training"),
         ("flag.checkered", "Race predictions, 5K to marathon"),
@@ -124,13 +124,14 @@ struct PaywallView: View {
         }
         .background { flowingBackground }
         .overlay(alignment: .topTrailing) { if !hard { closeButton } }
-        // The paywall is a dark, cinematic moment regardless of the athlete's appearance setting
-        // (user call 2026-07-10) — the wash reads best over true black. Use `.environment(\.colorScheme)`,
+        // The paywall is a BRIGHT, light moment regardless of the athlete's appearance setting
+        // (user call 2026-07-29, reversing the 2026-07-10 dark call) — the iridescence reads as
+        // luminous foil over white, where over near-black it went murky. Use `.environment(\.colorScheme)`,
         // NOT `.preferredColorScheme`: the latter is a PREFERENCE that flows UP to the hosting window,
-        // so on dismiss it left the presenter (e.g. the coach chat) stuck in dark. Setting the
-        // environment styles only the paywall's own subtree — same dark look, no leak to whoever
+        // so on dismiss it left the presenter (e.g. the coach chat) stuck in the forced scheme.
+        // Setting the environment styles only the paywall's own subtree — no leak to whoever
         // presented it.
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, .light)
         .alert("Nothing to restore", isPresented: $nothingToRestore) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -160,24 +161,39 @@ struct PaywallView: View {
         }
     }
 
-    // MARK: Background — the brand's holographic wash, alive but quiet
+    // MARK: Background — the brand's holographic wash, quiet and alive
 
-    /// The animated iridescent mesh flows through the whole canvas — alive enough to notice, masked
-    /// so it glows at the top (behind the lockup + headline), stays present behind the reading, and
-    /// warms up again under the plans. Static under Reduce Motion (IridescentView handles it).
+    /// A soft pastel wash that visibly — but slowly — travels. Two layers of motion: the mesh's own
+    /// ~8s interior shimmer (IridescentView), plus a slow wander of the WHOLE oversized field here
+    /// (offset only — transforms, never layout — on two incommensurate ~20s/27s periods so the path
+    /// never reads as a loop). The mask is applied OUTSIDE the moving layer, so the legibility
+    /// profile stays pinned to the layout — full glow behind the lockup + headline, quieter behind
+    /// the reading, warmer again under the plans — while the colors flow beneath it. Everything
+    /// freezes under Reduce Motion (the paused timeline here, IridescentView internally).
     private var flowingBackground: some View {
         ZStack {
             Theme.background
-            IridescentView(intensity: 0.72)
-                .mask(
-                    LinearGradient(stops: [
-                        .init(color: .white,                 location: 0.00),
-                        .init(color: .white.opacity(0.70),   location: 0.22),
-                        .init(color: .white.opacity(0.34),   location: 0.45),
-                        .init(color: .white.opacity(0.34),   location: 0.72),
-                        .init(color: .white.opacity(0.60),   location: 1.00),
-                    ], startPoint: .top, endPoint: .bottom)
-                )
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0 : ctx.date.timeIntervalSinceReferenceDate
+                // Amplitude 2.6 is what makes the motion PERCEPTIBLE: at the component's default
+                // shimmer a blurred full-bleed mesh translates almost uniformly and reads as still
+                // (owner report 2026-07-29). The 13s loop keeps the bigger travel unhurried — the
+                // color cells visibly swim past each other, never race. Oversized well past the
+                // wander radius so edges never reveal the canvas beneath.
+                IridescentView(intensity: 0.62, amplitude: 2.6, loop: 13)
+                    .scaleEffect(1.35)
+                    .offset(x: CGFloat(48 * sin(t / 17.0 * 2 * .pi) + 16 * sin(t / 6.1 * 2 * .pi + 0.9)),
+                            y: CGFloat(36 * sin(t / 23.0 * 2 * .pi + 1.7) + 12 * sin(t / 8.6 * 2 * .pi)))
+            }
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .white,                 location: 0.00),
+                    .init(color: .white.opacity(0.72),   location: 0.22),
+                    .init(color: .white.opacity(0.42),   location: 0.45),
+                    .init(color: .white.opacity(0.42),   location: 0.72),
+                    .init(color: .white.opacity(0.62),   location: 1.00),
+                ], startPoint: .top, endPoint: .bottom)
+            )
         }
         .ignoresSafeArea()
     }
@@ -186,8 +202,8 @@ struct PaywallView: View {
 
     private func lockup(_ s: CGFloat) -> some View {
         VStack(spacing: Theme.Space.sm * s) {
-            // Always the white wordmark — this surface is permanently dark.
-            Image("WordmarkWhite")
+            // Always the black wordmark — this surface is deliberately bright (light canvas).
+            Image("WordmarkBlack")
                 .resizable().interpolation(.high).scaledToFit().frame(height: 22 * s)
             Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(Color(hex: "0E0E12"))
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
@@ -209,7 +225,9 @@ struct PaywallView: View {
                 .font(.serif(31 * s, weight: .semibold)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center).lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("The full adaptive engine, built around\nyour body, your goal, your life.")
+            // Two plain sentences, no dash — the owner's voice rule (2026-07-30): dashes here read
+            // as AI-written. Matches the coach-voice no-em-dash bar.
+            Text("Plans built by runners, for runners.\nAround your body, your goal, your life.")
                 .font(.serif((Theme.FontSize.caption + 2) * s, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -242,12 +260,18 @@ struct PaywallView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .background {
-            // A barely-there glass card lifts the list off the wash without deadening it.
+            // Glass with a white tint over it (owner ask 2026-07-30: the cards should stand out a
+            // bit more against the moving wash): the material keeps the wash breathing through,
+            // the tint makes the card read as a crisp panel rather than a smudge, and the soft
+            // shadow floats it. Same recipe as the plan cards below — one card language.
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .fill(.ultraThinMaterial)
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .stroke(Theme.hairline)
+                .fill(.white.opacity(0.5))
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .strokeBorder(.white.opacity(0.8))
         }
+        .shadow(color: .black.opacity(0.07), radius: 18, y: 8)
     }
 
     // MARK: Plans
@@ -273,7 +297,8 @@ struct PaywallView: View {
                         .foregroundStyle(Theme.inkSecondary)
                     // Suppressed with the price: the trial length is a placeholder until the store
                     // answers, and "7-DAY FREE TRIAL" is as much a promise as the number beside it.
-                    if p.isAnnual, p.trialDays > 0, paywall.pricingIsLive {
+                    // Data-driven, not annual-only — since 2026-07-29 both plans carry the trial.
+                    if p.trialDays > 0, paywall.pricingIsLive {
                         Text("\(p.trialDays)-DAY FREE TRIAL")
                             .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Color(hex: "0E0E12"))
                             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -300,9 +325,11 @@ struct PaywallView: View {
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 shape.fill(.ultraThinMaterial)
-                shape.stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: isSelected ? 1.5 : 1)
+                shape.fill(.white.opacity(0.5))
+                shape.strokeBorder(isSelected ? Theme.ink : .white.opacity(0.8),
+                                   lineWidth: isSelected ? 1.5 : 1)
             }
-            .shadow(color: .black.opacity(isSelected ? 0.07 : 0), radius: 18, y: 8)
+            .shadow(color: .black.opacity(isSelected ? 0.10 : 0.06), radius: 18, y: 8)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -415,10 +442,11 @@ struct PaywallView: View {
         // The fine print is the one place a wrong number is actually a claim about what we'll
         // charge — never build it from placeholder pricing.
         guard paywall.pricingIsLive else { return "Pricing unavailable · cancel anytime" }
-        if product.isAnnual, product.trialDays > 0 {
-            return "\(product.trialDays) days free, then \(product.priceText)/yr · cancel anytime"
+        let per = product.isAnnual ? "yr" : "mo"
+        if product.trialDays > 0 {
+            return "\(product.trialDays) days free, then \(product.priceText)/\(per) · cancel anytime"
         }
-        return "\(product.priceText)/mo · cancel anytime"
+        return "\(product.priceText)/\(per) · cancel anytime"
     }
 
     /// Entitlement landed. A host that keeps this cover on screen for a following beat handles it via

@@ -9,7 +9,7 @@ final class FuelFlowUITests: XCTestCase {
 
     func testLogEditAndReadoutLoop() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--fuel", "--reset-fuel"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--fuel", "--reset-fuel"]
         app.launch()
 
         // The deep link lands on the Fuel tab.
@@ -113,7 +113,7 @@ final class FuelFlowUITests: XCTestCase {
     /// with per-month counts, and search narrows across all of it.
     func testHistoryAtScale() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--reset-fuel", "--seed-fuel-history", "--fuel"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--reset-fuel", "--seed-fuel-history", "--fuel"]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
         app.buttons["Meal history"].tap()
@@ -135,7 +135,7 @@ final class FuelFlowUITests: XCTestCase {
     /// flips from the classic floor ("+ kcal") to a goal ("kcal today").
     func testFuelingGoalsAdjuster() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--fuel", "--reset-fuel", "--seed-plan-name"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--fuel", "--reset-fuel", "--seed-plan-name"]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
 
@@ -172,7 +172,7 @@ final class FuelFlowUITests: XCTestCase {
     /// athlete, and that both the SEND action and the (now-visible) toolbar entries reach the paywall.
     func testFuelIsProGated() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--debug-free", "--fuel"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--fuel"]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 20), "Fuel tab missing.")
 
@@ -232,7 +232,7 @@ final class FuelFlowUITests: XCTestCase {
     func testLocalFirstResolvesRewordedMeal() {
         let app = XCUIApplication()
         // Seed the athlete's history (yesterday-and-back; today stays empty), unlock Pro, land on Fuel.
-        app.launchArguments = ["--seed-demo", "--reset-fuel", "--seed-fuel-history", "--debug-pro", "--fuel"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--reset-fuel", "--seed-fuel-history", "--debug-pro", "--fuel"]
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Fuel"].waitForExistence(timeout: 20), "Fuel page didn't appear.")
@@ -275,7 +275,7 @@ final class FuelFlowUITests: XCTestCase {
     /// the athlete's own usuals the moment they do.
     func testStaplesComposeInstantly() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--reset-fuel", "--fuel"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--reset-fuel", "--fuel"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Fuel"].waitForExistence(timeout: 20), "Fuel page didn't appear.")
 

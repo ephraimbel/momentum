@@ -329,6 +329,11 @@ struct LogWorkoutView: View {
         // stat forever). Deliberately no pace recalibration — hand-entered numbers are too coarse
         // to move the plan's fitness model.
         w.calories = CalorieEstimator.kcal(for: w, bodyMassKg: profiles.first?.bodyMassKg)
+        // A logged workout is a post like any tracked one: it takes the athlete's default
+        // visibility (their own last explicit choice). Community builds only — solo stays private.
+        if CommunityAccess.enabled, let p = profiles.first {
+            w.privacy = SocialPrivacy.defaultVisibility(p)
+        }
         context.insert(w)
         // Never report success on a write that didn't land (the finish-flow save screens'
         // rule) — the hand-typed workout would vanish while the screen buzzed "saved".

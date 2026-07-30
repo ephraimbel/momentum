@@ -79,7 +79,7 @@ final class HealthService: HealthServing {
         return isAuthorized
     }
 
-    func save(_ workout: Workout) async {
+    func save(_ workout: Workout, includeEnergy: Bool) async {
         guard isAuthorized, !isAlreadySaved(workout.id) else { return }
 
         let start = workout.startedAt
@@ -95,7 +95,7 @@ final class HealthService: HealthServing {
             try await builder.beginCollection(at: start)
 
             var samples: [HKSample] = []
-            if let kcal = workout.calories, kcal > 0 {
+            if includeEnergy, let kcal = workout.calories, kcal > 0 {
                 samples.append(HKQuantitySample(type: HKQuantityType(.activeEnergyBurned),
                     quantity: HKQuantity(unit: .kilocalorie(), doubleValue: kcal), start: start, end: end))
             }
@@ -671,6 +671,21 @@ final class HealthService: HealthServing {
         let steps = Self.ambientSum(await stepsRaw, nettingOut: workoutSpans)
         let kcal = Self.ambientSum(await kcalRaw, nettingOut: workoutSpans)
         return (steps, kcal)
+    }
+
+    /// The wearable's measured active energy inside one workout's window — the Watch's own numbers
+    /// for exactly the minutes the athlete was playing (timed-sport calorie prefill). Each source is
+    /// summed independently and the biggest wins: Watch and iPhone both write energy for the same
+    /// minutes, and adding them double-counts. `nil` = no samples at all (no wearable, unauthorized,
+    /// or the Watch hasn't synced yet) — absent, never zero, so callers can fall back to an estimate.
+    func measuredActiveEnergy(start: Date, end: Date) async -> Double? {
+        guard HKHealthStore.isHealthDataAvailable(), end > start else { return nil }
+        let samples = await quantitySamples(.activeEnergyBurned, unit: .kilocalorie(),
+                                            from: start, to: end)
+        guard !samples.isEmpty else { return nil }
+        let bySource = Dictionary(grouping: samples, by: \.source)
+            .mapValues { $0.reduce(0) { $0 + $1.value } }
+        return bySource.values.max()
     }
 
     /// Daily step totals for the Trends "Daily movement" card. A STATISTICS query, deliberately —

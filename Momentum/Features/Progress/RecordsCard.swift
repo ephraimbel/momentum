@@ -9,12 +9,25 @@ struct RecordsCard: View {
 
     @Query private var profiles: [UserProfile]
 
-    private var bests: [RecordsBook.Best] {
-        RecordsBook.currentBests(profiles.first?.prs ?? [])
+    /// The segment-flip static cache (the HeatmapHistoryCard/HealthSegmentView pattern): this card
+    /// remounts on every Trends visit, and `RecordsBook.currentBests` filtered the whole faulted
+    /// `prs` relationship ~8× (once per cardio type) on every BODY pass — including every chart
+    /// scrub tick. Value types only, never SwiftData refs.
+    @MainActor private static var cache: (key: Int, bests: [RecordsBook.Best])?
+    @State private var bests: [RecordsBook.Best] = RecordsCard.cache?.bests ?? []
+
+    /// Cheap change signature: count + newest achievement (records are append-mostly).
+    private var recordsKey: Int {
+        let prs = profiles.first?.prs ?? []
+        var h = Hasher()
+        h.combine(prs.count)
+        h.combine(prs.map(\.achievedAt).max())
+        return h.finalize()
     }
 
     var body: some View {
         let rows = bests
+        return Group {
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 Text("RECORD BOOK").font(.rounded(Theme.FontSize.label, weight: .bold))
@@ -31,6 +44,16 @@ struct RecordsCard: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
             }
+        }
+        }
+        .task(id: recordsKey) {
+            if let c = Self.cache, c.key == recordsKey {
+                bests = c.bests
+                return
+            }
+            let computed = RecordsBook.currentBests(profiles.first?.prs ?? [])
+            bests = computed
+            Self.cache = (recordsKey, computed)
         }
     }
 

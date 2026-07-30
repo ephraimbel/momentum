@@ -24,6 +24,8 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
     /// The seeded athlete's bundled synthetic-face asset (deterministic per name); nil for real
     /// network athletes. See `CommunityAvatars`.
     var communityAvatarAsset: String? { isSample ? CommunityAvatars.assetName(forHandle: handle) : nil }
+    /// The hash-assigned preset look for face-less community athletes (see `CommunityAvatars.preset`).
+    var communityPreset: AvatarPreset? { isSample ? CommunityAvatars.preset(forHandle: handle) : nil }
 }
 
 enum CommunityDirectory {
@@ -43,10 +45,13 @@ enum CommunityDirectory {
         /// literal `stat`. City must match a `CommunityRoutes` key.
         func post(_ n: Int, _ a: CommunityAuthor, _ type: WorkoutType, _ when: Date, _ title: String,
                   _ caption: String?, _ stat: String = "", city: String? = nil,
-                  targetKm: Double = 8, paceSecPerKm: Double = 340,
+                  targetKm: Double = 8, paceSecPerKm: Double = 340, mapless: Bool = false,
                   pr: String? = nil, reactions: Int = 0, ai: String? = nil) -> FeedItem {
             var rng = SeededRNG(n &* 99_173)
-            let loop = type.isGPS
+            // `mapless` = the generator's honesty rule for the hand-curated voices too: a title
+            // that claims a workout or terrain ("tempo", "Hill repeats", a trail) must never sit
+            // over a downtown street loop (CommunityContentAuditTests trips otherwise).
+            let loop = (type.isGPS && !mapless)
                 ? (city ?? a.location).flatMap { CommunityRoutes.loop(city: $0, discipline: type, nearestKm: targetKm) }
                 : nil
             let statLine = loop.map {
@@ -75,7 +80,7 @@ enum CommunityDirectory {
             CommunityAthlete(handle: maya.handle, name: maya.name, location: maya.location,
                 bio: "Marathoner chasing a sub-3. Coffee, then miles.",
                 totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000, lat: 30.27, lon: -97.74,
-                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
+                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", "6.2 mi · 48:20", mapless: true, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
             CommunityAthlete(handle: theo.handle, name: theo.name, location: theo.location,
                 bio: "Strength coach. Big believer in boring consistency.",
                 totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000, lat: 40.78, lon: -73.97,
@@ -83,7 +88,7 @@ enum CommunityDirectory {
             CommunityAthlete(handle: lin.handle, name: lin.name, location: lin.location,
                 bio: "Cyclist. Hills are just downhills in waiting.",
                 totalWorkouts: 268, dayStreak: 5, totalDistanceM: 9_800_000, lat: 45.52, lon: -122.64,
-                posts: [post(3, lin, .ride, ago(7), "Hill repeats", nil, targetKm: 39, paceSecPerKm: 139, reactions: 18)]),
+                posts: [post(3, lin, .ride, ago(7), "Hill repeats", nil, "24.2 mi · 1:30:21", mapless: true, reactions: 18)]),
             CommunityAthlete(handle: priya.handle, name: priya.name, location: priya.location,
                 bio: "Hybrid athlete. Lift heavy, move fast.",
                 totalWorkouts: 190, dayStreak: 12, totalDistanceM: 620_000, lat: 51.51, lon: -0.13,
@@ -95,7 +100,7 @@ enum CommunityDirectory {
             CommunityAthlete(handle: sofia.handle, name: sofia.name, location: sofia.location,
                 bio: "Trail runner. Higher is better.",
                 totalWorkouts: 156, dayStreak: 4, totalDistanceM: 1_900_000, lat: 40.01, lon: -105.27,
-                posts: [post(6, sofia, .trailRun, ago(28), "Mesa loop", "Big climb, bigger views.", targetKm: 13, paceSecPerKm: 345, pr: "Longest run", reactions: 51)]),
+                posts: [post(6, sofia, .trailRun, ago(28), "Mesa loop", "Big climb, bigger views.", "8.1 mi · 1:14:45 · 1,350 ft", mapless: true, pr: "Longest run", reactions: 51)]),
             CommunityAthlete(handle: devon.handle, name: devon.name, location: devon.location,
                 bio: "Erg every morning. Meters don't lie.",
                 totalWorkouts: 410, dayStreak: 15, totalDistanceM: 2_400_000, lat: 41.88, lon: -87.63,

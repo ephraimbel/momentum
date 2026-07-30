@@ -7,6 +7,7 @@ struct WorkoutDetailView: View {
     var weightUnit: WeightUnit = .default()
     var distanceUnit: DistanceUnit = .auto
     @Environment(CoachPresenter.self) private var coach
+    @Environment(\.modelContext) private var context
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -22,6 +23,17 @@ struct WorkoutDetailView: View {
                     }
                 }
                 askCoachRow
+                // Change your mind later (the save screen's picker, revisitable): flipping the
+                // audience re-dirties the workout so the next publish sweep reconciles the post —
+                // up on share, DOWN on a downgrade to private. The regret path must be as easy
+                // as the share path.
+                if CommunityAccess.enabled {
+                    ShareVisibilityRow(privacy: $workout.privacy, boxed: true)
+                        .onChange(of: workout.privacy) {
+                            workout.syncedAt = nil
+                            try? context.save()
+                        }
+                }
             }
             .padding(Theme.Space.md)
         }

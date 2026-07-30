@@ -370,8 +370,10 @@ struct FuelView: View {
     /// `todayMeals`: once the signature has moved, the map describes the meal as it WAS, so we pay
     /// the decode for one frame rather than name items the athlete has already removed. Falls back
     /// to the live property for a meal that simply isn't in the map — right, just at the old cost.
-    private func title(_ meal: Meal) -> String {
-        guard isCacheValid, let cached = cachedTitles[meal.id] else { return meal.journalTitle }
+    /// `cacheValid` comes from the CALLER, computed once per section — `isCacheValid` re-hashes
+    /// the whole day signature, and this used to run it once per journal row + twice per chip.
+    private func title(_ meal: Meal, cacheValid: Bool) -> String {
+        guard cacheValid, let cached = cachedTitles[meal.id] else { return meal.journalTitle }
         return cached
     }
 
@@ -587,13 +589,9 @@ struct FuelView: View {
         .background(fieldShape.fill(Theme.surface))
         .overlay {
             if composerGlow {
-                fieldShape
-                    .stroke(LinearGradient(colors: Theme.iridescent,
-                                           startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 1.5)
-                    .opacity(voice.isRecording && !reduceMotion
-                             ? 0.55 + 0.45 * voice.level          // the ring breathes WITH the voice
-                             : (draft.isEmpty ? 0.65 : 1))
+                // Leaf view: keeps the 45 Hz `voice.level` read out of THIS page's body.
+                DictationGlowStroke(shape: fieldShape, voice: voice,
+                                    restingOpacity: draft.isEmpty ? 0.65 : 1)
             } else {
                 fieldShape.stroke(Theme.hairline)
             }
@@ -620,7 +618,7 @@ struct FuelView: View {
             ZStack {
                 Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear))
                 if voice.isRecording {
-                    VoiceLevelBars(level: voice.level, tint: Theme.background)
+                    MicLevelBars(voice: voice, tint: Theme.background)
                 } else {
                     Image(systemName: "mic")
                         .font(.system(size: 15, weight: .semibold))
@@ -915,6 +913,7 @@ struct FuelView: View {
     @ViewBuilder
     private var usualsRow: some View {
         let list = usuals
+        let chipsCacheValid = isCacheValid   // once per section, not twice per chip
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Theme.Space.xs) {
                 if list.isEmpty {
@@ -942,10 +941,10 @@ struct FuelView: View {
                             if paywall.isEntitled(to: .fuel) { repeatMeal(meal) }
                             else { paywall.present(for: .fuel) }
                         } label: {
-                            chipLabel(title(meal))
+                            chipLabel(title(meal, cacheValid: chipsCacheValid))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Log again: \(title(meal))")
+                        .accessibilityLabel("Log again: \(title(meal, cacheValid: chipsCacheValid))")
                     }
                 }
             }
@@ -1009,13 +1008,14 @@ struct FuelView: View {
     @ViewBuilder
     private var todaysMeals: some View {
         let rows = todayMeals
+        let rowsCacheValid = isCacheValid   // once per section, not once per row
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 Text("TODAY").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
                     .foregroundStyle(Theme.inkTertiary)
                 VStack(spacing: 0) {
                     ForEach(rows) { meal in
-                        mealRow(meal)
+                        mealRow(meal, cacheValid: rowsCacheValid)
                             .transition(rowTransition)
                         if meal.id != rows.last?.id {
                             Rectangle().fill(Theme.hairline).frame(height: 0.5)
@@ -1029,7 +1029,7 @@ struct FuelView: View {
         }
     }
 
-    private func mealRow(_ meal: Meal) -> some View {
+    private func mealRow(_ meal: Meal, cacheValid: Bool) -> some View {
         // The gate covers Siri-path estimates too — without it, a meal Siri was actively
         // estimating rendered as "Couldn't estimate" and was editable mid-flight (opening the
         // sheet then saving wiped the just-landed numbers).
@@ -1045,7 +1045,7 @@ struct FuelView: View {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Theme.Space.sm) {
-                        Text(title(meal))
+                        Text(title(meal, cacheValid: cacheValid))
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .lineLimit(2).multilineTextAlignment(.leading)
                             .contentTransition(.opacity)

@@ -71,6 +71,9 @@ struct ProfileGrid: View {
     var onOpen: (UUID) -> Void
     /// Called when the athlete opens the full awards gallery.
     var onOpenAwards: () -> Void = {}
+    /// When set, each tile registers as the zoom source for the pager (see ProfileScreen). Optional
+    /// with a nil default so previews and any other host keep building unchanged.
+    var zoomNamespace: Namespace.ID? = nil
 
     /// The gutter is a HAIRLINE, not a spacing token (Instagram measures 1px; we use 2pt so it
     /// survives dark mode and non-Retina scaling). This is the single biggest reason a photo grid
@@ -120,9 +123,18 @@ struct ProfileGrid: View {
     @State private var didEntrance = false
     @ViewBuilder
     private func tileCell(_ workout: Workout, globalIndex: Int) -> some View {
-        let tile = WorkoutTile(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
+        let bare = WorkoutTile(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
                                isPR: prWorkoutIds.contains(workout.id)) {
             onOpen(workout.id)
+        }
+        // Zoom source keyed on the workout id — the pager's `.zoom` grows out of exactly this
+        // tile. Applied per-cell rather than on the grid so recycling keeps ids honest.
+        let tile = Group {
+            if let ns = zoomNamespace {
+                bare.matchedTransitionSource(id: workout.id, in: ns)
+            } else {
+                bare
+            }
         }
         if globalIndex < 9 {
             tile.modifier(TileEntrance(delay: Double(globalIndex) * 0.035, enabled: !didEntrance))
@@ -320,8 +332,10 @@ struct ProfileGrid: View {
 // MARK: - Motion primitives (profile entrances — transform-only, Reduce Motion snaps)
 
 /// A number that tallies up once when it appears. Shared by the lifetime hero and the
-/// consistency headline; Reduce Motion shows the final value immediately.
-private struct CountUpNumber: View {
+/// consistency headline; Reduce Motion shows the final value immediately. Internal, not private:
+/// visited athlete profiles (AthleteProfileView) run the SAME Highlights motion — one profile
+/// grammar app-wide (owner call 2026-07-30).
+struct CountUpNumber: View {
     let value: Double
     let format: (Double) -> String
     var font: Font
@@ -342,7 +356,8 @@ private struct CountUpNumber: View {
 }
 
 /// A hairline the page draws for itself, left to right (scale transform, never layout).
-private struct PenRule: View {
+/// Internal for the same reason as `CountUpNumber` — the visited-profile Highlights shares it.
+struct PenRule: View {
     var delay: Double = 0
     @State private var drawn = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -378,7 +393,8 @@ private struct TileEntrance: ViewModifier {
 }
 
 /// A small scale-spring settle for objects landing on a shelf (the award medallions).
-private struct SettleIn: ViewModifier {
+/// Internal like `CountUpNumber`/`PenRule` — the visited-profile trophy case shares it.
+struct SettleIn: ViewModifier {
     var delay: Double = 0
     @State private var settled = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

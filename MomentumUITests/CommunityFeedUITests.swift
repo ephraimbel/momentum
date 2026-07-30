@@ -12,7 +12,13 @@ final class CommunityFeedUITests: XCTestCase {
     }
 
     func testFeedScopesAndBylineNavigation() throws {
-        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
+        throw XCTSkip("""
+            Written for the PRE-REDESIGN card feed (Following|Everyone scope bar, post-body cards, \
+            --community-tab). Community shipped again 2026-07-29 as the grid wall inside Profile, so \
+            these steps address surfaces that no longer exist — the skip reason is the stale design, \
+            not a back-burnered feature. Live coverage: FollowFlowUITests (follow graph end to end). \
+            Rewriting search + post-detail against the wall is open work.
+            """)
         let app = XCUIApplication()
         // --ui-test-social keeps feed maps as instant silhouettes; XCTest's accessibility snapshot
         // realizes every lazy row, and a fleet of live Mapbox renders times the queries out.
@@ -65,7 +71,13 @@ final class CommunityFeedUITests: XCTestCase {
     /// post's body opens the full-page reading view (fullScreenCover, 2026-07-10 — the sheet
     /// presentation was clipping the post on device).
     func testSearchFollowAndFullPagePostDetail() throws {
-        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
+        throw XCTSkip("""
+            Written for the PRE-REDESIGN card feed (Following|Everyone scope bar, post-body cards, \
+            --community-tab). Community shipped again 2026-07-29 as the grid wall inside Profile, so \
+            these steps address surfaces that no longer exist — the skip reason is the stale design, \
+            not a back-burnered feature. Live coverage: FollowFlowUITests (follow graph end to end). \
+            Rewriting search + post-detail against the wall is open work.
+            """)
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--community-tab", "--reset-social", "--ui-test-social"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
@@ -116,7 +128,13 @@ final class CommunityFeedUITests: XCTestCase {
     }
 
     func testSaveScreenCarriesTheShareMoment() throws {
-        throw XCTSkip("Community is back-burnered for v1 (2026-07-16) — suite returns with the feed.")
+        throw XCTSkip("""
+            Written for the PRE-REDESIGN card feed (Following|Everyone scope bar, post-body cards, \
+            --community-tab). Community shipped again 2026-07-29 as the grid wall inside Profile, so \
+            these steps address surfaces that no longer exist — the skip reason is the stale design, \
+            not a back-burnered feature. Live coverage: FollowFlowUITests (follow graph end to end). \
+            Rewriting search + post-detail against the wall is open work.
+            """)
         let app = XCUIApplication()
         // `--ui-test-strength` opens Today in strength; `--ui-test-route` self-authorizes location.
         app.launchArguments = ["--seed-demo", "--ui-test-strength", "--ui-test-route"]

@@ -1,4 +1,9 @@
 import Foundation
+import UIKit
+
+// (`CommunityPhotos` deleted 2026-07-30 — seeded posts carry no stock photos since the same-day
+// reversal, and the enum had zero callers left. The `commphoto-*` asset blobs can leave the
+// bundle whenever an app-size pass wants them.)
 
 /// Generates a large, deterministic **Momentum community** (docs/SOCIAL-LAYER.md). Honest presence:
 /// every generated athlete is clearly labeled community content in the UI (never a real stranger near
@@ -6,7 +11,11 @@ import Foundation
 /// real cities — **US-majority** — with small jitter so globe dots land on cities (not the ocean), and
 /// each GPS post carries a real short route + a varied map style so the feed shows real maps.
 enum CommunityGenerator {
-    static let count = 950
+    /// Community scale (owner call 2026-07-29: "thousands across the globe" — feed, strip, and
+    /// globe all read this same number, so they can never disagree). Deliberately NON-round: an
+    /// even 3,000 reads as a planted figure. Identities are index-seeded, so growing the count
+    /// appends new athletes without reshuffling anyone who already existed.
+    static let count = 2_863
 
     static func generate(now: Date) -> [CommunityAthlete] {
         (0..<count).map { athlete(index: $0, now: now) }
@@ -68,6 +77,21 @@ enum CommunityGenerator {
             lat: lat, lon: lon, posts: [post])
     }
 
+    /// "Athletes moving right now" for the wall's live strip — a deterministic time-of-day curve
+    /// (twin peaks at 6–9 and 17–20, 3am near-quiet) with per-hour jitter, over the community's
+    /// size. Stable within an hour, honest to the clock; real presence replaces it when the
+    /// backend serves one.
+    static func movingNow(now: Date = Date()) -> Int {
+        let hour = Calendar.current.component(.hour, from: now)
+        let day = Int(now.timeIntervalSince1970 / 86_400)
+        let curve: [Double] = [0.010, 0.008, 0.006, 0.006, 0.012, 0.035,
+                               0.075, 0.095, 0.085, 0.060, 0.045, 0.050,
+                               0.055, 0.045, 0.040, 0.045, 0.060, 0.090,
+                               0.105, 0.085, 0.055, 0.035, 0.022, 0.014]
+        var rng = SeededRNG(day &* 24 &+ hour &* 7877)
+        return max(3, Int(Double(count) * curve[hour] * rng.double(0.85, 1.15)))
+    }
+
     /// Power-biased pick toward the front of a (roughly popularity-ordered) list — real communities
     /// clump; uniform picks read generated. One rng draw, like `pick`.
     private static func pickBiased<T>(_ pool: [T], _ rng: inout SeededRNG) -> T {
@@ -124,8 +148,28 @@ enum CommunityGenerator {
         // A REAL street-following loop from the bundled Directions fetch — never a synthetic
         // shape over rooftops. If a city has no bundled loop, the post ships without a map
         // (an honest gap beats an obviously fake trace).
-        let loop = discipline.isGPS ? CommunityRoutes.loop(city: city, discipline: discipline, rng: &rng) : nil
-        let (title, stat, pr) = content(for: discipline, routeKm: loop?.km, rng: &rng)
+        //
+        // Structured sessions (track reps, tempo, hills) and trail runs ship WITHOUT a map on
+        // purpose: their titles claim terrain or a workout a downtown street loop would flatly
+        // contradict ("Track night" over city blocks is the loudest fake tell), and real watch
+        // posts from the track or the woods are mapless all the time — that's what honest looks
+        // like in a feed.
+        // ~8%: real feeds have the occasional watch-only interval post, but the WALL is a wall of
+        // routes — at 14% two glyph tiles per screenful read as a pattern, not an exception.
+        let structured = discipline == .run && rng.int(0...99) < 8
+        let mapless = structured || discipline == .trailRun
+        let loop = (discipline.isGPS && !mapless)
+            ? CommunityRoutes.loop(city: city, discipline: discipline, rng: &rng) : nil
+        let (title, stat, pr) = structured ? workoutContent(rng: &rng)
+                                           : content(for: discipline, routeKm: loop?.km, rng: &rng)
+        // NO stock photos on seeded posts (owner call 2026-07-30, reversing 2026-07-29): the
+        // bundled Lorem Picsum shots read tacky next to real work, and a fake vista on a fake
+        // post is the exact generator-tell this feed is engineered to avoid. Every seeded post
+        // now leads with its own honest visual — the route, the muscle map, or the sport glyph
+        // (the `CommunityPageMedia`/tile fallback). Real athletes' photo posts are untouched;
+        // this only stops the seed from faking a camera roll.
+        let photos: [Data] = []
+        let coverPhoto = false
         let muscles = discipline.isStrengthStyle ? StrengthFeedMuscles.activation(forTitle: title, type: discipline) : nil
         let ai = rng.int(0...2) == 0 ? rng.pick(aiReads(for: discipline)) : nil
         // Respects follow a power law, not a flat 0–140 draw (that uniform spread was the strongest
@@ -133,13 +177,28 @@ enum CommunityGenerator {
         // stable "audience" (handle-seeded), growing as the post ages (a 3-minute-old post hasn't
         // been seen yet), with a modest PR bump.
         var aud = SeededRNG(handle.utf8.reduce(17) { ($0 &* 37 &+ Int($1)) & 0x7FFF_FFFF })
-        let ceiling = 3 + 150 * pow(aud.double(0, 1), 3)
+        // Lively but still power-law (owner ask 2026-07-29): typical posts sit ~15–60 with a real
+        // popular tail into the hundreds, and even a fresh post has been seen by SOMEONE (the
+        // maturity floor) — a page of 2s and 3s read as a ghost town, not a community.
+        let ceiling = 10 + 480 * pow(aud.double(0, 1), 2.2)
         let maturity = min(max(0, now.timeIntervalSince(date)) / 3600 / 24, 1)
-        let reactions = Int(ceiling * max(maturity, 0.04) * (pr != nil ? 1.6 : 1.0) * rng.double(0.6, 1.1))
+        let reactions = Int(ceiling * max(maturity, 0.18) * (pr != nil ? 1.6 : 1.0) * rng.double(0.6, 1.1))
         return FeedItem(id: id, authorName: name, authorHandle: handle, location: city,
-                        isCommunity: true, type: discipline, date: date, title: title, caption: caption,
+                        isCommunity: true, isPro: Self.isPro(handle: handle),
+                        type: discipline, date: date, title: title, caption: caption,
                         statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: loop?.pts, mapStyle: style,
-                        baseReactions: reactions, aiRead: ai)
+                        baseReactions: reactions, photosData: photos, coverIsPhoto: coverPhoto,
+                        aiRead: ai)
+    }
+
+    /// Whether a community member wears the purple Verified-Pro seal — the SAME checkmark a real
+    /// Pro account shows (owner call 2026-07-30; replaces the old iridescent "Momentum" pill).
+    /// Deterministic per handle so the byline, the pager, and the profile always agree, and
+    /// deliberately not everyone: a wall where every single member is sealed reads as fake.
+    /// Mixing constants differ from the audience RNG so Pro doesn't correlate with popularity.
+    static func isPro(handle: String) -> Bool {
+        let seed = handle.utf8.reduce(31) { ($0 &* 29 &+ Int($1)) & 0x7FFF_FFFF }
+        return seed % 100 < 62
     }
 
     /// "MM:SS" / "H:MM:SS" from seconds — with real seconds, because real workouts don't all
@@ -180,11 +239,15 @@ enum CommunityGenerator {
             return (rng.pick(km >= 14 ? longRunTitles : runTitles),
                     gpsStat(km: km, paceSecPerKm: rng.double(280, 430), rng: &rng), pr)
         case .trailRun:
-            // Slower paces (5:35–7:40 /km). Trail titles ONLY when there's no route map — the
-            // bundled loops trace city streets, and "Singletrack miles" over downtown blocks is a
-            // fake tell. With a street map these read as easy road runs, which the pace matches.
-            return (rng.pick(routeKm == nil ? trailTitles : easyRunTitles),
-                    gpsStat(km: routeKm ?? rng.double(5, 15), paceSecPerKm: rng.double(335, 460), rng: &rng), pr)
+            // Always mapless (makePost skips the street loop — no bundled trail geometry exists,
+            // and "Singletrack miles" over downtown blocks was the loudest fake tell). Terrain is
+            // carried by slower paces (5:35–8:00 /km) and a climb figure instead of a trace.
+            let km = rng.double(6, 18)
+            let climbFt = (Int(km * 0.6214 * rng.double(80, 320)) / 10) * 10
+            return (rng.pick(trailTitles),
+                    gpsStat(km: km, paceSecPerKm: rng.double(335, 480), rng: &rng)
+                        + " · \(climbFt.formatted()) ft",
+                    pr)
         case .ride, .mountainBikeRide, .gravelRide, .eBikeRide:
             // 20–31 km/h ≈ 12–19 mph.
             return (rng.pick(rideTitles),
@@ -211,6 +274,15 @@ enum CommunityGenerator {
             }
             return (rng.pick(titles), durationString(seconds: rng.int(20 * 60...70 * 60)), pr)
         }
+    }
+
+    /// A structured session: track reps, tempo, hills. Total distance includes warmup and
+    /// cooldown, and the overall pace sits between easy and race effort — a 45-minute "8×400"
+    /// averaging 5:20/km is exactly what an interval night looks like on a watch.
+    private static func workoutContent(rng: inout SeededRNG) -> (String, String, String?) {
+        let pr = rng.int(0...7) == 0 ? rng.pick(["5K PR", "Fastest mile"]) : nil
+        return (rng.pick(workoutTitles),
+                gpsStat(km: rng.double(6, 13), paceSecPerKm: rng.double(275, 335), rng: &rng), pr)
     }
 
     // MARK: Pools
@@ -302,12 +374,19 @@ enum CommunityGenerator {
                 "Nice reset.", "Podcast miles.", "Fresh air fixed it.", "Perfect weather for it.",
                 "Legs needed this.", "Slow on purpose."]
         }
+        if discipline == .trailRun {
+            return neutralCaptions + [
+                "Roots and rocks the whole way.", "Climbed into the fog.", "Legs toast, worth it.",
+                "Lost the trail twice lol", "Zero pace, all vert.", "The woods fixed my head.",
+                "Hiking the ups, flying the downs."]
+        }
         if discipline.isGPS {
             return neutralCaptions + [
                 "Negative split the whole way.", "Legs heavy, heart full.", "Easy effort, big smile.",
                 "Beat my old time.", "Perfect weather for it.", "Almost bailed at mile 2. Glad I didn't.",
                 "First run in new shoes and yeah, believers now", "Humid one today 🥵",
-                "Sunrise did all the work.", "Didn't want to. Did it anyway."]
+                "Sunrise did all the work.", "Didn't want to. Did it anyway.",
+                "Splits held on the last two.", "Legs knew what day it was."]
         }
         return neutralCaptions
     }
@@ -321,8 +400,8 @@ enum CommunityGenerator {
     private static let runTitles = ["Morning run","Lunch run","Evening run","Night run","Easy miles","Recovery jog","Shakeout","Easy run","Base miles","Daily miles","Midweek miles","Neighborhood loop","Park loop","Riverside loop","Steady miles","Just some miles","Quick one before work","Got the miles in","Out the door early","Sunrise miles","A few easy ones","Around town"]
     private static let longRunTitles = ["Long run","Long one","Sunday long run","Weekend long run","Going long","Big miles","Long slow miles","The long one","Longest of the week"]
     private static let rideTitles = ["Morning ride","Evening ride","Long ride","Gravel loop","Coffee ride","Sunset spin","Recovery spin","Weekend ride","Lunch spin","Easy spin","Neighborhood loop","Base miles on the bike","Got out on the bike","Just spinning","Out for a roll"]
-    private static let trailTitles = ["Trail run","Ridge loop","Singletrack miles","Dirt hour","Trail miles","Out on the trails","Woods run","Trail time"]
-    private static let easyRunTitles = ["Easy miles","Recovery jog","Easy run","Slow miles","Base miles","Easy shakeout","Just some miles","Steady miles"]
+    private static let trailTitles = ["Trail run","Ridge loop","Singletrack miles","Dirt hour","Trail miles","Out on the trails","Woods run","Trail time","Switchbacks","Vert day","Fire road climb","Creek trail loop"]
+    private static let workoutTitles = ["Track night","Track Tuesday","8×400 at the track","6×800 with the club","Mile repeats","400s and a cooldown","Tempo run","Tempo Thursday","Fartlek","Hill repeats","Speed day","Intervals","Workout Wednesday","5×1K","Strides and tempo"]
     private static let walkTitles = ["Recovery walk","Evening walk","Hike","Trail walk","Steps day","Nature walk","Out for a walk","Long walk"]
     private static let urbanWalkTitles = ["Morning walk","Evening walk","Recovery walk","Neighborhood loop","Steps day","Lunch walk","After dinner walk","Just a walk","Podcast walk","Around the block"]
     private static let liftTitles = ["Push day","Pull day","Leg day","Upper body","Lower body","Full body","Gym session","Strength day","Lifting","Quick lift","Accessory day","Back and bis","Chest day","Legs and core","Lower power","Upper hypertrophy"]
@@ -371,13 +450,14 @@ enum CommunityGenerator {
     /// Variety of basemaps across the feed (Strava-style "people use different maps"). No satellite —
     /// aerial imagery is off-brand and removed from the app's map choices.
     static let feedStyles: [MapStyleOption] = [.standard, .realistic, .streets, .outdoors, .dark]
-    /// Repeats = weight. Run-dominant (~40% run/trail) — this is a running-first community; the old
-    /// even-ish spread made swim+row+yoga a quarter of the feed, which read like a generic fitness
-    /// generator. Rowing rides on the featured @devonrows rather than the generated pool.
+    /// Repeats = weight. Run-DOMINANT (~65% run/trail, owner call 2026-07-29 — this is a running
+    /// app and the wall should read like one): city runs with real street-loop maps, structured
+    /// track/tempo sessions, trail runs with climb. The rest is the plausible cross-training a
+    /// running community actually posts. Rowing rides on the featured @devonrows.
     private static let disciplines: [WorkoutType] = [
-        .run, .run, .run, .run, .run, .run, .trailRun,
-        .strength, .strength, .strength, .hiit,
-        .ride, .ride, .walk, .walk, .swimming, .yoga]
+        .run, .run, .run, .run, .run, .run, .run, .run, .run, .run, .run,
+        .trailRun,
+        .strength, .strength, .ride, .ride, .walk, .swimming, .yoga]
 }
 
 /// Session-scoped "someone just posted" pulses: each pull-to-refresh mints a few brand-new

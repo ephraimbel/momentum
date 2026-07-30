@@ -22,7 +22,7 @@ final class AIService: AIServing {
         guard let endpoint, let bearer else { return template }
 
         let request = AnalysisRequest(
-            workout: WorkoutDigest(workout),
+            workout: WorkoutDigest(workout, distanceUnit: distanceUnit),
             planned: plannedDigest(workout, planned: planned),
             units: .init(weight: weightUnit == .lb ? "lb" : "kg", distance: distanceUnit.rawValueString),
             athlete: athleteContext()

@@ -44,6 +44,10 @@ struct AthletePanel: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The figure's iridescent mesh animates at 30 fps for as long as it exists — including
+    /// scrolled far off-screen under the Trends report (3 offscreen passes/tick for nothing,
+    /// 2026-07-30 perf audit). Freeze it whenever the panel isn't visible.
+    @State private var onScreen = true
 
     /// The stage grows with the athlete's text setting — 400pt at the default size (exactly what
     /// it was hard-coded to), taller as the type grows. That headroom is the whole fix: the box
@@ -69,6 +73,7 @@ struct AthletePanel: View {
         // Deliberately no card: the panel is built into the canvas — the figure stands in the
         // app itself, not in a box. The platform below grounds it instead.
         .padding(.vertical, Theme.Space.sm)
+        .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
     }
 
     private var stage: some View {
@@ -162,7 +167,8 @@ struct AthletePanel: View {
     private func figure(fig: CGRect) -> some View {
         // No `.shadow` here: blurring a 30fps-animating mesh re-renders the whole figure
         // offscreen every tick. The static aura in `backdrop` supplies the dark-mode glow.
-        MuscleMapView(activation: activation, sides: [.front], sex: sex, forceStatic: reduceMotion)
+        MuscleMapView(activation: activation, sides: [.front], sex: sex,
+                      forceStatic: reduceMotion || !onScreen)
             .frame(width: fig.width, height: fig.height)
             .position(x: fig.midX, y: fig.midY)
             .accessibilityHidden(true)   // the columns carry the data; the figure is scenery

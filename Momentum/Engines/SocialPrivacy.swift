@@ -60,6 +60,16 @@ enum SocialPrivacy {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// The granularity that goes with a location the athlete just typed. **Filling the field IS the
+    /// opt-in** — Edit Profile offers one optional line, and leaving it blank is how you stay
+    /// unplaced; there's no separate switch to forget. Clearing it takes the location back off the
+    /// wire entirely (`.off`), and an athlete who once chose the coarser `.region` keeps it.
+    static func granularity(forCity city: String, current: String) -> LocationGranularity {
+        guard !city.trimmingCharacters(in: .whitespaces).isEmpty else { return .off }
+        let existing = LocationGranularity(rawValue: current) ?? .off
+        return existing == .off ? .city : existing
+    }
+
     /// One-line summary of how exposed the athlete currently is — drives the profile privacy chip.
     static func exposureSummary(_ profile: UserProfile) -> String {
         if defaultVisibility(profile) == .private && !profile.appearOnMap && !profile.discoverable {

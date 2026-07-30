@@ -35,9 +35,12 @@ gps running / running route / trail running; Bevel-side — hrv / recovery / vo2
 
 **Promotional Text** (170 chars, updatable anytime without review):
 ```
-Train smarter, not just harder. Momentum reads your recovery and builds your training around it: adaptive race plans, honest goal verdicts, injury protection.
+Plans built by runners, for runners. Momentum reads your recovery and builds your training around it: adaptive race plans, honest goal verdicts, injury protection.
 ```
-*(158 chars — repositioned: recovery-informed training leads.)*
+*(162 chars — repositioned 2026-07-29 per owner: runner-built leads, never "AI plan"; no dash next
+to the runner phrase (owner voice call 2026-07-30, dashes read as AI-written). Promotional text is
+NOT search-indexed, so it carries the conversion phrase; the Subtitle stays keyword-dense. NOT yet
+pushed to the live listing — the API write needs the owner's go-ahead (permission-gated).)*
 
 **Primary category:** Health & Fitness · **Secondary:** Sports
 
@@ -108,8 +111,8 @@ Declare accurately (you collect these):
 
 ## Pricing (subscriptions — App Store Connect → Subscriptions)
 Two auto-renewing subscriptions in one group (must match `PaywallOffering.standard` in the app):
-- **momentum Pro — Monthly** (`momentum_pro_monthly`): **$14.99/mo**, no trial — set deliberately below Runna (~$17.99/mo) to win the price-comparison shopper.
-- **momentum Pro — Annual** (`momentum_pro_annual`): **$109.99/yr** (≈ $9/mo; the app's savings badge rounds the ~39% real saving to a clean "save 40%"), **7-day free trial**.
+- **momentum Pro — Monthly** (`momentum_pro_monthly`): **$9.99/mo**, no trial — the trial is the annual's nudge (owner call 2026-07-30). (Repriced 2026-07-29 — mass-market positioning; the hard paywall makes price the conversion funnel.)
+- **momentum Pro — Annual** (`momentum_pro_annual`): **$59.99/yr** (under $5/mo — half Runna's annual, below Strava's $79.99; the savings badge reads a clean "save 50%"), **7-day free trial**.
 
 The App Store renders these prices natively from the product — the listing **description does not hardcode them**. Full activation runbook: `docs/MONETIZATION-SETUP.md`.
 

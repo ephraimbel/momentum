@@ -8,6 +8,10 @@ import SwiftUI
 struct FindAthletesView: View {
     /// Called with the chosen athlete's handle; the presenter dismisses and routes to the profile.
     var onOpen: (String) -> Void
+    /// In-place inside the Community face (2026-07-29): no NavigationStack/title of its own — the
+    /// host header stays put above, and the field row grows a Cancel that hands control back.
+    var embedded = false
+    var onCancel: (() -> Void)? = nil
 
     @Environment(FollowStore.self) private var follows
     @Environment(RemoteFeedStore.self) private var remoteFeed
@@ -17,49 +21,57 @@ struct FindAthletesView: View {
     @FocusState private var searching: Bool
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                searchField
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if trimmedQuery.isEmpty {
-                            sectionLabel("SUGGESTED")
-                            ForEach(suggested) { row($0) }
-                        } else if results.isEmpty {
-                            emptyResults
-                        } else {
-                            ForEach(results) { row($0) }
-                        }
+        if embedded {
+            content
+        } else {
+            NavigationStack {
+                content
+                    .navigationTitle("Find athletes")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
                     }
-                    .padding(.horizontal, Theme.Space.lg)
-                    .padding(.bottom, Theme.Space.xxl)
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack(spacing: 0) {
+            searchField
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if trimmedQuery.isEmpty {
+                        sectionLabel("SUGGESTED")
+                        ForEach(suggested) { row($0) }
+                    } else if results.isEmpty {
+                        emptyResults
+                    } else {
+                        ForEach(results) { row($0) }
+                    }
                 }
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.bottom, Theme.Space.xxl)
             }
-            .background(Theme.background)
-            .navigationTitle("Find athletes")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
+        }
+        .background(Theme.background)
+        // Debounced remote search — local results render instantly on every keystroke.
+        .task(id: trimmedQuery) {
+            let q = trimmedQuery
+            guard q.count >= 2 else { remoteHits = []; return }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            remoteHits = await remoteFeed.search(q)
+        }
+        .onAppear {
+            searching = true
+            #if DEBUG
+            // --find-query <term>: pre-fill the search (deterministic sim verification of the
+            // results list; host-keyboard injection into the sim is unreliable).
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "--find-query"), args.indices.contains(i + 1) {
+                query = args[i + 1]
             }
-            // Debounced remote search — local results render instantly on every keystroke.
-            .task(id: trimmedQuery) {
-                let q = trimmedQuery
-                guard q.count >= 2 else { remoteHits = []; return }
-                try? await Task.sleep(for: .milliseconds(300))
-                guard !Task.isCancelled else { return }
-                remoteHits = await remoteFeed.search(q)
-            }
-            .onAppear {
-                searching = true
-                #if DEBUG
-                // --find-query <term>: pre-fill the search (deterministic sim verification of the
-                // results list; host-keyboard injection into the sim is unreliable).
-                let args = ProcessInfo.processInfo.arguments
-                if let i = args.firstIndex(of: "--find-query"), args.indices.contains(i + 1) {
-                    query = args[i + 1]
-                }
-                #endif
-            }
+            #endif
         }
     }
 
@@ -91,26 +103,34 @@ struct FindAthletesView: View {
 
     private var searchField: some View {
         HStack(spacing: Theme.Space.sm) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-            TextField("Search by name or @handle", text: $query)
-                .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($searching)
-                .submitLabel(.search)
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16)).foregroundStyle(Theme.inkTertiary)
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                TextField("Search by name or @handle", text: $query)
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($searching)
+                    .submitLabel(.search)
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16)).foregroundStyle(Theme.inkTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
+            }
+            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+            .background(Capsule().fill(Theme.surface))
+            .overlay(Capsule().stroke(Theme.hairline))
+            if embedded {
+                Button("Cancel") { searching = false; onCancel?() }
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityLabel("Cancel search")
             }
         }
-        .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-        .background(Capsule().fill(Theme.surface))
-        .overlay(Capsule().stroke(Theme.hairline))
         .padding(.horizontal, Theme.Space.lg)
         .padding(.vertical, Theme.Space.md)
     }
@@ -128,8 +148,10 @@ struct FindAthletesView: View {
                 HStack(spacing: Theme.Space.sm) {
                     // Clean initials chip, not the seeded community's synthetic face assets — those read
                     // as odd stock photos in a list (user ask 2026-07-15). Real athletes' own photos
-                    // (avatarData) still show; seeded community falls back to a monogram.
-                    AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42)
+                    // (avatarData) still show; seeded community falls back to its preset look (a clean
+                    // graphic, not a photo — the 2026-07-15 call was about faces) or the monogram.
+                    AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42,
+                               preset: athlete.communityPreset)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(athlete.name)
                             .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)

@@ -4,10 +4,9 @@ import Foundation
 ///
 /// Each bundled synthetic face (StyleGAN portraits that depict no real person — no right-of-publicity
 /// concern for sample accounts; still clearly badged "Momentum community") is handed to **exactly one**
-/// athlete, in directory order, until the gendered pools are spent. Athletes past that carry NO asset,
-/// so `AvatarView` shows their initials — exactly as if they never set a profile photo. Plenty of real
-/// accounts look like that, so a feed of "some faces, some monograms" reads more honest (and never
-/// repeats a face) than reusing the pool across everyone. The mapping is:
+/// athlete. Since 2026-07-29 the look is hash-MIXED through the directory (faces / preset looks /
+/// monograms interleaved — see `assignment`), so the visible feed reads like a real crowd: photos,
+/// picked looks, and untouched defaults side by side, never a face repeated. The mapping is:
 ///   • **unique** — no two athletes share a face (assigned once, keyed by the athlete's handle).
 ///   • **deterministic + stable** — same athlete → same face (or same initials) every launch, on every
 ///     surface (feed byline, profile header, search, comments), so identity stays coherent.
@@ -36,26 +35,60 @@ enum CommunityAvatars {
         "Theo","Marcus","Devon","Jamal","Owen","Diego","Liam","Noah","Caleb","Andre","Ravi","Kofi","Tomas",
         "Sven","Kai","Omar","Hugo","Mateo","Joon","Felix","Pablo","Sami","Dario","Cole"]
 
-    /// The avatar asset for a community athlete, or `nil` once the gendered pool is spent (→ the
-    /// athlete shows their initials chip, like an account with no photo). Keyed by the unique handle,
-    /// so every face is used exactly once.
-    static func assetName(forHandle handle: String) -> String? { assignment[handle] }
+    /// The avatar asset for a community athlete, or `nil` when their look is a preset or the plain
+    /// monogram. Every face is still unique (assigned once, keyed by the athlete's handle).
+    static func assetName(forHandle handle: String) -> String? { assignment.faces[handle] }
 
-    /// One-time unique assignment over the deterministic community directory: each athlete claims the
-    /// next unused face of their gender; when a pool is spent, later athletes get no asset. Built once
-    /// (lazy) — `CommunityDirectory.all()` is cached and doesn't resolve avatars while it builds, so
-    /// there's no initialization cycle.
-    private static let assignment: [String: String] = {
-        var map: [String: String] = [:]
+    /// The identity-look MIX (2026-07-29, "make the feed feel real"): each athlete's look is
+    /// hash-bucketed in its own stream — ~42% wear a synthetic face (unique, gender-matched,
+    /// pool-limited), ~36% picked one of the twelve preset looks (the exact grid real athletes
+    /// pick from), and the rest never touched the picker (plain monogram). The old order-based
+    /// assignment spent all ~319 faces on the FIRST athletes in directory order — exactly the
+    /// ones the feed surfaces — so the visible page showed faces only and none of the app's own
+    /// preset looks. Built once (lazy); `CommunityDirectory.all()` is cached and doesn't resolve
+    /// avatars while it builds, so there's no initialization cycle.
+    private static let assignment: (faces: [String: String], presets: [String: AvatarPreset]) = {
+        var faces: [String: String] = [:]
+        var presets: [String: AvatarPreset] = [:]
         var f = 0, m = 0
         for athlete in CommunityDirectory.all() where athlete.isSample {
-            if isFemale(athlete.name) {
-                if f < femaleCount { map[athlete.handle] = String(format: "commf-%02d", f); f += 1 }
-            } else {
-                if m < maleCount { map[athlete.handle] = String(format: "commm-%02d", m); m += 1 }
+            let roll = stableHash("mix:" + athlete.handle) % 100
+            if roll < 42 {
+                if isFemale(athlete.name), f < femaleCount {
+                    faces[athlete.handle] = String(format: "commf-%02d", f); f += 1; continue
+                }
+                if !isFemale(athlete.name), m < maleCount {
+                    faces[athlete.handle] = String(format: "commm-%02d", m); m += 1; continue
+                }
+                // Pool spent — fall through to a preset look rather than a monogram.
             }
+            if roll < 78 {
+                let h = stableHash("preset:" + athlete.handle)
+                presets[athlete.handle] = weightedPresets[Int(h % UInt64(weightedPresets.count))]
+            }
+            // else: the monogram default — neither map carries the handle.
         }
-        return map
+        return (faces, presets)
+    }()
+
+    /// A curated preset look, or nil when the athlete wears a face or the monogram default. Same
+    /// hash stream as the mix above — the seeded community's name draws are load-bearing
+    /// sequential RNG (2026-07 realism pass) and must never be consumed from here. Keyed by
+    /// handle, so the look is stable across launches and identical on every surface (feed byline,
+    /// profile header, search, comments).
+    static func preset(forHandle handle: String) -> AvatarPreset? { assignment.presets[handle] }
+
+    /// The pick table, each case repeated by its weight. Monogram + runner read as everyday picks,
+    /// track is occasional, and the wordmark is rare on purpose — a feed where thirty strangers
+    /// all wear the brand's logo reads as staged, which is the one thing the seeded community
+    /// must never do.
+    private static let weightedPresets: [AvatarPreset] = {
+        let weights: [(AvatarPreset, Int)] = [
+            (.monogramLight, 3), (.monogramDark, 3), (.monogramLavender, 3),
+            (.runnerLight, 3), (.runnerDark, 3), (.runnerLavender, 3),
+            (.trackLight, 2), (.trackDark, 2), (.trackLavender, 2),
+            (.wordmarkLight, 1), (.wordmarkDark, 1), (.wordmarkLavender, 1)]
+        return weights.flatMap { Array(repeating: $0.0, count: $0.1) }
     }()
 
     /// Gender bucket from the first name; an unrecognised name falls back to a deterministic hash

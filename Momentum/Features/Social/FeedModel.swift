@@ -12,8 +12,9 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let location: String?
     let isCommunity: Bool          // drives the "Momentum community" label (honest labeling)
     /// Verified Pro athlete → the checkmark next to the name. Remote posts carry it from the
-    /// server profile; the viewer's own posts stamp it from the live entitlement. Seeded
-    /// community content is never verified.
+    /// server profile; the viewer's own posts stamp it from the live entitlement; seeded community
+    /// members carry `CommunityGenerator.isPro(handle:)` — deterministic, ~62%, so byline, pager,
+    /// and profile always agree (owner call 2026-07-30; replaced the iridescent "Momentum" pill).
     var isPro: Bool = false
     let type: WorkoutType
     let date: Date
@@ -30,9 +31,12 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var mapStyle: MapStyleOption = .standard
     /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
     var baseReactions: Int = 0
-    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Take priority over
-    /// the route map; >1 renders as a swipeable carousel.
+    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Since 2026-07-29
+    /// they page BEHIND the activity's own visual — see `coverIsPhoto`.
     var photosData: [Data] = []
+    /// The cover rule: the activity's own visual (route/muscle/glyph) covers the tile and leads
+    /// the pager; a photo covers only when the author explicitly chose it.
+    var coverIsPhoto: Bool = false
     /// The hero photo — the first attached photo (convenience for tile/thumbnail contexts).
     var photoData: Data? { photosData.first }
     /// The author's profile photo (the user's own posts); nil → initials/bundled avatar (community).
@@ -41,9 +45,14 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     /// community posts show a real-feeling face instead of an initials chip. nil for the user's own
     /// and real network posts (they carry `avatarData`). See `CommunityAvatars`.
     var communityAvatarAsset: String? { isCommunity ? authorHandle.flatMap { CommunityAvatars.assetName(forHandle: $0) } : nil }
+    /// The hash-assigned preset look for face-less community athletes (see `CommunityAvatars.preset`).
+    var communityPreset: AvatarPreset? { isCommunity ? authorHandle.flatMap { CommunityAvatars.preset(forHandle: $0) } : nil }
     /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
     /// post's reading view. The user's own posts carry their `aiSummary`; community posts are seeded.
     var aiRead: String? = nil
+    /// REMOTE posts only: the server's comment count for the rail (blocked-filtered, from
+    /// `feed_page.comment_count`). nil for seeded/own posts — their counts are computed locally.
+    var remoteCommentCount: Int? = nil
 
     /// Route as map coordinates for `RouteMapView`.
     var routeCoordinates: [CLLocationCoordinate2D]? {
@@ -120,6 +129,7 @@ enum FeedAssembler {
             // The athlete's own posts render the map THEY saved the run with (save-screen choice).
             mapStyle: w.gps?.mapStyle ?? .standard,
             photosData: w.orderedPhotosData,
+            coverIsPhoto: w.coverIsPhoto,
             avatarData: profile?.avatarData,
             aiRead: w.aiSummary)
     }

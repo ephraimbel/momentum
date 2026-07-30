@@ -18,12 +18,15 @@ struct CardioSummaryContent: View {
     /// beat, so the summary would already be sitting fully drawn the moment it lifted. History
     /// passes 0 and reveals immediately.
     var revealDelay: Double = 0
-    /// Whether to read this run against the athlete's history and say what it meant.
+    /// Whether this is the finish-line moment, where a line may speak in the present tense.
     ///
-    /// Off in history, deliberately. The verdict is written in the present tense — "that's 3 this
-    /// week" — which is true the moment you finish and nonsense on a run from six months ago. It
-    /// would also insert a row a beat after the screen appeared, shoving the content down; the
-    /// post-workout surface hides that behind the celebration, a history screen has nowhere to put it.
+    /// It used to mean "show the verdict at all", and history passed `false` — so a run lost its
+    /// meaning the second time you opened it, arriving at bare numbers and a share button. The
+    /// reason for that was sound but too broad: only *some* verdicts expire. "That's 3 this week"
+    /// is true at the finish and nonsense in December; "Ninth time on this loop, 12s/mi faster than
+    /// last time" is true forever. So history now shows the timeless ones (`Verdict.isTimeless`)
+    /// and this flag governs only the perishable extras: the present-tense consistency line and the
+    /// plan connection ("stays on the board").
     var showsVerdict: Bool = false
 
     @Environment(\.modelContext) private var context
@@ -94,7 +97,7 @@ struct CardioSummaryContent: View {
                 // Only when no badge fired — a record run is already spoken for, and two readings of
                 // the same run stacked on each other is noise, not generosity. The extra fetch is
                 // skipped entirely in history, where the line isn't shown.
-                if showsVerdict, hits.isEmpty { verdict = computeVerdict(gps) }
+                if hits.isEmpty { verdict = computeVerdict(gps) }
                 if showsVerdict { planLine = computePlanConnection(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
@@ -141,7 +144,11 @@ struct CardioSummaryContent: View {
     /// carry it — this used to restate `hits.first`, printing the same sentence twice in a row. So
     /// the slot belongs to the verdict instead, and every run gets a reading rather than just the
     /// one in ten that PRs.
-    private var competenceLine: RunVerdict.Verdict? { hits.isEmpty ? verdict : nil }
+    private var competenceLine: RunVerdict.Verdict? {
+        guard hits.isEmpty, let verdict else { return nil }
+        // History keeps everything that stays true; only the finish line gets the perishable ones.
+        return showsVerdict || verdict.isTimeless ? verdict : nil
+    }
 
     /// Each tone gets a glyph that matches what it's claiming — a rosette over "that's 3 this week"
     /// reads as an award for turning up, which devalues the badge that means something.
@@ -171,14 +178,22 @@ struct CardioSummaryContent: View {
         let start = workout.startedAt
         var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt < start })
         descriptor.sortBy = [SortDescriptor(\.startedAt, order: .reverse)]
-        let priors = ((try? context.fetch(descriptor)) ?? [])
+        let earlier = (try? context.fetch(descriptor)) ?? []
+        let priors = earlier
             .filter { $0.type == workout.type }
             .compactMap { w -> RunVerdict.Run? in
                 guard let g = w.gps, g.distanceM > 0 else { return nil }
-                return RunVerdict.Run(date: w.startedAt, distanceM: g.distanceM, durationS: w.durationS)
+                return RunVerdict.Run(date: w.startedAt, distanceM: g.distanceM,
+                                      durationS: w.durationS, avgHR: g.avgHR)
             }
-        let this = RunVerdict.Run(date: start, distanceM: gps.distanceM, durationS: workout.durationS)
-        return RunVerdict.verdict(for: this, priors: priors, unit: distanceUnit)
+        // Same ground beats same distance, so the engine gets the route history when this run
+        // retraces one. `RouteMatch` walks the same already-fetched array (no second query) and
+        // rejects on distance before touching any geometry, so the common case where nothing
+        // matches costs a comparison per prior run and nothing else.
+        let route = RouteMatch.context(for: workout, gps: gps, priors: earlier)
+        let this = RunVerdict.Run(date: start, distanceM: gps.distanceM,
+                                  durationS: workout.durationS, avgHR: avgHR(gps))
+        return RunVerdict.verdict(for: this, priors: priors, route: route, unit: distanceUnit)
     }
 
     private var achievementsSection: some View {
@@ -196,7 +211,10 @@ struct CardioSummaryContent: View {
     /// failure state — the open session simply rolls forward as it always did.
     private func computePlanConnection(_ gps: GPSDetail) -> PlanConnection? {
         if let s = workout.plannedSession {
-            return PlanConnection(text: "\(dayPrefix(s.date)) \(sessionKindText(s)) — checked off your plan.",
+            // A colon, not the em dash this used to carry (`CoachVoiceTests` bans the dash outright)
+            // and not a comma (the same suite bans conclusions bolted onto one). It also keeps
+            // `dayPrefix` sentence-initial, which its capital "Today's" assumes.
+            return PlanConnection(text: "\(dayPrefix(s.date)) \(sessionKindText(s)): checked off your plan.",
                                   credited: true)
         }
         var descriptor = FetchDescriptor<UserProfile>()
@@ -214,7 +232,7 @@ struct CardioSummaryContent: View {
             return (s, f)
         }.max { $0.1 < $1.1 }
         guard let (session, f) = best else { return nil }
-        return PlanConnection(text: "\(dayPrefix(session.date)) \(sessionKindText(session)) stays on the board — this covered about \(Int((f * 100).rounded()))% of it.",
+        return PlanConnection(text: "\(dayPrefix(session.date)) \(sessionKindText(session)) stays on the board. This covered about \(Int((f * 100).rounded()))% of it.",
                               credited: false)
     }
 
@@ -252,8 +270,7 @@ struct CardioSummaryContent: View {
         let coords = gps.routeCoordinates(type: workout.type)
         let style = mapStyleOverride ?? gps.mapStyle
         if coords.count > 1 {
-            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style,
-                         milestoneUnitMeters: unitMeters)   // same unit as the splits below
+            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style)
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
                 // When the map-matched route lands post-finish (nil→present), the coordinates change

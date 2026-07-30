@@ -20,8 +20,12 @@ struct StrengthSaveView: View {
     @State private var reader: FinishedWorkoutReader?
     private var workout: Workout? { reader?.workout }
 
+    @Query private var profiles: [UserProfile]
+
     @State private var title = ""
     @State private var desc = ""
+    /// Who sees this session on the community wall — see `CardioSaveView.privacy`.
+    @State private var privacy: WorkoutPrivacy = .private
     /// Plays after SAVE — see `CardioSaveView.celebrating` (user call 2026-07-23): quiet arrival,
     /// edit, then Done → the circle-and-check beat draws and dismisses the screen.
     @State private var celebrating = false
@@ -85,7 +89,13 @@ struct StrengthSaveView: View {
             if let workout = reader.workout {
                 title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
                 desc = workout.note
-                // The share moment starts from the athlete's chosen default (never silently public).
+                // The share moment starts from the athlete's chosen default (never silently
+                // public); a workout that already carries a choice (recovery re-save) keeps it.
+                if CommunityAccess.enabled {
+                    privacy = workout.privacy == .private
+                        ? profiles.first.map(SocialPrivacy.defaultVisibility) ?? .private
+                        : workout.privacy
+                }
             }
         }
     }
@@ -103,6 +113,10 @@ struct StrengthSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
+            if CommunityAccess.enabled {
+                Divider().overlay(Theme.hairline)
+                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
+            }
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -115,7 +129,14 @@ struct StrengthSaveView: View {
         guard let reader, reader.commit({
             $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Community builds only — the solo app never touches privacy (see CardioSaveView).
+            if CommunityAccess.enabled { $0.privacy = privacy }
         }) else { saveFailed = true; return }
+        // Remember the last explicit choice as the new default (see CardioSaveView).
+        if CommunityAccess.enabled, let p = profiles.first, p.defaultWorkoutVisibility != privacy.rawValue {
+            p.defaultWorkoutVisibility = privacy.rawValue
+            try? context.save()
+        }
         // Persist the records this session set (fresh context — the logged sets are complete there).
         if let workout = reader.workout {
             let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)

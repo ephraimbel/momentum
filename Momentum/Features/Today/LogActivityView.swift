@@ -332,12 +332,17 @@ struct LogActivityView: View {
         .padding(.vertical, 6)
         .background(fieldShape.fill(Theme.surface))
         .overlay {
-            if composerGlow {
+            if composerGlow, !dictationDemo {
+                // Leaf view: keeps the 45 Hz `voice.level` read out of this page's body.
+                DictationGlowStroke(shape: fieldShape, voice: voice,
+                                    restingOpacity: draft.isEmpty && !dictating ? 0.65 : 1)
+            } else if composerGlow {
+                // --dictation-demo: fixed level, no live transcriber to read.
                 fieldShape
                     .stroke(LinearGradient(colors: Theme.iridescent,
                                            startPoint: .topLeading, endPoint: .bottomTrailing),
                             lineWidth: 1.5)
-                    .opacity(ringOpacity)
+                    .opacity(reduceMotion ? 1 : 0.55 + 0.45 * 0.8)
             } else {
                 fieldShape.stroke(Theme.hairline)
             }
@@ -351,13 +356,6 @@ struct LogActivityView: View {
 
     private var composerGlow: Bool { composing || !draft.isEmpty || dictating }
     private var dictating: Bool { voice.isRecording || dictationDemo }
-
-    /// While dictating the iridescent ring breathes WITH the voice (opacity rides the live
-    /// level); Reduce Motion keeps it static — the doctrine's no-self-pulsing rule either way.
-    private var ringOpacity: Double {
-        guard dictating, !reduceMotion else { return draft.isEmpty && !dictating ? 0.65 : 1 }
-        return 0.55 + 0.45 * (dictationDemo ? 0.8 : voice.level)
-    }
 
     /// `--dictation-demo`: renders the recording-state composer with a fixed level so the
     /// dictation design can be screenshot-verified (the Simulator can't be spoken to).
@@ -443,8 +441,10 @@ struct LogActivityView: View {
         } label: {
             ZStack {
                 Circle().fill(dictating ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear))
-                if dictating {
-                    VoiceLevelBars(level: dictationDemo ? 0.7 : voice.level, tint: Theme.background)
+                if dictationDemo {
+                    VoiceLevelBars(level: 0.7, tint: Theme.background)
+                } else if dictating {
+                    MicLevelBars(voice: voice, tint: Theme.background)
                 } else {
                     Image(systemName: "mic")
                         .font(.system(size: 15, weight: .semibold))
@@ -940,6 +940,11 @@ struct LogActivityView: View {
                                            effort: r.effort, note: "",
                                            exercises: inputs, resolveExercise: cachedRef)
             w.calories = CalorieEstimator.kcal(for: w, bodyMassKg: profiles.first?.bodyMassKg)
+            // A logged workout is a post like any tracked one: it takes the athlete's default
+            // visibility (their own last explicit choice). Community builds only — solo stays private.
+            if CommunityAccess.enabled, let p = profiles.first {
+                w.privacy = SocialPrivacy.defaultVisibility(p)
+            }
             context.insert(w)
             workouts.append(w)
         }

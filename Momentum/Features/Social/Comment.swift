@@ -50,11 +50,11 @@ enum CommunityComments {
                      authorHandle: String? = nil) -> [Comment] {
         let base = stableSeed(postID)                  // process-stable (UUID.hashValue is randomized)
         var rng = SeededRNG(base)
-        // Zero-skewed and capped by engagement: most posts carry NO thread; only well-respected posts
-        // sprout longer ones. The old uniform 0-4 put comments under ~80% of the feed (and 4-comment
-        // threads on 3-respect posts) — both generator tells.
-        let cap = reactions < 8 ? 0 : reactions < 25 ? 1 : reactions < 60 ? 2 : 4
-        let n = min(cap, Int(5 * pow(rng.double(0, 1), 2.6)))
+        // Skewed and capped by engagement: quiet posts carry a line or nothing; well-respected
+        // posts sprout real threads (owner ask 2026-07-29 — the page should read like humans are
+        // actually talking). Still never a long thread under a barely-seen post.
+        let cap = reactions < 6 ? 0 : reactions < 15 ? 2 : reactions < 40 ? 4 : reactions < 90 ? 6 : 9
+        let n = min(cap, Int(10 * pow(rng.double(0, 1), 1.7)))
         guard n > 0 else { return [] }
         // Comments land AFTER their post — a two-day-old comment under a twenty-minute-old post
         // is an instant fake tell. Clamp the window to the post's actual age when known.
@@ -106,14 +106,19 @@ enum CommunityComments {
         "Strong work! 🔥", "Let's go!", "Beast mode.", "Consistency is everything 💪",
         "Huge. Keep it up!", "Love this.", "Respect.", "Crushing it lately.", "Solid effort!",
         "This is the way.", "Unreal consistency.", "There it is!!", "Weekend well spent.",
-        "Making me want to get out there"]
+        "Making me want to get out there", "ok this is motivating", "The streak continues 🙌",
+        "You again!! machine.", "day made", "Needed to see this today", "and I thought I trained hard",
+        "W", "goals honestly", "Proud of you!", "How do you do this daily", "showing up > everything"]
     private static let gpsTexts = [
         "Inspiring pace.", "That route looks brutal. Nice.", "Okay pace!! 👏",
         "What shoes are you in?", "That elevation though", "Those splits 👀",
-        "Perfect morning for it."]
+        "Perfect morning for it.", "That loop looks fun, dropping a pin", "negative splits?? insane",
+        "My knees hurt just looking at this", "That is a spicy pace my friend",
+        "Take me next time!!", "The early morning grind 🌅", "route saved for the weekend"]
     private static let strengthTexts = [
         "Save some PRs for the rest of us", "Numbers going up 📈", "That volume is serious.",
-        "Strong. Simple as that.", "Gym therapy hits different."]
+        "Strong. Simple as that.", "Gym therapy hits different.", "Sheesh. That total.",
+        "Leg day warrior 🫡", "Bar speed must have been flying"]
     private static let calmTexts = [
         "Needed this reminder to slow down.", "Recovery is training too.", "So peaceful.",
         "Balance 🙌"]

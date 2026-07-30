@@ -36,6 +36,20 @@ enum RunVerdict {
     struct Verdict: Sendable, Equatable {
         let text: String
         let tone: Tone
+        /// Whether this sentence is still true a year from now.
+        ///
+        /// Most of them are: where a run ranks among the athlete's own is a fact about the past and
+        /// doesn't rot. The consistency fallback is the exception, because "that's 3 this week" is
+        /// true at the finish line and nonsense on a run reopened in December. History shows the
+        /// timeless ones and suppresses the rest, so a run keeps its meaning without ever lying
+        /// about when it happened.
+        let isTimeless: Bool
+
+        init(text: String, tone: Tone, isTimeless: Bool = true) {
+            self.text = text
+            self.tone = tone
+            self.isTimeless = isTimeless
+        }
     }
 
     /// A finished session reduced to what a comparison actually needs.
@@ -43,11 +57,15 @@ enum RunVerdict {
         let date: Date
         let distanceM: Double
         let durationS: Double
+        /// Average heart rate, when the run captured one. Optional throughout: it is the difference
+        /// between a good line and no line, never between a correct verdict and a wrong one.
+        let avgHR: Int?
 
-        init(date: Date, distanceM: Double, durationS: Double) {
+        init(date: Date, distanceM: Double, durationS: Double, avgHR: Int? = nil) {
             self.date = date
             self.distanceM = distanceM
             self.durationS = durationS
+            self.avgHR = avgHR
         }
 
         /// Seconds per kilometre, or nil when there's nothing to divide — a recording with no
@@ -58,6 +76,22 @@ enum RunVerdict {
         }
     }
 
+    /// Earlier runs over the same ground, and what to call it.
+    ///
+    /// Distance is a crude stand-in for "comparable": two 5Ks can share a number and nothing else.
+    /// Same-route runs are the comparison a runner actually makes, so when the caller can supply
+    /// them (`RouteMatch`) they outrank everything the distance ladder can say. The noun travels
+    /// with the priors because only the geometry knows whether it closed.
+    struct RouteContext: Sendable, Equatable {
+        let priors: [Run]
+        let isLoop: Bool
+
+        init(priors: [Run], isLoop: Bool) {
+            self.priors = priors
+            self.isLoop = isLoop
+        }
+    }
+
     /// Two runs are "the same shape" when their distances are within this fraction of each other.
     static let similarDistanceTolerance = 0.15
 
@@ -65,14 +99,32 @@ enum RunVerdict {
     /// different traffic light account for more. Claiming it would cheapen every real gain.
     static let meaningfulDeltaSPerUnit = 3.0
 
+    /// A heart-rate drop worth mentioning. Below this, day-to-day variation in sleep, caffeine and
+    /// strap placement accounts for it.
+    static let meaningfulHRDeltaBPM = 3
+
+    /// How much pace a run may give up and still be read as "the same effort at a lower heart rate".
+    /// Past this the athlete simply ran easier, and crediting that as efficiency would be a lie the
+    /// athlete can feel.
+    static let sameEffortPaceWindowSPerUnit = 15.0
+
+    /// Close enough to a route best that saying so is encouragement rather than a consolation.
+    static let nearBestWindowSPerUnit = 10.0
+
     /// The verdict line, or nil when we genuinely have nothing to say.
     /// - Parameters:
     ///   - run: the session just finished.
     ///   - priors: every earlier session of the SAME discipline. Order doesn't matter; anything
     ///     dated at or after `run` is discarded, so a caller may pass its whole history unfiltered.
+    ///   - route: earlier runs over this exact route, when the caller could identify one. Takes
+    ///     precedence over the distance ladder below: same ground is a real test, same distance is
+    ///     a coincidence.
     ///   - unit: display unit — the delta is phrased per mile or per kilometre to match the screen.
-    static func verdict(for run: Run, priors: [Run], unit: DistanceUnit) -> Verdict? {
+    static func verdict(for run: Run, priors: [Run], route: RouteContext? = nil,
+                        unit: DistanceUnit) -> Verdict? {
         guard let pace = run.paceSPerKm else { return nil }
+
+        if let route, let v = routeVerdict(for: run, pace: pace, route: route, unit: unit) { return v }
 
         let earlier = priors.filter { $0.date < run.date && $0.distanceM > 0 && $0.durationS > 0 }
         guard !earlier.isEmpty else {
@@ -111,6 +163,70 @@ enum RunVerdict {
         return consistencyLine(for: run, earlier: earlier)
     }
 
+    // MARK: - The route ladder
+
+    /// What this run meant *for this route*, in descending order of what it's allowed to claim.
+    ///
+    /// The rungs, and the guard each one carries so it can never over-claim:
+    ///  1. **Route best.** Needs two earlier outings, so "fastest here" describes a route the
+    ///     athlete knows rather than the better of two attempts.
+    ///  2. **Route podium.** Needs three, for the same reason: second of three is a placing, second
+    ///     of two is a way of saying "slower".
+    ///  3. **Faster than last time here**, once the gain clears the noise floor.
+    ///  4. **The same road at a lower heart rate.** The one honest thing to say about a run that
+    ///     wasn't faster: the clock is not the only measure and this is the other one. Gated on the
+    ///     pace being close, because a genuinely easy day also has a low heart rate and calling that
+    ///     efficiency is flattery.
+    ///  5. **Within touching distance of their best here.**
+    ///  6. **The bare fact of the repetition**, which is always true and never a rebuke.
+    ///
+    /// Rungs 4 to 6 are the no-shame floor: none of them states a deficit. The clock is on the
+    /// screen directly above this line, so the athlete already knows. Saying it back is not honesty,
+    /// it is just piling on.
+    private static func routeVerdict(for run: Run, pace: Double,
+                                     route: RouteContext, unit: DistanceUnit) -> Verdict? {
+        let priors = route.priors.filter { $0.date < run.date && $0.paceSPerKm != nil }
+        guard !priors.isEmpty, let bestPrior = priors.compactMap(\.paceSPerKm).min() else { return nil }
+
+        let noun = route.isLoop ? "loop" : "route"
+        let ord = ordinalWord(priors.count + 1)
+        let rank = priors.filter { ($0.paceSPerKm ?? .infinity) < pace }.count + 1
+
+        if rank == 1, priors.count >= 2 {
+            return Verdict(text: "Fastest you've run this \(noun).", tone: .earned)
+        }
+        // Second and third only: first place belongs to the rung above, which declines to award it
+        // on a field of two, and a podium rung that also handled rank 1 would announce a "1th".
+        //
+        // A placing is only worth naming when there is a field to place in. Second of two is a
+        // roundabout way of saying "slower", and third of four is barely better, so a placing must
+        // have at least as many runs behind it as in front: 2nd needs four outings, 3rd needs six.
+        if (2...3).contains(rank), priors.count + 1 >= rank * 2 {
+            return Verdict(text: "Your \(ordinal(rank))-fastest on this \(noun).", tone: .earned)
+        }
+
+        if let last = priors.max(by: { $0.date < $1.date }), let lastPace = last.paceSPerKm {
+            let gain = perDisplayUnit(lastPace - pace, unit: unit)
+            if gain >= meaningfulDeltaSPerUnit {
+                return Verdict(text: "\(ord) time on this \(noun). \(Int(gain.rounded()))s/\(unitLabel(unit)) faster than last time.",
+                               tone: .gain)
+            }
+            if let hr = run.avgHR, let lastHR = last.avgHR, hr > 0, lastHR > 0,
+               lastHR - hr >= meaningfulHRDeltaBPM,
+               perDisplayUnit(pace - lastPace, unit: unit) <= sameEffortPaceWindowSPerUnit {
+                return Verdict(text: "\(ord) time on this \(noun), at \(lastHR - hr) fewer beats than last time.",
+                               tone: .gain)
+            }
+        }
+
+        let offBest = perDisplayUnit(pace - bestPrior, unit: unit)
+        if offBest > 0, offBest <= nearBestWindowSPerUnit {
+            return Verdict(text: "\(ord) time on this \(noun). Within \(max(1, Int(offBest.rounded())))s/\(unitLabel(unit)) of your best here.",
+                           tone: .steady)
+        }
+        return Verdict(text: "\(ord) time on this \(noun).", tone: .steady)
+    }
+
     // MARK: - Fallback
 
     /// What's true no matter how the pace landed: that they showed up, and how often lately.
@@ -123,7 +239,8 @@ enum RunVerdict {
         case 2: text = "Two this week."
         default: text = "That's \(thisWeek) this week."
         }
-        return Verdict(text: text, tone: .steady)
+        // The one line that expires: see `Verdict.isTimeless`.
+        return Verdict(text: text, tone: .steady, isTimeless: false)
     }
 
     // MARK: - Units
@@ -145,5 +262,25 @@ enum RunVerdict {
         case 3: return "3rd"
         default: return "\(n)th"
         }
+    }
+
+    /// "Ninth time on this loop" reads like a person; "9th time" reads like a receipt. Words up to
+    /// twenty, where English has them and they stay short, then digits, where spelling it out would
+    /// be worse than the numeral it replaced. Capitalised because it always opens the sentence.
+    private static func ordinalWord(_ n: Int) -> String {
+        let words = ["", "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
+                     "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth", "Fourteenth",
+                     "Fifteenth", "Sixteenth", "Seventeenth", "Eighteenth", "Nineteenth", "Twentieth"]
+        if n >= 1, n < words.count { return words[n] }
+        // 21st, 22nd, 23rd, 24th … with the teens exception English insists on.
+        let suffix: String
+        switch (n % 100, n % 10) {
+        case (11...13, _): suffix = "th"
+        case (_, 1): suffix = "st"
+        case (_, 2): suffix = "nd"
+        case (_, 3): suffix = "rd"
+        default: suffix = "th"
+        }
+        return "\(n)\(suffix)"
     }
 }

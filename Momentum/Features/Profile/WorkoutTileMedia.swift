@@ -55,7 +55,18 @@ struct WorkoutTileMedia: View {
         Group {
             switch resolved {
             case .photo(let ui):
-                Image(uiImage: ui).resizable().scaledToFill()
+                // Immersive shows the WHOLE image over a blurred fill (the pager rule); tiles
+                // keep the straight fill crop.
+                if style == .immersive {
+                    ZStack {
+                        Image(uiImage: ui).resizable().scaledToFill()
+                            .blur(radius: 40, opaque: true)
+                            .overlay(Color.black.opacity(0.10))
+                        Image(uiImage: ui).resizable().scaledToFit()
+                    }
+                } else {
+                    Image(uiImage: ui).resizable().scaledToFill()
+                }
             case .muscle(let activation):
                 muscleMedia(activation)
             case .snapshot(let ui):
@@ -98,12 +109,10 @@ struct WorkoutTileMedia: View {
     }
 
     private func computeMedia() async -> Media {
-        if let data = workout.heroPhotoData {
-            // Tiles are ~120pt cells — decode a downsampled thumbnail off-main instead of the
-            // full photo bitmap; the full-bleed immersive page keeps full resolution.
-            let ui = style == .tile ? await ImageDownsampler.thumbnail(data, maxPixel: 480) : UIImage(data: data)
-            if let ui { return .photo(ui) }
-        }
+        // The cover rule (owner call 2026-07-29): the activity's OWN visual leads — route map for
+        // GPS, muscle map for lifts — and a photo covers only when the athlete flipped "Photo as
+        // cover". Photos still outrank the generic glyph (they never beat the sport's real media).
+        if workout.coverIsPhoto, let ui = await decodedPhoto() { return .photo(ui) }
         if workout.type.isStrengthStyle, let session = workout.strength {
             let activation = MuscleActivation.from(session: session)
             if activation.values.contains(where: { $0 > 0 }) { return .muscle(activation) }
@@ -125,7 +134,15 @@ struct WorkoutTileMedia: View {
             let coords = await routeCoordsOffMain()
             if coords.count > 1 { return .route(coords) }
         }
+        if let ui = await decodedPhoto() { return .photo(ui) }
         return .glyph
+    }
+
+    /// Tiles decode a downsampled thumbnail off-main; the full-bleed immersive page keeps full
+    /// resolution.
+    private func decodedPhoto() async -> UIImage? {
+        guard let data = workout.heroPhotoData else { return nil }
+        return style == .tile ? await ImageDownsampler.thumbnail(data, maxPixel: 480) : UIImage(data: data)
     }
 
     /// The route walk faults every GPS sample and Kalman-smooths it — done on the MainActor it
@@ -173,7 +190,7 @@ struct WorkoutTileMedia: View {
     @ViewBuilder
     private func muscleMedia(_ activation: [MuscleGroup: Double]) -> some View {
         ZStack {
-            Theme.surface
+            IridescentWash()
             if style == .immersive {
                 AnatomyGlowView(activation: activation, sequential: true)
                     .padding(Theme.Space.xl)
@@ -189,8 +206,6 @@ struct WorkoutTileMedia: View {
         if style == .immersive {
             RouteMapView(coordinates: coords, style: workout.gps?.mapStyle ?? .persisted,
                          interactive: true,
-                         milestoneUnitMeters: distanceUnit.resolved() == .imperial
-                             ? Formatters.metersPerMile : 1000,
                          cameraHandle: mapCameraHandle)
         } else {
             ZStack {
@@ -204,8 +219,7 @@ struct WorkoutTileMedia: View {
 
     private var glyphMedia: some View {
         ZStack {
-            LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            IridescentWash()
             Image(systemName: workout.type.systemImage)
                 .font(.system(size: style == .immersive ? 96 : 40, weight: .bold))
                 .foregroundStyle(Theme.ink.opacity(0.85))

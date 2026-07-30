@@ -17,6 +17,10 @@ struct WorkoutPhotoSection: View {
     @State private var showingCamera = false
 
     private var photosData: [Data] { workout.orderedPhotosData }
+    /// Whether this workout has a visual of its own that a photo would displace.
+    private var hasOwnVisual: Bool {
+        (workout.type.isGPS && workout.gps != nil) || workout.type.isStrengthStyle
+    }
     private var remaining: Int { Workout.photoCap - photosData.count }
     private static var cameraAvailable: Bool { CameraPicker.isAvailable }
 
@@ -30,6 +34,27 @@ struct WorkoutPhotoSection: View {
                     addButton
                 } else {
                     thumbnailStrip
+                }
+                // The cover rule (owner call 2026-07-29): the activity's own visual — route map,
+                // muscle map — is always the grid/post cover; this quiet switch is the ONE way a
+                // photo takes over. Only shown when there IS an own visual to displace.
+                if !photosData.isEmpty, hasOwnVisual {
+                    Toggle(isOn: $workout.coverIsPhoto) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Photo as cover")
+                                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                                .foregroundStyle(Theme.ink)
+                            Text(workout.type.isGPS ? "Off, your route leads and photos ride behind it."
+                                                    : "Off, your session visual leads.")
+                                .font(.rounded(Theme.FontSize.label, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary)
+                        }
+                    }
+                    .tint(Theme.ink)
+                    .onChange(of: workout.coverIsPhoto) {
+                        try? context.save()
+                        Haptics.selection()
+                    }
                 }
             }
         }

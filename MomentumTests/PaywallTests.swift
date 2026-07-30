@@ -72,18 +72,19 @@ struct PaywallTests {
         #expect(Feature.programs.placement == "full_plan")
     }
 
-    @Test func annualOfferingCarriesTheTrial() {
+    @Test func annualAloneCarriesTheTrial() {
         let offering = PaywallOffering.standard
         #expect(offering.annual.trialDays == 7)
-        #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 40)   // 38.85% ($109.99 vs 12 × $14.99), rounded to nearest 5%
+        #expect(offering.monthly.trialDays == 0)   // trial is the ANNUAL's nudge (owner call 2026-07-30)
+        #expect(offering.annualSavingsPercent == 50)   // 49.96% ($59.99 vs 12 × $9.99), rounded to nearest 5%
     }
 
-    /// Monthly is priced UNDER Runna (~$17.99/mo) to win the price-comparison shopper (2026-07-14).
-    @Test func monthlyPriceUndercutsRunna() {
+    /// Mass-market pricing (2026-07-29): half Runna's annual, under Strava's — the hard paywall
+    /// makes the annual price the conversion funnel, so it must read as "I can actually do this."
+    @Test func pricingIsTheCompetitivePair() {
         let offering = PaywallOffering.standard
-        #expect(offering.monthly.priceText == "$14.99")
-        #expect(offering.annual.priceText == "$109.99")
+        #expect(offering.monthly.priceText == "$9.99")
+        #expect(offering.annual.priceText == "$59.99")
         #expect(offering.monthly.period == .monthly)
     }
 }

@@ -17,6 +17,12 @@ struct SettingsView: View {
     @State private var restoring = false
     @State private var restoreMessage: String?   // only failure/no-op paths — success flips the card itself
     @State private var exportFile: JSONExportFile?
+    /// A store the app failed to open on some earlier launch, moved aside rather than deleted
+    /// (`PersistenceController.quarantineStore`). Nil on every healthy install.
+    @State private var quarantine: PersistenceController.QuarantineRecord?
+    /// The quarantined store, zipped so it can leave the app through the share sheet. Prepared off
+    /// the main actor because a store carrying real GPS history is not small.
+    @State private var quarantineZip: URL?
     @State private var showExporter = false
     @State private var exporting = false      // fetch+encode runs off-main; the row shows a spinner
     @State private var exportMessage: String?
@@ -63,6 +69,16 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .onAppear { healthConnected = services.health.isAuthorized }
+        // Load the quarantine record, and — only if there is one — zip the set-aside store so the
+        // share sheet has something to hand over. Off the main actor: this is file IO over a store
+        // that may carry a season of GPS samples, and Settings must not hitch to find out there is
+        // nothing to do. On a healthy install the guard falls through immediately.
+        .task {
+            quarantine = PersistenceController.quarantineRecord
+            guard let record = quarantine, record.recovered, quarantineZip == nil else { return }
+            let path = record.path
+            quarantineZip = await Task.detached { archiveForSharing(URL(fileURLWithPath: path)) }.value
+        }
         .fileExporter(isPresented: $showExporter, document: exportFile,
                       contentType: .json, defaultFilename: "momentum-data") { result in
             if case .failure = result { exportMessage = "Couldn't save the export — try again." }
@@ -489,6 +505,52 @@ struct SettingsView: View {
 
     private var dataCard: some View {
         card {
+            // The rarest block in the app and the most important when it appears: a previous launch
+            // could not open the store and moved it aside instead of deleting it. Never red — a
+            // corrupt store is not the athlete's fault — and never a launch-time alert, which on a
+            // broken app is a trap. It stays here until they dismiss it themselves.
+            if let quarantine, quarantine.recovered {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("We couldn't open your training data")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                    // No support clause: there is no contact route in the app and no import path,
+                    // so promising "send it to support to get it back" would name a destination
+                    // that does not exist. Say only what is true — the file is still here, and it
+                    // can leave the phone. Widen this the day a contact row and an importer ship.
+                    Text("On \(quarantine.at.formatted(date: .abbreviated, time: .shortened)) this app started with an empty library. Your previous data was set aside rather than deleted, and you can save a copy of it here.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 11)
+                if let quarantineZip {
+                    ShareLink(item: quarantineZip) {
+                        HStack(spacing: Theme.Space.md) {
+                            iconChip("arrow.down.doc")
+                            Text("Save a copy")
+                                .font(.rounded(Theme.FontSize.body, weight: .medium))
+                                .foregroundStyle(Theme.ink)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.inkTertiary)
+                        }
+                        .padding(.vertical, 11)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    actionRow("Preparing your copy", icon: "arrow.down.doc", busy: true) {}
+                }
+                inset
+                actionRow("Dismiss", icon: "xmark") {
+                    PersistenceController.quarantineRecord = nil
+                    self.quarantine = nil
+                    self.quarantineZip = nil
+                }
+                inset
+            }
             // Fetch + pretty-print encode off the main thread — synchronously in the tap it was a
             // perceptible hitch at real history sizes (every workout's gps/strength row faulted).
             actionRow("Export my data", icon: "square.and.arrow.up", busy: exporting) {
@@ -733,4 +795,29 @@ private struct VerticalHitPad: Shape {
         .environment(PaywallController(isPro: false))
         .environment(Services.live())
         .environment(AuthController(userID: "preview"))
+}
+
+/// Zip a quarantined store directory so it can leave the app through the share sheet.
+/// `NSFileCoordinator`'s `.forUploading` option is the dependency-free way to archive a directory:
+/// it hands back a temporary zip that is only guaranteed to exist inside the coordination block, so
+/// the copy out is not optional. Returns nil rather than throwing — a failed rescue must not become
+/// a second failure on top of the first.
+private func archiveForSharing(_ directory: URL) -> URL? {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: directory.path) else { return nil }
+    var coordinationError: NSError?
+    var archived: URL?
+    NSFileCoordinator().coordinate(readingItemAt: directory, options: .forUploading,
+                                   error: &coordinationError) { zip in
+        let destination = fm.temporaryDirectory
+            .appendingPathComponent("momentum-recovered-\(directory.lastPathComponent).zip")
+        try? fm.removeItem(at: destination)
+        do {
+            try fm.copyItem(at: zip, to: destination)
+            archived = destination
+        } catch {
+            archived = nil
+        }
+    }
+    return coordinationError == nil ? archived : nil
 }

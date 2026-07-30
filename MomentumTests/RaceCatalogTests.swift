@@ -118,4 +118,56 @@ struct RaceCatalogTests {
             #expect(Set(r.distances).count == r.distances.count, "\(r.id): duplicate distances")
         }
     }
+
+    // MARK: The 2026-07-29 expansion
+
+    @Test func expansionClassicsLandOnTheirTraditionalWeekends() {
+        // Hand-derived from the 2026 calendar (Jan 1, 2026 is a Thursday) — golden dates, so a
+        // rule typo can't silently point a training block at the wrong weekend.
+        let ref = date(2026, 1, 1)
+        #expect(race("mumbai").nextDate(after: ref, calendar: cal) == date(2026, 1, 18))          // 3rd Sun Jan
+        #expect(race("seville").nextDate(after: ref, calendar: cal) == date(2026, 2, 15))         // 3rd Sun Feb
+        #expect(race("osaka").nextDate(after: ref, calendar: cal) == date(2026, 2, 22))           // last Sun Feb
+        #expect(race("napa").nextDate(after: ref, calendar: cal) == date(2026, 3, 1))             // 1st Sun Mar
+        #expect(race("seoul").nextDate(after: ref, calendar: cal) == date(2026, 3, 15))           // 3rd Sun Mar
+        #expect(race("cooper-river").nextDate(after: ref, calendar: cal) == date(2026, 4, 4))     // 1st Sat Apr
+        #expect(race("eugene").nextDate(after: ref, calendar: cal) == date(2026, 4, 26))          // last Sun Apr
+        #expect(race("indy-mini").nextDate(after: ref, calendar: cal) == date(2026, 5, 2))        // 1st Sat May
+        #expect(race("flying-pig").nextDate(after: ref, calendar: cal) == date(2026, 5, 3))       // 1st Sun May
+        #expect(race("goteborgsvarvet").nextDate(after: ref, calendar: cal) == date(2026, 5, 16)) // 3rd Sat May
+        #expect(race("edinburgh").nextDate(after: ref, calendar: cal) == date(2026, 5, 31))       // last Sun May
+        #expect(race("stockholm").nextDate(after: ref, calendar: cal) == date(2026, 6, 6))        // 1st Sat Jun
+        #expect(race("gold-coast").nextDate(after: ref, calendar: cal) == date(2026, 7, 5))       // 1st Sun Jul
+        #expect(race("beach-to-beacon").nextDate(after: ref, calendar: cal) == date(2026, 8, 1))  // 1st Sat Aug
+        #expect(race("medoc").nextDate(after: ref, calendar: cal) == date(2026, 9, 5))            // 1st Sat Sep
+        #expect(race("buenos-aires").nextDate(after: ref, calendar: cal) == date(2026, 9, 27))    // 4th Sun Sep
+        #expect(race("frankfurt").nextDate(after: ref, calendar: cal) == date(2026, 10, 25))      // last Sun Oct
+        #expect(race("istanbul").nextDate(after: ref, calendar: cal) == date(2026, 11, 1))        // 1st Sun Nov
+        #expect(race("shanghai").nextDate(after: ref, calendar: cal) == date(2026, 11, 29))       // last Sun Nov
+    }
+
+    @Test func expansionBroadensTheWorld() {
+        // The catalog now reaches every continent an athlete can road-race on.
+        let countries = Set(RaceCatalog.races.map(\.country))
+        for c in ["Austria", "Czechia", "Denmark", "Sweden", "Türkiye", "South Korea",
+                  "Argentina", "Brazil", "Ethiopia", "India"] {
+            #expect(countries.contains(c), "missing country: \(c)")
+        }
+        #expect(RaceCatalog.races.count >= 75, "catalog shrank to \(RaceCatalog.races.count)")
+        // Short-race athletes get real events too, not just marathon weekends.
+        #expect(RaceCatalog.races.contains { $0.flagship == .fiveK })
+        #expect(RaceCatalog.races.filter { $0.flagship == .tenK }.count >= 5)
+        #expect(RaceCatalog.races.filter { $0.flagship == .half }.count >= 6)
+    }
+
+    @Test func expansionSearchAndMatchDisambiguate() {
+        // Diacritic-insensitive search reaches Göteborgsvarvet from a bare keyboard.
+        #expect(RaceCatalog.search("goteborg").contains { $0.id == "goteborgsvarvet" })
+        #expect(RaceCatalog.search("sweden").count == 2)
+        // Two Manchesters, correctly told apart by what the athlete asked for.
+        #expect(RaceCatalog.match(freeText: "manchester marathon")?.race.id == "manchester")
+        #expect(RaceCatalog.match(freeText: "the great manchester run 10k")?.race.id == "great-manchester")
+        #expect(RaceCatalog.match(freeText: "tata mumbai marathon")?.race.id == "mumbai")
+        #expect(RaceCatalog.match(freeText: "flying pig")?.race.id == "flying-pig")
+    }
 }

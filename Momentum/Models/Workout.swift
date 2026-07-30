@@ -33,6 +33,10 @@ final class Workout {
     /// Photos the athlete attached, Strava-style (cap `Workout.photoCap`, ordered; first is the hero).
     /// Each is its own external-storage blob so grids can fault just the hero.
     @Relationship(deleteRule: .cascade) var photos: [WorkoutPhoto] = []
+    /// The cover rule (owner call 2026-07-29): the activity's OWN visual — route map, muscle map,
+    /// discipline glyph — is always the grid/post cover; a photo covers only when the athlete
+    /// explicitly flips this on the save screen. Additive + defaulted (schema rule).
+    var coverIsPhoto: Bool = false
 
     init() {}
 

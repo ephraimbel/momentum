@@ -15,8 +15,8 @@ Create two auto-renewing subscriptions in one group (pricing decided 2026-07-14 
 
 | Product ID | Duration | Price | Intro offer |
 |---|---|---|---|
-| `momentum_pro_monthly` | 1 month | $14.99 | — |
-| `momentum_pro_annual`  | 1 year  | $109.99 | **7-day free trial** |
+| `momentum_pro_monthly` | 1 month | $9.99 | — |
+| `momentum_pro_annual`  | 1 year  | $59.99 | **7-day free trial** |
 
 These IDs must match `PaywallOffering.standard` in `PaywallController.swift`.
 

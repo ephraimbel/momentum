@@ -31,6 +31,10 @@ struct CardioSaveView: View {
     @State private var desc = ""
     @State private var sportType: WorkoutType = .run
     @State private var effort: Int?
+    /// Who sees this activity on the community wall — the share moment (docs/SOCIAL-LAYER.md).
+    /// Seeded from the athlete's default; only rendered/committed when `CommunityAccess.enabled`,
+    /// so the solo app keeps every workout private exactly as before.
+    @State private var privacy: WorkoutPrivacy = .private
     /// The map style THIS run renders with — previewed live on the hero map, persisted on Save.
     @State private var mapStyle: MapStyleOption = .persisted
     @State private var initialMapStyle: MapStyleOption = .persisted
@@ -79,6 +83,11 @@ struct CardioSaveView: View {
                     ProgressView().padding(.top, Theme.Space.xxl)
                 }
             }
+            #if DEBUG
+            // --save-bottom: open pre-scrolled to the editor (route-avatar offer verification —
+            // simctl can't scroll). Same trick as Settings' --settings-bottom.
+            .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--save-bottom") ? .bottom : .top)
+            #endif
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
             // Not "Save run": the recording was already on disk before this screen appeared, so a
@@ -144,6 +153,13 @@ struct CardioSaveView: View {
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
                 hasRoute = (workout.gps?.routeCoordinates(type: workout.type).count ?? 0) > 1
+                // The share moment starts from the athlete's chosen default (never silently
+                // public); a workout that already carries a choice (recovery re-save) keeps it.
+                if CommunityAccess.enabled {
+                    privacy = workout.privacy == .private
+                        ? profiles.first.map(SocialPrivacy.defaultVisibility) ?? .private
+                        : workout.privacy
+                }
             }
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
@@ -192,6 +208,10 @@ struct CardioSaveView: View {
             }
             Divider().overlay(Theme.hairline)
             effortRow
+            if CommunityAccess.enabled {
+                Divider().overlay(Theme.hairline)
+                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
+            }
         }
         .padding(Theme.Space.md)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
@@ -311,9 +331,18 @@ struct CardioSaveView: View {
             $0.type = sportType
             $0.perceivedEffort = effort
             $0.gps?.mapStyleRaw = mapStyle.rawValue
+            // The chosen audience — community builds only; the solo app never touches privacy,
+            // so a previously-shared workout can't be silently downgraded by a flagless build.
+            if CommunityAccess.enabled { $0.privacy = privacy }
             // Recompute on the fresh context so the estimate sees the complete GPS detail.
             $0.calories = CalorieEstimator.kcal(for: $0, bodyMassKg: profiles.first?.bodyMassKg)
         }) else { saveFailed = true; return }
+        // Remember the last explicit choice as the new default (Strava's model): the next save
+        // seeds from it, so a habitual sharer isn't re-flipping the picker every run.
+        if CommunityAccess.enabled, let p = profiles.first, p.defaultWorkoutVisibility != privacy.rawValue {
+            p.defaultWorkoutVisibility = privacy.rawValue
+            try? context.save()
+        }
 
         // The saved snapshot must match the chosen basemap (grid tile + History thumb). Re-render
         // off the save path when the style changed (or the finish-time render failed); the tile

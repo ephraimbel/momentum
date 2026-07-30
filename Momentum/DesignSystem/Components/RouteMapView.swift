@@ -25,9 +25,6 @@ struct RouteMapView: View {
     var style: MapStyleOption = .persisted
     var interactive: Bool = false
     var padding: CGFloat = 28
-    /// Drop a numbered badge each whole display unit along the drawn line (1000 for km,
-    /// `Formatters.metersPerMile` for miles). nil — the compact-card default — draws none.
-    var milestoneUnitMeters: Double? = nil
     /// See `RouteMapCameraHandle`; only meaningful when `interactive`.
     var cameraHandle: RouteMapCameraHandle? = nil
     @Environment(\.colorScheme) private var colorScheme
@@ -38,32 +35,24 @@ struct RouteMapView: View {
     /// 2026-07-24). The `.overview` viewport STATE re-fits whenever the map's real size lands —
     /// the whole route, every time, on every surface.
     @State private var viewport: Viewport
-    private let milestones: [RouteMilestones.Milestone]
 
     init(coordinates: [CLLocationCoordinate2D], style: MapStyleOption = .persisted,
          interactive: Bool = false, padding: CGFloat = 28,
-         milestoneUnitMeters: Double? = nil, cameraHandle: RouteMapCameraHandle? = nil) {
+         cameraHandle: RouteMapCameraHandle? = nil) {
         self.coordinates = coordinates
         self.style = style
         self.interactive = interactive
         self.padding = padding
-        self.milestoneUnitMeters = milestoneUnitMeters
         self.cameraHandle = cameraHandle
-        self.milestones = milestoneUnitMeters.map { RouteMilestones.along(coordinates, unitMeters: $0) } ?? []
         _viewport = State(initialValue: Self.fit(coordinates, padding: padding))
     }
 
     var body: some View {
         MapReader { proxy in
             Map(viewport: $viewport) {
-                // Milestones before the pins: declaration order is z-order, and start/finish must
-                // win any collision (they also `allowOverlap`; badges cull instead of piling up).
-                ForEvery(milestones, id: \.index) { milestone in
-                    MapViewAnnotation(coordinate: milestone.coordinate) {
-                        milestoneBadge(milestone.index)
-                    }
-                    .allowOverlap(false)
-                }
+                // The numbered per-mile/km badges that used to render here were REMOVED entirely
+                // (owner call 2026-07-30 — they read as noise, not information). The route keeps
+                // exactly two annotations: where it began and where it ended.
                 if let start = coordinates.first, coordinates.count > 1 {
                     MapViewAnnotation(coordinate: start) { startPin }.allowOverlap(true)
                 }
@@ -74,7 +63,12 @@ struct RouteMapView: View {
             .mapStyle(style.mapboxStyle(for: colorScheme))
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(interactive ? Self.exploreGestures : GestureOptions())
-            .onStyleLoaded { _ in addRouteLayers(proxy.map) }
+            .onStyleLoaded { _ in
+                // Before the route goes on: the basemap's POI and transit pins are the only thing
+                // that ever competes with it for the frame. See `MapChrome.hidePointsOfInterest`.
+                MapChrome.hidePointsOfInterest(on: proxy.map)
+                addRouteLayers(proxy.map)
+            }
             .allowsHitTesting(interactive)
             .onChange(of: viewport.isIdle) { _, idle in
                 // A gesture parks the viewport at .idle — that's the "explored" signal.
@@ -109,38 +103,12 @@ struct RouteMapView: View {
         return options
     }
 
-    /// Green "start" dot (white ring).
-    private var startPin: some View {
-        ZStack {
-            Circle().fill(.white).frame(width: 18, height: 18)
-            Circle().fill(Theme.success).frame(width: 11, height: 11)
-        }
-        .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
-        .accessibilityLabel("Start")
-    }
-
-    /// Checkered-flag "finish" marker.
-    private var finishPin: some View {
-        ZStack {
-            Circle().fill(Theme.ink).frame(width: 22, height: 22)
-            Image(systemName: "flag.checkered").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-        }
-        .shadow(color: .black.opacity(0.3), radius: 2.5, y: 1)
-        .accessibilityLabel("Finish")
-    }
-
-    /// Numbered whole-unit badge. Fixed materials like the pins (white chip, near-black numeral) —
-    /// map annotations sit on the map's own palette, not the app theme's.
-    private func milestoneBadge(_ index: Int) -> some View {
-        Text("\(index)")
-            .font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
-            .foregroundStyle(Color(white: 0.13))
-            .padding(.horizontal, 5).padding(.vertical, 2.5)
-            .background(Capsule().fill(.white))
-            .overlay(Capsule().stroke(Color(white: 0.13).opacity(0.15), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
-            .accessibilityLabel("Marker \(index)")
-    }
+    /// Start and finish use the SHARED marks (`RouteEndpoints`) — the same objects the grid tiles
+    /// and snapshots draw. They used to be this file's own 18pt dot and 22pt black flag-disc, which
+    /// is why opening a route from the profile showed a visibly different marker than the tile you
+    /// tapped (owner report 2026-07-30). One definition, one look, every surface.
+    private var startPin: some View { RouteStartMark(diameter: 12) }
+    private var finishPin: some View { RouteFinishMark(diameter: 12) }
 
     /// Adds the casing + gradient route layers once the style is ready (re-added if the style reloads).
     private func addRouteLayers(_ map: MapboxMap?) {

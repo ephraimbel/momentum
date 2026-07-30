@@ -114,10 +114,14 @@ struct CoachChatView: View {
             if let prefill = presenter.consumePrefill(), vm?.input.isEmpty == true {
                 vm?.input = prefill
             }
-            // The chat's primary act is typing: focus the composer on EVERY open, once the cover's
-            // transition settles (focusing mid-presentation drops the focus on the floor). The
-            // keyboard rises with the field already glowing above it — no extra tap to start talking.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { inputFocused = true }
+            // The chat's primary act is typing, so the composer focuses on open once the cover's
+            // transition settles (focusing mid-presentation drops the focus on the floor) — EXCEPT
+            // on a fresh thread (2026-07-30): the keyboard buried the landing's starter card on
+            // first contact, exactly the moment it should be read. The glowing field is the
+            // invitation to type; one tap accepts it.
+            if !isFresh {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { inputFocused = true }
+            }
             #if DEBUG
             // --coach-typing: land mid-keystroke (focused field + draft text) so the composer's
             // typing glow can be screenshot-verified deterministically.
@@ -156,62 +160,96 @@ struct CoachChatView: View {
         }
     }
 
-    /// A calm, premium landing the first time in — orb, a question, and starting prompts.
-    /// Scrollable with a viewport-tracking min height: centered when there's room, and when the
-    /// keyboard rises the fixed-height hero compresses by SCROLLING instead of shoving the composer
-    /// under the keyboard (the transcript state gets this for free from its own ScrollView).
+    /// A calm, premium landing the first time in (redesigned 2026-07-30): a personal two-line
+    /// greeting in the upper third — the coach proves it knows the athlete and today's session —
+    /// and the starters docked above the composer as ONE hairline-separated card (the house row
+    /// grammar; the old centered capsule stack was the app's last 2024-era surface). Scrollable
+    /// with a viewport-tracking min height: when the keyboard rises the hero compresses by
+    /// SCROLLING instead of shoving the composer under the keyboard.
     private func welcomeHero(_ vm: CoachChatViewModel) -> some View {
         GeometryReader { geo in
             ScrollView {
-                heroContent(vm)
-                    .padding(Theme.Space.lg)
-                    .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                VStack(spacing: 0) {
+                    Spacer(minLength: Theme.Space.xl)
+                    VStack(spacing: Theme.Space.lg) {
+                        BrandMark(size: 72)
+                        VStack(spacing: Theme.Space.xs) {
+                            Text(vm.heroTitle)
+                                .font(.display(28, weight: .black))
+                                .foregroundStyle(Theme.ink)
+                            Text(vm.heroSubline)
+                                .font(.rounded(Theme.FontSize.body, weight: .medium))
+                                .foregroundStyle(Theme.inkSecondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        starterList(vm)
+                            .padding(.top, Theme.Space.lg)
+                    }
+                    Spacer(minLength: Theme.Space.xl)
+                }
+                .padding(Theme.Space.lg)
+                .frame(maxWidth: .infinity, minHeight: geo.size.height)
             }
             .scrollBounceBehavior(.basedOnSize)
             .scrollDismissesKeyboard(.interactively)
         }
     }
 
-    private func heroContent(_ vm: CoachChatViewModel) -> some View {
-        VStack(spacing: Theme.Space.lg) {
-            BrandMark(size: 88)
-            VStack(spacing: Theme.Space.sm) {
-                Text("How can I help?")
-                    .font(.display(28, weight: .black))
-                    .foregroundStyle(Theme.ink)
-                Text(messages.first?.text ?? "Ask me anything about your training.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, Theme.Space.lg)
-            VStack(spacing: Theme.Space.sm) {
-                ForEach(vm.suggestions, id: \.self) { s in
-                    Button { attemptSend(vm, s) } label: {
+    /// The conversation starters as individual quiet pills (owner calls 2026-07-30: one big card
+    /// read too heavy, bare lines too little — each question wears its OWN soft capsule): tiny
+    /// glyph + question on a surface capsule with a hairline, centered. The capability disclosure
+    /// closes the column one register quieter, bare by design.
+    private func starterList(_ vm: CoachChatViewModel) -> some View {
+        VStack(spacing: Theme.Space.sm + 2) {
+            ForEach(vm.suggestions, id: \.self) { s in
+                Button { attemptSend(vm, s) } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: Self.starterGlyph(s))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.inkTertiary)
                         Text(s)
-                            .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                            .foregroundStyle(Theme.ink)
-                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-                            .background {
-                                Capsule().fill(IridescentMaterial()).opacity(0.22)
-                                Capsule().stroke(Theme.hairline)
-                            }
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                            .foregroundStyle(Theme.inkSecondary)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, Theme.Space.md)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(Theme.surface))
+                    .overlay(Capsule().stroke(Theme.hairline))
+                    .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
             }
-            // The quiet disclosure — full capability surface + ground rules, one tap away.
             Button { showCapabilities = true } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "info.circle").font(.system(size: 11, weight: .semibold))
+                HStack(spacing: 5) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11, weight: .semibold))
                     Text("What your coach can do")
                         .font(.rounded(Theme.FontSize.label, weight: .semibold))
                 }
                 .foregroundStyle(Theme.inkTertiary)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.top, Theme.Space.xs)
+        }
+        .multilineTextAlignment(.center)
+    }
+
+    /// One glyph per known starter — `computeSuggestions` mints from a fixed set, so this map is
+    /// exhaustive today; the bubble is the safe default for any future addition.
+    private static func starterGlyph(_ s: String) -> String {
+        switch s {
+        case "Brief me on today": "sun.max"
+        case "How did my last workout go?": "figure.run"
+        case "How should I run my race?": "flag.checkered"
+        case "How's my recovery looking?": "waveform.path.ecg"
+        case "What should I eat before my long run?": "fork.knife"
+        case "What could I race right now?": "stopwatch"
+        case "How am I doing?": "chart.line.uptrend.xyaxis"
+        case "Why is my plan built this way?": "calendar"
+        case "How was my week?": "chart.bar"
+        default: "bubble.left"
         }
     }
 
@@ -448,13 +486,10 @@ struct CoachChatView: View {
                     // ring while typing — and while dictating the ring breathes WITH the voice.
                     // Never self-pulsing; Reduce Motion keeps it static by design.
                     if glowActive {
-                        fieldShape
-                            .stroke(LinearGradient(colors: Theme.iridescent,
-                                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                                    lineWidth: 1.5)
-                            .opacity(voice.isRecording && !reduceMotion
-                                     ? 0.55 + 0.45 * voice.level
-                                     : (vm.input.isEmpty ? 0.65 : 1))
+                        // Leaf view: keeps the 45 Hz `voice.level` read out of the chat's body —
+                        // the whole transcript re-rendered per audio buffer while dictating.
+                        DictationGlowStroke(shape: fieldShape, voice: voice,
+                                            restingOpacity: vm.input.isEmpty ? 0.65 : 1)
                     } else {
                         fieldShape.stroke(Theme.hairline)
                     }
@@ -517,7 +552,7 @@ struct CoachChatView: View {
             ZStack {
                 Circle().fill(voice.isRecording ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear))
                 if voice.isRecording {
-                    VoiceLevelBars(level: voice.level, tint: Theme.background)
+                    MicLevelBars(voice: voice, tint: Theme.background)
                 } else {
                     Image(systemName: "mic")
                         .font(.system(size: 15, weight: .semibold))

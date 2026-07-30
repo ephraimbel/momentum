@@ -551,7 +551,13 @@ enum PlanEngine {
         // protective cap as the ramp), and never on a deload. The stimulus COMPLEMENTS the primary
         // (`secondQualityWorkout`) — threshold beside a speed day, VO₂ beside a threshold day.
         var secondQualityAdded = false
-        let wantsSecond = !timeTrial
+        // A race-pace-finish long run IS this week's second hard stimulus — Pfitzinger pairs the
+        // LT day with the RP-long in one week, and nobody stacks a third quality session on top.
+        // Without this gate, the rotation weeks (weekIndex%3==1 in a half/marathon build) carried
+        // RP-long + primary + second quality: three hard days on a five-day week, which is the
+        // grey-zone overload every coach's first red pen finds.
+        let longIsHard = out.contains { ($0.runType == .long || $0.runType == .progression) && $0.isHardRun }
+        let wantsSecond = !timeTrial && !longIsHard
             && (qualityBias > 1.0 || level == .experienced) && weeklyM >= (podium ? 40_000 : 45_000)
         if isRunning, runDays >= 5, !isDeload, goal != .stayConsistent, injuryAreas.isEmpty,
            level != .new, wantsSecond, phase == .build || phase == .peak, out.count < runDays,
@@ -887,14 +893,38 @@ enum PlanEngine {
         var safe = available.filter { !forbidden.contains($0) }
         var unsafe = available.filter { forbidden.contains($0) }
 
-        // Hard runs first onto safe days; downgrade if none left. With two quality days in a week
-        // (the second-quality slot), back-to-back hard days are the classic overuse pattern — so
-        // each hard run prefers a day NOT adjacent to an already-placed one. A soft preference:
-        // when the pool leaves no non-adjacent day, the run still schedules rather than vanish.
+        // The LONG RUN anchors the week, placed first — the way a coach builds a microcycle (fix
+        // the long day, then space the quality around it). It takes the LATEST available day, which
+        // on calendar-anchored weeks is the weekend slot long runs actually live in. A hard long
+        // (race-pace finish) honors the day-after-a-lower-lift rule like any hard run; a plain one
+        // may sit anywhere. Without this anchor, the long run took "whatever day was left", which
+        // put 25 km between two quality days with zero recovery on either side.
         var hardDays: [Int] = []
-        for i in runs.indices where runs[i].isHardRun {
+        var longDay: Int?
+        if let li = runs.firstIndex(where: { $0.runType == .long || $0.runType == .progression }) {
+            let candidates = runs[li].isHardRun && !safe.isEmpty ? safe
+                : (safe + unsafe).isEmpty ? [] : (safe + unsafe)
+            if let day = candidates.max() {
+                runs[li].dayOffset = day
+                longDay = day
+                if runs[li].isHardRun { hardDays.append(day) }
+                safe.removeAll { $0 == day }
+                unsafe.removeAll { $0 == day }
+            }
+        }
+
+        // Hard runs next onto safe days; downgrade if none left. With two quality days in a week
+        // (the second-quality slot), back-to-back hard days are the classic overuse pattern — so
+        // each hard run prefers a day NOT adjacent to an already-placed one, AND not adjacent to
+        // the long run (quality on dead legs the day after a long run is the other classic). A
+        // soft preference: when the pool leaves no such day, the run still schedules rather than
+        // vanish.
+        for i in runs.indices where runs[i].isHardRun && runs[i].dayOffset < 0 {
             if !safe.isEmpty {
-                let idx = safe.firstIndex { d in !hardDays.contains { abs($0 - d) == 1 } } ?? 0
+                let spaced = Set(hardDays + (longDay.map { [$0] } ?? []))
+                let idx = safe.firstIndex { d in !spaced.contains { abs($0 - d) == 1 } }
+                    ?? safe.firstIndex { d in !hardDays.contains { abs($0 - d) == 1 } }
+                    ?? 0
                 let day = safe.remove(at: idx)
                 hardDays.append(day)
                 runs[i].dayOffset = day

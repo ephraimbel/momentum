@@ -15,7 +15,7 @@ final class StrengthLogUITests: XCTestCase {
         let app = XCUIApplication()
         // `--ui-test-strength` opens Today in strength (no picker navigation); `--ui-test-route`
         // self-authorizes location so that alert never interrupts the flow.
-        app.launchArguments = ["--seed-demo", "--ui-test-strength", "--ui-test-route"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--ui-test-strength", "--ui-test-route"]
         // Dismiss any remaining system alert (e.g. notifications) on the next interaction.
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {

@@ -164,11 +164,12 @@ enum PRType: String, Codable, Sendable, CaseIterable {
 enum WorkoutPrivacy: String, Codable, Sendable, CaseIterable {
     case `private`, friends, `public`
 
-    /// User-facing label for the visibility picker.
+    /// User-facing label for the visibility picker. "Friends" rhymes with the community wall's
+    /// Friends | Global scope pill (2026-07-29) — one audience language across save and feed.
     var label: String {
         switch self {
         case .private: "Only me"
-        case .friends: "Followers"
+        case .friends: "Friends"
         case .public: "Everyone"
         }
     }

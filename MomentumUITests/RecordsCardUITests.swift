@@ -12,7 +12,7 @@ final class RecordsCardUITests: XCTestCase {
 
     func testRecordBookShowsBests() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--progress-tab", "--progress-scroll-records"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--progress-tab", "--progress-scroll-records"]
         app.launch()
 
         let title = app.staticTexts["RECORD BOOK"]
