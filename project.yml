@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.5"
-    CURRENT_PROJECT_VERSION: "12"   # build 12 (v1.5): community launch + repricing ($9.99/mo · $59.99/yr, trial on both). ASC 1.5 version record still needs creating once 1.1 clears review.
+    CURRENT_PROJECT_VERSION: "13"   # build 13 (v1.5): build 12 + the coach race-prediction fix (one model, no double endurance tax).
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
