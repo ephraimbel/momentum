@@ -17,7 +17,9 @@ struct InjuryResponseTests {
         vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date())!
         vm.experience = .some
         vm.weeklyRunVolumeM = 30_000
-        return vm.finish(in: ctx)
+        let profile = vm.finish(in: ctx)
+        profile.distanceUnit = "metric"   // deterministic clean-km snapping, locale-independent
+        return profile
     }
 
     @Test func twingeKeepsRunningButDropsQuality() throws {

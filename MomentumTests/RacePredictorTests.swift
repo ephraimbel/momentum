@@ -42,5 +42,31 @@ struct RacePredictorTests {
         #expect(RacePredictor.label(forRaceM: 10000) == "10K")
         #expect(RacePredictor.label(forRaceM: 21097) == "Half")
         #expect(RacePredictor.label(forRaceM: 42195) == "Marathon")
+        #expect(RacePredictor.label(forRaceM: 50000) == "Ultra")
+    }
+
+    // MARK: The endurance tax — predictions past ~3 h stop pretending pain doesn't exist
+
+    @Test func ultraPredictionsCarryTheEnduranceTax() {
+        // A 25:00-5K athlete. Raw Riegel says a 50K is barely slower per km than a marathon —
+        // the exact "9:59-pace ultra" absurdity: no glycogen wall, no impact damage, no long day.
+        let naive50K = 1500 * pow(50_000.0 / 5_000.0, RacePredictor.riegelExponent)
+        let corrected = RacePredictor.finishTimeS(raceDistanceM: 50_000, p5kSPerKm: 300)!
+        #expect(corrected > naive50K * 1.05, "50K prediction must be taxed well past raw Riegel")
+
+        // And the marathon → 50K pace gap is a real gap, not a rounding error.
+        let marathonPace = RacePredictor.projectedPaceSPerKm(raceDistanceM: 42_195, p5kSPerKm: 300)!
+        let ultraPace = RacePredictor.projectedPaceSPerKm(raceDistanceM: 50_000, p5kSPerKm: 300)!
+        #expect(ultraPace > marathonPace * 1.03)
+    }
+
+    @Test func subThreeHourPredictionsAreUntouched() {
+        // The validated envelope stays pure Riegel: a ~1:55 half and a 2:48 marathon (17:30-5K
+        // athlete) sit under the 3 h horizon and predict exactly as before.
+        let half = RacePredictor.finishTimeS(raceDistanceM: 21_097, p5kSPerKm: 300)!
+        #expect(abs(half - 1500 * pow(21_097.0 / 5_000.0, 1.06)) < 0.5)
+        let eliteMarathon = RacePredictor.finishTimeS(raceDistanceM: 42_195, p5kSPerKm: 210)!
+        #expect(abs(eliteMarathon - 210 * 5 * pow(42_195.0 / 5_000.0, 1.06)) < 0.5)
+        #expect(eliteMarathon < 3 * 3600)
     }
 }

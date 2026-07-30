@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The athlete's appearance choice (Settings → Appearance). Both palettes are first-class: the
 /// light look is the daylight hero (white canvas, near-black ink), the dark look is the original
@@ -15,6 +16,17 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         case .system: "System"
         case .light: "Light"
         case .dark: "Dark"
+        }
+    }
+
+    /// The UIKit twin of `colorScheme`, for the window-level override in `MomentumApp` —
+    /// `.unspecified` IS the System case (it hands control back to the OS), which is what lets the
+    /// applicator stay value-driven with no conditional structure.
+    var interfaceStyle: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
         }
     }
 

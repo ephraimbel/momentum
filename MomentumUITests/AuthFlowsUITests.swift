@@ -14,16 +14,24 @@ final class AuthFlowsUITests: XCTestCase {
     private var pass: String { ProcessInfo.processInfo.environment["E2E_PASS"] ?? "" }
     private var newPass: String { ProcessInfo.processInfo.environment["E2E_NEWPASS"] ?? "" }
 
+    /// The welcome asks for no account (2026-07-27) — its primary CTA now goes into setup, so the
+    /// account page is reached through the returning-athlete door.
     private func launchAtGate() -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--reset-auth", "--uitest-password"]
         app.launch()
-        let getStarted = app.buttons["Get started"]
-        XCTAssertTrue(getStarted.waitForExistence(timeout: 10), "reset-auth should land on the gate")
-        getStarted.tap()
-        XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
+        openAccountPage(app, from: "reset-auth should land on the welcome")
         return app
+    }
+
+    /// Welcome hero → the account page. Works from either welcome variant ("Get started" or
+    /// "Continue as …"), since the returning-athlete door is on both.
+    private func openAccountPage(_ app: XCUIApplication, from message: String) {
+        let returning = app.buttons["I already have an account"]
+        XCTAssertTrue(returning.waitForExistence(timeout: 10), message)
+        returning.tap()
+        XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
     }
 
     private func signIn(_ app: XCUIApplication, email: String, password: String) {
@@ -74,24 +82,23 @@ final class AuthFlowsUITests: XCTestCase {
         app.buttons["Save password"].tap()
 
         // Sheet falls; the recovery session is live → the app proper (profile exists → tabs).
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30),
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30),
                       "after saving the password the athlete should be in the app")
         attach(app, "recovery-signed-in")
 
         // Sign out from Settings.
-        app.tabBars.buttons["Profile"].tap()
+        openProfileSheet(app)
         app.buttons["Settings"].firstMatch.tap()
         let signOut = app.buttons["Sign out"]
         XCTAssertTrue(signOut.waitForExistence(timeout: 10))
         scrollTo(signOut, in: app)   // the account card sits low on the page
         signOut.tap()
-        XCTAssertTrue(app.buttons["Get started"].waitForExistence(timeout: 10), "sign-out should return to the gate")
 
-        // Sign back in with the NEW password.
-        app.buttons["Get started"].tap()
-        XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
+        // Sign back in with the NEW password. Sign-out keeps local data, so the welcome renders its
+        // "Continue as …" variant — the returning-athlete door is the stable target on both.
+        openAccountPage(app, from: "sign-out should return to the welcome")
         signIn(app, email: email, password: newPass)
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30),
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30),
                       "the new password should sign in")
         attach(app, "signed-in-new-password")
     }
@@ -102,9 +109,9 @@ final class AuthFlowsUITests: XCTestCase {
         let app = launchAtGate()
 
         app.buttons["Continue without an account"].tap()
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 15), "guest should enter the app")
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 15), "guest should enter the app")
 
-        app.tabBars.buttons["Profile"].tap()
+        openProfileSheet(app)
         app.buttons["Settings"].firstMatch.tap()
         let more = app.buttons["More ways to sign in — Google or email"]
         XCTAssertTrue(more.waitForExistence(timeout: 10), "guest card should offer more sign-in options")
@@ -130,9 +137,9 @@ final class AuthFlowsUITests: XCTestCase {
     func test4_deleteAccount() throws {
         let app = launchAtGate()
         signIn(app, email: email, password: pass)
-        XCTAssertTrue(app.tabBars.buttons["Profile"].waitForExistence(timeout: 30), "sign-in should enter the app")
+        XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30), "sign-in should enter the app")
 
-        app.tabBars.buttons["Profile"].tap()
+        openProfileSheet(app)
         app.buttons["Settings"].firstMatch.tap()
         let deleteRow = app.buttons["Delete account"]
         XCTAssertTrue(deleteRow.waitForExistence(timeout: 10))
@@ -146,9 +153,10 @@ final class AuthFlowsUITests: XCTestCase {
         attach(app, "delete-account-dialog")
         confirm.tap()
 
-        // Server delete + local sign-out → back at the gate.
-        XCTAssertTrue(app.buttons["Get started"].waitForExistence(timeout: 30),
-                      "account deletion should land back on the gate")
+        // Server delete + local sign-out → back at the welcome. Local data deliberately stays on
+        // the device (AuthController.deleteAccount), so this is the "Continue as …" variant.
+        XCTAssertTrue(app.buttons["I already have an account"].waitForExistence(timeout: 30),
+                      "account deletion should land back on the welcome")
         attach(app, "post-delete-gate")
     }
 
@@ -182,5 +190,12 @@ final class AuthFlowsUITests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
+    }
+
+    /// Profile is a tab again (community back-burnered 2026-07-16).
+    private func openProfileSheet(_ app: XCUIApplication) {
+        let tab = app.tabBars.buttons["Profile"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10), "Profile tab not found")
+        tab.tap()
     }
 }

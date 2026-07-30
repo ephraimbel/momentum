@@ -12,12 +12,15 @@ struct MuscleMapView: View {
     let activation: [MuscleGroup: Double]
     /// Which figures to show, left→right. Default front + back (the iconic anatomy-chart look).
     var sides: [BodySide] = [.front, .back]
-    /// The body shape to render. `.female` warps the figure (narrower shoulders/waist, wider hips);
-    /// a true female anatomical dataset can drop into `BodyAnatomy` later with no call-site changes.
-    var sex: BodySex = .neutral
+    /// The body figure to render — `.female` renders the true female anatomical dataset. `nil`
+    /// (the default) uses the athlete's own figure (`AthleteFigure.sex`), so most call sites need
+    /// not pass anything; explicit callers (onboarding, the athlete panel) still override.
+    var sex: BodySex? = nil
     /// Force the iridescence to hold static (no animated `MeshGradient`). Set when many maps render at
     /// once — e.g. the profile grid — so the tiles stay at 60fps. Independent of Reduce Motion.
     var forceStatic: Bool = false
+
+    private var resolvedSex: BodySex { sex ?? AthleteFigure.sex }
 
     /// `.fullBody` credit floods every muscle (cardio/HIIT/"other"); fold it into the real regions.
     private var resolved: [MuscleGroup: Double] {
@@ -35,7 +38,7 @@ struct MuscleMapView: View {
     var body: some View {
         HStack(spacing: Theme.Space.md) {
             ForEach(sides) { side in
-                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: sex, forceStatic: forceStatic)
+                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: resolvedSex, forceStatic: forceStatic)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -51,11 +54,25 @@ struct MuscleMapView: View {
 
 enum BodySide: String, Identifiable, CaseIterable { case front, back; var id: String { rawValue } }
 
-/// Which body shape to render. `.neutral` is the source anatomy; `.female` applies a proportion warp.
-enum BodySex { case neutral, female
+/// Which body figure to render. `.neutral` is the (male) source anatomy; `.female` is the true
+/// female anatomical dataset. Both are real SVG datasets from the same MIT source.
+enum BodySex: Equatable { case neutral, female
     /// Map a stored profile sex (BiologicalSex raw) to a figure — only `female` changes the shape.
     init(profileSex: String?) { self = (profileSex == "female") ? .female : .neutral }
 }
+
+/// The athlete's OWN body figure — resolved once from their profile sex at the app root
+/// (`AthleteFigure.sex = …`) and read as the DEFAULT by every `MuscleMapView`/`AnatomyGlowView`
+/// that doesn't pass an explicit `sex`. So a female athlete sees her figure on every surface —
+/// live lifting, summary, tiles, Today — with no per-call plumbing.
+///
+/// A plain `@MainActor` static rather than an environment value ON PURPOSE: the body renders inside
+/// `fullScreenCover`s (the live workout, its summary, the immersive pager), and covers do NOT inherit
+/// custom environment values across the presentation boundary (verified — the live-lift figure came
+/// out male for a female athlete under the env approach). A global static is immune to that. Views
+/// re-read it on every render, so changing sex in Profile → Edit updates them on the next pass.
+/// Explicit callers (onboarding's live selection, the athlete panel) still override it.
+@MainActor enum AthleteFigure { static var sex: BodySex = .neutral }
 
 // MARK: - One figure
 
@@ -84,7 +101,9 @@ private struct BodyFigure: View {
         case (.back, _):        BodyAnatomy.backOutline
         }
     }
-    private var originX: CGFloat { side == .front ? 0 : BodyAnatomy.viewBoxWidth }
+    /// The source viewBox for THIS figure — male and female use different coordinate spaces
+    /// (the female art is taller and offset), so every scale/translate reads from here.
+    private var box: BodyAnatomy.ViewBox { BodyAnatomy.viewBox(side, sex) }
 
     var body: some View {
         GeometryReader { geo in
@@ -98,14 +117,14 @@ private struct BodyFigure: View {
                 // Worked muscles: one flowing oil-slick, revealed only through worked regions, each at
                 // an alpha proportional to its volume. (Mask alpha = per-muscle intensity.)
                 IridescentView(intensity: 1.0, isStatic: reduceMotion || forceStatic)
-                    .mask(
-                        ZStack {
-                            ForEach(parts.indices, id: \.self) { i in
-                                let intensity = intensity(parts[i].muscle)
-                                if intensity > 0 { shape(parts[i].path).fill(.white.opacity(intensity)) }
-                            }
-                        }
-                    )
+                    .mask(workedMask)
+
+                // A soft top-lit sheen over the lit muscles — a subtle gloss so a covered body reads
+                // glassy and premium, not flat. Static (no per-frame blur) so it's free on animation.
+                LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.04), .clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .blendMode(.softLight)
+                    .mask(workedMask)
 
                 // Worked muscles get a defining edge so the glow reads clearly against white.
                 ForEach(parts.indices, id: \.self) { i in
@@ -123,28 +142,42 @@ private struct BodyFigure: View {
                                       style: StrokeStyle(lineWidth: lw * 1.2, lineCap: .round, lineJoin: .round))
             }
         }
-        .aspectRatio(BodyAnatomy.viewBoxWidth / BodyAnatomy.viewBoxHeight, contentMode: .fit)
+        .aspectRatio(box.width / box.height, contentMode: .fit)
         .accessibilityHidden(true)
     }
 
-    private func shape(_ path: Path) -> ScaledBodyShape { ScaledBodyShape(source: path, originX: originX) }
+    private func shape(_ path: Path) -> ScaledBodyShape { ScaledBodyShape(source: path, box: box) }
 
-    /// Worked → 0.55…1.0 (even a light muscle is clearly lit); unworked → 0.
+    /// The worked-muscle mask: each lit region filled at its per-muscle intensity. Shared by the
+    /// iridescent fill and the gloss sheen so both reveal through exactly the same shapes.
+    private var workedMask: some View {
+        ZStack {
+            ForEach(parts.indices, id: \.self) { i in
+                let intensity = intensity(parts[i].muscle)
+                if intensity > 0 { shape(parts[i].path).fill(.white.opacity(intensity)) }
+            }
+        }
+    }
+
+    /// Worked → 0.62…1.0 (even a light muscle is richly lit); unworked → 0. A higher floor makes the
+    /// covered body glow fuller and more premium than a faint wash.
     private func intensity(_ muscle: MuscleGroup?) -> Double {
         guard let muscle, let v = activation[muscle], v > 0, maxVal > 0 else { return 0 }
-        return 0.55 + 0.45 * min(1, v / maxVal)
+        return 0.62 + 0.38 * min(1, v / maxVal)
     }
 }
 
-/// Maps a parsed body `Path` (in source viewBox coords) onto the view, preserving aspect. Back-figure
-/// paths live at x∈[724,1448]; `originX` shifts them back so each figure fills its own frame.
+/// Maps a parsed body `Path` (in source viewBox coords) onto the view, preserving aspect. Each
+/// figure carries its own `ViewBox` (back paths and the female art live at their own min-x/min-y),
+/// so the transform normalizes from that box into the render frame.
 private struct ScaledBodyShape: Shape {
     let source: Path
-    let originX: CGFloat
+    let box: BodyAnatomy.ViewBox
     func path(in rect: CGRect) -> Path {
-        let scale = rect.width / BodyAnatomy.viewBoxWidth
+        let scale = rect.width / box.width
         let t = CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
-                                  tx: rect.minX - originX * scale, ty: rect.minY)
+                                  tx: rect.minX - box.minX * scale,
+                                  ty: rect.minY - box.minY * scale)
         return source.applying(t)
     }
 }
@@ -152,8 +185,21 @@ private struct ScaledBodyShape: Shape {
 // MARK: - Parsed anatomy (slug → muscle, SVG path → SwiftUI Path), built once and cached
 
 enum BodyAnatomy {
-    static let viewBoxWidth: CGFloat = 724
-    static let viewBoxHeight: CGFloat = 1448
+    /// A figure's source coordinate space. Male and female use DIFFERENT boxes (the female art is
+    /// taller and offset), so scaling/positioning must read the right one per (side, sex).
+    struct ViewBox: Equatable { let minX: CGFloat; let minY: CGFloat; let width: CGFloat; let height: CGFloat }
+
+    /// The source viewBox for a figure — from each dataset's own SVG `viewBox`.
+    /// Male front `0 0 724 1448`, back `724 0 724 1448`; female front `-50 -40 734 1538`,
+    /// back `756 0 774 1448` (react-native-body-highlighter).
+    static func viewBox(_ side: BodySide, _ sex: BodySex) -> ViewBox {
+        switch (side, sex) {
+        case (.front, .female): ViewBox(minX: -50, minY: -40, width: 734, height: 1538)
+        case (.back, .female):  ViewBox(minX: 756, minY: 0, width: 774, height: 1448)
+        case (.front, _):       ViewBox(minX: 0, minY: 0, width: 724, height: 1448)
+        case (.back, _):        ViewBox(minX: 724, minY: 0, width: 724, height: 1448)
+        }
+    }
 
     struct Part { let muscle: MuscleGroup?; let path: Path }
 
@@ -164,38 +210,13 @@ enum BodyAnatomy {
     static let frontOutline: Path = SVGPath.parse(MuscleBodyData.frontOutline)
     static let backOutline: Path = SVGPath.parse(MuscleBodyData.backOutline)
 
-    // Female figures: the same muscle regions warped into a more feminine silhouette (narrower
-    // shoulders + waist, slightly wider hips). A proportion warp until a true female anatomical
-    // dataset is added — every path warps with the SAME function so glow/outline stay aligned.
-    static let femaleFront: [Part] = front.map { Part(muscle: $0.muscle, path: femaleWarp($0.path, centerX: viewBoxWidth / 2)) }
-    static let femaleBack: [Part] = back.map { Part(muscle: $0.muscle, path: femaleWarp($0.path, centerX: viewBoxWidth + viewBoxWidth / 2)) }
-    static let femaleFrontOutline: Path = femaleWarp(frontOutline, centerX: viewBoxWidth / 2)
-    static let femaleBackOutline: Path = femaleWarp(backOutline, centerX: viewBoxWidth + viewBoxWidth / 2)
-
-    /// Warp a path horizontally as a function of height: pull in the shoulders + waist, push out the
-    /// hips. Subtle (≤~9%), applied around the figure's own centerline (`centerX`).
-    static func femaleWarp(_ path: Path, centerX: CGFloat) -> Path {
-        func warp(_ p: CGPoint) -> CGPoint {
-            let h = Double(p.y / viewBoxHeight)                       // 0 = head, 1 = feet
-            func gauss(_ c: Double, _ w: Double) -> Double { exp(-pow((h - c) / w, 2)) }
-            let sx = 1 - 0.085 * gauss(0.17, 0.07)                    // narrower shoulders
-                       - 0.05 * gauss(0.41, 0.06)                     // pinched waist
-                       + 0.075 * gauss(0.57, 0.075)                   // wider hips
-            return CGPoint(x: centerX + (p.x - centerX) * CGFloat(sx), y: p.y)
-        }
-        var out = Path()
-        path.forEach { element in
-            switch element {
-            case .move(let to): out.move(to: warp(to))
-            case .line(let to): out.addLine(to: warp(to))
-            case .quadCurve(let to, let c): out.addQuadCurve(to: warp(to), control: warp(c))
-            case .curve(let to, let c1, let c2): out.addCurve(to: warp(to), control1: warp(c1), control2: warp(c2))
-            case .closeSubpath: out.closeSubpath()
-            @unknown default: break
-            }
-        }
-        return out
-    }
+    // Female figures: the TRUE female anatomical dataset (react-native-body-highlighter, same MIT
+    // source + identical slugs as the male set — so `frontMuscle`/`backMuscle` map it unchanged).
+    // Data lives in `MuscleBodyDataFemale.swift`; each renders in its own `viewBox` above.
+    static let femaleFront: [Part] = build(MuscleBodyData.femaleFront, map: frontMuscle)
+    static let femaleBack: [Part] = build(MuscleBodyData.femaleBack, map: backMuscle)
+    static let femaleFrontOutline: Path = SVGPath.parse(MuscleBodyData.femaleFrontOutline)
+    static let femaleBackOutline: Path = SVGPath.parse(MuscleBodyData.femaleBackOutline)
 
     private static func build(_ data: [(slug: String, paths: [String])],
                               map: (String) -> MuscleGroup?, skip: Set<String> = []) -> [Part] {
@@ -357,6 +378,31 @@ enum MuscleActivation {
             guard let session = workout.strength else { continue }
             for (muscle, value) in from(session: session) { total[muscle, default: 0] += value }
         }
+        return total
+    }
+
+    /// Lower-body contribution from foot sports (running/walking/hiking) — endurance work drives the
+    /// posterior chain, so the athlete figure reflects a runner's training, not only gym work. Scaled
+    /// by distance in "set-equivalents per km" tuned so a strong running week reads like a solid leg
+    /// block; walks/hikes count at half (same chain, lighter load). Weights are relative — the map
+    /// normalizes to the top muscle — so what matters is the distribution, not the absolute numbers.
+    static func fromEndurance(workouts: [Workout]) -> [MuscleGroup: Double] {
+        let perKm: [MuscleGroup: Double] = [.calves: 0.5, .quads: 0.45, .hamstrings: 0.35, .glutes: 0.35, .core: 0.15]
+        var total: [MuscleGroup: Double] = [:]
+        for w in workouts where w.type.category == .foot {
+            let km = (w.gps?.distanceM ?? 0) / 1000
+            guard km > 0 else { continue }
+            let scale = w.type.discipline == .walking ? 0.5 : 1.0   // walk/hike lighter than run
+            for (m, f) in perKm { total[m, default: 0] += f * km * scale }
+        }
+        return total
+    }
+
+    /// The Athlete Panel's activation: strength coverage plus the endurance lower-body contribution,
+    /// so both a lifter and a pure runner see a figure that reflects — and re-windows with — their work.
+    static func combined(workouts: [Workout]) -> [MuscleGroup: Double] {
+        var total = from(workouts: workouts)
+        for (m, v) in fromEndurance(workouts: workouts) { total[m, default: 0] += v }
         return total
     }
 }

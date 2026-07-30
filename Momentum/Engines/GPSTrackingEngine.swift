@@ -6,21 +6,32 @@ import Foundation
 protocol GPSWorkoutSink: Sendable {
     /// Create the durable `Workout` + `GPSDetail` and mark it the active (recoverable) workout.
     func beginWorkout(type: WorkoutType, startedAt: Date) async
-    /// Persist a single fix immediately (the durability guarantee).
-    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) async
+    /// Persist a single fix immediately (the durability guarantee). `pausedSpan` marks a fix
+    /// captured while paused (manual or auto) — the engine accrued nothing for it, so readers
+    /// must skip both its metres and its seconds.
+    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool, pausedSpan: Bool) async
     /// Update rolled-up aggregates (every ~5s).
     func checkpoint(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async
-    /// Finalize aggregates and clear the active-workout marker.
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
-                       smoothedPaceSPerKm: Double) async
+    /// Finalize aggregates and clear the active-workout marker. `durationS` is MOVING time (what the
+    /// athlete sees and what every pace is computed against); `elapsedS` is wall time from start to
+    /// finish, pauses included — the window every Health read (HR series, time-in-zones, import
+    /// overlap) must span.
+    /// The live EMA is deliberately NOT a parameter. It was one, it went unused-but-passed, and the
+    /// store persisted it as the workout's average pace. An argument nobody has to justify is how
+    /// that survived — so the value simply cannot reach persistence any more.
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elapsedS: TimeInterval,
+                       elevationGainM: Double) async
 }
 
 struct NoopGPSWorkoutSink: GPSWorkoutSink {
     func beginWorkout(type: WorkoutType, startedAt: Date) async {}
-    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) async {}
+    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool, pausedSpan: Bool) async {}
     func checkpoint(distanceM: Double, durationS: TimeInterval, elevationGainM: Double) async {}
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
-                       smoothedPaceSPerKm: Double) async {}
+    /// The live EMA is deliberately NOT a parameter. It was one, it went unused-but-passed, and the
+    /// store persisted it as the workout's average pace. An argument nobody has to justify is how
+    /// that survived — so the value simply cannot reach persistence any more.
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elapsedS: TimeInterval,
+                       elevationGainM: Double) async {}
 }
 
 /// Cardio capture engine (PRD §8.3). A strict state machine over a pure `GPSProcessor`.
@@ -48,8 +59,6 @@ actor GPSTrackingEngine {
     }
 
     enum Const {
-        static let heroUpdateThrottleS = 1.0
-        static let routeRedrawThrottleS = 0.5
         static let checkpointIntervalS = 5.0
         static let liveActivityUpdateS = 3.0
         static let gpsLostTimeoutS = 8.0   // no accepted fix for this long → GPSLost (keep timing)
@@ -111,14 +120,29 @@ actor GPSTrackingEngine {
 
         if state == .acquiring { state = .tracking }
 
-        let result = processor.ingest(fix)
+        // Manual pause: the processor stays warm (dot follows, resume can't spike-reject) but accrues
+        // no distance, and neither the live route nor the saved one records the paused walk — the
+        // sample persists as not-accepted so `RouteReplay` (saved route = accepted samples) skips it
+        // too. Resume ≤100m away draws a clean chord; farther splits the trace (LiveSmoother's gap
+        // split) — both exactly Strava's pause behavior.
+        let manuallyPaused = state == .paused
+        // Auto-pause accrues nothing either (caught on-device 2026-07-23): the clock was frozen
+        // but position wander kept adding meters — inflating distance while time stood still, so
+        // pace read fast. The processor stays warm exactly like a manual pause.
+        let paused = manuallyPaused || state == .autoPaused
+        let result = processor.ingest(fix, paused: paused)
         let accepted = result != .rejected
         // Build the route from the Kalman-corrected position (not the raw fix): the first accepted
         // fix (anchor) plus every real move.
-        if case .accepted(let added) = result, added > 0 || route.isEmpty {
+        if !manuallyPaused, case .accepted(let added) = result, added > 0 || route.isEmpty {
             route.append(Coordinate(lat: processor.filteredLat, lon: processor.filteredLon))
         }
-        await sink.persistSample(fix, accepted: accepted)
+        // Auto-paused fixes are stored as NOT accepted, exactly like manual ones. They used to be
+        // stored accepted — the engine counted zero for them while every "saved route = accepted
+        // samples" reader counted the stationary wander at the traffic light, so the saved route
+        // grew a scribble and the split/PR reducer inherited both those metres and that time.
+        // `pausedSpan` keeps the record honest without destroying it (mark, don't destroy).
+        await sink.persistSample(fix, accepted: accepted && !paused, pausedSpan: paused)
 
         // Moving-time accounting only while actively tracking.
         if state == .tracking, let mark = lastMovingMark {
@@ -127,8 +151,15 @@ actor GPSTrackingEngine {
         lastMovingMark = now
 
         // Auto-pause / resume (manual pause is sticky and not overridden here).
-        if state != .paused {
-            let pausedBySpeed = processor.shouldAutoPause(speedMS: max(0, fix.speedMS), now: now,
+        //
+        // An UNKNOWN speed is not evidence of stopping. CoreLocation reports a negative sentinel for
+        // `speed` under canopy, in an urban canyon, or on a cold re-acquire — and `max(0,)` turned
+        // that sentinel into a confident "stationary", latching auto-pause on an athlete who was
+        // still running. That freezes the clock while position-only fixes keep accruing distance,
+        // so the run comes back short on time and its pace reads fast. Skip the decision instead:
+        // hold whatever state we were in until the device tells us something it actually measured.
+        if state != .paused, fix.speedMS >= 0 {
+            let pausedBySpeed = processor.shouldAutoPause(speedMS: fix.speedMS, now: now,
                                                           currentlyPaused: state == .autoPaused)
             if !pausedBySpeed {
                 // Real movement → a manual-resume override is done its job; normal auto-pause resumes.
@@ -141,6 +172,12 @@ actor GPSTrackingEngine {
             }
             // else: stationary but the athlete manually resumed → stay tracking (Resume always wins).
         }
+
+        // Re-assert the state invariant after the awaits above: an `await` here is a suspension point,
+        // so `finish()` can run (writing the authoritative durationS and moving to .saving/.summary)
+        // while this ingest is parked. If it did, bail — otherwise the checkpoint below would clobber
+        // that finalized duration with `movingTimeS`.
+        guard state == .tracking || state == .autoPaused || state == .gpsLost else { return }
 
         if let last = lastCheckpoint, now.timeIntervalSince(last) >= Const.checkpointIntervalS {
             await sink.checkpoint(distanceM: processor.distanceM,
@@ -171,15 +208,16 @@ actor GPSTrackingEngine {
 
     /// `durationOverrideS` lets the view model supply its continuous elapsed-time clock (which
     /// ticks independently of GPS-fix cadence); falls back to engine-accumulated moving time.
-    func finish(durationOverrideS: TimeInterval? = nil) async {
+    /// `elapsedOverrideS` is the wall-clock span including pauses; it falls back to the moving
+    /// time, which is what a pause-free run's elapsed genuinely is.
+    func finish(durationOverrideS: TimeInterval? = nil, elapsedOverrideS: TimeInterval? = nil) async {
         state = .saving
+        let duration = durationOverrideS ?? movingTimeS
         await sink.finishWorkout(distanceM: processor.distanceM,
-                                 durationS: durationOverrideS ?? movingTimeS,
-                                 elevationGainM: processor.elevationGainM,
-                                 smoothedPaceSPerKm: processor.smoothedPaceSPerKm)
+                                 durationS: duration,
+                                 elapsedS: max(elapsedOverrideS ?? duration, duration),
+                                 elevationGainM: processor.elevationGainM)
         state = .summary
     }
 
-    /// Re-enter after a cold launch with an unfinished workout (the "Resume?" path).
-    func markRecovered() { state = .recovered }
 }

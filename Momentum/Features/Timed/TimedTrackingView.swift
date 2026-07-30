@@ -2,7 +2,8 @@ import SwiftUI
 import SwiftData
 
 /// The live timed-activity screen — a calm, full-bleed stopwatch for sports that are just duration
-/// (tennis, yoga, …). Start is automatic on appear; pause/resume and finish below; an X discards.
+/// (tennis, yoga, …). Start is automatic on appear; pause/resume and finish below; the X confirms
+/// leaving and offers Finish & save once there's a minute on the clock — never a silent loss.
 struct TimedTrackingView: View {
     let type: WorkoutType
     let container: ModelContainer
@@ -37,12 +38,19 @@ struct TimedTrackingView: View {
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.vertical, Theme.Space.lg)
-        .confirmationDialog("Discard this \(type.title.lowercased())?",
+        .confirmationDialog("End this \(type.title.lowercased())?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
+            // Leaving must never silently cost the session (mirrors the strength X): a minute or
+            // more on the clock earns a save path; under that there's nothing worth keeping.
+            if vm.elapsed >= 60 {
+                Button("Finish & save") { onFinish(vm.finish()) }
+            }
             Button("Discard", role: .destructive) { onFinish(vm.discard()) }
             Button("Keep recording", role: .cancel) {}
         } message: {
-            Text("This won't be saved to your history.")
+            Text(vm.elapsed >= 60
+                 ? "Save your \(Formatters.duration(s: vm.elapsed)) so far, or discard it."
+                 : "Nothing to save yet. Discard this \(type.title.lowercased())?")
         }
     }
 
@@ -55,7 +63,7 @@ struct TimedTrackingView: View {
                     .frame(width: 36, height: 36)
                     .background(Circle().fill(Theme.surface))
             }
-            .accessibilityLabel("Discard")
+            .accessibilityLabel("End workout")
             Spacer()
             HStack(spacing: Theme.Space.xs) {
                 Image(systemName: type.systemImage).font(.system(size: 15, weight: .bold))

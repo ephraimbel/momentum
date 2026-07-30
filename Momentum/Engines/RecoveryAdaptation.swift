@@ -15,7 +15,9 @@ enum RecoveryAdaptation {
     /// Decide whether today should be eased. Requires TWO independent warning signs — one noisy night
     /// never lurches the plan (§1 guardrail). The aggressive tier also counts a *slightly* elevated
     /// resting HR and a slightly shorter night (the tighter leash it was promised). The morning
-    /// check-in counts too: what the athlete says stands equal to what the wearable measured.
+    /// check-in counts too: what the athlete says stands equal to what the wearable measured. Illness-
+    /// watch deviations (breathing rate, wrist temperature) count the same way once their baselines
+    /// are banded — nil until then, so an unlearned norm can never raise a false alarm.
     static func decide(signals: RecoverySignals, intensity: PlanIntensity,
                        checkin: DailyCheckin? = nil) -> Decision? {
         var reasons: [String] = []
@@ -27,17 +29,24 @@ enum RecoveryAdaptation {
         }
 
         // NOTE the trend polarity: `.down` is the "well up" caution (≥4 bpm over baseline); `.up` is
-        // slightly raised (1–4 bpm) — only the aggressive leash reacts to the milder form.
+        // slightly raised (1–4 bpm) — only the tight-leash tiers (aggressive/podium) react to the
+        // milder form.
         if signals.restingHRTrend == .down {
             reasons.append("resting HR elevated")
-        } else if intensity == .aggressive, signals.restingHRTrend == .up {
+        } else if intensity.tightLeash, signals.restingHRTrend == .up {
             reasons.append("resting HR creeping up")
         }
 
-        let sleepCut = intensity == .aggressive ? 6.5 : 6.0
+        let sleepCut = intensity.tightLeash ? 6.5 : 6.0
         if let sleep = signals.sleepHours, sleep < sleepCut {
             reasons.append("a short night (\(String(format: "%.1f", sleep))h)")
         }
+
+        // Illness-watch (RECOVERY-HUB-PLAN §11.1.3) — the hard tier of the readiness modifiers, each
+        // one ordinary warning sign here. Alone it's a quirk of the night; concordant with a second
+        // signal it's the body fighting something, and the ease legitimately fires. Never a diagnosis.
+        if let z = signals.respiratoryZ, z >= 2 { reasons.append("breathing rate above your norm") }
+        if let delta = signals.wristTempDeltaC, delta >= 1.0 { reasons.append("running warm vs your normal") }
 
         guard reasons.count >= 2 else { return nil }
         return Decision(reason: reasons.joined(separator: " and "))
@@ -84,16 +93,23 @@ enum RecoveryAdaptation {
                              in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
         guard let plan else { return nil }
         let todays = PlanCoaching.todaySessions(plan, on: today, calendar: calendar)
+        // `.moved` is still today's open work (reconcileMissed rolls slipped days forward as .moved)
+        // — a quality session must not dodge the recovery ease just because it slid here.
         guard let session = todays.first(where: {
-            $0.status == .planned && $0.completedWorkout == nil && $0.discipline == .running
+            ($0.status == .planned || $0.status == .moved)
+            && $0.completedWorkout == nil && $0.discipline == .running
             && ($0.runType?.isQuality == true || $0.runType == .long)
         }) else { return nil }
 
         let p5k = plan.p5kSPerKm
         session.runType = .easy
         session.intervals = nil
-        session.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
-        if let d = session.targetDistanceM { session.targetDistanceM = (d * 0.9).rounded() }
+        session.targetPaceSPerKm = RunRounding.snapPace(
+            sPerKm: PlanEngine.pace(.easy, p5k: p5k),
+            unit: PlanCoaching.displayUnit(in: context), type: .easy)
+        if let d = session.targetDistanceM {
+            session.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: PlanCoaching.displayUnit(in: context))
+        }
         if let dur = session.targetDurationS { session.targetDurationS = (dur * 0.9).rounded() }
         session.rationale = "Eased today — \(decision.reason). The hard work lands better when you're recovered."
 

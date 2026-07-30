@@ -34,13 +34,14 @@ struct WorkoutReadTemplatesTests {
     @Test func cardioReadIsConcise() {
         let read = WorkoutReadTemplates.read(for: runWorkout(), planned: false, distanceUnit: .metric)
         #expect(read.narrative.split(separator: " ").count <= 55)
-        #expect(read.narrative.contains("Run"))
+        // The opener is the athlete's own number, not a form field ("Run of 8.0 km at ...").
+        #expect(read.narrative.hasPrefix("8 km at 5:14"))
         assertNoMedicalClaims(read.narrative)
     }
 
     @Test func sanitizeStripsMedicalLanguage() {
         #expect(WorkoutReadTemplates.sanitize("You risk injury if you continue")
-                == "Session saved, momentum's got the details.")
+                == "Logged. I've got the numbers.")
         #expect(WorkoutReadTemplates.sanitize("Great pace today") == "Great pace today")
         // Em dashes are converted to clean sentence punctuation (no AI-slop dashes).
         #expect(WorkoutReadTemplates.sanitize("Strong work — nice splits") == "Strong work. Nice splits")
@@ -54,10 +55,11 @@ struct WorkoutReadTemplatesTests {
             RepResult(repIndex: 3, repTotal: 3, title: nil, targetPaceSPerKm: 300, achievedPaceSPerKm: 301, distanceM: 400, durationS: 120),
         ]
         #expect(WorkoutReadTemplates.coachingClause(runType: .intervals, reps: reps)
-                == "That's your speed session done ✓. 2 of 3 reps on pace.")
-        // A long run with no guided reps → the aerobic-base tie-in.
+                == "That's the speed session done. 2 of 3 reps on pace.")
+        // A long run with no guided reps says the one thing and stops. The old form hung
+        // ", aerobic base building" off a comma, which is the tell CoachVoiceTests now bans.
         #expect(WorkoutReadTemplates.coachingClause(runType: .long, reps: [])
-                == "That's your long run done ✓, aerobic base building.")
+                == "That's the long run done.")
         // A free run (no prescription) adds no coaching clause.
         #expect(WorkoutReadTemplates.coachingClause(runType: .freeRun, reps: []) == nil)
         #expect(WorkoutReadTemplates.coachingClause(runType: nil, reps: []) == nil)

@@ -50,11 +50,11 @@ struct InjuryReportSheet: View {
                 } else if let area, let severity {
                     OversizedButton(title: "Adjust my plan") {
                         guard let profile else { dismiss(); return }
-                        Haptics.light()
                         withAnimation(Motion.standard) {
                             outcome = InjuryResponse.report(area: area, severity: severity,
                                                             profile: profile, in: context)
                         }
+                        Haptics.success()   // the plan adjusted — same beat as the check-in's Done
                     }
                     .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.sm)
                     .background(Theme.background)

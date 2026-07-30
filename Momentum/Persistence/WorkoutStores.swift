@@ -24,7 +24,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         ActiveWorkoutMarker.set(workout.id)
     }
 
-    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool) {
+    func persistSample(_ fix: GPSProcessor.Fix, accepted: Bool, pausedSpan: Bool = false) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         let sample = LocationSample()
         sample.t = fix.t
@@ -34,6 +34,7 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         sample.altitudeM = fix.altitudeM
         sample.speedMS = fix.speedMS
         sample.accepted = accepted
+        sample.pausedSpan = pausedSpan
         detail.samples.append(sample)
         try? modelContext.save()
     }
@@ -47,27 +48,54 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    func finishWorkout(distanceM: Double, durationS: TimeInterval, elevationGainM: Double,
-                       smoothedPaceSPerKm: Double) {
+    func finishWorkout(distanceM: Double, durationS: TimeInterval, elapsedS: TimeInterval = 0,
+                       elevationGainM: Double) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self],
               let workoutID, let workout = self[workoutID, as: Workout.self] else { return }
         detail.distanceM = distanceM
         detail.elevationGainM = elevationGainM
+        // The stored aggregate is total ÷ total, never the live EMA — see `averagePaceSPerKm`.
+        // Walk and hike fall into the else branch too, so they were storing the EMA as well.
         if type.discipline == .cycling {   // all bike variants report speed, not pace
-            detail.avgSpeedMS = durationS > 0 ? distanceM / durationS : 0
+            detail.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: distanceM, durationS: durationS)
         } else {
-            detail.avgPaceSPerKm = smoothedPaceSPerKm
+            detail.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS)
         }
         workout.durationS = durationS
-        workout.elapsedS = durationS
+        // Moving time and wall time are different numbers the moment anyone pauses. Storing the
+        // moving time in BOTH cut every Health window (`startedAt + max(elapsedS, durationS)`) short
+        // by the length of the pauses — the tail of the HR chart and the time-in-zones histogram
+        // simply went missing on any run with stops, which is most of them.
+        workout.elapsedS = max(elapsedS, durationS)
+        persistSplits(detail)
         try? modelContext.save()
         ActiveWorkoutMarker.clear()
     }
 
-    /// Attach the rendered route snapshot (PRD §8.5) to the finished workout's GPS detail.
-    func attachSnapshot(_ data: Data) {
+    /// Write the run's whole-kilometre splits (SI, `CardioMetrics.splits` over the canonical replay).
+    /// The relationship existed and was never populated by anything, so the AI read was handed an
+    /// empty split list on every run and the coach's negative-split call could never fire.
+    private func persistSplits(_ detail: GPSDetail) {
+        guard type.isGPS, detail.splits.isEmpty else { return }
+        for split in detail.kilometreSplits(type: type) {
+            let row = Split()
+            row.index = split.index
+            row.distanceM = split.distanceM
+            row.durationS = split.durationS
+            row.isPartial = split.isPartial
+            detail.splits.append(row)
+        }
+    }
+
+    /// Attach the rendered route snapshot (PRD §8.5) to the finished workout's GPS detail, stamping
+    /// the style it was rendered with — the workout's map identity is fixed at render time, so the
+    /// live surfaces (detail, immersive pager) always match the tile instead of drifting with the
+    /// athlete's later app-wide style changes.
+    func attachSnapshot(_ data: Data, styleRaw: String? = nil) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         detail.mapSnapshotData = data
+        detail.mapSnapshotVersion = RouteSnapshotter.renderVersion
+        if let styleRaw { detail.mapStyleRaw = styleRaw }
         try? modelContext.save()
     }
 
@@ -146,6 +174,13 @@ actor StrengthWorkoutStore: StrengthWorkoutSink {
         session.exercises.append(row)
         try? modelContext.save()
         rowIDs[rowId] = row.persistentModelID
+    }
+
+    func updateExerciseGrouping(rowId: UUID, order: Int, supersetGroup: Int?) {
+        guard let rowPID = rowIDs[rowId], let row = self[rowPID, as: WorkoutExercise.self] else { return }
+        row.order = order
+        row.supersetGroup = supersetGroup
+        try? modelContext.save()
     }
 
     func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,

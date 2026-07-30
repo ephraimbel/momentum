@@ -1,12 +1,17 @@
 import Foundation
+import CoreLocation
 import HealthKit
 import Observation
+import WatchKit
 
 /// On-wrist cardio capture (PRD §8.10) via `HKWorkoutSession` + `HKLiveWorkoutBuilder` — the watch
 /// is the sensor. HealthKit's live data source feeds heart rate, active energy, and distance; the
-/// session keeps running with the screen down (the `workout-processing` background mode). Real sensor
-/// values need a physical Watch; on the simulator the session starts and the clock ticks while the
-/// metrics stay at zero.
+/// session keeps running with the screen down (the `workout-processing` background mode). A
+/// CoreLocation stream (same 25 m accuracy gate as the phone, PRD §20) records the route for the
+/// live map page and the summary trace. A 1 Hz metronome derives what Garmin/COROS derive on the
+/// wrist: time-in-zone (Karvonen `HRZones`, Tanaka max-HR from Health date of birth) and auto-lap
+/// splits with a haptic per lap. Real sensor values need a physical Watch; on the simulator the
+/// session starts and the clock ticks while the metrics stay at zero.
 @MainActor
 @Observable
 final class WatchCardioModel: NSObject {
@@ -15,6 +20,11 @@ final class WatchCardioModel: NSObject {
     private let healthStore = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
+    /// Persists the GPS trail into HealthKit as an `HKWorkoutRoute` attached to the workout —
+    /// this is what lets the phone draw the run on its (Mapbox) maps after import.
+    private var routeBuilder: HKWorkoutRouteBuilder?
+    private let locationManager = CLLocationManager()
+    private var metronome: Timer?
 
     private(set) var heartRateBPM = 0
     private(set) var activeEnergyKcal = 0.0
@@ -22,11 +32,70 @@ final class WatchCardioModel: NSObject {
     private(set) var running = false
     private(set) var paused = false
     private(set) var failed = false
+    /// Location permission denied/restricted — the map page says so instead of "Finding GPS…".
+    private(set) var locationDenied = false
+    /// Latched by `end()`. Makes teardown idempotent and gates every late-arriving write
+    /// (metronome tick, location fix, control tap) so nothing mutates a closed session.
+    private(set) var hasEnded = false
+    /// Set once at `end()` so the summary's Time never creeps after the session closes.
+    private var frozenElapsed: TimeInterval?
+    /// Wall-clock anchor for the metronome: accrual uses real elapsed deltas, not tick counts,
+    /// so coalesced/deferred timer fires (screen off) don't under-count time-in-zone.
+    private var lastTickAt: Date?
+
+    // Route (gated CoreLocation fixes; the map page and summary trace read this).
+    private(set) var route: [CLLocationCoordinate2D] = []
+
+    // Zone model — resolved at start (Tanaka 208 − 0.7·age from Health DOB, else 190).
+    private(set) var zones: [HRZones.Zone] = []
+    /// Seconds accrued in each zone (index 0 = Z1). Driven by the 1 Hz metronome.
+    private(set) var timeInZone: [TimeInterval] = [0, 0, 0, 0, 0]
+
+    // Splits — auto-lap every km (mi in imperial regions), plus the manual Lap button.
+    /// Completed lap durations, oldest first. Each is seconds for one lap.
+    private(set) var splits: [TimeInterval] = []
+    private(set) var lastSplitS: TimeInterval = 0
+    let splitLengthM: Double = DistanceUnit.auto.resolved() == .imperial ? Formatters.metersPerMile : 1000
+    private var lapStartElapsed: TimeInterval = 0
+    private var lapStartDistance: Double = 0
+
+    // MARK: Guided structure — the synced quality session's steps, advancing off the metronome
+
+    /// The step tracker for today's guided workout (phone-built, phone-synced). nil for plain
+    /// runs — every guided surface hides and the wrist is just a recorder.
+    private(set) var guide: StructuredRunTracker?
+
+    // MARK: Pace halo — the target band from today's synced session, judged on ROLLING pace
+
+    /// Today's prescribed easy/target window (s/km), synced from the phone. nil = no plan today
+    /// → the halo never renders and the wrist never judges a free run. On guided runs the band
+    /// follows the CURRENT STEP (`applyGuideBand`), so the halo always judges against the rep.
+    private(set) var paceBandSPerKm: ClosedRange<Double>?
+    /// Where the athlete sits against the band right now (driven by the 1 Hz metronome).
+    enum PaceState { case none, inBand, fast, slow }
+    private(set) var paceState: PaceState = .none
+    /// Rolling ~30 s pace — what "current pace" honestly means on the wrist (whole-run average
+    /// hides every surge; instant GPS pace is noise).
+    private(set) var rollingPaceSPerKm: Double = 0
+    private var paceSamples: [(t: TimeInterval, d: Double)] = []
+    /// Haptic discipline: a state must HOLD for 8 s before it speaks, and pace haptics never
+    /// fire more than once per 25 s — guidance, not nagging.
+    private var pendingPaceState: PaceState = .none
+    private var pendingSince: TimeInterval = 0
+    private var lastPaceHapticAt: TimeInterval = -60
+
+    // HR aggregates for the summary.
+    private var hrSum = 0.0
+    private var hrTicks = 0.0
+    private(set) var maxObservedHR = 0
+    var avgHR: Int { hrTicks > 0 ? Int((hrSum / hrTicks).rounded()) : 0 }
 
     // DEBUG synthetic session for deterministic watch-sim verification (HealthKit can't run headless
     // on the sim, and sensor values need a real Watch). Mirrors the phone's `--ui-test-route`.
     private var demoStart: Date?
-    private var demoTimer: Timer?
+    private var demoTick = 0
+    private var demoPausedAccum: TimeInterval = 0
+    private var demoPauseBegan: Date?
     private var demo: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--watch-demo")
@@ -37,8 +106,26 @@ final class WatchCardioModel: NSObject {
 
     /// HK-managed elapsed time — freezes while paused. Read each tick from a `TimelineView`.
     var elapsed: TimeInterval {
-        if let demoStart { return Date().timeIntervalSince(demoStart) }
+        if let frozenElapsed { return frozenElapsed }
+        if let demoStart {
+            let pausedNow = demoPauseBegan.map { Date().timeIntervalSince($0) } ?? 0
+            return Date().timeIntervalSince(demoStart) - demoPausedAccum - pausedNow
+        }
         return builder?.elapsedTime ?? 0
+    }
+
+    /// 1-based zone for the current heart rate (0 when no HR yet).
+    var currentZone: Int {
+        guard heartRateBPM > 0, !zones.isEmpty else { return 0 }
+        if heartRateBPM < zones[0].bpm.lowerBound { return 1 }
+        return zones.last(where: { heartRateBPM >= $0.bpm.lowerBound })?.index ?? 1
+    }
+
+    /// 0…1 position across the whole five-zone span, for the gauge pointer.
+    var zoneFraction: Double {
+        guard let lo = zones.first?.bpm.lowerBound, let hi = zones.last?.bpm.upperBound,
+              hi > lo, heartRateBPM > 0 else { return 0 }
+        return min(1, max(0, Double(heartRateBPM - lo) / Double(hi - lo)))
     }
 
     init(type: WorkoutType) {
@@ -46,17 +133,28 @@ final class WatchCardioModel: NSObject {
         super.init()
     }
 
-    /// Request authorization, then start the session + live collection.
+    /// Request authorization, then start the session + live collection + the route stream.
     func start() async {
+        zones = HRZones.zones(maxHR: 190) ?? []          // placeholder until DOB resolves
+        resolvePaceBand()
+        resolveGuide()
+        #if DEBUG
         if demo { startDemo(); return }
+        #endif
         guard HKHealthStore.isHealthDataAvailable() else { failed = true; return }
-        let share: Set = [HKQuantityType.workoutType(), HKQuantityType(.activeEnergyBurned)]
+        let share: Set = [HKQuantityType.workoutType(), HKQuantityType(.activeEnergyBurned),
+                          HKSeriesType.workoutRoute()]
         let read: Set<HKObjectType> = [
             HKQuantityType(.heartRate), HKQuantityType(.activeEnergyBurned),
-            HKQuantityType(.distanceWalkingRunning), HKQuantityType(.distanceCycling)
+            HKQuantityType(.distanceWalkingRunning), HKQuantityType(.distanceCycling),
+            HKCharacteristicType(.dateOfBirth)
         ]
         do { try await healthStore.requestAuthorization(toShare: share, read: read) }
         catch { failed = true; return }
+        // The auth sheet can sit open indefinitely — if the view died meanwhile (end() ran),
+        // don't start an orphan session nothing can ever stop.
+        guard !hasEnded else { return }
+        resolveZones()
 
         let config = HKWorkoutConfiguration()
         config.activityType = Self.activityType(for: type)
@@ -69,46 +167,259 @@ final class WatchCardioModel: NSObject {
             builder.delegate = self
             self.session = session
             self.builder = builder
+            self.routeBuilder = HKWorkoutRouteBuilder(healthStore: healthStore, device: nil)
 
             let now = Date()
             session.startActivity(with: now)
             try await builder.beginCollection(at: now)
             running = true
-        } catch { failed = true }
+        } catch { failed = true; return }
+
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.activityType = type.discipline == .cycling ? .otherNavigation : .fitness
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+        startMetronome()
+    }
+
+    /// Today's pace window, if the phone synced a running session with one. Foot sports only —
+    /// a ride's band would be speed, a different instrument.
+    private func resolvePaceBand() {
+        guard type.discipline == .running else { return }
+        if let s = WatchSyncStore.shared.todaySession,
+           let lo = s.paceLoSPerKm, let hi = s.paceHiSPerKm, hi > lo {
+            paceBandSPerKm = lo...hi
+        }
+        #if DEBUG
+        // The demo run oscillates 2.6–3.5 m/s (~286–385 s/km); this band makes the halo breathe
+        // through in-band ↔ fast ↔ slow deterministically on the sim.
+        if demo, paceBandSPerKm == nil { paceBandSPerKm = 300...345 }
+        #endif
+    }
+
+    /// Today's guided structure, if the phone synced one — the wrist runs the SAME step tracker
+    /// the phone does, so a quality session coaches identically on either device.
+    private func resolveGuide() {
+        guard type.discipline == .running,
+              let workout = WatchSyncStore.shared.todaySession?.structured,
+              !workout.steps.isEmpty else { return }
+        guide = StructuredRunTracker(steps: workout.steps)
+        applyGuideBand()
+    }
+
+    /// The halo band follows the CURRENT step on guided runs: a rep's target ± its tolerance,
+    /// nothing during effort-based steps (a grade destroys pace — hills guide by feel).
+    private func applyGuideBand() {
+        guard let step = guide?.current else { return }
+        if let target = step.paceSPerKm {
+            paceBandSPerKm = (target - step.toleranceSPerKm)...(target + step.toleranceSPerKm)
+        } else {
+            paceBandSPerKm = nil
+        }
+    }
+
+    /// Advance the guided structure off the 1 Hz metronome; step transitions speak in the shared
+    /// haptic vocabulary — a rep begins with the firm GO, a recovery with the settle double-pulse,
+    /// the whole structure done earns the surge (the run keeps recording; ending stays yours).
+    private func advanceGuide() {
+        guard var g = guide, !g.isComplete else { return }
+        guard g.advance(distanceM: distanceM, elapsedS: elapsed) else { guide = g; return }
+        guide = g
+        applyGuideBand()
+        stepEnteredHaptic()
+    }
+
+    private func stepEnteredHaptic() {
+        guard let g = guide else { return }
+        guard let step = g.current else { WatchHaptics.surge(); return }
+        switch step.kind {
+        case .work: WatchHaptics.go()
+        case .recovery, .cooldown: WatchHaptics.easeOff()
+        case .warmup: break
+        }
+    }
+
+    /// Personalize the five zones from Health's date of birth (Tanaka max HR); keep 190 otherwise.
+    private func resolveZones() {
+        guard let dob = try? healthStore.dateOfBirthComponents(),
+              let birth = Calendar.current.date(from: dob) else { return }
+        let age = Calendar.current.dateComponents([.year], from: birth, to: Date()).year ?? 0
+        guard age > 8, age < 110 else { return }
+        let maxHR = Int((208.0 - 0.7 * Double(age)).rounded())
+        if let z = HRZones.zones(maxHR: maxHR) { zones = z }
     }
 
     func togglePause() {
-        if demo { paused.toggle(); return }
+        guard !hasEnded else { return }
+        if demo {
+            paused.toggle()
+            if paused { demoPauseBegan = Date() }
+            else if let began = demoPauseBegan {
+                demoPausedAccum += Date().timeIntervalSince(began)
+                demoPauseBegan = nil
+            }
+            return
+        }
         guard let session else { return }
         paused ? session.resume() : session.pause()
     }
 
+    /// Manual lap (Garmin-style): close the current lap now and restart the counter.
+    /// (recordSplit speaks the haptic — the split double-tap, or the surge on a new fastest.)
+    /// On a guided run the lap button ALSO ends the current step (the Garmin/COROS convention) —
+    /// GPS drift never traps an athlete inside a rep they've clearly finished.
+    func lap() {
+        guard running, !hasEnded else { return }
+        recordSplit()
+        if var g = guide, !g.isComplete {
+            g.skip(distanceM: distanceM, elapsedS: elapsed)
+            guide = g
+            applyGuideBand()
+            stepEnteredHaptic()
+        }
+    }
+
+    // MARK: 1 Hz metronome — zone accrual + auto-lap (and, in demo, synthetic sensors)
+
+    private func startMetronome() {
+        lastTickAt = Date()
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        timer.tolerance = 0.2
+        metronome = timer
+    }
+
+    private func tick() {
+        guard running, !hasEnded else { lastTickAt = Date(); return }
+        #if DEBUG
+        if demo { demoAdvance() }
+        #endif
+        guard !paused else { lastTickAt = Date(); return }
+        // Accrue by real elapsed time, not per fire: with the screen off the system coalesces
+        // run-loop timers, and counting fires would silently shrink time-in-zone on long runs.
+        let now = Date()
+        let delta = min(max(now.timeIntervalSince(lastTickAt ?? now), 0), 120)
+        lastTickAt = now
+        if heartRateBPM > 0, delta > 0 {
+            hrSum += Double(heartRateBPM) * delta
+            hrTicks += delta
+            maxObservedHR = max(maxObservedHR, heartRateBPM)
+            let z = currentZone
+            if z >= 1 { timeInZone[z - 1] += delta }
+        }
+        advancePace()
+        advanceGuide()
+        if distanceM - lapStartDistance >= splitLengthM {
+            recordSplit()
+        }
+    }
+
+    /// Rolling pace + the halo's state machine. States must hold 8 s to speak; haptics are
+    /// throttled to one per 25 s (guidance, not nagging) via the shared `WatchHaptics` vocabulary.
+    private func advancePace() {
+        paceSamples.append((elapsed, distanceM))
+        paceSamples.removeAll { elapsed - $0.t > 32 }
+        guard let oldest = paceSamples.first, elapsed - oldest.t >= 8 else { return }
+        let dt = elapsed - oldest.t
+        let dd = distanceM - oldest.d
+        rollingPaceSPerKm = dd > 1 ? dt / (dd / 1000) : 0
+
+        guard let band = paceBandSPerKm, rollingPaceSPerKm > 0 else { return }
+        let state: PaceState = band.contains(rollingPaceSPerKm) ? .inBand
+            : rollingPaceSPerKm < band.lowerBound ? .fast : .slow
+        if state != pendingPaceState {
+            pendingPaceState = state
+            pendingSince = elapsed
+        }
+        guard state != paceState, elapsed - pendingSince >= 8 else { return }
+        let previous = paceState
+        paceState = state
+        guard previous != .none, elapsed - lastPaceHapticAt >= 25 else { return }
+        lastPaceHapticAt = elapsed
+        switch state {
+        case .inBand: WatchHaptics.inBand()
+        case .fast:   WatchHaptics.easeOff()
+        case .slow:   WatchHaptics.pickUp()
+        case .none:   break
+        }
+    }
+
+    private func recordSplit() {
+        let lapS = elapsed - lapStartElapsed
+        guard lapS > 1 else { return }
+        let wasFastest = splits.count >= 1 && lapS < (splits.min() ?? .infinity)
+        splits.append(lapS)
+        lastSplitS = lapS
+        lapStartElapsed = elapsed
+        lapStartDistance = distanceM
+        // The split speaks in the shared vocabulary — and a new fastest lap earns the surge.
+        if wasFastest { WatchHaptics.surge() } else { WatchHaptics.split() }
+    }
+
     #if DEBUG
-    /// Run a synthetic ~3 m/s session so the live layout can be verified on the sim.
+    /// Run a synthetic session so every live page can be verified on the sim: ~3.2 m/s along a
+    /// parametric park loop, HR sweeping Z1→Z4. Deterministic — no RNG.
     private func startDemo() {
         demoStart = Date()
         running = true
-        heartRateBPM = 148
-        var tick = 0
-        demoTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, !self.paused else { return }
-                tick += 1
-                self.distanceM += 3.0                       // ~3 m/s
-                self.activeEnergyKcal += 0.18
-                self.heartRateBPM = 148 + (tick % 7)        // gentle oscillation, no RNG
-            }
-        }
+        heartRateBPM = 128
+        startMetronome()
+    }
+
+    private func demoAdvance() {
+        guard !paused else { return }
+        demoTick += 1
+        // Speed oscillates 2.6–3.5 m/s so the pace halo breathes through its three states.
+        distanceM += 3.05 + 0.45 * sin(Double(demoTick) / 40)
+        activeEnergyKcal += 0.19
+        heartRateBPM = 132 + Int((34 * sin(Double(demoTick) / 60)).rounded())
+        route.append(Self.demoCoordinate(tick: demoTick))
+    }
+
+    /// A gently wobbled loop around a park — reads as a real run on the map and the trace.
+    private static func demoCoordinate(tick: Int) -> CLLocationCoordinate2D {
+        let theta = Double(tick) / 480 * 2 * .pi
+        let lat = 37.7694 + 0.0016 * sin(theta) + 0.00018 * sin(3.1 * theta)
+        let lon = -122.4762 + 0.0022 * cos(theta) + 0.00021 * sin(2.3 * theta)
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+
+    /// Fabricate a finished ~27-min 5K so the summary screen can be verified deterministically
+    /// on the sim (`--watch-demo --watch-page=summary`).
+    func seedDemoSummary() {
+        zones = HRZones.zones(maxHR: 190) ?? []
+        frozenElapsed = 1622
+        distanceM = 5 * splitLengthM + 243   // 5 completed laps + change, coherent in any locale
+        activeEnergyKcal = 388
+        heartRateBPM = 152
+        hrSum = 148 * 1500; hrTicks = 1500
+        maxObservedHR = 174
+        splits = [318, 309, 304, 312, 299]
+        lastSplitS = 299
+        timeInZone = [120, 540, 610, 260, 92]
+        route = (0...480).map { Self.demoCoordinate(tick: $0) }
+        running = false
     }
     #endif
 
-    /// End the session and finalize the workout into HealthKit.
+    /// End the session and finalize the workout into HealthKit. Idempotent — every exit path
+    /// (End button, failure Close, view teardown) funnels here and later calls are no-ops.
     func end() async {
-        if demo { demoTimer?.invalidate(); demoTimer = nil; running = false; return }
+        guard !hasEnded else { return }
+        hasEnded = true
+        metronome?.invalidate(); metronome = nil
+        frozenElapsed = elapsed
+        if demo { running = false; return }
+        locationManager.stopUpdatingLocation()
         session?.end()
         do {
             try await builder?.endCollection(at: Date())
-            _ = try await builder?.finishWorkout()
+            let workout = try await builder?.finishWorkout()
+            if let workout, !route.isEmpty {
+                try await routeBuilder?.finishRoute(with: workout, metadata: nil)
+            }
         } catch { /* best-effort finalize; the session already ended */ }
         running = false
     }
@@ -119,6 +430,42 @@ final class WatchCardioModel: NSObject {
         case .cycling: .cycling
         case .walking: .walking
         default: .running
+        }
+    }
+}
+
+// MARK: - Route capture (same accept gate as the phone: accuracy ∈ (0, 25 m], PRD §20)
+
+extension WatchCardioModel: CLLocationManagerDelegate {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let accepted = locations.filter { $0.horizontalAccuracy > 0 && $0.horizontalAccuracy <= 25 }
+        guard !accepted.isEmpty else { return }
+        Task { @MainActor in
+            guard !paused, !hasEnded else { return }
+            // Decimated coordinates (≥ 3 m apart) for the on-wrist map, so hours stay light —
+            // appended synchronously (before the HK await) so `route` follows arrival order, not
+            // the order two close callbacks happen to resume in after insertRouteData.
+            for coord in accepted.map(\.coordinate) {
+                if let last = route.last {
+                    let d = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                        .distance(from: CLLocation(latitude: coord.latitude, longitude: coord.longitude))
+                    guard d >= 3 else { continue }
+                }
+                route.append(coord)
+            }
+            // …and the full-fidelity trail into HealthKit (the phone draws this after import).
+            try? await routeBuilder?.insertRouteData(accepted)
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // Route is an enhancement — the workout keeps recording without it.
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        Task { @MainActor in
+            locationDenied = (status == .denied || status == .restricted)
         }
     }
 }

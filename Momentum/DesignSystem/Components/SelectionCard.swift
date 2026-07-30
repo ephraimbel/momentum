@@ -11,9 +11,11 @@ struct SelectionCard: View {
     /// users favorite activities). `onToggleFavorite` fires without selecting the card.
     var isFavorite: Bool? = nil
     var onToggleFavorite: (() -> Void)? = nil
+    /// The iridescent glowing border — a deliberate, sanctioned exception to "iridescence marks
+    /// progress only" (user call 2026-07-23), reserved for the ONE option that IS the earned tier:
+    /// Podium, the train-to-win commitment. Never sprinkle this on ordinary options.
+    var iridescent: Bool = false
     let action: () -> Void
-
-    @State private var pressed = false
 
     var body: some View {
         Button {
@@ -25,7 +27,10 @@ struct SelectionCard: View {
                     Image(systemName: systemImage)
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 40, height: 40)
-                        .background(Circle().fill(isSelected ? Color.white.opacity(0.16) : Theme.background))
+                        // Appearance-adapting: when selected, the card fills with `Theme.ink` (near
+                        // WHITE in dark mode), so a hardcoded white disc vanished. `Theme.background`
+                        // is the ink's counterpart in both palettes, so the disc reads either way.
+                        .background(Circle().fill(isSelected ? Theme.background.opacity(0.16) : Theme.background))
                         .symbolEffect(.bounce, value: isSelected)
                 }
                 VStack(alignment: .leading, spacing: 2) {
@@ -66,19 +71,38 @@ struct SelectionCard: View {
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card)
                     .fill(isSelected ? Theme.ink : Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card)
-                    .stroke(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
+                if iridescent {
+                    // The glow stays through selection — the ink fill + iridescent ring reads as
+                    // "committed", not a lost highlight. `.strokeBorder` (not `.stroke`) draws the
+                    // whole 2pt ring INSIDE the card's frame, so the side edges are never clipped by
+                    // the scroll view that hosts these cards. IridescentMaterial is static under
+                    // Reduce Motion by design.
+                    RoundedRectangle(cornerRadius: Theme.Radius.card)
+                        .strokeBorder(IridescentMaterial(), lineWidth: 2)
+                } else {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card)
+                        .strokeBorder(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
+                }
             }
+            // A soft outer glow — kept modest so the small bloom the host scroll view can't clip
+            // stays imperceptible, while the inset `.strokeBorder` above carries the visible ring.
+            .shadow(color: iridescent ? Theme.iridescent[0].opacity(0.4) : .clear, radius: 6)
         }
-        .buttonStyle(.plain)
-        .scaleEffect(pressed ? 0.97 : 1)
+        .buttonStyle(PressableScaleStyle())
         .animation(.spring(response: 0.34, dampingFraction: 0.7), value: isSelected)
-        .animation(Motion.lively, value: pressed)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
-                .onEnded { _ in pressed = false }
-        )
+    }
+}
+
+/// Scales a button's label on press using the button's OWN press state, so the press cancels the
+/// instant the user starts scrolling. Replaces a `.simultaneousGesture(DragGesture(minimumDistance:
+/// 0))` that recognized on touch-down and fired the tap on a light scroll (the scroll-vs-tap bug:
+/// scrolling a list of these cards would select whichever one the finger started on).
+struct PressableScaleStyle: ButtonStyle {
+    var scale: CGFloat = 0.97
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(Motion.lively, value: configuration.isPressed)
     }
 }
 

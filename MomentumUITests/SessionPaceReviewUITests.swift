@@ -11,7 +11,7 @@ final class SessionPaceReviewUITests: XCTestCase {
 
     func testGuidedRunDetailShowsPaceReviewAndHRChart() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--ui-test-run-detail"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--ui-test-run-detail"]
         app.launch()
 
         let title = app.staticTexts["PACE REVIEW"]

@@ -12,9 +12,17 @@ struct WorkoutPhotoSection: View {
     var canEdit: Bool = false
     @Environment(\.modelContext) private var context
     @State private var picked: [PhotosPickerItem] = []
+    @State private var choosingSource = false
+    @State private var showingLibrary = false
+    @State private var showingCamera = false
 
     private var photosData: [Data] { workout.orderedPhotosData }
+    /// Whether this workout has a visual of its own that a photo would displace.
+    private var hasOwnVisual: Bool {
+        (workout.type.isGPS && workout.gps != nil) || workout.type.isStrengthStyle
+    }
     private var remaining: Int { Workout.photoCap - photosData.count }
+    private static var cameraAvailable: Bool { CameraPicker.isAvailable }
 
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
@@ -27,15 +35,64 @@ struct WorkoutPhotoSection: View {
                 } else {
                     thumbnailStrip
                 }
+                // The cover rule (owner call 2026-07-29): the activity's own visual — route map,
+                // muscle map — is always the grid/post cover; this quiet switch is the ONE way a
+                // photo takes over. Only shown when there IS an own visual to displace.
+                if !photosData.isEmpty, hasOwnVisual {
+                    Toggle(isOn: $workout.coverIsPhoto) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Photo as cover")
+                                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                                .foregroundStyle(Theme.ink)
+                            Text(workout.type.isGPS ? "Off, your route leads and photos ride behind it."
+                                                    : "Off, your session visual leads.")
+                                .font(.rounded(Theme.FontSize.label, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary)
+                        }
+                    }
+                    .tint(Theme.ink)
+                    .onChange(of: workout.coverIsPhoto) {
+                        try? context.save()
+                        Haptics.selection()
+                    }
+                }
             }
         }
         .onChange(of: picked) { _, items in Task { await load(items) } }
+        // Take a photo right there or pull from the library (user ask 2026-07-11) — the dialog is
+        // skipped when there's no camera (Simulator, iPad without one) and the library opens direct.
+        .confirmationDialog("Add photos", isPresented: $choosingSource, titleVisibility: .hidden) {
+            Button("Take photo") { showingCamera = true }
+            Button("Choose from library") { showingLibrary = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(isPresented: $showingLibrary, selection: $picked,
+                      maxSelectionCount: max(remaining, 0), matching: .images)
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraPicker { image in append(image) }
+                .ignoresSafeArea()
+        }
+    }
+
+    private func addPhotos() {
+        #if DEBUG
+        // The system Photos picker is out-of-process on the Simulator (XCUITest can't reliably drive
+        // it), so under the core-flow E2E flag a tap attaches a bundled demo image directly — the
+        // real append path, just without the picker — so the photo → save → feed → grid flow is testable.
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-run4"),
+           let url = Bundle.main.url(forResource: "demo-avatar", withExtension: "jpg"),
+           let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
+            append(img)
+            return
+        }
+        #endif
+        if Self.cameraAvailable { choosingSource = true } else { showingLibrary = true }
     }
 
     // MARK: Add (empty state)
 
     private var addButton: some View {
-        PhotosPicker(selection: $picked, maxSelectionCount: Workout.photoCap, matching: .images) {
+        Button { addPhotos() } label: {
             HStack(spacing: Theme.Space.sm) {
                 Image(systemName: "camera").font(.system(size: 16, weight: .semibold))
                 Text("Add photos").font(.rounded(Theme.FontSize.body, weight: .semibold))
@@ -45,6 +102,7 @@ struct WorkoutPhotoSection: View {
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [5])))
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Manage (thumbnails + add tile)
@@ -56,13 +114,14 @@ struct WorkoutPhotoSection: View {
                     thumbnail(data, index: index)
                 }
                 if remaining > 0 {
-                    PhotosPicker(selection: $picked, maxSelectionCount: remaining, matching: .images) {
+                    Button { addPhotos() } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
                             .frame(width: 56, height: 56)
                             .background(RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface))
                             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [5])))
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Add photo")
                 }
             }
@@ -88,6 +147,16 @@ struct WorkoutPhotoSection: View {
             .padding(2)
             .accessibilityLabel("Remove photo \(index + 1)")
         }
+    }
+
+    /// A camera capture lands exactly like a picked photo: downscaled, appended in order, saved.
+    private func append(_ image: UIImage) {
+        guard remaining > 0, let raw = image.jpegData(compressionQuality: 0.9) else { return }
+        migrateLegacyIfNeeded()
+        let order = (workout.photos.map(\.order).max() ?? -1) + 1
+        workout.photos.append(WorkoutPhoto(order: order, data: Self.downscaled(raw)))
+        try? context.save()
+        Haptics.success()
     }
 
     // MARK: Mutations (all edits run on the multi-photo set — legacy folds in first)

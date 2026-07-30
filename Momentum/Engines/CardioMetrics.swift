@@ -15,6 +15,28 @@ enum CardioMetrics {
         let isPartial: Bool
     }
 
+    /// Total time ÷ total distance — the ONE definition of average pace in this app, and the exact
+    /// expression a dozen display sites already recompute independently.
+    ///
+    /// Never the live EMA. `GPSProcessor.smoothedPaceSPerKm` is an α=0.2 recency-weighted value with
+    /// an effective window of a few seconds: it is the right number for the live screen and the wrong
+    /// one to persist, because slowing to a walk before reaching for Finish drags it to walking pace.
+    /// Every other writer in the app (crash recovery, Health import, manual logging) already used
+    /// this formula — only the live-capture finish path stored the EMA, which is why the stored field
+    /// disagreed with the summary screen that recomputed it.
+    ///
+    /// Returns 0 for degenerate input — never inf, never NaN. 0 renders blank.
+    static func averagePaceSPerKm(distanceM: Double, durationS: TimeInterval) -> Double {
+        guard distanceM > 0, durationS > 0 else { return 0 }
+        return durationS / (distanceM / 1000)
+    }
+
+    /// The cycling counterpart — bikes report speed, not pace. Same degenerate contract.
+    static func averageSpeedMS(distanceM: Double, durationS: TimeInterval) -> Double {
+        guard distanceM > 0, durationS > 0 else { return 0 }
+        return distanceM / durationS
+    }
+
     /// Fastest contiguous time to cover `distanceM`, scanning windows that end at each sample
     /// with linear interpolation of the start point. Returns nil if the activity is too short.
     /// O(n) via a monotonic start pointer (cumulative distance is non-decreasing).

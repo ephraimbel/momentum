@@ -11,7 +11,7 @@ so it's inert until then and the app keeps building/testing without it.
 > which exist in CI/the build sandbox. Everything below is a one-time activation.
 
 ## 1. App Store Connect — products
-Create two auto-renewing subscriptions in one group (PRD §10 pricing):
+Create two auto-renewing subscriptions in one group (pricing decided 2026-07-14 — monthly set below Runna):
 
 | Product ID | Duration | Price | Intro offer |
 |---|---|---|---|

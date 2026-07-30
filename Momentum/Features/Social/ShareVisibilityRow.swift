@@ -50,7 +50,7 @@ struct ShareVisibilityRow: View {
     private var hint: String {
         switch privacy {
         case .private: "Only you. Nothing leaves your history."
-        case .friends: "Followers see your title, stats, and photos — never your exact start point."
+        case .friends: "People who follow you see your title, stats, and photos — never your exact start point."
         case .public: "Anyone on Momentum sees your title, stats, and photos — never your exact start point."
         }
     }

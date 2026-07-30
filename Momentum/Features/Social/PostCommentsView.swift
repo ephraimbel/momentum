@@ -13,12 +13,21 @@ struct PostCommentsView: View {
 
     @State private var draft = ""
     @FocusState private var composing: Bool
+    /// The tapped commenter — pushed within this sheet's own NavigationStack. Commenters are real
+    /// directory athletes, so their name/avatar routes to their profile like anywhere else.
+    @State private var shownAthlete: CommunityAthlete?
 
     private var profile: UserProfile? { profiles.first }
 
-    /// Seeded + user comments, moderation-filtered, oldest → newest.
+    /// Comments, moderation-filtered, oldest → newest. Seeds join ONLY on badged community posts —
+    /// a real athlete's thread is exactly what was actually written (pulled + the viewer's own);
+    /// fabricated comments on a real person's post crossed the honesty line (caught 2026-07-30).
     private var visible: [Comment] {
-        (CommunityComments.seed(for: item.id) + comments.comments(for: item.id))
+        let seeded = item.isCommunity
+            ? CommunityComments.seed(for: item.id, postDate: item.date, reactions: item.baseReactions,
+                                     type: item.type, authorHandle: item.authorHandle)
+            : []
+        return (seeded + comments.comments(for: item.id))
             .filter(moderation.isVisible)
             .sorted { $0.date < $1.date }
     }
@@ -31,7 +40,7 @@ struct PostCommentsView: View {
                         postHeader
                         Divider().overlay(Theme.hairline)
                         if visible.isEmpty {
-                            Text("No comments yet — say something kind.")
+                            Text("No comments yet. Say something kind.")
                                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                                 .padding(.top, Theme.Space.sm)
                         } else {
@@ -46,6 +55,7 @@ struct PostCommentsView: View {
             .navigationTitle("Comments")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .navigationDestination(item: $shownAthlete) { AthleteProfileView(athlete: $0) }
             .onAppear { comments.pullRemote(for: item.id) }   // merge the server thread (no-op offline)
         }
     }
@@ -60,10 +70,25 @@ struct PostCommentsView: View {
 
     private func row(_ comment: Comment) -> some View {
         HStack(alignment: .top, spacing: Theme.Space.sm) {
-            AvatarView(photo: comment.isCommunity ? nil : profile?.avatarData, name: comment.authorName, size: 30)
+            // Commenter identity routes to their profile (basic social contract) — commenters are
+            // real directory athletes, so the tap resolves for every seeded comment.
+            Button {
+                if comment.isCommunity, let h = comment.authorHandle,
+                   let athlete = CommunityDirectory.athlete(handle: h) { shownAthlete = athlete }
+            } label: {
+                AvatarView(photo: comment.isCommunity ? nil : profile?.avatarData, name: comment.authorName, size: 30,
+                           imageName: comment.isCommunity ? comment.authorHandle.flatMap { CommunityAvatars.assetName(forHandle: $0) } : nil,
+                           preset: comment.isCommunity ? comment.authorHandle.flatMap { CommunityAvatars.preset(forHandle: $0) } : nil)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View \(comment.authorName)'s profile")
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(comment.authorName).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        .onTapGesture {
+                            if comment.isCommunity, let h = comment.authorHandle,
+                               let athlete = CommunityDirectory.athlete(handle: h) { shownAthlete = athlete }
+                        }
                     Text(comment.date.formatted(.relative(presentation: .named)))
                         .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 }

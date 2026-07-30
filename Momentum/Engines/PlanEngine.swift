@@ -30,6 +30,11 @@ enum PlanEngine {
     /// every interval session with vVO₂max pace.
     static func sessionPace(_ type: RunType, p5k: Double, intervals: String?,
                             raceDistanceM: Double? = nil) -> Double {
+        // Race day targets the GOAL distance's predicted pace — a marathon race session must never
+        // re-derive to 5K pace on recalibration (pace(.race) is the 5K scalar, right only for a 5K).
+        if type == .race {
+            return DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 5_000, p5kSPerKm: p5k)
+        }
         if type == .intervals, let note = intervals?.lowercased() {
             // Threshold first — a rep distance like "1.5km" also contains "5k", so the anchored
             // "@ 5k" check must not win on threshold cruise reps.
@@ -111,10 +116,32 @@ enum PlanEngine {
         // athletes favors more frequent absorption weeks over softer work. Deload every 3rd week.
         if (profile.age ?? 0) >= 50 { buildWeeks = min(buildWeeks, 2) }
         let downEvery = buildWeeks + 1   // deload on the Nth week
+        // Quality density follows the same injury cap as the ramp: a body that's been hurt before
+        // never gets the second weekly quality session, whatever the intensity dial says.
+        let qualityBias = injuryAreas.isEmpty
+            ? profile.intensity.qualityBias
+            : min(profile.intensity.qualityBias, PlanIntensity.balanced.qualityBias)
+
+        // Podium activation: the top tier's structural upgrades (higher volume ceiling, longer
+        // long-run cap, the two-hard-days week as standard, rest-day shakeouts) switch on only
+        // when the week can hold them (5+ run days) and the body has no injury history — the same
+        // protective cap as the ramp. Podium on a 3-day week or a hurt body trains like Aggressive.
+        let podiumActive = profile.intensity == .podium && runDays >= 5 && injuryAreas.isEmpty
+
+        // The tune-up time trial (2026-07-24, pro-practice pass): every real build for a long race
+        // carries a checkpoint race effort — coaches use it to test fitness and set honest paces.
+        // Ours does the same job mechanically: a hard 5K TT is planned quality, so its result feeds
+        // the recalibration loop (bank → confirm) with REAL evidence instead of waiting for one to
+        // happen by accident. Placed once, on the first build week (end of base = exactly when a
+        // coach tests), for in-window races of 10K+ with an 8+ week runway.
+        let wantsTimeTrial = cardio == .running && raceInWindow && totalWeeks >= 8
+            && (profile.raceDistanceM ?? 0) >= 10_000 && runDays >= 3
+        var timeTrialPlaced = false
 
         // Build ceiling: volume grows toward the race distance's readiness peak and then HOLDS —
         // a year-long marathon plan reaches marathon volume; a no-race block never exceeds double
         // its start. Clamped so a very low starting base can't be asked to quadruple in one plan.
+        // Podium raises the readiness peak ~20% — front-of-race preparation runs real volume.
         let startWeeklyM = profile.currentWeeklyVolumeM ?? {
             switch profile.runningExperience { case .new: 14_000; case .some: 26_000; case .experienced: 42_000 }
         }()
@@ -122,17 +149,26 @@ enum PlanEngine {
             guard hasCardio, let raceM = profile.raceDistanceM, startWeeklyM > 0 else { return 2.0 }
             let peakTarget = PlanFeasibility.peakWeeklyVolumeM(distanceM: raceM,
                                                                experience: profile.runningExperience)
+                * (podiumActive ? 1.2 : 1.0)
             return min(3.5, max(1.0, peakTarget / startWeeklyM))
         }()
+        // Post-race recovery lead-in (the reverse taper): the block's first weeks are all-easy at a
+        // fraction of normal volume, then training resumes from baseline. Never consumes the whole
+        // block, and shifts the deload cadence so a natural down-week doesn't land right after it.
+        let leadIn = max(0, min(profile.postRaceRecoveryWeeks, totalWeeks - 1))
+        let leadInMults = recoveryMultipliers(weeks: leadIn)
         for w in 0..<totalWeeks {
             let isTaper = meso.taperWeeks > 0 && w >= totalWeeks - meso.taperWeeks
             let isPeak = !isTaper && meso.peakWeeks > 0 && w >= totalWeeks - meso.taperWeeks - meso.peakWeeks
-            let isDeload = !isTaper && !isPeak && (w % downEvery == downEvery - 1)
+            let isLeadIn = w < leadIn && !isTaper && !isPeak
+            let isDeload = !isTaper && !isPeak
+                && (isLeadIn || (w >= leadIn && (w - leadIn) % downEvery == downEvery - 1))
             let phase: PlanPhase = isTaper ? .taper
                 : isPeak ? .peak
                 : isDeload ? .recovery
-                : (w < meso.baseWeeks ? .base : .build)
+                : (w < meso.baseWeeks + leadIn ? .base : .build)
             let volumeMult: Double
+            var longWaveMult = 1.0
             if isTaper {
                 // Bosquet 2007: exponential volume cut relative to the PEAK week (race week ~45–55%
                 // of peak), never relative to week one — a long plan's taper isn't a crash diet.
@@ -140,6 +176,8 @@ enum PlanEngine {
                 volumeMult = lastBuildMult * taperMults[min(into, taperMults.count - 1)]
             } else if isPeak {
                 volumeMult = lastBuildMult          // hold the biggest load — no further ramp
+            } else if isLeadIn {
+                volumeMult = leadInMults[min(w, leadInMults.count - 1)]
             } else if isDeload {
                 volumeMult = lastBuildMult * 0.7
             } else {
@@ -147,23 +185,52 @@ enum PlanEngine {
                 // peak instead of compounding geometrically for months. (The ACWR governor guards
                 // the week-over-week rate; this guards the destination.)
                 volumeMult = min(pow(ramp, Double(buildIndex)), multCeiling)
+                // Once the plateau is reached, the LONG RUN oscillates instead of repeating the
+                // same distance for months (real programs wave: 16-18-20-14…). The deload cadence
+                // still provides the big dips; this is the week-to-week texture between them.
+                if volumeMult >= multCeiling - 0.0001 {
+                    longWaveMult = Self.longRunWave[buildIndex % Self.longRunWave.count]
+                }
                 lastBuildMult = volumeMult
                 buildIndex += 1
             }
 
+            let isTimeTrialWeek = wantsTimeTrial && !timeTrialPlaced && phase == .build && !isDeload
+            if isTimeTrialWeek { timeTrialPlaced = true }
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
                                  goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload,
                                  raceDistanceM: profile.raceDistanceM, weekIndex: w,
                                  currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM,
-                                 injuryAreas: injuryAreas, phase: phase)
+                                 injuryAreas: injuryAreas, phase: phase,
+                                 qualityBias: qualityBias, longWaveMult: longWaveMult,
+                                 podium: podiumActive, timeTrial: isTimeTrialWeek)
                 : []
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
                                    catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus))
                 : []
-            let scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
+            var scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
+            // Podium's rest-day shakeout: on training weeks (never deload/taper/lead-in), one of
+            // the remaining rest days — the day after the long run when it's free — carries an
+            // OPTIONAL 3 km jog. "Rest days will just be a slow mile or two" is the tier's promise;
+            // the rationale keeps it honest: skipping it still counts as rest.
+            if podiumActive, hasCardio, !isDeload, !isTaper, !isLeadIn, runDays <= 6 {
+                let used = Set(scheduled.map(\.dayOffset))
+                let afterLong = scheduled.first(where: { $0.runType == .long }).map(\.dayOffset).map { $0 + 1 }
+                let day = (afterLong.flatMap { $0 <= 6 && !used.contains($0) ? $0 : nil })
+                    ?? (0...6).first { !used.contains($0) }
+                if let day {
+                    var jog = GeneratedSession(dayOffset: day, discipline: cardio!)
+                    jog.runType = .recovery
+                    jog.targetDistanceM = 3_000
+                    jog.targetPaceSPerKm = pace(.recovery, p5k: p5k)
+                    jog.rationale = "Optional shakeout — twenty easy minutes keeps the legs turning between hard days. Flat today? Skipping it counts as rest too."
+                    scheduled.append(jog)
+                    scheduled.sort { $0.dayOffset < $1.dayOffset }
+                }
+            }
             weeks.append(GeneratedWeek(index: w, isDeload: isDeload, isTaper: isTaper, phase: phase, sessions: scheduled))
         }
 
@@ -182,6 +249,71 @@ enum PlanEngine {
             }
         }
 
+        // Race day itself — the season's crown, placed on the exact race date with the goal distance
+        // at this athlete's predicted race pace. The whole macrocycle points at this day; without it
+        // the plan tapers into… a filler run. Added AFTER the ACWR governor (you don't run 80% of a
+        // marathon) and BEFORE RunRounding (whose `isRace` branch snaps it to the exact distance).
+        if raceInWindow, cardio == .running, let raceDate = profile.raceDate,
+           let raceM = profile.raceDistanceM, raceM > 0 {
+            let dayCount = calendar.dateComponents([.day], from: calendar.startOfDay(for: startDate),
+                                                   to: calendar.startOfDay(for: raceDate)).day ?? -1
+            let raceWeek = dayCount / 7
+            if dayCount >= 0, raceWeek < weeks.count {
+                let off = dayCount % 7
+                // Race day owns the rest of its week: nothing on the day itself, and nothing after —
+                // post-race days are recovery, not training. The day before drops any lift (nobody
+                // squats the eve of their goal race) and a run there becomes a classic shakeout
+                // (short + easy, with a few strides unless a speed-sensitive injury history rules
+                // maximal turnover out).
+                weeks[raceWeek].sessions.removeAll {
+                    $0.dayOffset >= off || ($0.dayOffset == off - 1 && $0.discipline == .strength)
+                }
+                let shakeoutStrides = injuryAreas.isDisjoint(with: Self.speedSensitiveAreas)
+                for i in weeks[raceWeek].sessions.indices
+                    where weeks[raceWeek].sessions[i].dayOffset == off - 1
+                          && weeks[raceWeek].sessions[i].discipline == .running {
+                    weeks[raceWeek].sessions[i].runType = shakeoutStrides ? .strides : .easy
+                    weeks[raceWeek].sessions[i].isHardRun = false
+                    weeks[raceWeek].sessions[i].intervals = shakeoutStrides ? "4×20sec strides" : nil
+                    weeks[raceWeek].sessions[i].targetDistanceM =
+                        min(weeks[raceWeek].sessions[i].targetDistanceM ?? 3_000, 3_000)
+                    weeks[raceWeek].sessions[i].targetPaceSPerKm = pace(.easy, p5k: p5k)
+                    weeks[raceWeek].sessions[i].rationale = "Shakeout — loose legs for tomorrow. Nothing to gain here, plenty to lose."
+                }
+                var race = GeneratedSession(dayOffset: off, discipline: .running)
+                race.runType = .race
+                race.targetDistanceM = raceM
+                race.targetPaceSPerKm = DanielsPaces.racePaceSPerKm(distanceM: raceM, p5kSPerKm: p5k)
+                race.isHardRun = true
+                race.rationale = "Race day — everything pointed here. Trust the taper and run your plan."
+                weeks[raceWeek].sessions.append(race)
+                weeks[raceWeek].sessions.sort { $0.dayOffset < $1.dayOffset }
+            }
+        }
+
+        // Clean prescriptions (RunRounding): snap every running target — distance AND pace — to the
+        // round value a coach would write in the athlete's unit, as the LAST step, so it's what's
+        // stored and shown. The race session snaps to the exact race distance; easy-family paces
+        // snap to :15 and quality/race paces to :05 (8:30/mi, never 8:24/mi). Perturbs weekly
+        // volume by <2% and paces by ≤7.5 s/unit (inside SessionPaceReview's tolerance band), so
+        // both the ACWR ramp and the pace-review verdicts hold.
+        for w in weeks.indices {
+            for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
+                let runType = weeks[w].sessions[s].runType
+                if let d = weeks[w].sessions[s].targetDistanceM, d > 0 {
+                    // A time trial IS its distance — "5K time trial", never "3 mi time trial".
+                    let canonical = runType == .race
+                        || weeks[w].sessions[s].intervals?.contains("Time trial") == true
+                    weeks[w].sessions[s].targetDistanceM =
+                        RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: canonical)
+                }
+                if let p = weeks[w].sessions[s].targetPaceSPerKm, p > 0, let runType {
+                    weeks[w].sessions[s].targetPaceSPerKm =
+                        RunRounding.snapPace(sPerKm: p, unit: profile.distanceUnit, type: runType)
+                }
+            }
+        }
+
         return GeneratedPlan(p5kSPerKm: p5k, weeks: weeks)
     }
 
@@ -196,9 +328,18 @@ enum PlanEngine {
     /// landing exactly on race week. Beyond a year, the block is pure foundation and the horizon
     /// rolls forward on regeneration — never a taper stranded before race day.
     static func weeksToGenerate(startDate: Date, raceDate: Date?, calendar: Calendar) -> Int {
-        guard let toRace = weeksToRace(startDate: startDate, raceDate: raceDate, calendar: calendar) else { return 4 }
+        guard let toRace = weeksToRace(startDate: startDate, raceDate: raceDate, calendar: calendar) else {
+            return openBlockWeeks
+        }
         return max(1, min(52, toRace))
     }
+
+    /// An open-ended plan (no race date) generates one full mesocycle at a time — a rolling BLOCK the
+    /// athlete renews when it wraps (`PlanService.renewBlock`), so the plan never dead-ends and never
+    /// bloats into an unearned year-long prescription for someone who just wants to get fitter. Six
+    /// weeks is a real training block — base + build with an absorbed deload — long enough to show
+    /// progress and short enough to reassess honestly ("we'll see where you're at").
+    static let openBlockWeeks = 6
 
     /// Mesocycle boundaries (base → build → peak → taper). Taper length follows the science by race
     /// distance — 5K/10K ≈ 1 week, half ≈ 2, marathon+ ≈ 3 (Bosquet 2007 meta: cut volume 41–60%,
@@ -243,20 +384,47 @@ enum PlanEngine {
         }
     }
 
+    /// Post-race recovery lead-in length by the distance just raced — the reverse taper. The weeks
+    /// after a goal race are the highest re-injury window in running: the block that follows starts
+    /// with this many all-easy weeks before normal training resumes (5K/10K ≈ 1, half ≈ 1,
+    /// marathon ≈ 2, ultra ≈ 3 — matching the "recover as long as the taper" convention).
+    static func postRaceRecoveryWeeks(forRaceM race: Double) -> Int {
+        switch race {
+        case ..<25_000: return 1
+        case ..<45_000: return 2
+        default: return 3
+        }
+    }
+
+    /// Recovery lead-in volume as a fraction of the athlete's normal week, per week into the
+    /// lead-in — a reverse taper climbing back to baseline (never a jump straight to full load).
+    static func recoveryMultipliers(weeks: Int) -> [Double] {
+        switch weeks {
+        case ..<2: return [0.55]
+        case 2: return [0.45, 0.7]
+        default: return [0.4, 0.6, 0.8]
+        }
+    }
+
     // MARK: Cardio sessions
 
     static func cardioSessions(discipline: Discipline, runDays: Int, level: ExperienceLevel,
                                goal: Goal, p5k: Double, volumeMult: Double, isDeload: Bool,
                                raceDistanceM: Double? = nil, weekIndex: Int = 0,
                                currentWeeklyVolumeM: Double? = nil, longestRunM: Double? = nil,
-                               injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build) -> [GeneratedSession] {
+                               injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build,
+                               qualityBias: Double = 1.0, longWaveMult: Double = 1.0,
+                               podium: Bool = false, timeTrial: Bool = false) -> [GeneratedSession] {
         guard runDays > 0 else { return [] }
         var (easyBase, longBase, qualityBase): (Double, Double, Double)
         // Seed the starting week from the athlete's actual current load when they gave it — so the plan
         // meets them where they are instead of an experience-tier average (fixes "too aggressive" plans).
         if let weekly = currentWeeklyVolumeM, weekly > 0 {
             let hasLong = runDays >= 2, hasQuality = runDays >= 3
-            longBase = min(max(longestRunM ?? weekly * 0.35, weekly * 0.22), weekly * 0.45)
+            // Long-run share of the week: ≤30-ish% once there are enough days to spread volume across
+            // (the microcycle guideline); 3-day runners legitimately concentrate more in the long run.
+            let shareCap = runDays >= 4 ? 0.32 : 0.45
+            longBase = min(max(longestRunM ?? weekly * 0.35, weekly * 0.22), weekly * shareCap)
             qualityBase = weekly * 0.18
             let easyDays = max(1, runDays - (hasLong ? 1 : 0) - (hasQuality ? 1 : 0))
             let used = (hasLong ? longBase : 0) + (hasQuality ? qualityBase : 0)
@@ -272,18 +440,21 @@ enum PlanEngine {
 
         // Race-specific shaping: the long run progresses toward a race-appropriate peak and is clamped
         // there so a 5K plan doesn't drift into marathon volume (and a marathon's long run actually
-        // gets long). Short races sharpen with intervals; long races build threshold with tempo.
-        let longCap = raceDistanceM.map { longRunPeak(forRaceM: $0) }
-        if let cap = longCap {
+        // gets long). The companion rule — short races sharpen with intervals, long races build
+        // threshold with tempo — is applied inside `qualityWorkout` (see its race band), which is
+        // where the session menu is actually chosen.
+        let raceCap = raceDistanceM.map { longRunPeak(forRaceM: $0, podium: podium) }
+        if let cap = raceCap {
             // Seeded athletes start from their own longest run (never forced up to half-peak); everyone
             // else uses the race-appropriate default. Both cap at the race peak.
             longBase = currentWeeklyVolumeM != nil ? min(longBase, cap) : min(max(longBase, cap * 0.5), cap)
         }
-        let useIntervals: Bool = {
-            if let r = raceDistanceM { return r <= 12_000 }     // 5K/10K → speed; half/marathon → tempo
-            return goal == .raceDistance || goal == .endurance
-        }()
-
+        // Time-on-feet cap: no long run beyond ~3 h at this athlete's long-run pace (Daniels caps by
+        // DURATION, not distance — a 32 km prescription is a 4-hour injury factory for a slower
+        // runner, and the aerobic stimulus tops out long before the tissue damage does).
+        let durationCapM = ((podium ? 12_600.0 : 10_800.0) / pace(.long, p5k: p5k)) * 1000   // podium: 3.5 h
+        longBase = min(longBase, durationCapM)
+        let longCap: Double? = min(raceCap ?? .infinity, durationCapM)
         var out: [GeneratedSession] = []
         // `paceOverride` lets VO₂ / threshold interval sessions carry a rep pace other than 5k pace.
         func makeRun(_ type: RunType, _ base: Double, hard: Bool, intervals: String? = nil,
@@ -302,30 +473,129 @@ enum PlanEngine {
             return s
         }
 
-        // Long run — a progression run every 3rd week for non-beginners (finish faster than you
-        // started). Taper long runs stay plain and easy — freshness, not stimulus.
+        // Long run — the rotation for non-beginners outside deload/taper weeks:
+        //  • every 3rd week a progression run (finish faster than you started),
+        //  • for half/marathon+ plans in build/peak, every 3rd week a **race-pace finish** — the
+        //    signature marathon workout (Canova/Daniels: the last kilometres at goal pace on tired
+        //    legs are the race rehearsal nothing else provides). The block grows with the calendar.
+        //  • otherwise plain and easy. Taper long runs always stay plain — freshness, not stimulus.
         if runDays >= 2 {
-            let longType: RunType = (weekIndex % 3 == 2 && level != .new && !isDeload && phase != .taper)
-                ? .progression : .long
-            out.append(makeRun(longType, longBase, hard: false, cap: longCap))
+            let rotate = level != .new && !isDeload && phase != .taper
+            let longRace = (raceDistanceM ?? 0) >= 20_000
+            // `longWaveMult` oscillates the plateau (1.0 / 0.88 / 0.95) so months of identical
+            // 32 km Sundays become a real wave; the caps still bound every variant.
+            let wavedLong = longBase * longWaveMult
+            // `!timeTrial`: the checkpoint week keeps its long run EASY — the test needs fresh
+            // legs to mean anything, so the TT is that week's only hard running.
+            if rotate, longRace, weekIndex % 3 == 1, phase == .build || phase == .peak, isRunning, !timeTrial {
+                var s = makeRun(.long, wavedLong, hard: true, cap: longCap)
+                let dist = s.targetDistanceM ?? 0
+                // Grow 3 km → cap (marathon 8 km, half 5 km), never more than 40% of the run.
+                let finishKm = min(Double(3 + weekIndex / 3),
+                                   (raceDistanceM ?? 0) >= 40_000 ? 8 : 5,
+                                   (dist / 1000) * 0.4).rounded(.down)
+                if finishKm >= 2 {
+                    s.intervals = "Last \(Int(finishKm))km @ race pace"
+                    s.rationale = "Long run with a race-pace finish — racing on tired legs is the skill."
+                } else {
+                    s.isHardRun = false   // too short for a real block → plain long run
+                }
+                out.append(s)
+            } else {
+                let longType: RunType = (rotate && weekIndex % 3 == 2) ? .progression : .long
+                out.append(makeRun(longType, wavedLong, hard: false, cap: longCap))
+            }
         }
+        // The athlete's weekly volume this week — scales the threshold dose (Daniels: T volume per
+        // session tops out near ~10% of weekly mileage) and gates the second quality slot.
+        let tierWeekly: Double = switch level { case .new: 14_000; case .some: 26_000; case .experienced: 42_000 }
+        let weeklyM = (currentWeeklyVolumeM ?? tierWeekly) * volumeMult
         // The week's main quality session. Deload weeks skip it entirely; taper weeks KEEP it —
         // taper science cuts volume, never intensity (the menu shrinks to a short race-pace touch).
+        var primaryQuality: (type: RunType, intervals: String?, paceOverride: Double?, note: String?)?
         if runDays >= 3 && !isDeload && goal != .stayConsistent && isRunning {
-            let q = qualityWorkout(weekIndex: weekIndex, raceDistanceM: raceDistanceM, level: level, p5k: p5k,
-                                   injuryAreas: injuryAreas, phase: phase)
-            out.append(makeRun(q.type, qualityBase, hard: true, intervals: q.intervals,
-                               paceOverride: q.paceOverride, note: q.note))
+            if timeTrial {
+                // The checkpoint race effort — replaces this week's quality menu. A .tempo carrier
+                // (planned quality, so a hard result banks recalibration evidence) at 5K race pace.
+                let tt = (type: RunType.tempo, intervals: Optional("Time trial — 5K at race effort"),
+                          paceOverride: Optional(pace(.race, p5k: p5k)),
+                          note: Optional("A checkpoint, not a race: run it honest. Your training paces recalibrate from the result."))
+                primaryQuality = tt
+                var session = makeRun(tt.type, 5_000, hard: true, intervals: tt.intervals,
+                                      paceOverride: tt.paceOverride, note: tt.note)
+                // A test is its exact distance — never scaled by the week's multiplier (the final
+                // snap also keeps it canonical, so the governor can't be silently undone there).
+                session.targetDistanceM = 5_000
+                out.append(session)
+                // The fixed 5K can outweigh the quality it replaced — shave the surplus off the
+                // easy days so the week's TOTAL stays on the governed ramp.
+                let fillerDays = Double(max(1, runDays - (runDays >= 2 ? 1 : 0) - 1))
+                let surplus = 5_000 - qualityBase * volumeMult
+                if surplus > 0 {
+                    easyBase = max(2_000, easyBase - (surplus / fillerDays) / volumeMult)
+                }
+            } else {
+                let q = qualityWorkout(weekIndex: weekIndex, raceDistanceM: raceDistanceM, level: level, p5k: p5k,
+                                       injuryAreas: injuryAreas, phase: phase, weeklyVolumeM: weeklyM,
+                                       qualityDistanceM: qualityBase * volumeMult)
+                primaryQuality = q
+                out.append(makeRun(q.type, qualityBase, hard: true, intervals: q.intervals,
+                                   paceOverride: q.paceOverride, note: q.note))
+            }
         }
-        // Fill easy; for non-beginners, one easy run becomes a strides day (cheap neuromuscular speed).
-        // Maximal-speed strides are the classic re-injury mechanism for hamstring/hip histories, so
-        // those athletes keep the day easy instead.
+        // The SECOND weekly quality session — the dial `PlanIntensity.qualityBias` was built for.
+        // Two hard sessions is the Pfitzinger/Hansons norm for committed athletes; one-forever was
+        // the biggest gap between our plans and a real program. Earned, never default: aggressive
+        // or experienced athletes at real volume (≥45 km/wk), on ≥5 run days, in build/peak only
+        // (base stays pyramidal, taper stays fresh), never with an injury history (the same
+        // protective cap as the ramp), and never on a deload. The stimulus COMPLEMENTS the primary
+        // (`secondQualityWorkout`) — threshold beside a speed day, VO₂ beside a threshold day.
+        var secondQualityAdded = false
+        // A race-pace-finish long run IS this week's second hard stimulus — Pfitzinger pairs the
+        // LT day with the RP-long in one week, and nobody stacks a third quality session on top.
+        // Without this gate, the rotation weeks (weekIndex%3==1 in a half/marathon build) carried
+        // RP-long + primary + second quality: three hard days on a five-day week, which is the
+        // grey-zone overload every coach's first red pen finds.
+        let longIsHard = out.contains { ($0.runType == .long || $0.runType == .progression) && $0.isHardRun }
+        let wantsSecond = !timeTrial && !longIsHard
+            && (qualityBias > 1.0 || level == .experienced) && weeklyM >= (podium ? 40_000 : 45_000)
+        if isRunning, runDays >= 5, !isDeload, goal != .stayConsistent, injuryAreas.isEmpty,
+           level != .new, wantsSecond, phase == .build || phase == .peak, out.count < runDays,
+           let primary = primaryQuality {
+            let q2 = secondQualityWorkout(weekIndex: weekIndex, p5k: p5k,
+                                          weeklyVolumeM: weeklyM, primary: primary)
+            secondQualityAdded = true
+            out.append(makeRun(q2.type, qualityBase * 0.85, hard: true, intervals: q2.intervals,
+                               paceOverride: q2.paceOverride, note: q2.note))
+        }
+        // Fill the remaining days with real TEXTURE, not identical easy runs (a week that reads
+        // "5.5 / 5.5 / 5.5" was the tell of a template):
+        //  • one strides day (cheap neuromuscular speed) — skipped when a second quality session
+        //    already covers turnover, and on hamstring/hip histories (max-speed re-injury risk);
+        //    deload weeks keep exactly this one touch so the legs don't go flat.
+        //  • one MEDIUM-LONG run (the Pfitzinger staple — the quiet aerobic middle gear), and one
+        //    true RECOVERY jog, on ≥5-day weeks. Sized 1.4× / 0.6× the easy base, so together they
+        //    equal two easy days — texture is volume-neutral.
         var stridesAdded = false
+        var mediumLongAdded = false, recoveryAdded = false
         let avoidStrides = !injuryAreas.isDisjoint(with: Self.speedSensitiveAreas)
+        let texture = isRunning && level != .new && !isDeload && phase != .taper && runDays >= 5
         while out.count < runDays {
-            if isRunning, level != .new, !isDeload, !stridesAdded, runDays >= 4, !avoidStrides {
+            if isRunning, level != .new, !stridesAdded, !avoidStrides, !secondQualityAdded,
+               (runDays >= 4 || (isDeload && runDays >= 3)) {
                 stridesAdded = true
                 out.append(makeRun(.strides, easyBase, hard: false, intervals: "6×20sec strides"))
+            } else if texture, !mediumLongAdded {
+                mediumLongAdded = true
+                var s = makeRun(.easy, easyBase * 1.4, hard: false,
+                                cap: min(longBase * volumeMult * 0.85, longCap ?? .infinity))
+                s.rationale = "Medium-long run — the quiet aerobic engine-builder between the hard days."
+                out.append(s)
+            } else if texture, !recoveryAdded {
+                recoveryAdded = true
+                var s = makeRun(.recovery, easyBase * 0.6, hard: false)
+                s.rationale = "Recovery jog — slower on purpose; this is where the hard work absorbs."
+                out.append(s)
             } else {
                 let intervals = (isRunning && level == .new) ? "Run/walk 1:1" : nil
                 out.append(makeRun(.easy, easyBase, hard: false, intervals: intervals))
@@ -355,7 +625,8 @@ enum PlanEngine {
     /// swap high-impact hill reps out; hamstring/hip histories swap sprint-fast reps and strides for
     /// threshold cruise work. The swap is explained on the session (`note`) — never silent.
     static func qualityWorkout(weekIndex: Int, raceDistanceM: Double?, level: ExperienceLevel,
-                               p5k: Double, injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build)
+                               p5k: Double, injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build,
+                               weeklyVolumeM: Double? = nil, qualityDistanceM: Double? = nil)
         -> (type: RunType, intervals: String?, paceOverride: Double?, note: String?) {
         let fiveK = pace(.race, p5k: p5k), threshold = pace(.tempo, p5k: p5k)
         let goalRace = DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 5_000, p5kSPerKm: p5k)
@@ -369,8 +640,22 @@ enum PlanEngine {
         let r400 = min(10, 6 + weekIndex / 3)
         let rVO2 = min(6, 4 + weekIndex / 3)
         let rHill = min(12, 8 + weekIndex / 3)
-        let rKm = min(7, 4 + weekIndex / 4)
-        let shortRace = (raceDistanceM ?? 5_000) <= 12_000
+        // Hills need a hill — not every athlete has one, so the plan never REQUIRES terrain
+        // (2026-07-24). The power stimulus is a flat hard-surge fartlek by default; a hill
+        // is a welcome option, not a prerequisite. Dedicated hill sessions live in the
+        // workout library for athletes who have one and want it.
+        let powerNote = "Short, hard efforts for power — flat ground is perfect; take them uphill if you've got a hill."
+        // Threshold dose scales with the ATHLETE, not just the calendar (Daniels: T volume per
+        // session tops out near ~10% of weekly mileage). A 40 km/wk runner cruises 4–5×1km; a
+        // 120 km/wk runner has earned 10–12. The calendar still gates the ramp inside the ceiling.
+        let tCeil = weeklyVolumeM.map { max(4, min(12, Int(($0 * 0.10) / 1000))) } ?? 7
+        let rKm = min(tCeil, 4 + weekIndex / 4)
+        // Race bands: a 10K is NOT a long 5K — it's threshold-centric with VO₂ touches (Daniels),
+        // where 5K training leans on speed and half/marathon+ on threshold + race-pace volume.
+        // The old ≤12 km "short" boundary trained 10K runners on 400s at 5K pace all build.
+        let raceM = raceDistanceM ?? 5_000
+        let shortRace = raceM <= 8_000
+        let midRace = raceM > 8_000 && raceM <= 15_000
 
         var menu: [(RunType, String?, Double?, String?)]
         if level == .new {
@@ -385,19 +670,24 @@ enum PlanEngine {
             case .base:
                 menu = [(.tempo, nil, nil, nil),
                         avoidImpact ? (.fartlek, "6×(2min hard / 90sec float)", nil, impactNote)
-                                    : (.hills, "\(rHill)×45sec hills", nil, nil),
+                                    : (.fartlek, "\(rHill)×(45sec hard / 90sec float)", nil, powerNote),
                         (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
             case .peak:
                 menu = shortRace
                     ? [avoidSpeed ? (.intervals, "\(rKm)×1km @ threshold", threshold, speedNote)
                                   : (.intervals, "\(r400)×400m @ 5K", fiveK, nil),
                        (.intervals, "\(rVO2)×3min @ VO2", nil, nil)]
+                    : midRace
+                    ? [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),
+                       (.intervals, "3×1km @ race pace", goalRace, nil)]
                     : [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),
                        (.intervals, "3×2km @ race pace", goalRace, nil)]
             case .taper:
                 menu = shortRace
                     ? [avoidSpeed ? (.intervals, "3×1km @ threshold", threshold, speedNote)
                                   : (.intervals, "4×400m @ 5K", fiveK, nil)]
+                    // The mid-band taper touch is at RACE pace — the old short-race menu sent 10K
+                    // runners into race week practicing a pace faster than they'll run.
                     : [(.intervals, "3×1km @ race pace", goalRace, nil)]
             default:   // .build (recovery weeks never request quality)
                 if shortRace {
@@ -405,28 +695,68 @@ enum PlanEngine {
                                        : (.intervals, "\(r400)×400m @ 5K", fiveK, nil),
                             (.intervals, "\(rVO2)×3min @ VO2", nil, nil),
                             avoidImpact ? (.tempo, nil, nil, impactNote)
-                                        : (.hills, "\(rHill)×45sec hills", nil, nil),
+                                        : (.fartlek, "\(rHill)×(45sec hard / 90sec float)", nil, powerNote),
+                            (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
+                } else if midRace {
+                    menu = [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),
+                            (.intervals, "\(rVO2)×3min @ VO2", nil, nil),
+                            (.tempo, nil, nil, nil),
                             (.fartlek, "8×(1min hard / 1min float)", nil, nil)]
                 } else {
                     menu = [(.intervals, "\(rKm)×1km @ threshold", threshold, nil),
                             (.tempo, nil, nil, nil),
                             (.fartlek, "6×(2min hard / 90sec float)", nil, nil),
-                            (.intervals, "\(min(8, 5 + weekIndex / 4))×1km @ threshold", threshold, nil)]
+                            (.intervals, "\(min(tCeil, 5 + weekIndex / 4))×1km @ threshold", threshold, nil)]
                 }
             }
         }
         let pick = menu[((weekIndex % menu.count) + menu.count) % menu.count]
+        // Continuous tempo caps at ~25 min at threshold (Daniels; Pfitzinger tops out similarly) —
+        // a bigger allocation becomes cruise intervals, the same T dose in absorbable pieces. At
+        // 80 km/wk the old allocation prescribed 40+ continuous minutes at T, which nobody runs.
+        if pick.0 == .tempo, let qDist = qualityDistanceM {
+            let tempoCapM = (1_500.0 / threshold) * 1000 + 2_000   // 25 min at T + wu/cd carve
+            if qDist > tempoCapM {
+                return (.intervals, "\(rKm)×1km @ threshold", threshold, pick.3)
+            }
+        }
         return (pick.0, pick.1, pick.2, pick.3)
+    }
+
+    /// The plateau wave for the long run (applied once weekly volume holds at its ceiling): full,
+    /// step-back, near-full — so a months-long plateau reads 32-28-30-32 instead of 32 forever.
+    /// Deload weeks still provide the big dips; this is the texture between them.
+    static let longRunWave: [Double] = [1.0, 0.88, 0.95]
+
+    /// The week's SECOND quality session — always the COMPLEMENT of the primary (the Pfitzinger
+    /// LT+VO₂ pairing): a threshold-flavored primary earns a VO₂ touch; anything else (speed reps,
+    /// hills, fartlek, race-pace blocks) earns threshold cruise work. Two stimuli classes means the
+    /// two hard days can never collapse into the same workout. Injury histories never reach here
+    /// (the second slot is gated off entirely for them).
+    static func secondQualityWorkout(weekIndex: Int, p5k: Double, weeklyVolumeM: Double?,
+                                     primary: (type: RunType, intervals: String?, paceOverride: Double?, note: String?))
+        -> (type: RunType, intervals: String?, paceOverride: Double?, note: String?) {
+        let threshold = pace(.tempo, p5k: p5k)
+        let tCeil = weeklyVolumeM.map { max(4, min(12, Int(($0 * 0.10) / 1000))) } ?? 7
+        let rKm = min(tCeil, 4 + weekIndex / 4)
+        let rVO2 = min(5, 3 + weekIndex / 4)
+        let primaryIsThreshold = (primary.intervals?.lowercased().contains("threshold") ?? false)
+            || primary.type == .tempo
+        return primaryIsThreshold
+            ? (.intervals, "\(rVO2)×3min @ VO2", nil,
+               "Second quality day — a VO₂ touch beside the threshold work. Your volume has earned both.")
+            : (.intervals, "\(rKm)×1km @ threshold", threshold,
+               "Second quality day — threshold work beside the harder reps. Your volume has earned both.")
     }
 
     /// The peak weekly long-run distance a race builds toward (meters). Short races multiply up; long
     /// races run a fraction of race distance (you never run a full marathon in training).
-    static func longRunPeak(forRaceM race: Double) -> Double {
+    static func longRunPeak(forRaceM race: Double, podium: Bool = false) -> Double {
         switch race {
         case ..<6_000:    return race * 1.8          // 5K → ~9K long
         case ..<13_000:   return race * 1.5          // 10K → ~15K long
-        case ..<25_000:   return min(20_000, race * 0.9)   // half → ~19K
-        default:          return min(32_000, race * 0.76)  // marathon → ~32K
+        case ..<25_000:   return min(podium ? 22_000 : 20_000, race * (podium ? 0.95 : 0.9))
+        default:          return min(podium ? 35_000 : 32_000, race * (podium ? 0.85 : 0.76))
         }
     }
 
@@ -494,13 +824,28 @@ enum PlanEngine {
         }
     }
 
+    /// Picks an exercise for a muscle slot — **rep-countable only**.
+    ///
+    /// Timed holds and loaded carries are excluded outright, not merely deprioritized. The whole
+    /// app logs sets as reps × weight, so an auto-prescribed plank or farmer's carry has no
+    /// honest way to be written down: prescribing it in reps is nonsense ("3 × 10–15" of a
+    /// plank), and prescribing it in seconds would demand a per-set timer the logger doesn't
+    /// have. Excluding them removes the dilemma instead of picking a side of it — every
+    /// prescription the plan produces is now something the athlete can actually record.
+    ///
+    /// These exercises stay in the LIBRARY and remain fully loggable by hand; they are simply
+    /// never auto-prescribed (the same arrangement hills have). A slot whose only candidates are
+    /// timed is skipped by the caller, which is strictly better than prescribing something
+    /// unloggable.
     private static func selectExercise(muscle: MuscleGroup, preferCompound: Bool, allowed: Set<EquipmentType>,
                                        catalog: [ExerciseCatalogItem], used: Set<String>) -> ExerciseCatalogItem? {
         let candidates = catalog.filter {
-            allowed.contains($0.equipment) && !used.contains($0.name) && $0.primaryMuscles.contains(muscle)
+            allowed.contains($0.equipment) && !used.contains($0.name)
+                && $0.primaryMuscles.contains(muscle)
+                && ($0.trackingMode == .weightReps || $0.trackingMode == .repsOnly)
         }
         let preferred = candidates.filter { $0.category == (preferCompound ? .compound : .isolation) }
-        return (preferCompound ? (preferred.first ?? candidates.first) : (preferred.first ?? candidates.first))
+        return preferred.first ?? candidates.first
     }
 
     private static func scheme(for ex: ExerciseCatalogItem, goal: Goal, level: ExperienceLevel, isDeload: Bool) -> GeneratedExercise {
@@ -548,10 +893,40 @@ enum PlanEngine {
         var safe = available.filter { !forbidden.contains($0) }
         var unsafe = available.filter { forbidden.contains($0) }
 
-        // Hard runs first onto safe days; downgrade if none left.
-        for i in runs.indices where runs[i].isHardRun {
+        // The LONG RUN anchors the week, placed first — the way a coach builds a microcycle (fix
+        // the long day, then space the quality around it). It takes the LATEST available day, which
+        // on calendar-anchored weeks is the weekend slot long runs actually live in. A hard long
+        // (race-pace finish) honors the day-after-a-lower-lift rule like any hard run; a plain one
+        // may sit anywhere. Without this anchor, the long run took "whatever day was left", which
+        // put 25 km between two quality days with zero recovery on either side.
+        var hardDays: [Int] = []
+        var longDay: Int?
+        if let li = runs.firstIndex(where: { $0.runType == .long || $0.runType == .progression }) {
+            let candidates = runs[li].isHardRun && !safe.isEmpty ? safe
+                : (safe + unsafe).isEmpty ? [] : (safe + unsafe)
+            if let day = candidates.max() {
+                runs[li].dayOffset = day
+                longDay = day
+                if runs[li].isHardRun { hardDays.append(day) }
+                safe.removeAll { $0 == day }
+                unsafe.removeAll { $0 == day }
+            }
+        }
+
+        // Hard runs next onto safe days; downgrade if none left. With two quality days in a week
+        // (the second-quality slot), back-to-back hard days are the classic overuse pattern — so
+        // each hard run prefers a day NOT adjacent to an already-placed one, AND not adjacent to
+        // the long run (quality on dead legs the day after a long run is the other classic). A
+        // soft preference: when the pool leaves no such day, the run still schedules rather than
+        // vanish.
+        for i in runs.indices where runs[i].isHardRun && runs[i].dayOffset < 0 {
             if !safe.isEmpty {
-                let day = safe.removeFirst()
+                let spaced = Set(hardDays + (longDay.map { [$0] } ?? []))
+                let idx = safe.firstIndex { d in !spaced.contains { abs($0 - d) == 1 } }
+                    ?? safe.firstIndex { d in !hardDays.contains { abs($0 - d) == 1 } }
+                    ?? 0
+                let day = safe.remove(at: idx)
+                hardDays.append(day)
                 runs[i].dayOffset = day
                 // In a hybrid week, explain the cross-discipline placement (fresh legs) — our edge.
                 // An injury-history note set at generation is more specific: it wins.
@@ -628,6 +1003,7 @@ enum PlanEngine {
         case .fartlek: return "Fartlek — playful surges that build speed without the track."
         case .hills: return "Hill reps — strength and power, easy on the joints."
         case .strides: return "Strides — short, fast, relaxed; wakes up your legs."
+        case .race: return "Race day — everything pointed here."
         default: return "Easy run — most of your week should feel like this."
         }
     }
@@ -668,4 +1044,11 @@ struct PlanInputs: Sendable {
     /// Age in years (from onboarding's birth year) — 50+ gets masters recovery: deload every 3rd
     /// week instead of the intensity default. Intensity itself is never reduced by age.
     var age: Int? = nil
+    /// Post-race recovery lead-in (weeks): the block opens with this many all-easy reverse-taper
+    /// weeks before normal training resumes. Set by `PlanService.completeRace` on the block that
+    /// follows a finished goal race; 0 everywhere else.
+    var postRaceRecoveryWeeks: Int = 0
+    /// The athlete's display unit — prescriptions snap to clean values in it (`RunRounding`), so a
+    /// coach's "run 4 miles / a 5K" reads clean instead of "3.73 mi". Storage stays SI.
+    var distanceUnit: DistanceUnit = .metric
 }

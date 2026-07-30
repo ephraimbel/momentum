@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import UserNotifications
 
 /// Local notifications (PRD §24) — the "updates" half of the adaptive coach. Two kinds:
@@ -15,16 +16,71 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     private let reminderHour = 7
     private let reminderMinute = 30
 
+    /// Siri meal receipts: the category carries the Undo action (see `SiriMealLogger.postReceipt`).
+    /// nonisolated: referenced from the nonisolated delegate callback.
+    nonisolated static let mealReceiptCategory = "momentum.meal.receipt"
+    nonisolated static let mealUndoAction = "momentum.meal.undo"
+
     override init() {
         super.init()
         center.delegate = self
+        // The app's one notification category set — replace-not-merge semantics, so every
+        // category the app uses must be registered here together.
+        let undo = UNNotificationAction(identifier: Self.mealUndoAction, title: "Undo",
+                                        options: [.destructive])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.mealReceiptCategory, actions: [undo],
+                                   intentIdentifiers: [], options: []),
+        ])
     }
 
-    func requestAuthorization() {
+    /// Notification actions land here — currently just the meal receipt's Undo, which removes
+    /// the Siri-logged meal (safe if it's already gone).
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        let info = response.notification.request.content.userInfo
+        guard action == Self.mealUndoAction,
+              let idString = info["mealID"] as? String,
+              let id = UUID(uuidString: idString) else {
+            completionHandler()
+            return
+        }
+        Task { @MainActor in
+            SiriMealLogger.undoMeal(id: id, in: PersistenceController.shared.container.mainContext)
+            completionHandler()
+        }
+    }
+
+    /// Siri meal receipts start life under PROVISIONAL authorization (granted silently mid-Siri,
+    /// delivered quietly to Notification Center — no banner). The athlete who logs by voice wants
+    /// to SEE the receipt land, so the app's next open asks properly, once: the full system
+    /// prompt, only when a receipt has actually been posted and delivery isn't full yet. The
+    /// flag clears after one ask — never a nag, whatever they choose.
+    static func promoteReceiptAuthorizationIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: SiriMealLogger.receiptPostedKey) else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .provisional, .notDetermined:
+                defaults.set(false, forKey: SiriMealLogger.receiptPostedKey)
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            default:
+                defaults.set(false, forKey: SiriMealLogger.receiptPostedKey)
+            }
+        }
+    }
+
+    func requestAuthorization(completion: (() -> Void)? = nil) {
+        // `completion` always fires on the main thread once the prompt is resolved (or right away if
+        // already determined), so callers can advance a flow only after the system alert is dismissed.
+        let finish = { DispatchQueue.main.async { completion?() } }
         // Re-acquire the (non-Sendable) center inside the closure rather than capturing it.
         UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .notDetermined else { return }
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            guard settings.authorizationStatus == .notDetermined else { finish(); return }
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in finish() }
         }
     }
 
@@ -119,10 +175,18 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         center.add(UNNotificationRequest(identifier: "momentum.streak", content: content, trigger: trigger))
     }
 
-    /// Show banners while foregrounded, so the "plan updated" nudge is actually seen.
+    /// Show banners while foregrounded, so the "plan updated" nudge is actually seen — except the
+    /// rest-timer alert, which is redundant here: this delegate only fires while the app is active,
+    /// and the in-app rest ring is already counting down (that notification is cancelled on
+    /// skip/finish, never when the ring reaches 0 naturally). Suppress it so it doesn't fire a
+    /// banner+sound over the ring every set.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if notification.request.identifier == Self.restID {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound])
     }
 

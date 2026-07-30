@@ -6,6 +6,11 @@ struct ProgressRing: View {
     var progress: Double                 // 0...1
     var lineWidth: CGFloat = 12
 
+    // A two-tone version of this — ink for the portion already banked, iridescence for the part just
+    // earned — was tried and removed. Iridescence is deliberately soft on white, so beside an ink arc
+    // the earned segment was indistinguishable from the empty track: the one thing the ring existed
+    // to celebrate read as a gap. One legible arc, with the caller animating it from where the week
+    // stood to where it stands now, carries the same meaning as growth.
     var body: some View {
         ZStack {
             Circle()

@@ -19,11 +19,15 @@ enum StreakCalculator {
 
     /// Current streak ending at `today`. Walks backward counting counting-days, tolerating a
     /// single forgiven gap; two consecutive non-counting days end it.
+    ///
+    /// An empty `today` is *pending*, not missed — the day isn't over. Without this, an athlete
+    /// whose single grace day was yesterday watches the streak hit 0 at midnight and pop back
+    /// when they train that afternoon (exactly the punitive flicker PRD §21 forbids).
     static func currentStreak(countingDays: Set<Int>, today: Int) -> Int {
         guard let earliest = countingDays.min() else { return 0 }
         var streak = 0
         var misses = 0
-        var day = today
+        var day = countingDays.contains(today) ? today : today - 1
         while day >= earliest - 1 {
             if countingDays.contains(day) {
                 streak += 1
@@ -55,13 +59,19 @@ enum StreakCalculator {
     }
 
     /// Planned rest days — the documented other half of "a day counts": any day inside the plan's
-    /// active span (first session through today, never the future) with no session scheduled. An
-    /// athlete resting exactly when the plan says rest must never lose the streak — a 4-day/week
-    /// plan has back-to-back rest days every single week.
+    /// active span with no session scheduled. An athlete resting exactly when the plan says rest
+    /// must never lose the streak — a 4-day/week plan has back-to-back rest days every single week.
+    ///
+    /// The span is first session through `min(today, last session)`: while the plan is live its
+    /// gaps are prescribed rest, but once the final session passes nothing is prescribing rest
+    /// anymore — without the cap, a finished/abandoned plan feeds the streak a free "rest day"
+    /// every day forever and the flame climbs on total inactivity.
     static func plannedRestDays(sessionDays: Set<Int>, today: Int) -> Set<Int> {
-        guard let start = sessionDays.min(), start <= today else { return [] }
+        guard let start = sessionDays.min(), let last = sessionDays.max(), start <= today else { return [] }
+        let end = min(today, last)
+        guard start <= end else { return [] }
         var rest = Set<Int>()
-        for day in start...today where !sessionDays.contains(day) { rest.insert(day) }
+        for day in start...end where !sessionDays.contains(day) { rest.insert(day) }
         return rest
     }
 
@@ -75,9 +85,12 @@ enum StreakCalculator {
         return perWeek.values.filter { $0 >= daysPerWeek }.count
     }
 
-    /// Map a date to an integer local-day key (days since 2001 reference, in `calendar`'s zone).
+    /// Map a date to an integer local-day key (a gap-free day ordinal, in `calendar`'s zone).
+    /// Uses the calendar's day-in-era ordinal so every local day gets one unique, monotonic key
+    /// in every timezone — flooring a UTC-anchored interval by a *local* start-of-day collides or
+    /// skips a key at DST transitions in UTC±0 zones (London/Dublin/Lisbon). All comparisons are
+    /// relative, so the constant offset is harmless.
     static func localDay(_ date: Date, calendar: Calendar = .current) -> Int {
-        let start = calendar.startOfDay(for: date)
-        return Int((start.timeIntervalSinceReferenceDate / 86_400).rounded(.down))
+        return calendar.ordinality(of: .day, in: .era, for: date) ?? 0
     }
 }

@@ -4,7 +4,12 @@ import SwiftData
 /// The "Choose Activity" picker — momentum's Strava-style activity selector, grouped by category with
 /// a search bar at the top. A **"Your activities"** shortcut row sits at the very top: the activities a
 /// user has starred plus the ones they log most, so a hybrid athlete (runs + lifts) never scrolls for
-/// their two or three. Star toggles live on every card. Monochrome cards via the shared `SelectionCard`.
+/// their two or three. **Sports shown up there are REMOVED from their category section below**
+/// (owner call 2026-07-30 — Run appearing in both "Your activities" and "Foot Sports" read as a
+/// doubled list); starring moves a row up with an animation, unstarring sends it home. Star
+/// toggles live on every card. Monochrome cards via the shared `SelectionCard`. The ONE picker
+/// everywhere — Today's chip, the manual log, and the plan's add-session sheet all present this view.
+/// (A tile-grid restructure was built and rejected same day — keep the row list.)
 struct SportPicker: View {
     @Binding var selection: WorkoutType
     var onClose: () -> Void
@@ -12,6 +17,9 @@ struct SportPicker: View {
     @State private var query = ""
     @State private var favorites = SportFavorites()
     @Query private var workouts: [Workout]
+    /// Per-sport log counts, snapshotted once on present — grouping the whole workout table inside a
+    /// computed property re-ran per body evaluation (every search keystroke, every star toggle).
+    @State private var loggedCounts: [WorkoutType: Int] = [:]
 
     private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
     private func matches(_ t: WorkoutType) -> Bool {
@@ -23,8 +31,7 @@ struct SportPicker: View {
     /// ones not already starred. Capped so it stays a quick-pick, not a second full list.
     private var topActivities: [WorkoutType] {
         var out = favorites.favorites
-        let counts = Dictionary(grouping: workouts, by: \.type).mapValues(\.count)
-        let mostUsed = counts.sorted { $0.value > $1.value }.map(\.key).filter { !out.contains($0) }
+        let mostUsed = loggedCounts.sorted { $0.value > $1.value }.map(\.key).filter { !out.contains($0) }
         out += mostUsed
         return Array(out.prefix(5))
     }
@@ -36,11 +43,18 @@ struct SportPicker: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
                         if trimmed.isEmpty {
-                            if !topActivities.isEmpty {
-                                section("Your activities", topActivities)
+                            let top = topActivities
+                            if !top.isEmpty {
+                                section("Your activities", top)
                             }
+                            // Each category minus what "Your activities" already shows — a sport
+                            // never appears twice on this screen. A category whose sports all
+                            // moved up disappears entirely rather than sitting as an empty header.
                             ForEach(SportCategory.allCases) { category in
-                                section(category.title, WorkoutType.allCases.filter { $0.category == category })
+                                let rest = WorkoutType.allCases.filter {
+                                    $0.category == category && !top.contains($0)
+                                }
+                                if !rest.isEmpty { section(category.title, rest) }
                             }
                         } else if results.isEmpty {
                             emptyState
@@ -52,6 +66,7 @@ struct SportPicker: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
+            .task { loggedCounts = Dictionary(grouping: workouts, by: \.type).mapValues(\.count) }
             .background(Theme.background)
             .navigationTitle("Choose Activity")
             .navigationBarTitleDisplayMode(.inline)
@@ -109,7 +124,10 @@ struct SportPicker: View {
                               systemImage: sport.systemImage,
                               isSelected: selection == sport,
                               isFavorite: favorites.isFavorite(sport),
-                              onToggleFavorite: { favorites.toggle(sport) }) {
+                              // Animated: with the sections deduped, starring MOVES the row up to
+                              // "Your activities" (and unstarring sends it home) — the slide makes
+                              // that read as a move, not a vanish-and-reappear.
+                              onToggleFavorite: { withAnimation(Motion.lively) { favorites.toggle(sport) } }) {
                     selection = sport
                     onClose()
                 }

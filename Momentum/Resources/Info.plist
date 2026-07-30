@@ -17,12 +17,12 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.momentum.app.auth</string>
+			<string>com.ephraimbel.momentum.app.auth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>momentum</string>
@@ -30,23 +30,31 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>MBXAccessToken</key>
 	<string>$(MBX_ACCESS_TOKEN)</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>momentum uses the camera to scan food barcodes, to attach photos to a workout right after you finish it, and to take a photo for a share card.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>momentum saves your completed workouts to Apple Health.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>momentum uses the microphone so you can speak instead of typing — a meal, a workout, a question for your coach.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>momentum uses motion data to measure cadence and steps.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>RevenueCatAPIKey</key>
-	<string></string>
+	<string>appl_RCnCHIbAdYuSJAkzepPxxmnGVMJ</string>
 	<key>SupabaseAnonKey</key>
 	<string>$(SUPABASE_ANON_KEY)</string>
 	<key>SupabaseURL</key>

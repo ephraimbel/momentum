@@ -60,10 +60,45 @@ struct StructuredWorkoutTests {
         #expect(w.steps.first?.paceSPerKm == 380)
     }
 
+    // MARK: Rep grouping (the summary's collapsed "10 × 400m" row)
+
+    @Test func repGroupingCollapsesNumberedRepsAndKeepsBlocksFlat() {
+        func rep(_ i: Int, of n: Int, title: String? = nil, pace: Double = 290,
+                 dist: Double = 402, dur: Double = 118) -> RepResult {
+            RepResult(repIndex: i, repTotal: n, title: title, targetPaceSPerKm: 285,
+                      achievedPaceSPerKm: pace, distanceM: dist, durationS: dur)
+        }
+        // 10 numbered reps + a cool-down-less tempo block → ONE group + one flat block.
+        var reps = (1...10).map { rep($0, of: 10) }
+        reps.append(RepResult(repIndex: nil, repTotal: nil, title: "Tempo", targetPaceSPerKm: 314,
+                              achievedPaceSPerKm: 318, distanceM: 4000, durationS: 1272))
+        let segments = RepGrouping.segments(reps)
+        #expect(segments.count == 2)
+        #expect(segments[0].reps.count == 10)
+        #expect(segments[1].reps.count == 1)
+        // The group speaks the workout's language: median achieved 402 m snaps to "400m".
+        #expect(segments[0].headline == "10 × 400m")
+        #expect(segments[0].pacedCount == 10)
+        // Timed efforts read duration, not distance — "8 × 30s hills".
+        let hills = (1...8).map { rep($0, of: 8, title: "Hill", pace: 0, dist: 90, dur: 31) }
+        let hillSegments = RepGrouping.segments(hills)
+        #expect(hillSegments.count == 1)
+        #expect(hillSegments[0].headline == "8 × 30s hills")
+        // Effort groups (no pace target) carry no average pace.
+        let effortOnly = (1...8).map {
+            RepResult(repIndex: $0, repTotal: 8, title: "Hill", targetPaceSPerKm: nil,
+                      achievedPaceSPerKm: 0, distanceM: 90, durationS: 31)
+        }
+        #expect(RepGrouping.segments(effortOnly)[0].averagePaceSPerKm == nil)
+    }
+
     @Test func longerRepsGetLongerRecoveries() {
-        let w = iv(5, 800, pace: 300)
-        let rec = w.steps.first { $0.kind == .recovery }
-        #expect(rec?.target == .duration(120))
+        // The rest ladder: 800s take ~2:30, kilometre reps a full 3:00 — short rests on long
+        // VO₂ reps quietly turn the session into a ragged tempo.
+        let w800 = iv(5, 800, pace: 300)
+        #expect(w800.steps.first { $0.kind == .recovery }?.target == .duration(150))
+        let w1k = iv(4, 1000, pace: 300)
+        #expect(w1k.steps.first { $0.kind == .recovery }?.target == .duration(180))
     }
 
     // MARK: Tempo expansion

@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The unified plan reveal (PRD §4.1 step 4, §7.1) — the moment the user is sold. Centered brand
-/// wordmark, an iridescent goal ring that fills (the earned accent), a real weekly-volume shape for the
-/// block ahead, and the first week as tappable cards that expand to the actual work (every lift, every
-/// run's mileage + pace). Restrained, premium, celebratory.
+/// The unified plan reveal (PRD §4.1 step 4, §7.1) — the moment the user is sold. Clean and monochrome:
+/// centered brand wordmark, an editorial headline, a count-up plan summary, the real weekly-volume shape
+/// of the block ahead, and the first week as tappable cards that expand to the actual work (every lift,
+/// every run's mileage + pace). Restrained, premium, professional.
 struct PlanRevealView: View {
     let vm: OnboardingViewModel
     let profile: UserProfile?
@@ -12,9 +12,10 @@ struct PlanRevealView: View {
     @State private var shownWeeks = 0.0
     @State private var shownDays = 0.0
     @State private var shownSessions = 0.0
-    @State private var bloom = 0.0          // soft iridescent celebration bloom behind the headline
     @State private var barsIn = false       // weekly-volume bars grow up on appear
+    @State private var calloutIn = false    // peak-week callout pops in after the bars settle
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
     private var planWeekCount: Int {
@@ -28,12 +29,17 @@ struct PlanRevealView: View {
 
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
 
-    private var weekOne: [PlannedSession] {
-        guard let sessions = profile?.plan?.sessions else { return [] }
-        let sorted = sessions.sorted { $0.date < $1.date }
-        guard let firstDate = sorted.first?.date else { return [] }
-        let end = Calendar.current.date(byAdding: .day, value: 7, to: firstDate) ?? firstDate
-        return sorted.filter { $0.date < end }
+    /// The whole plan, grouped into weeks (1-based) so the athlete can browse every session ahead.
+    private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] {
+        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return [] }
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
+        func weekOf(_ d: Date) -> Int { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: d)).day ?? 0) / 7) }
+        var groups: [Int: [PlannedSession]] = [:]
+        for s in sessions { groups[weekOf(s.date), default: []].append(s) }
+        return groups.keys.sorted().map { w in
+            (week: w + 1, sessions: groups[w]!.sorted { $0.date < $1.date })
+        }
     }
 
     var body: some View {
@@ -45,30 +51,31 @@ struct PlanRevealView: View {
                 reflectionChips.reveal(0.24)
                 if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.27) }
                 weeklyVolumeCard.reveal(0.30)
-                // Running-first (ENDURANCE-FOCUS §13): runners get the road ahead — a route drawing
-                // itself under the purple "you" puck. The anatomy body stays only for lift-only plans.
-                if vm.running {
-                    routeSection.reveal(0.33).id("road")
-                } else if vm.includesStrength {
-                    anatomySection.reveal(0.33)
-                }
-                firstWeekList
+                if vm.intensity == .podium, vm.running { podiumOutlook.reveal(0.33).id("podium") }
+                fullPlanList.id("plan")
             }
             .frame(maxWidth: .infinity)
-            .padding(.top, Theme.Space.md)
+            .padding(.top, Theme.Space.sm)
             .padding(.bottom, Theme.Space.sm)
         }
         .scrollIndicators(.hidden)
+        #if DEBUG
         .onAppear {
-            #if DEBUG
-            // Deterministic sim verification of the road-ahead beat (simctl can't scroll).
-            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-road") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    withAnimation { proxy.scrollTo("road", anchor: .center) }
+            // Deterministic sim verification of the lower half (simctl can't scroll).
+            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-plan") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation { proxy.scrollTo("plan", anchor: .top) }
                 }
             }
-            #endif
+            // --reveal-scroll-podium: frame the Podium outlook card (its iridescent border is a
+            // design surface that needs screenshot verification).
+            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-podium") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation { proxy.scrollTo("podium", anchor: .center) }
+                }
+            }
         }
+        #endif
         }
         // Pin the CTA so it's visible the moment the page opens; the plan scrolls above it.
         .safeAreaInset(edge: .bottom) {
@@ -93,7 +100,10 @@ struct PlanRevealView: View {
     // MARK: Brand
 
     private var brandmark: some View {
-        Image("WordmarkBlack")
+        // Onboarding runs unconditionally dark (RootView, 2026-07-28), so in practice this is always
+        // the white mark — kept conditional anyway so the reveal can't render an invisible black
+        // wordmark if it's ever shown on a light canvas. Same idiom as CommunityView's masthead.
+        Image(colorScheme == .dark ? "WordmarkWhite" : "WordmarkBlack")
             .resizable()
             .interpolation(.high)
             .scaledToFit()
@@ -103,33 +113,24 @@ struct PlanRevealView: View {
             .reveal(0.02)
     }
 
-    // MARK: Hero — iridescent goal ring + count-up + headline
+    // MARK: Hero — editorial headline + count-up summary
 
     private var hero: some View {
         VStack(spacing: Theme.Space.lg) {
-            // Editorial headline over a soft iridescent bloom — the earned brand accent, kept restrained.
-            ZStack {
-                Ellipse()
-                    .fill(LinearGradient(colors: Theme.iridescent, startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 300, height: 170)
-                    .blur(radius: 60)
-                    .opacity(0.20 * bloom)
-                    .scaleEffect(0.9 + 0.1 * bloom)
-                VStack(spacing: Theme.Space.sm) {
-                    Text(planReadyTitle)
-                        .font(.serif(33, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(vm.projectedOutcome())
-                        .font(.rounded(Theme.FontSize.body, weight: .medium))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, Theme.Space.md)
+            VStack(spacing: Theme.Space.sm) {
+                Text(planReadyTitle)
+                    .font(.serif(30, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(vm.projectedOutcome())
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.top, Theme.Space.sm)
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.top, Theme.Space.xs)
             statStrip.reveal(0.16)
         }
     }
@@ -147,6 +148,7 @@ struct PlanRevealView: View {
         .padding(.vertical, Theme.Space.md)
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(planWeekCount) weeks, \(vm.daysPerWeek) days per week, \(totalSessions) sessions")
     }
@@ -182,8 +184,9 @@ struct PlanRevealView: View {
                             .font(.rounded(Theme.FontSize.caption, weight: .bold))
                             .monospacedDigit()
                             .foregroundStyle(Theme.ink)
-                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
+                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
                             .background(Capsule().fill(Theme.surface))
+                            .overlay(Capsule().stroke(Theme.hairline))
                     }
                 }
             }
@@ -204,6 +207,11 @@ struct PlanRevealView: View {
         let weekCount = min(16, (sessions.map { weekOf($0.date) }.max() ?? 0) + 1)
         guard weekCount > 0 else { return ([], "") }
 
+        // A long season charts its first 16 weeks — say so, or "30 WEEKS" in the stat strip above
+        // sits over a 16-bar chart with no explanation.
+        let totalWeeks = (sessions.map { weekOf($0.date) }.max() ?? 0) + 1
+        let truncationNote = totalWeeks > weekCount ? " · first \(weekCount) of \(totalWeeks) weeks shown" : ""
+
         if vm.running {
             var m = [Double](repeating: 0, count: weekCount)
             for s in sessions where s.discipline == .running && weekOf(s.date) < weekCount {
@@ -211,11 +219,11 @@ struct PlanRevealView: View {
             }
             let peak = m.max() ?? 0
             let cap = "Peaks at \(Formatters.distance(meters: peak, unit: distanceUnit)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
-            return (m, peak > 0 ? cap : "")
+            return (m, peak > 0 ? cap + truncationNote : "")
         } else {
             var c = [Double](repeating: 0, count: weekCount)
             for s in sessions where weekOf(s.date) < weekCount { c[weekOf(s.date)] += 1 }
-            return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week")
+            return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week" + truncationNote)
         }
     }
 
@@ -225,33 +233,188 @@ struct PlanRevealView: View {
         if data.values.count > 1, (data.values.max() ?? 0) > 0 {
             let maxV = data.values.max() ?? 1
             let peakIdx = data.values.firstIndex(of: maxV) ?? 0
+            let count = data.values.count
+            let tickEvery = count <= 8 ? 1 : (count <= 12 ? 2 : 3)
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                sectionLabel("YOUR NEXT \(data.values.count) WEEKS")
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    HStack(alignment: .bottom, spacing: 5) {
+                sectionLabel("YOUR TRAINING BLOCK")
+                VStack(alignment: .leading, spacing: Theme.Space.md) {
+                    // Elegant progression bars — a gray build with the peak week in the running-trace
+                    // purple (Theme.route), its value called out on a pill that pops in once bars settle.
+                    HStack(alignment: .bottom, spacing: barGap(count)) {
                         ForEach(Array(data.values.enumerated()), id: \.offset) { i, v in
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(i == peakIdx ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.16)))
-                                .frame(height: max(6, CGFloat(v / maxV) * 84) * (barsIn ? 1 : 0.02))
+                            VStack(spacing: 5) {
+                                Spacer(minLength: 0)
+                                if i == peakIdx {
+                                    Text(peakLabel(maxV))
+                                        .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+                                        // `Theme.background`, not `.white`: the capsule is filled
+                                        // with `Theme.ink`, which inverts to near-white in dark —
+                                        // hardcoded white text on it would be invisible.
+                                        .foregroundStyle(Theme.background)
+                                        .padding(.horizontal, 7).padding(.vertical, 3)
+                                        .background(Capsule().fill(Theme.ink))
+                                        .fixedSize()
+                                        .scaleEffect(calloutIn ? 1 : 0.7, anchor: .bottom)
+                                        .opacity(calloutIn ? 1 : 0)
+                                }
+                                UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 0,
+                                                       bottomTrailingRadius: 0, topTrailingRadius: 6, style: .continuous)
+                                    .fill(i == peakIdx
+                                          ? AnyShapeStyle(LinearGradient(colors: [Theme.route, Theme.route.opacity(0.78)],
+                                                                         startPoint: .top, endPoint: .bottom))
+                                          : AnyShapeStyle(LinearGradient(colors: [Theme.ink.opacity(0.18), Theme.ink.opacity(0.05)],
+                                                                         startPoint: .top, endPoint: .bottom)))
+                                    .frame(height: max(5, CGFloat(v / maxV) * 116) * (barsIn ? 1 : 0.02))
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(height: 158, alignment: .bottom)
+                    .animation(reduceMotion ? nil : .spring(response: 0.65, dampingFraction: 0.78), value: barsIn)
+
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+
+                    // Week axis — sparse ticks so it never crowds; the peak week always labeled.
+                    HStack(spacing: barGap(count)) {
+                        ForEach(Array(data.values.enumerated()), id: \.offset) { i, _ in
+                            Text("\(i + 1)")
+                                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(i == peakIdx ? Theme.ink : Theme.inkTertiary)
+                                .opacity((i % tickEvery == 0 || i == count - 1 || i == peakIdx) ? 1 : 0)
                                 .frame(maxWidth: .infinity)
                         }
                     }
-                    .frame(height: 88, alignment: .bottom)
-                    .animation(reduceMotion ? nil : .spring(response: 0.6, dampingFraction: 0.8), value: barsIn)
-                    HStack {
-                        Text("Week 1").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                        Spacer()
-                        if !data.caption.isEmpty {
-                            Text(data.caption).font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                        }
+
+                    if !data.caption.isEmpty {
+                        Text(data.caption)
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(Theme.Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Tighter gaps as the block gets longer so 16 weeks still breathe.
+    private func barGap(_ count: Int) -> CGFloat { count <= 6 ? 8 : (count <= 10 ? 6 : 4) }
+
+    /// The peak week's value for the on-chart callout — distance for runners, session count otherwise.
+    private func peakLabel(_ v: Double) -> String {
+        vm.running ? Formatters.distance(meters: v, unit: distanceUnit) : "\(Int(v.rounded()))"
+    }
+
+    // MARK: The Podium outlook (podium tier only — the depth the commitment earned)
+
+    /// Honest projections + the block's peak profile, for the athlete training to win. Wears the
+    /// tier's iridescent border — the reveal stays monochrome (user call) EXCEPT the Podium
+    /// signature, which follows the tier from its selection card to its promise.
+    private var podiumOutlook: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            sectionLabel("THE PODIUM OUTLOOK")
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                if let line = outlookProjectionLine {
+                    Text(line)
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let s = peakWeekStats {
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+                    HStack(spacing: 0) {
+                        outlookCell(Formatters.distance(meters: s.volumeM, unit: distanceUnit), "PEAK WEEK")
+                        statDivider
+                        outlookCell(Formatters.distance(meters: s.longestM, unit: distanceUnit), "LONGEST RUN")
+                        statDivider
+                        outlookCell("\(s.hardDays)", "HARD DAYS / WK")
+                    }
+                }
+                Text("Projected from your logged fitness — the work still has to happen.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            // strokeBorder, not stroke: a centered stroke overhangs the card by half its width, and
+            // the scroll view clips that overhang on the left/right (full-width card) but not
+            // top/bottom (open spacing) — the border rendered 0.75pt on the sides and 1.5pt+glow
+            // above/below (owner report 2026-07-30). Inset fully inside, it's uniform everywhere.
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(IridescentMaterial(), lineWidth: 1.5))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Race path: today's predicted finish, then the goal the block is built to REACH — aiming at the
+    /// athlete's actual target is the job, not hedging a lesser prediction. When the goal is a genuine
+    /// stretch beyond one cycle's honest reach, we still point at it and name the real ground this
+    /// block covers toward it. No-race: the athlete's 5K, now and where the block points it. All from
+    /// `PodiumOutlook` (the verdict's own improvement model — never a promise the engine would refuse).
+    private var outlookProjectionLine: String? {
+        guard let p5k = profile?.plan?.p5kSPerKm, p5k > 0 else { return nil }
+        let weeks = planWeekCount
+        if vm.goal == .raceDistance, let r = vm.raceDistance {
+            // Their own time at the race distance is the honest "now" — mirrors the feasibility
+            // banner, so the reveal never contradicts the verdict the athlete just saw.
+            let raceTimeS: Double? = {
+                guard let rr = vm.calibration.recentRun, abs(rr.distanceM - r.meters) < 100 else { return nil }
+                return rr.timeS
+            }()
+            guard let proj = PodiumOutlook.raceProjection(raceDistanceM: r.meters, p5kSPerKm: p5k,
+                                                          goalFinishTimeS: vm.goalFinishTimeS,
+                                                          experience: vm.experience, weeks: weeks,
+                                                          currentRaceTimeS: raceTimeS) else { return nil }
+            let now = PlanFeasibility.hms(proj.nowS)
+            let race = r.label.lowercased()
+            if let goalS = vm.goalFinishTimeS {
+                // Built to reach it (goal within honest reach) vs. built to close on it (a stretch).
+                if proj.builtS <= goalS + 1 {
+                    return "Today's fitness runs a \(now) \(race). This block is built to get you to your \(PlanFeasibility.hms(goalS)) goal."
+                }
+                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)) — real ground toward your \(PlanFeasibility.hms(goalS)) goal."
+            }
+            return "Today's fitness runs a \(now) \(race). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
+        }
+        guard let proj = PodiumOutlook.fiveKProjection(p5kSPerKm: p5k, experience: vm.experience,
+                                                       weeks: weeks) else { return nil }
+        return "Today you're a \(PlanFeasibility.hms(proj.nowS)) 5K runner. This block is built to move you toward \(PlanFeasibility.hms(proj.builtS))."
+    }
+
+    /// The block's biggest week: running volume, the single longest run anywhere in the block, and
+    /// how many hard days that peak week holds.
+    private var peakWeekStats: (volumeM: Double, longestM: Double, hardDays: Int)? {
+        let weeks = weeksGrouped
+        guard !weeks.isEmpty else { return nil }
+        func runVol(_ ss: [PlannedSession]) -> Double {
+            ss.filter { $0.discipline == .running && $0.runType != .race }
+                .compactMap(\.targetDistanceM).reduce(0, +)
+        }
+        guard let peak = weeks.max(by: { runVol($0.sessions) < runVol($1.sessions) }) else { return nil }
+        let vol = runVol(peak.sessions)
+        guard vol > 0 else { return nil }
+        let longest = profile?.plan?.sessions
+            .filter { $0.discipline == .running && $0.runType != .race }
+            .compactMap(\.targetDistanceM).max() ?? 0
+        let hard = peak.sessions.filter { $0.runType?.isQuality == true }.count
+        return (volumeM: vol, longestM: longest, hardDays: hard)
+    }
+
+    private func outlookCell(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(.display(20, weight: .black)).monospacedDigit()
+                .foregroundStyle(Theme.ink)
+            Text(label)
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.0)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: Race countdown (dated race goals)
@@ -259,7 +422,8 @@ struct PlanRevealView: View {
     private func raceCountdown(_ weeks: Int) -> some View {
         HStack(spacing: Theme.Space.md) {
             Image(systemName: "flag.checkered").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
-                .frame(width: 44, height: 44).background(Circle().fill(IridescentMaterial()).opacity(0.32))
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Theme.background)).overlay(Circle().stroke(Theme.hairline))
             VStack(alignment: .leading, spacing: 1) {
                 Text(weeks == 0 ? "Race week" : "\(weeks) week\(weeks == 1 ? "" : "s") to race day")
                     .font(.display(20, weight: .black)).foregroundStyle(Theme.ink).monospacedDigit()
@@ -273,50 +437,20 @@ struct PlanRevealView: View {
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(IridescentMaterial()).opacity(0.12)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
     }
 
-    // MARK: The road ahead — a real route drawing itself under the purple "you" puck (runners)
+    // MARK: The full plan — every week, collapsible; sessions expand to the actual work + fueling
 
-    private var routeSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            sectionLabel("THE ROAD AHEAD")
-            RouteDrawMap(headStyle: .puck, frameInsets: (64, 22))
-                .frame(height: 236)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
-                .accessibilityLabel("A running route drawing across a map — your training ahead")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: Anatomy — where the plan will build you (lift-only plans)
-
-    private var anatomySection: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            sectionLabel("WHERE YOU'LL GROW")
-            AnatomyGlowView(activation: vm.targetMuscles(), sex: vm.bodySex)
-                .frame(height: 230)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, Theme.Space.md)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: First week — tappable cards that expand to the actual work
-
-    private var firstWeekList: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            sectionLabel("YOUR FIRST WEEK").reveal(0.34)
-            VStack(spacing: Theme.Space.sm) {
-                ForEach(Array(weekOne.enumerated()), id: \.element.persistentModelID) { index, session in
-                    SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
-                                         startExpanded: index == 0)
-                        .reveal(0.38 + Double(index) * 0.06)
-                }
+    private var fullPlanList: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            sectionLabel("YOUR PLAN, WEEK BY WEEK").reveal(0.34)
+            ForEach(Array(weeksGrouped.enumerated()), id: \.element.week) { i, group in
+                WeekSection(week: group.week, sessions: group.sessions, profile: profile,
+                            distanceUnit: distanceUnit, running: vm.running, startExpanded: group.week == 1)
+                    .reveal(min(0.6, 0.38 + Double(i) * 0.05))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -327,24 +461,85 @@ struct PlanRevealView: View {
     private func animateIn() {
         guard !reduceMotion else {
             shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
-            shownSessions = Double(totalSessions); bloom = 1; barsIn = true
+            shownSessions = Double(totalSessions); barsIn = true; calloutIn = true
             return
         }
-        withAnimation(.easeOut(duration: 0.9).delay(0.15)) { bloom = 1 }
         withAnimation(.easeOut(duration: 1.1).delay(0.2)) {
             shownWeeks = Double(planWeekCount)
             shownDays = Double(vm.daysPerWeek)
             shownSessions = Double(totalSessions)
         }
-        withAnimation(.spring(response: 0.7, dampingFraction: 0.8).delay(0.45)) { barsIn = true }
+        withAnimation(.spring(response: 0.7, dampingFraction: 0.8).delay(0.5)) { barsIn = true }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.7).delay(1.0)) { calloutIn = true }
         Haptics.celebration()   // the earned, sold moment
+    }
+}
+
+// MARK: - Collapsible week
+
+/// One week of the plan, collapsible so the athlete can browse the whole block without an endless wall.
+/// The header shows the week's shape (session count + mileage); expanding reveals every session, each of
+/// which expands again to the concrete work and — for long runs — fueling guidance. Week 1 opens by default.
+private struct WeekSection: View {
+    let week: Int
+    let sessions: [PlannedSession]
+    let profile: UserProfile?
+    let distanceUnit: DistanceUnit
+    let running: Bool
+    let startExpanded: Bool
+
+    @State private var expanded = false
+
+    private var summary: String {
+        let n = sessions.count
+        if running {
+            let m = sessions.reduce(0.0) { $0 + ($1.discipline == .running ? ($1.targetDistanceM ?? 0) : 0) }
+            if m > 0 { return "\(n) · \(Formatters.distance(meters: m, unit: distanceUnit))" }
+        }
+        return "\(n) session\(n == 1 ? "" : "s")"
+    }
+
+    var body: some View {
+        VStack(spacing: Theme.Space.sm) {
+            Button {
+                Haptics.selection()
+                withAnimation(.snappy(duration: 0.26)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Text("WEEK \(week)")
+                        .font(.rounded(Theme.FontSize.caption, weight: .black)).tracking(1.2)
+                        .foregroundStyle(Theme.ink)
+                    Spacer(minLength: Theme.Space.sm)
+                    Text(summary)
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(Theme.inkTertiary)
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                }
+                .padding(.horizontal, Theme.Space.xs)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(spacing: Theme.Space.sm) {
+                    ForEach(Array(sessions.enumerated()), id: \.element.persistentModelID) { i, session in
+                        SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
+                                             startExpanded: week == 1 && i == 0)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .onAppear { if startExpanded { expanded = true } }
     }
 }
 
 // MARK: - Expandable session card
 
-/// A first-week session that expands to the concrete work: every lift's sets/reps/weight, or a run's
-/// mileage, pace and rep breakdown. The dropdown the athlete asked for.
+/// A plan session that expands to the concrete work: every lift's sets/reps/weight, or a run's mileage,
+/// pace, rep breakdown and — for long runs — fueling guidance. The dropdown the athlete asked for.
 private struct SessionDisclosureRow: View {
     let session: PlannedSession
     let profile: UserProfile?
@@ -397,6 +592,7 @@ private struct SessionDisclosureRow: View {
             }
         }
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .onAppear { if startExpanded { expanded = true } }
     }
 
@@ -407,10 +603,7 @@ private struct SessionDisclosureRow: View {
                 Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.caption, weight: .semibold))
                     .foregroundStyle(Theme.ink).lineLimit(1)
                 Spacer(minLength: Theme.Space.sm)
-                if let w = StrengthSuggest.label(for: ex, profile: profile) {
-                    Text(w).font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
-                }
-                Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
+                Text(ex.prescriptionText)
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
                     .foregroundStyle(Theme.inkSecondary).frame(width: 66, alignment: .trailing)
             }
@@ -431,6 +624,42 @@ private struct SessionDisclosureRow: View {
         }
         if let why = session.rationale, !why.isEmpty {
             Text(why).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        fuelTip
+    }
+
+    /// Fueling guidance for the longer runs (short runs stay silent) — the same evidence-based `FuelingGuide`
+    /// the in-app session detail shows, so the athlete sees just how thorough the plan is.
+    @ViewBuilder
+    private var fuelTip: some View {
+        if session.discipline == .running,
+           let dur = FuelingGuide.estimatedDurationS(distanceM: session.targetDistanceM,
+                                                     paceSPerKm: session.targetPaceSPerKm,
+                                                     durationS: session.targetDurationS) {
+            let g = FuelingGuide.guidance(durationS: dur, isRace: session.runType == .race)
+            if g.carbsPerHour != nil {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text(g.headline).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                    }
+                    fuelLine("BEFORE", g.before)
+                    fuelLine("DURING", g.during)
+                    fuelLine("AFTER", g.after)
+                }
+                .padding(Theme.Space.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.background))
+            }
+        }
+    }
+
+    private func fuelLine(_ label: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Text(label).font(.rounded(9, weight: .black)).tracking(0.7).foregroundStyle(Theme.inkTertiary)
+                .frame(width: 46, alignment: .leading).padding(.top, 2)
+            Text(text).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

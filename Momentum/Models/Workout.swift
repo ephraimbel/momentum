@@ -33,6 +33,10 @@ final class Workout {
     /// Photos the athlete attached, Strava-style (cap `Workout.photoCap`, ordered; first is the hero).
     /// Each is its own external-storage blob so grids can fault just the hero.
     @Relationship(deleteRule: .cascade) var photos: [WorkoutPhoto] = []
+    /// The cover rule (owner call 2026-07-29): the activity's OWN visual — route map, muscle map,
+    /// discipline glyph — is always the grid/post cover; a photo covers only when the athlete
+    /// explicitly flips this on the save screen. Additive + defaulted (schema rule).
+    var coverIsPhoto: Bool = false
 
     init() {}
 
@@ -78,6 +82,12 @@ final class GPSDetail {
     var avgHR: Int?
     var avgCadence: Int?            // steps/min (run) or rpm (ride)
     var mapSnapshotData: Data?      // true-B/W PNG
+    /// `RouteSnapshotter.renderVersion` the snapshot was drawn with — the healer re-renders
+    /// stale-version images so look changes reach old workouts. 0 = pre-versioning.
+    var mapSnapshotVersion: Int = 0
+    /// The basemap this workout's map renders with — chosen on the save screen (nil = the athlete's
+    /// app-wide persisted style at render time). Raw string for SwiftData migration safety.
+    var mapStyleRaw: String?
     /// Route snapped to the road/path network by Mapbox Map Matching (§8.5), stored as JSON
     /// `[[lat, lon]]`. Present only when matching succeeded above the confidence gate; display falls
     /// back to the Kalman-filtered raw trace when nil. The raw `samples` are always retained.
@@ -92,6 +102,11 @@ final class GPSDetail {
     var structuredRepsData: Data?
     var structuredReps: [RepResult] {
         structuredRepsData.flatMap { try? JSONDecoder().decode([RepResult].self, from: $0) } ?? []
+    }
+
+    /// The workout's map style, resolved: the saved per-run choice, else the app-wide style.
+    var mapStyle: MapStyleOption {
+        mapStyleRaw.flatMap(MapStyleOption.init(rawValue:)) ?? .persisted
     }
 
     init() {}
@@ -119,6 +134,13 @@ final class LocationSample {
     var altitudeM: Double = 0
     var speedMS: Double = 0
     var accepted: Bool = true
+    /// Captured while the recording was PAUSED — manually or by auto-pause. The engine accrued
+    /// neither distance nor time for it, so no reader may either: the route skips it and the
+    /// split/PR reducer freezes its clock across the span (`GPSDetail.routePoints`). Deliberately
+    /// distinct from `accepted == false`, which means the accept gate rejected the fix (a spike, a
+    /// weak-signal reading) while the athlete *was* still moving and the clock must keep running.
+    /// Additive-only (defaults false, so pre-2026-07 rows read as "never paused").
+    var pausedSpan: Bool = false
 
     init() {}
 }
@@ -134,4 +156,21 @@ final class Split {
     var isPartial: Bool = false
 
     init() {}
+}
+
+/// Cheap content signature over already-materialized scalars — the cache key for aggregates
+/// that must refresh on equal-count mutations (edit a saved workout's sport, delete one and
+/// import another in the same session). A count-only key silently replays stale charts through
+/// exactly those edits. Scalars only — never faults relationships (sets, GPS samples).
+extension Array where Element == Workout {
+    var contentSignature: Int {
+        var h = Hasher()
+        h.combine(count)
+        for w in self {
+            h.combine(w.startedAt)
+            h.combine(w.type.rawValue)
+            h.combine(w.durationS)
+        }
+        return h.finalize()
+    }
 }

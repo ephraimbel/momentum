@@ -17,15 +17,32 @@ struct CardioTrackingView: View {
     var guideRoute: [GeoPoint] = []
     /// An optional guided structured session (warm-up → reps → cool-down) to coach through in real time.
     var structured: StructuredWorkout? = nil
+    /// The plan's prescribed pace for a *non-structured* planned run (easy/long) — shown as a quiet
+    /// target on the goal bar so "run easy at ~9:40" lives on the screen, not in the athlete's
+    /// memory. Structured sessions carry their own per-step targets and ignore this.
+    var targetPaceSPerKm: Double? = nil
     var onFinish: (UUID?) -> Void
 
     enum Phase { case acquiring, countdown, tracking }
 
-    @Query private var workouts: [Workout]
+    /// The newest few workouts, ONLY to frame the map on the athlete's last route until a live fix
+    /// lands. Unbounded and unsorted, this fetched the entire history and re-sorted it in memory on
+    /// every body pass — and body re-evaluates through the whole recording, because the row being
+    /// captured is itself in the result set.
+    static var recentRoutes: FetchDescriptor<Workout> {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        d.fetchLimit = 5
+        return d
+    }
+    @Query(CardioTrackingView.recentRoutes) private var workouts: [Workout]
     @Environment(\.colorScheme) private var colorScheme
     @Query private var profiles: [UserProfile]   // for max HR → live zone banding
     @State private var phase: Phase = .acquiring
     @State private var countdown = 3
+    /// Where the run began — captured from the athlete's known position the INSTANT recording arms,
+    /// so the green start pin drops immediately on "GO" rather than waiting for the first accepted
+    /// route point (which lands up to a fix interval later, and read as a delayed dot).
+    @State private var startCoordinate: CLLocationCoordinate2D?
     @State private var viewport: Viewport = .idle
     @State private var confirmStop = false
     @State private var vm: CardioViewModel?
@@ -42,6 +59,19 @@ struct CardioTrackingView: View {
     /// multi-hour session). Frozen chunks are appended to the Mapbox source once and never re-sent;
     /// only the short live tail is replaced per fix, so map payloads stay constant-size too.
     @State private var smoother = RouteSmoothing.LiveSmoother()
+    /// Mapbox interpolates the location puck toward each pushed position over ~1.1 s, so the dot's
+    /// *visual* position trails the newest fix. If we drew the trace to that newest fix immediately,
+    /// the line would race ahead of the dot (badly, on fast descents or dense fixes — the dot ends up
+    /// mid-trace instead of at the tip). So we hold the trace's leading tip back by the same lag: the
+    /// smoother is fed only points that arrived ≥ `puckLagS` ago, which is ≈ where the puck has
+    /// actually interpolated to — so the athlete's dot always sits exactly at the tip of the line.
+    private static let puckLagS: TimeInterval = 0.5
+    /// (wall-clock arrival, route-point count) samples, so we can look up how many points existed
+    /// ≈`puckLagS` ago and draw the trace only that far — pruned to a small trailing window.
+    @State private var traceReleaseLog: [(t: Date, count: Int)] = []
+    /// Rearmed on every fix; fires only when route points stop, releasing the held-back tail so the
+    /// line ends exactly under the parked dot (see the trailing flush in `onChange`).
+    @State private var traceFlushTask: Task<Void, Never>?
     /// Drives the puck (and its follow camera) from our Kalman-filtered position instead of raw
     /// CoreLocation — the dot, the camera, and the trace all track the same clean track, so a
     /// rejected GPS spike can't teleport the dot into a building while the line stays put.
@@ -67,15 +97,23 @@ struct CardioTrackingView: View {
     /// The locked-on follow viewport — follows the location puck, north-up, at a tight running zoom.
     private var followViewport: Viewport { .followPuck(zoom: followZoom, bearing: .constant(0)) }
 
+    /// What the LIVE map actually renders: the flat 2D equivalent of the athlete's chosen style, so
+    /// a follow-camera over a heavy 3D/satellite basemap can't jank the run screen. Their real
+    /// choice (`mapStyle`) still drives the layers picker and the saved run's snapshot.
+    private var liveStyle: MapStyleOption { mapStyle.liveTrackingStyle }
+
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
 
     /// Most recent prior route's location, used to frame the map until a live fix arrives — so we
     /// never show the whole country while waiting for GPS.
     private var lastKnownCoordinate: CLLocationCoordinate2D? {
-        workouts
-            .sorted { $0.startedAt > $1.startedAt }
+        // Never the recording in progress: its `samples` array is the one growing under us, and
+        // faulting it per body pass is exactly the work this lookup must not do.
+        let live = ActiveWorkoutMarker.pendingID
+        return workouts
             .lazy
+            .filter { $0.id != live }
             .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
             .first
             .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
@@ -113,9 +151,36 @@ struct CardioTrackingView: View {
         // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
         // the athlete centered at the tight running zoom.
         .onChange(of: routeCoords.count) { updateOffRoute() }   // followPuck keeps the camera centered
-        // The moment recording starts, snap in to the athlete and follow.
+        #if DEBUG
+        // Marketing shot: frame the WHOLE clean loop (overview) instead of the tight follow zoom.
+        // Set it as a few one-shots AFTER the loop has drawn — doing it per-fix starves the engine
+        // (map thrash) and leaves the lap half-run.
+        .task {
+            guard LocationService.isMidway else { return }
+            // Let the whole lap draw first under the fast follow-cam (per-fix map work is cheap while
+            // zoomed in), THEN frame the finished loop — and re-frame a few times so the final shot
+            // always fits the complete loop.
+            try? await Task.sleep(for: .seconds(16))
+            for _ in 0..<5 {
+                if routeCoords.count > 2 {
+                    withAnimation(.easeInOut(duration: 0.7)) {
+                        viewport = .overview(geometry: LineString(routeCoords),
+                                             geometryPadding: EdgeInsets(top: 90, leading: 52, bottom: 300, trailing: 52))
+                    }
+                }
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+        #endif
+        // The moment recording starts: drop the start pin at the athlete's known position (instant,
+        // no wait for the first route point) and snap the camera in to follow.
         .onChange(of: phase) { _, newPhase in
-            if newPhase == .tracking { recenterOnUser() }
+            if newPhase == .tracking {
+                if startCoordinate == nil, let p = vm?.puckPoint {
+                    startCoordinate = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon)
+                }
+                recenterOnUser()
+            }
         }
         // Never imply we're still searching forever: after a beat, soften the copy to nudge "Start now".
         .task {
@@ -123,6 +188,8 @@ struct CardioTrackingView: View {
             if phase == .acquiring { withAnimation(Motion.standard) { acquireTimedOut = true } }
         }
         .onAppear {
+            if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
+
             // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
             // begins we follow the location puck (see `recenterOnUser`).
             if case .idle = viewport {
@@ -135,16 +202,17 @@ struct CardioTrackingView: View {
         // North-up (rotation disabled) so the rejoin arrow's compass bearing reads as screen rotation.
         MapReader { proxy in
             Map(viewport: $viewport) {
-                // A green dot where the run began (one stable annotation — no churn). Uses the raw first
-                // fix so it never triggers a spline recompute.
-                if let start = routeCoords.first {
+                // A green dot where the run began (one stable annotation — no churn). Uses the
+                // position captured at "GO" so it appears instantly; falls back to the first route
+                // point if that capture was ever missed. Never triggers a spline recompute.
+                if let start = startCoordinate ?? routeCoords.first {
                     MapViewAnnotation(coordinate: start) { startDot }.allowOverlap(true)
                 }
                 // The athlete's purple location puck ("you") is configured imperatively in
                 // `.onStyleLoaded` (BrandPuck.apply) — the SwiftUI `Puck2D` crashes on devices where
                 // Mapbox's default puck asset won't load.
             }
-            .mapStyle(mapStyle.mapboxStyle(for: colorScheme))
+            .mapStyle(liveStyle.mapboxStyle(for: colorScheme))
             .ornamentOptions(MapChrome.hidden)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
             .onStyleLoaded { _ in
@@ -156,11 +224,37 @@ struct CardioTrackingView: View {
             // and replace the short live tail. No full re-smooth, no full re-upload — per-fix work
             // stays constant no matter how long the session gets.
             .onChange(of: routeCoords.count) {
-                let delta = smoother.ingest(routeCoords)
-                syncRouteLayers(proxy.map, delta: delta)
+                let coords = routeCoords
+                let now = Date()
+                traceReleaseLog.append((now, coords.count))
+                traceReleaseLog.removeAll { $0.t < now.addingTimeInterval(-Self.puckLagS - 1) }
+                // Draw only up to where the puck has interpolated to (the point count as of ~puckLagS
+                // ago), so the trace tip tracks the dot instead of racing ahead of it. Fewer, calmer
+                // tail updates also keep the line from flickering into gaps under a fast fix stream.
+                let visibleCount = traceReleaseLog.last { $0.t <= now.addingTimeInterval(-Self.puckLagS) }?.count ?? 0
+                if visibleCount > 0 {
+                    let delta = smoother.ingest(Array(coords.prefix(visibleCount)))
+                    syncRouteLayers(proxy.map, delta: delta)
+                }
+                // Trailing flush: when route points STOP arriving (pause, standing still past the
+                // movement gate, GPS loss, the final fix before Finish), no further onChange fires —
+                // without this, the held-back newest point never releases and the line permanently
+                // ends one fix short of the parked dot. 1.2 s ≈ the dot's 1.1 s glide: the tip snaps
+                // in right as the dot settles. Cancelled and rearmed by every new fix, so it's a
+                // no-op while fixes flow.
+                traceFlushTask?.cancel()
+                traceFlushTask = Task {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    guard !Task.isCancelled else { return }
+                    let delta = smoother.ingest(coords)
+                    syncRouteLayers(proxy.map, delta: delta)
+                }
             }
-            // The puck follows the engine's filtered position (raw while acquiring so "you" shows
-            // instantly; Kalman tip once recording).
+            // Feed the puck the engine's filtered position per fix (raw while acquiring so "you"
+            // shows instantly; Kalman tip once recording). Mapbox's LocationManager interpolates the
+            // puck between these over ~1.1 s on its own optimized display link, and the follow camera
+            // tracks that smooth position — so the dot and map glide without us driving a second
+            // 60 fps loop (which saturated the GPU and janked the whole map).
             .onChange(of: vm?.puckPoint) { _, point in
                 if let point { puckFeed.push(lat: point.lat, lon: point.lon) }
             }
@@ -260,7 +354,8 @@ struct CardioTrackingView: View {
     }
 
     /// The guide line reads as a quiet dashed path — lighter over satellite imagery for contrast.
-    private var guideColor: Color { mapStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
+    /// Keyed to the LIVE style actually on screen, not the (possibly 3D) chosen one.
+    private var guideColor: Color { liveStyle.isImagery ? .white.opacity(0.65) : Theme.ink.opacity(0.28) }
 
     /// Green "start" dot (white ring) marking where the run began — matches the completed-route map.
     private var startDot: some View {
@@ -449,6 +544,9 @@ struct CardioTrackingView: View {
                 .font(.display(96, weight: .black)).foregroundStyle(.white)
                 .id(countdown).transition(.scale.combined(with: .opacity))
         }
+        // Purely visual — the dimmer must not eat taps, or the X behind it can't abort the
+        // countdown and an accidental start arms no matter what the athlete does.
+        .allowsHitTesting(false)
     }
 
     private func trackingPanel(_ vm: CardioViewModel) -> some View {
@@ -494,8 +592,11 @@ struct CardioTrackingView: View {
         }
         .animation(Motion.standard, value: vm.stepTitle)
         .padding(Theme.Space.md)
-        .confirmationDialog("End this \(type.title.lowercased())?", isPresented: $confirmStop, titleVisibility: .visible) {
-            Button("Finish", role: .destructive) { Task { onFinish(await vm.finish()) } }
+        // Finishing is the goal, not a loss. A destructive role paints the primary action red and
+        // frames crossing your own finish line as damage — the last thing the athlete should read
+        // before the reveal. The confirmation stays (a mis-tap mid-run is real); the alarm goes.
+        .confirmationDialog("Finish this \(type.title.lowercased())?", isPresented: $confirmStop, titleVisibility: .visible) {
+            Button("Finish") { Task { onFinish(await vm.finish()) } }
             Button("Keep going", role: .cancel) {}
         }
     }
@@ -622,7 +723,7 @@ struct CardioTrackingView: View {
                 }
             }
             .frame(height: 6)
-            Text("\(distanceNumber(forMeters: distance)) / \(goalNum) \(unitLabel)\(guideRoute.count > 1 ? " · your loop" : "")")
+            Text("\(distanceNumber(forMeters: distance)) / \(goalNum) \(unitLabel)\(targetPaceSuffix)\(guideRoute.count > 1 ? " · your loop" : "")")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
         }
         .padding(.horizontal, Theme.Space.lg)
@@ -631,7 +732,13 @@ struct CardioTrackingView: View {
         // iridescent "reached" state is never the sole signal (PRD §13.4).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(goalReached ? "Goal reached" : "Goal progress")
-        .accessibilityValue("\(distanceNumber(forMeters: distance)) of \(goalNum) \(unitLabel), \(Int((progress * 100).rounded())) percent")
+        .accessibilityValue("\(distanceNumber(forMeters: distance)) of \(goalNum) \(unitLabel), \(Int((progress * 100).rounded())) percent"
+                            + (targetPaceSPerKm.map { ", target pace \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? ""))
+    }
+
+    /// " · target ~9:40 /mi" when the plan prescribed a pace for this (non-structured) run.
+    private var targetPaceSuffix: String {
+        targetPaceSPerKm.map { " · target ~\(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? ""
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

@@ -42,19 +42,45 @@ enum CommentModeration {
 /// Seeded community comments so posts feel alive (honest: clearly community content). Deterministic
 /// per post id; replaced by real comments once Supabase is configured.
 enum CommunityComments {
-    static func seed(for postID: UUID, now: Date = Date()) -> [Comment] {
+    /// `reactions`/`type`/`authorHandle` come from the post so threads cohere with it: length follows
+    /// the respect count (nobody comments on a post nobody saw), texts match the sport, and the
+    /// author never comments on themselves. Defaults keep older/positional callers compiling.
+    static func seed(for postID: UUID, postDate: Date? = nil, now: Date = Date(),
+                     reactions: Int = 30, type: WorkoutType? = nil,
+                     authorHandle: String? = nil) -> [Comment] {
         let base = stableSeed(postID)                  // process-stable (UUID.hashValue is randomized)
         var rng = SeededRNG(base)
-        let n = rng.int(0...4)
+        // Skewed and capped by engagement: quiet posts carry a line or nothing; well-respected
+        // posts sprout real threads (owner ask 2026-07-29 — the page should read like humans are
+        // actually talking). Still never a long thread under a barely-seen post.
+        let cap = reactions < 6 ? 0 : reactions < 15 ? 2 : reactions < 40 ? 4 : reactions < 90 ? 6 : 9
+        let n = min(cap, Int(10 * pow(rng.double(0, 1), 1.7)))
         guard n > 0 else { return [] }
-        return (0..<n).map { k in
-            let who = rng.pick(commenters)
+        // Comments land AFTER their post — a two-day-old comment under a twenty-minute-old post
+        // is an instant fake tell. Clamp the window to the post's actual age when known.
+        let window = min(postDate.map { max(now.timeIntervalSince($0), 120) } ?? 40 * 3600, 40 * 3600)
+        // Commenters are REAL community athletes from the directory — they carry their own synthetic
+        // face and a tappable profile. The old hardcoded dozen existed nowhere, so every thread was
+        // the same faceless strangers under a faced poster. No dupes in a thread; never the author.
+        let pool = CommunityDirectory.all()
+        var used: Set<String> = authorHandle.map { [$0] } ?? []
+        var lines = texts(for: type)
+        return (0..<n).compactMap { k in
+            var who: CommunityAthlete?
+            for _ in 0..<8 {   // seeded retry keeps the draw deterministic
+                let candidate = pool[rng.int(0...(pool.count - 1))]
+                if candidate.isSample, !used.contains(candidate.handle) { who = candidate; break }
+            }
+            guard let who else { return nil }
+            used.insert(who.handle)
+            // Sample texts WITHOUT replacement so a thread never repeats a line.
+            let text = lines.isEmpty ? "Respect." : lines.remove(at: rng.int(0...(lines.count - 1)))
             return Comment(
                 id: UUID(uuidString: "00000000-0000-0000-0002-\(String(format: "%010d", abs(base) % 1_000_000_000))\(String(format: "%02d", k))") ?? UUID(),
                 postID: postID,
                 authorName: who.name, authorHandle: who.handle, isCommunity: true,
-                text: rng.pick(texts),
-                date: now.addingTimeInterval(-rng.double(0.2, 40) * 3600))
+                text: text,
+                date: now.addingTimeInterval(-rng.double(0.05, 0.9) * window))
         }
     }
 
@@ -67,12 +93,33 @@ enum CommunityComments {
         return Int(truncatingIfNeeded: h)
     }
 
-    private static let commenters: [(name: String, handle: String)] = [
-        ("Jordan Ellis", "jordane"), ("Sam Park", "samp"), ("Riley Okafor", "rileyo"),
-        ("Casey Tan", "caseyt"), ("Morgan Reed", "morganr"), ("Alex Costa", "alexc"),
-        ("Taylor Kim", "taylork"), ("Jules Mercer", "julesm")]
-    private static let texts = [
-        "Strong work! 🔥", "Let's go!", "Inspiring pace.", "That route looks brutal — nice.",
-        "Beast mode.", "Consistency is everything 💪", "Huge. Keep it up!", "Love this.",
-        "Respect.", "Crushing it lately.", "Solid effort!", "This is the way."]
+    // Written the way people actually comment — short, warm, no em-dashes (an AI tell). Sport-gated:
+    // "What shoes are you in?" under a swim or "that elevation though" under a lift read generated.
+    private static func texts(for type: WorkoutType?) -> [String] {
+        guard let type else { return warmTexts }
+        if type.isStrengthStyle { return warmTexts + strengthTexts }
+        if type == .yoga { return warmTexts + calmTexts }
+        if type.isGPS { return warmTexts + gpsTexts }
+        return warmTexts
+    }
+    private static let warmTexts = [
+        "Strong work! 🔥", "Let's go!", "Beast mode.", "Consistency is everything 💪",
+        "Huge. Keep it up!", "Love this.", "Respect.", "Crushing it lately.", "Solid effort!",
+        "This is the way.", "Unreal consistency.", "There it is!!", "Weekend well spent.",
+        "Making me want to get out there", "ok this is motivating", "The streak continues 🙌",
+        "You again!! machine.", "day made", "Needed to see this today", "and I thought I trained hard",
+        "W", "goals honestly", "Proud of you!", "How do you do this daily", "showing up > everything"]
+    private static let gpsTexts = [
+        "Inspiring pace.", "That route looks brutal. Nice.", "Okay pace!! 👏",
+        "What shoes are you in?", "That elevation though", "Those splits 👀",
+        "Perfect morning for it.", "That loop looks fun, dropping a pin", "negative splits?? insane",
+        "My knees hurt just looking at this", "That is a spicy pace my friend",
+        "Take me next time!!", "The early morning grind 🌅", "route saved for the weekend"]
+    private static let strengthTexts = [
+        "Save some PRs for the rest of us", "Numbers going up 📈", "That volume is serious.",
+        "Strong. Simple as that.", "Gym therapy hits different.", "Sheesh. That total.",
+        "Leg day warrior 🫡", "Bar speed must have been flying"]
+    private static let calmTexts = [
+        "Needed this reminder to slow down.", "Recovery is training too.", "So peaceful.",
+        "Balance 🙌"]
 }

@@ -49,6 +49,16 @@ enum SportCategory: String, CaseIterable, Identifiable {
 }
 enum Discipline: String, Codable, Sendable, CaseIterable { case running, cycling, walking, strength }
 
+extension WorkoutType {
+    /// The sport bucket a discipline maps to when nothing more precise is known.
+    static func forDiscipline(_ d: Discipline) -> WorkoutType {
+        switch d { case .strength: .strength; case .cycling: .ride; case .walking: .walk; case .running: .run }
+    }
+
+    // `forPlanned(_:)` lives in TrainingPlan.swift, not here: this file is compiled into the watch
+    // and widget targets too, and they don't build PlannedSession.
+}
+
 /// A target race the plan points at (drives long-run progression + taper). Onboarding captures one
 /// for "run a race" goals; the engine reads `raceDistanceM`.
 enum RaceDistance: String, Codable, Sendable, CaseIterable, Identifiable {
@@ -144,16 +154,22 @@ enum RunType: String, Codable, Sendable, CaseIterable {
 enum SessionStatus: String, Codable, Sendable, CaseIterable { case planned, completed, missed, moved }
 enum PRType: String, Codable, Sendable, CaseIterable {
     case fastest1k, fastest5k, fastest10k, longestRun, longestDuration
+    // Half/marathon benchmark windows (2026-07-22, awards pass) — additive: stored as new raw
+    // strings, so existing PersonalRecord rows are untouched.
+    case fastestHalf, fastestMarathon
+    // 50K benchmark window (2026-07-22) — the ultra finisher's own record, not a marathon split.
+    case fastest50k
     case heaviestWeight, bestE1RM, repMax, bestSetVolume, bestSessionVolume
 }
 enum WorkoutPrivacy: String, Codable, Sendable, CaseIterable {
     case `private`, friends, `public`
 
-    /// User-facing label for the visibility picker.
+    /// User-facing label for the visibility picker. "Friends" rhymes with the community wall's
+    /// Friends | Global scope pill (2026-07-29) — one audience language across save and feed.
     var label: String {
         switch self {
         case .private: "Only me"
-        case .friends: "Followers"
+        case .friends: "Friends"
         case .public: "Everyone"
         }
     }
@@ -247,6 +263,18 @@ extension WorkoutType: Identifiable {
     /// A GPS/map workout (run/ride/walk family) — carries a `gps` payload. The three capture modes
     /// are mutually exclusive: `isGPS`, `isStrengthStyle`, `isTimed`.
     var isGPS: Bool { !isStrengthStyle && !isTimed }
+
+    /// Any bike. **Use this, never `== .ride`,** wherever a surface picks speed over pace or hides
+    /// pace-shaped UI: cycling is FOUR cases, and an exact match against `.ride` silently left mountain,
+    /// gravel and e-bike rides reporting a running pace in min/mi across the profile pager, the workout
+    /// summary, splits, trends and share cards. Mirrors `discipline == .cycling` without importing the
+    /// planning vocabulary into display code.
+    var isCycling: Bool {
+        switch self {
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: true
+        default: false
+        }
+    }
 
     /// Maps each sport to one of the four planning/analytics disciplines (§8.7 notes). Trail runs roll
     /// up to running; bike variants to cycling; walk/hike to walking; gym to strength. Timed sports

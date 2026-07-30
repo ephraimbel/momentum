@@ -18,7 +18,7 @@ enum InjurySeverity: String, Codable, Sendable, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .twinge: "Mild — I notice it, but it doesn't change my stride"
+        case .twinge: "Mild. I notice it, but it doesn't change my stride"
         case .moderate: "It hurts or alters my gait, but I can keep moving"
         case .severe: "Sharp pain, limping, or I'm avoiding it entirely"
         }
@@ -54,8 +54,11 @@ enum InjuryResponse {
 
         if let plan = profile.plan {
             let p5k = plan.p5kSPerKm
+            let unit = (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()   // keep returns clean
+            // `.moved` sessions are still upcoming work — reconcileMissed rolls slipped days forward
+            // as .moved, and an injured athlete must not keep a quality session just because it slid.
             let window = plan.sessions.filter {
-                $0.status == .planned && $0.completedWorkout == nil
+                ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && $0.discipline == .running
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && $0.date <= until
@@ -67,10 +70,11 @@ enum InjuryResponse {
                     if let rt = s.runType, rt.isQuality || rt == .long {
                         s.runType = .easy
                         s.intervals = nil
-                        s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                        s.targetPaceSPerKm = RunRounding.snapPace(
+                            sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
                     }
-                    if let d = s.targetDistanceM { s.targetDistanceM = (d * 0.9).rounded() }
-                    s.rationale = "\(marker) \(areaName) — easy running only while it settles."
+                    if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: unit) }
+                    s.rationale = "\(marker) \(areaName). Easy running only while it settles."
                 case .moderate, .severe:
                     // Rest the impact; keep the engine with non-impact cross-training. Severe halves
                     // the duration and makes it explicitly optional (pain-free only).
@@ -90,8 +94,8 @@ enum InjuryResponse {
                     s.targetPaceSPerKm = nil
                     s.targetDurationS = (severity == .severe ? duration * 0.5 : duration).rounded()
                     s.rationale = severity == .severe
-                        ? "\(marker) \(areaName) — no running. Easy spin ONLY if completely pain-free; otherwise rest."
-                        : "\(marker) \(areaName) — no impact. Easy cross-training keeps your fitness while it heals."
+                        ? "\(marker) \(areaName). No running. Easy spin only if it is completely pain-free, otherwise rest."
+                        : "\(marker) \(areaName). No impact. Easy cross-training keeps your fitness while it heals."
                 }
                 changed += 1
             }
@@ -126,8 +130,9 @@ enum InjuryResponse {
         var restored = 0
         if let plan = profile.plan {
             let p5k = plan.p5kSPerKm
+            let unit = (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()
             let mine = plan.sessions.filter {
-                $0.status == .planned && $0.completedWorkout == nil
+                ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && ($0.rationale?.hasPrefix(marker) ?? false)
             }.sorted { $0.date < $1.date }
@@ -138,14 +143,16 @@ enum InjuryResponse {
                 s.targetDurationS = nil
                 if i == 0 {
                     s.runType = .recovery
-                    s.targetDistanceM = 3_000                       // a short test-the-waters return
-                    s.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
-                    s.rationale = "Welcome back — a short, gentle return. Stop if anything flares."
+                    s.targetDistanceM = RunRounding.snap(meters: 3_000, unit: unit)   // a short test-the-waters return
+                    s.targetPaceSPerKm = RunRounding.snapPace(
+                        sPerKm: PlanEngine.pace(.recovery, p5k: p5k), unit: unit, type: .recovery)
+                    s.rationale = "Welcome back. A short, gentle return. Stop if anything flares."
                 } else {
                     s.runType = .easy
-                    s.targetDistanceM = 5_000
-                    s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
-                    s.rationale = "Easy miles while you rebuild — quality work returns next week."
+                    s.targetDistanceM = RunRounding.snap(meters: 5_000, unit: unit)
+                    s.targetPaceSPerKm = RunRounding.snapPace(
+                        sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
+                    s.rationale = "Easy miles while you rebuild. Quality work returns next week."
                 }
                 restored += 1
             }
@@ -154,7 +161,7 @@ enum InjuryResponse {
             // fine and the plan still says "intervals".
             let gateEnd = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: today)) ?? today
             let eager = plan.sessions.filter {
-                $0.status == .planned && $0.completedWorkout == nil
+                ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && $0.discipline == .running
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && $0.date <= gateEnd
@@ -163,9 +170,10 @@ enum InjuryResponse {
             for s in eager {
                 s.runType = .easy
                 s.intervals = nil
-                s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
-                if let d = s.targetDistanceM { s.targetDistanceM = min(d, 8_000) }
-                s.rationale = "First week back — easy only. Quality returns once you've settled."
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
+                if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: min(d, 8_000), unit: unit) }
+                s.rationale = "First week back, easy only. Quality returns once you've settled."
             }
         }
         profile.activeInjuryArea = nil
@@ -177,7 +185,7 @@ enum InjuryResponse {
 
         var detail = restored > 0
             ? "Eased you back in: a short recovery run first, easy miles after. Quality work returns once you're settled."
-            : "Glad you're feeling better — your plan continues as written."
+            : "Glad you're feeling better. Your plan continues as written."
         // Honest re-timing (§8.2): a pause with a race on the calendar deserves a straight answer
         // about the goal — reassurance when there's room, the truth when there isn't.
         if let retiming = raceRetiming(profile: profile, today: today, calendar: calendar) {
@@ -211,11 +219,11 @@ enum InjuryResponse {
         let label = RaceDistance.nearest(toMeters: distanceM).label.lowercased()
         switch f.verdict {
         case .onTrack:
-            return "Your \(label) is still on track — \(weeks) weeks is enough runway."
+            return "Your \(label) is still on track. \(weeks) weeks is enough runway."
         case .tight:
-            return "The \(label) is tighter now: \(weeks) weeks where we'd like about \(f.weeksNeeded). Doable if the body cooperates — consistency over heroics."
+            return "The \(label) is tighter now: \(weeks) weeks where we'd like about \(f.weeksNeeded). Doable if the body cooperates. Consistency over heroics."
         case .tooShort:
-            return "Honestly: \(weeks) weeks to the \(label) is short after a pause — a safe build wants about \(f.weeksNeeded). Consider adjusting the goal time or the date; we'll make either work."
+            return "Honestly, \(weeks) weeks to the \(label) is short after a pause. A safe build wants about \(f.weeksNeeded). Consider adjusting the goal time or the date, and we'll make either work."
         case .noRace:
             return nil
         }
@@ -229,19 +237,19 @@ enum InjuryResponse {
             return Outcome(
                 headline: "Training around your \(area)",
                 detail: "Kept you running, dropped the intensity for \(InjurySeverity.twinge.windowDays) days. Most twinges settle with easy running and rest.",
-                guidance: "Ice and gentle mobility can help. If it sharpens, changes your stride, or lasts beyond a week — report it again or see a physio.",
+                guidance: "Ice and gentle mobility can help. If it sharpens, changes your stride, or lasts beyond a week, report it again or see a physio.",
                 sessionsChanged: changed)
         case .moderate:
             return Outcome(
                 headline: "Resting the impact on your \(area)",
-                detail: "Swapped \(InjurySeverity.moderate.windowDays) days of running for easy cross-training — your fitness holds while it heals.",
+                detail: "Swapped \(InjurySeverity.moderate.windowDays) days of running for easy cross-training. Your fitness holds while it heals.",
                 guidance: "If it isn't clearly improving in 3–5 days, a physio is worth the visit. Sharp pain, swelling, or pain at rest → get it looked at now.",
                 sessionsChanged: changed)
         case .severe:
             return Outcome(
-                headline: "Protecting your \(area) — no running",
+                headline: "Protecting your \(area), no running",
                 detail: "Stood running down for \(InjurySeverity.severe.windowDays) days. Optional pain-free spinning keeps the engine; everything else waits.",
-                guidance: "Please see a professional — sharp pain, limping, or not being able to bear weight isn't something to train through. We'll be ready when you're cleared.",
+                guidance: "Please see a professional. Sharp pain, limping, or not being able to bear weight isn't something to train through. We'll be ready when you're cleared.",
                 sessionsChanged: changed)
         }
     }

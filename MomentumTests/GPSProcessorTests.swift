@@ -165,4 +165,111 @@ struct GPSProcessorTests {
         #expect(spike == .rejected)
         #expect(p.distanceM == before)   // no phantom spur, no phantom distance
     }
+
+    /// Manual pause (Strava semantics): the paused walk keeps the filter warm — the map dot follows —
+    /// but accrues NOTHING (no distance/elevation/pace, `distanceAddedM == 0` so the engine appends no
+    /// route point), and the anchors rebase so post-resume movement measures only itself.
+    @Test func manualPauseAccruesNothingButKeepsTheDotWarm() {
+        var p = GPSProcessor(config: runConfig)
+        var lat = 30.0
+        _ = p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: 0))
+        for t in stride(from: 1.0, through: 5.0, by: 1.0) {          // running north, ~4.4m per fix
+            lat += 0.00004
+            #expect(p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: t)) != .rejected)
+        }
+        let runningDistance = p.distanceM
+        #expect(runningDistance > 12)                                 // ~22m accrued while running
+
+        // Paused: walk another ~44m north over 10 fixes. Dot must follow; nothing may accrue.
+        for t in stride(from: 6.0, through: 15.0, by: 1.0) {
+            lat += 0.00004
+            let r = p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: t), paused: true)
+            #expect(r == .accepted(distanceAddedM: 0))                // never a route-worthy move
+        }
+        #expect(p.distanceM == runningDistance)                       // the paused walk contributed zero
+        #expect(abs(p.filteredLat - lat) < 0.0001)                    // filter tracked the walk (dot follows)
+
+        // Resume: measured from the PAUSED position — never spike-rejected, and only the ~4.4m of
+        // real post-resume movement counts (never the 44m walked while paused).
+        lat += 0.00004
+        let resumed = p.ingest(fix(lat, -97.0, acc: 5, speed: 5, t: 16))
+        #expect(resumed != .rejected)
+        #expect(p.distanceM - runningDistance < 8)
+    }
+
+    // MARK: On-device accuracy fixes (2026-07-23 demo-video recording)
+
+    @Test func stationaryDopplerWanderAddsNoDistance() {
+        // Standing at a light: Doppler reads ~0 while position wanders 3–4m per fix — every
+        // wander clears the 2m movement gate, so meters used to accrue while covering none.
+        var p = GPSProcessor(config: runConfig)
+        _ = p.ingest(fix(30.0, -97.0, acc: 5, speed: 3, t: 0))
+        var lat = 30.0 + 0.00003
+        _ = p.ingest(fix(lat, -97.0, acc: 5, speed: 3, t: 1))
+        let moving = p.distanceM
+        // 20 fixes of pure wander, Doppler pinned at 0.1 m/s (genuinely stopped).
+        for t in stride(from: 2.0, through: 21.0, by: 1.0) {
+            lat += (Int(t) % 2 == 0 ? 0.00003 : -0.00003)   // ±3.3m oscillation
+            _ = p.ingest(fix(lat, -97.0, acc: 5, speed: 0.1, t: t))
+        }
+        #expect(p.distanceM == moving)   // the light cost zero meters
+        // Moving again accrues normally, measured from the rebased anchor (the Kalman needs a
+        // couple of fixes to trust motion again after standing still — correct, not a bug).
+        for t in stride(from: 22.0, through: 24.0, by: 1.0) {
+            lat += 0.00004
+            _ = p.ingest(fix(lat, -97.0, acc: 5, speed: 3, t: t))
+        }
+        #expect(p.distanceM > moving)
+    }
+
+    @Test func unknownDopplerNeverTriggersStationaryGuard() {
+        // A negative speed is "unknown", not "stopped" — position-only movement must still count
+        // (canopy, urban canyon), same doctrine as the engine's auto-pause.
+        var p = GPSProcessor(config: runConfig)
+        _ = p.ingest(fix(30.0, -97.0, acc: 5, speed: -1, t: 0))
+        _ = p.ingest(fix(30.00005, -97.0, acc: 5, speed: -1, t: 2))
+        #expect(p.distanceM > 4)
+    }
+
+    @Test func elevationJitterAccruesNothing() {
+        // Flat run, altitude wobbling ±2m — the old per-fix accrual booked every positive tick.
+        var p = GPSProcessor(config: runConfig)
+        var lat = 30.0
+        for (i, t) in stride(from: 0.0, through: 20.0, by: 1.0).enumerated() {
+            lat += 0.00004
+            let alt = 100.0 + (i % 2 == 0 ? 2.0 : -2.0)
+            _ = p.ingest(.init(t: Date(timeIntervalSinceReferenceDate: t), lat: lat, lon: -97.0,
+                               accuracyM: 5, speedMS: 3, altitudeM: alt))
+        }
+        #expect(p.elevationGainM == 0)
+    }
+
+    @Test func realClimbCountsFromTheValley() {
+        // A 12m ascent, a descent, then a second 6m climb — both count, the descent rebasing the
+        // anchor so climb two measures from its own base. Plateaus let the altitude EMA converge;
+        // each top can hold back at most one sub-threshold (<3m) residual, so 18m of real climb
+        // must book at least 12m and never more than 18.
+        var p = GPSProcessor(config: runConfig)
+        var lat = 30.0
+        var t = 0.0
+        func step(_ alt: Double, times: Int = 1) {
+            for _ in 0..<times {
+                lat += 0.00004
+                _ = p.ingest(.init(t: Date(timeIntervalSinceReferenceDate: t), lat: lat, lon: -97.0,
+                                   accuracyM: 5, speedMS: 3, altitudeM: alt))
+                t += 1
+            }
+        }
+        for alt in stride(from: 100.0, through: 112.0, by: 2.0) { step(alt) }   // +12
+        step(112, times: 10)                                                    // summit plateau
+        for alt in stride(from: 112.0, through: 104.0, by: -2.0) { step(alt) }  // descent (rebases)
+        step(104, times: 10)                                                    // valley plateau
+        for alt in stride(from: 104.0, through: 110.0, by: 2.0) { step(alt) }   // +6
+        step(110, times: 10)                                                    // final plateau
+        #expect(p.elevationGainM >= 12 && p.elevationGainM <= 18)
+        // And a flat continuation adds nothing further.
+        let settled = p.elevationGainM
+        step(110, times: 10)
+        #expect(p.elevationGainM == settled)
+    }
 }

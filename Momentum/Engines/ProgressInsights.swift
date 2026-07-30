@@ -22,25 +22,45 @@ struct ProgressInsights {
         let avgPaceSPerKm: Double   // distance-weighted, running only; 0 = no runs that week
     }
 
+    /// One calendar day — powers the Trends "Week" range (last 7 days as daily bars, Strava-style),
+    /// where weekly windows would collapse to a single meaningless bar.
+    struct DayPoint: Identifiable, Sendable {
+        let id = UUID()
+        let dayStart: Date
+        let load: Double
+        let distanceM: Double
+        let avgPaceSPerKm: Double   // distance-weighted, running only; 0 = no runs that day
+    }
+
     let acute: Double
     let chronic: Double
     let acwr: Double
     let status: Status
     let recommendation: Recommendation
-    let weeks: [WeekPoint]            // last 8 weeks, oldest → newest
+    let weeks: [WeekPoint]            // last `weeksBack` weeks, oldest → newest
+    let days: [DayPoint]              // last 7 calendar days, oldest → newest (the "Week" range)
     let loadTrendPct: Double          // this week vs prior 3-week average
     let distanceTrendPct: Double
     let paceTrendPct: Double          // running pace: negative = faster (improving)
     let hasData: Bool
 
-    init(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current) {
+    /// `weeksBack` sizes the weekly series window (the Trends range picker: 1M ≈ 5, 3M ≈ 13,
+    /// later 6M ≈ 26 and 1Y ≈ 52). ACWR and the trend percentages are window-independent — they
+    /// always read the most recent weeks — so switching ranges never changes the coaching verdict.
+    init(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current, weeksBack: Int = 8) {
         let load = TrainingLoad.session   // canonical session-RPE load (PRD §4.8)
 
         let acuteCut = calendar.date(byAdding: .day, value: -7, to: now)!
         let chronicCut = calendar.date(byAdding: .day, value: -28, to: now)!
         acute = workouts.filter { $0.startedAt >= acuteCut }.reduce(0) { $0 + load($1) }
         let chronic28 = workouts.filter { $0.startedAt >= chronicCut }.reduce(0) { $0 + load($1) }
-        chronic = chronic28 / 4
+        // Normalize the chronic divisor to the history that actually exists (weeks, capped at 4).
+        // A flat ÷4 understates chronic for new athletes — a keen first week reads as ratio ≈ 4
+        // and tells exactly the person we should be encouraging to "ease off / rest". With one
+        // week of data chronic == acute (ratio 1); by four weeks this is the classic ACWR.
+        let historyDays = workouts.map(\.startedAt).min()
+            .flatMap { calendar.dateComponents([.day], from: $0, to: now).day } ?? 0
+        chronic = chronic28 / min(4, max(1, Double(historyDays) / 7))
 
         hasData = !workouts.isEmpty
         if chronic < 1 {
@@ -59,12 +79,12 @@ struct ProgressInsights {
             }
         }
 
-        // Weekly series — eight rolling 7-day windows ending at `now`, oldest → newest. Rolling (not
-        // calendar) windows keep the most-recent bar aligned with the ACWR acute window, so a recent
-        // workout always shows up in the latest bar. A fixed calendar "this week" can be near-empty
-        // early in the week (e.g. a Sunday) and disagree with the acute load the headline reports.
+        // Weekly series — `weeksBack` rolling 7-day windows ending at `now`, oldest → newest. Rolling
+        // (not calendar) windows keep the most-recent bar aligned with the ACWR acute window, so a
+        // recent workout always shows up in the latest bar. A fixed calendar "this week" can be
+        // near-empty early in the week (e.g. a Sunday) and disagree with the acute load headline.
         var series: [WeekPoint] = []
-        for i in stride(from: 7, through: 0, by: -1) {
+        for i in stride(from: max(1, weeksBack) - 1, through: 0, by: -1) {
             guard let end = calendar.date(byAdding: .day, value: -7 * i, to: now),
                   let start = calendar.date(byAdding: .day, value: -7, to: end) else { continue }
             let inWeek = workouts.filter { $0.startedAt > start && $0.startedAt <= end }
@@ -78,6 +98,24 @@ struct ProgressInsights {
             series.append(WeekPoint(weekStart: start, load: wkLoad, distanceM: wkDist, avgPaceSPerKm: wkPace))
         }
         weeks = series
+
+        // Daily series — the last 7 calendar days (oldest → newest), one bucket per day, for the
+        // "Week" range. Same load/distance/pace math as the weekly series, just a 1-day window.
+        var dayPts: [DayPoint] = []
+        let today = calendar.startOfDay(for: now)
+        for i in stride(from: 6, through: 0, by: -1) {
+            guard let dayStart = calendar.date(byAdding: .day, value: -i, to: today),
+                  let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { continue }
+            let inDay = workouts.filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd }
+            let dLoad = inDay.reduce(0) { $0 + load($1) }
+            let dDist = inDay.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+            let runs = inDay.filter { $0.type.discipline == .running }
+            let runDist = runs.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
+            let runDur = runs.reduce(0) { $0 + $1.durationS }
+            let dPace = runDist > 0 ? runDur / (runDist / 1000) : 0
+            dayPts.append(DayPoint(dayStart: dayStart, load: dLoad, distanceM: dDist, avgPaceSPerKm: dPace))
+        }
+        days = dayPts
 
         // Trends: current week vs the prior 3 weeks' average.
         func trend(_ values: (WeekPoint) -> Double) -> Double {

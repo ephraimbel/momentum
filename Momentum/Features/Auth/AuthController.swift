@@ -5,7 +5,7 @@ import Supabase
 import os
 
 /// Auth-flow breadcrumbs (deep links especially) — a dropped callback is invisible without them.
-private let authLog = Logger(subsystem: "com.momentum.app", category: "auth")
+private let authLog = Logger(subsystem: "com.ephraimbel.momentum.app", category: "auth")
 
 /// Sign in with Apple session (PRD §8.11) — the app's identity. Holds the stable Apple user
 /// identifier (persisted) and the athlete's name (Apple only hands it over on the *first*
@@ -20,6 +20,10 @@ final class AuthController {
     private static let nameKey = "com.momentum.auth.name"
     private static let emailKey = "com.momentum.auth.email"
     private static let cloudSessionKey = "com.momentum.auth.hadCloudSession"
+    /// The last REAL account (Apple/Google/email) whose local data lives on this device. Survives a
+    /// plain sign-out (unlike `userIDKey`) so a DIFFERENT account signing in on a shared/hand-me-down
+    /// device is detected and the prior owner's SwiftData wiped — see `noteRealSignIn`.
+    private static let lastRealUserIDKey = "com.momentum.auth.lastRealUserID"
 
     /// The raw nonce for the in-flight Apple request. Apple gets its SHA-256 hash; Supabase gets
     /// the raw value — the pair is how the identity token is bound to this one request.
@@ -28,6 +32,45 @@ final class AuthController {
     /// Fired once, on the very first Supabase session this install ever gets — the hook that
     /// claims guest-era local data (re-marks workouts dirty so they upload under the new uid).
     var onFirstCloudSession: (() -> Void)?
+
+    /// Fired when a DIFFERENT real account signs in on a device that still holds a prior real
+    /// account's local data (shared/hand-me-down device). The host wipes local SwiftData so the new
+    /// person starts on a clean slate + re-onboards; guest→real upgrade, first sign-in, and a fresh
+    /// local session started at the welcome (`beginFreshLocalSession`) never fire it.
+    var onAccountSwitch: (() -> Void)?
+
+    /// Fires whenever the signed-in identity changes: the account id on sign-in, `nil` on sign-out
+    /// and for guests. Wired to `PaywallController.identify` in `MomentumApp` so billing knows who
+    /// the customer is — kept as a callback so this stays free of any billing import.
+    ///
+    /// **Invariant: every path that assigns `userID` must fire this.** There are four —
+    /// `signIn(userID:)` (Apple), `signInWithGoogle()`, `adoptEmailSession()` (email), and
+    /// `signOut()`. Miss one and that provider's athletes keep an anonymous RevenueCat customer,
+    /// silently, with nothing failing to point at it.
+    var onIdentityChange: ((String?) -> Void)?
+
+    /// True while onboarding owns the screen. Set by `RootView` from its `showOnboarding` state;
+    /// nothing observes it, so it can't participate in a view-invalidation loop.
+    @ObservationIgnored var isOnboarding = false
+
+    /// Record a real-account sign-in and, if it differs from the account whose data is on this device,
+    /// fire `onAccountSwitch` (wipe + re-onboard). First-ever sign-in (`prior == nil`) and a guest
+    /// upgrade (guests never write `lastRealUserIDKey`) both carry local data over, as intended.
+    private func noteRealSignIn(_ incoming: String) {
+        let prior = UserDefaults.standard.string(forKey: Self.lastRealUserIDKey)
+        UserDefaults.standard.set(incoming, forKey: Self.lastRealUserIDKey)
+        guard let prior, prior != incoming else { return }
+        UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)   // new account = a fresh cloud claim
+        // Never wipe while setup is on screen. Since 2026-07-27 the account is the LAST beat of
+        // onboarding, so this runs with the athlete's brand-new profile and plan already on disk —
+        // and onboarding only runs at all when there was no profile to begin with, so by
+        // construction there is no prior owner's training here to protect. Without this guard,
+        // signing in on that beat deletes the five minutes of work they just did and drops them
+        // into the app as a nameless "Athlete" with no plan. The marker above is still updated, so
+        // a genuine account switch later (from Settings, on a shared device) still wipes.
+        guard !isOnboarding else { return }
+        onAccountSwitch?()
+    }
 
     /// Sentinel userID for a guest (account-less, local-only) session.
     static let guestID = "guest"
@@ -52,12 +95,25 @@ final class AuthController {
             UserDefaults.standard.removeObject(forKey: Self.nameKey)
             UserDefaults.standard.removeObject(forKey: Self.emailKey)
             UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
+            UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
             if let client = SupabaseClientProvider.client { Task { try? await client.auth.signOut() } }
             return
         }
+        // Walk onboarding as a real GUEST — the shipping path since 2026-07-27, where the account
+        // is the last beat. Must be checked BEFORE `--onboarding` below: that one signs in as
+        // `demo-user`, and a real account correctly makes the account beat self-skip, so it can't
+        // reach the very screen this arg exists to verify.
+        if ProcessInfo.processInfo.arguments.contains("--onboarding-guest") {
+            userID = Self.guestID; return
+        }
         // Demos + UI tests skip the gate so seeded flows run straight to the app.
-        if ProcessInfo.processInfo.arguments.contains("--seed-demo") {
-            userID = "demo-user"; displayName = "Demo Athlete"; return
+        // `--onboarding` also signs in (without seeding a profile) so the onboarding flow can be
+        // presented over a clean no-profile state — no tabs render behind it, no map location prompt.
+        if ProcessInfo.processInfo.arguments.contains("--seed-demo")
+            || ProcessInfo.processInfo.arguments.contains("--seed-empty")
+            || ProcessInfo.processInfo.arguments.contains("--onboarding")
+            || ProcessInfo.processInfo.arguments.contains("--resume-demo") {   // resume-verification path
+            userID = "demo-user"; displayName = "Alex Rivera"; return   // matches the seeded demo profile
         }
         #endif
         userID = UserDefaults.standard.string(forKey: Self.userIDKey)
@@ -69,6 +125,7 @@ final class AuthController {
     /// Note: when upgrading from a guest, the local SwiftData (profile, workouts, plan) is keyed to
     /// the device container — it carries over untouched, so no re-onboarding.
     func signIn(userID: String, fullName: PersonNameComponents?, email: String?) {
+        noteRealSignIn(userID)   // wipe + re-onboard if a DIFFERENT account owned this device's data
         self.userID = userID
         UserDefaults.standard.set(userID, forKey: Self.userIDKey)
         if let fullName, let formatted = Self.format(fullName) {
@@ -79,6 +136,8 @@ final class AuthController {
             self.email = email
             UserDefaults.standard.set(email, forKey: Self.emailKey)
         }
+        // Real accounts only — a guest stays an anonymous RevenueCat customer.
+        onIdentityChange?(userID == Self.guestID ? nil : userID)
         Haptics.success()
     }
 
@@ -135,14 +194,36 @@ final class AuthController {
 
     /// Enter the app without an account — local-only (no cloud backup/sync/social). The athlete can
     /// Sign in with Apple later from Settings and keep everything they've logged.
-    func continueAsGuest() {
+    ///
+    /// `celebrate: false` for the welcome's "Get started", where nothing has succeeded yet — the
+    /// success haptic belongs to a door the athlete deliberately chose, not to entering setup.
+    func continueAsGuest(celebrate: Bool = true) {
         userID = Self.guestID
         displayName = nil
         email = nil
         UserDefaults.standard.set(Self.guestID, forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
-        Haptics.success()
+        if celebrate { Haptics.success() }
+    }
+
+    /// The welcome's "Get started" — begin setup with no account (2026-07-27: the account moved to
+    /// the END of onboarding, so nobody has to leave the app to start).
+    ///
+    /// Releases any prior real account's claim on this device FIRST. Without that, an athlete who
+    /// onboards here and then signs in on the final beat trips `noteRealSignIn`'s account-switch
+    /// wipe — deleting the profile and plan they just spent five minutes building. Releasing the
+    /// marker makes that sign-in read as what it actually is: a first sign-in, which carries local
+    /// data over.
+    ///
+    /// Only reachable with no local profile: the welcome offers "Get started" only when
+    /// `profiles.isEmpty`, and "Continue as …" otherwise. So there is no other owner's training
+    /// here to protect — and the wipe still fires normally for the door that does need it (a
+    /// different account signing in over data that exists).
+    func beginFreshLocalSession() {
+        UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
+        UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)   // a fresh cloud claim
+        continueAsGuest(celebrate: false)
     }
 
     func signOut() {
@@ -152,6 +233,10 @@ final class AuthController {
         UserDefaults.standard.removeObject(forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
+        // Drop any in-progress onboarding draft — a different athlete on this device must never
+        // resume someone else's answers.
+        OnboardingDraftStore.clear()
+        onIdentityChange?(nil)   // release the RevenueCat customer back to anonymous
         if let client = SupabaseClientProvider.client {
             Task { try? await client.auth.signOut() }
         }
@@ -171,7 +256,9 @@ final class AuthController {
                 ?? session.user.userMetadata["name"]?.stringValue
             // No Apple id to key on — the Supabase user id (prefixed so `refresh()` knows not to
             // run the Apple credential check against it) becomes the local identity.
-            userID = "google:\(session.user.id.uuidString)"
+            let gid = "google:\(session.user.id.uuidString)"
+            noteRealSignIn(gid)
+            userID = gid
             UserDefaults.standard.set(userID, forKey: Self.userIDKey)
             if let name, !name.isEmpty {
                 displayName = name
@@ -181,6 +268,7 @@ final class AuthController {
                 email = mail
                 UserDefaults.standard.set(mail, forKey: Self.emailKey)
             }
+            onIdentityChange?(gid)   // see signIn(userID:) — every identity path must fire this
             markCloudSession()
             Haptics.success()
             return true
@@ -348,20 +436,26 @@ final class AuthController {
         authLog.info("account deleted server-side")
         signOut()   // the server session is already void; this clears the local identity
         // A future account on this device is a genuine first cloud session again — the
-        // re-mark/re-claim hook must refire for it.
+        // re-mark/re-claim hook must refire for it. Clearing the last-real-account marker keeps the
+        // documented "local data stays, like a guest" behavior: the next sign-in carries it over
+        // rather than wiping (account switch only wipes when a DIFFERENT account signs in mid-life).
         UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
+        UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
         return true
     }
 
     /// Persist local identity off a Supabase email session (mirrors the Google path: prefixed id
     /// so `refresh()` skips the Apple credential check).
     private func adoptEmailSession(_ session: Session) {
-        userID = "email:\(session.user.id.uuidString)"
+        let eid = "email:\(session.user.id.uuidString)"
+        noteRealSignIn(eid)
+        userID = eid
         UserDefaults.standard.set(userID, forKey: Self.userIDKey)
         if let mail = session.user.email, !mail.isEmpty {
             self.email = mail
             UserDefaults.standard.set(mail, forKey: Self.emailKey)
         }
+        onIdentityChange?(eid)   // see signIn(userID:) — every identity path must fire this
         markCloudSession()
         Haptics.success()
     }

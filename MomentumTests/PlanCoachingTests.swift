@@ -16,6 +16,7 @@ struct PlanCoachingTests {
 
     private func makePlan(in ctx: ModelContext, sessions: [PlannedSession]) -> TrainingPlan {
         let profile = UserProfile()
+        profile.distanceUnit = "metric"   // deterministic clean-km snapping (RunRounding), locale-independent
         let plan = TrainingPlan()
         ctx.insert(profile)
         ctx.insert(plan)
@@ -44,6 +45,26 @@ struct PlanCoachingTests {
         #expect(credited != nil)
         #expect(session.status == .completed)
         #expect(session.completedWorkout?.id == workout.id)
+    }
+
+    @Test func creditsMovedSessionsToo() throws {
+        // reconcileMissed rolls slipped days forward as `.moved` — an athlete who then does the work
+        // must get the credit (the old `.planned`-only filter left the day reading as undone).
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let session = PlannedSession()
+        session.date = Calendar.current.startOfDay(for: Date())
+        session.discipline = .strength
+        session.status = .moved
+        let plan = makePlan(in: ctx, sessions: [session])
+
+        let workout = Workout()
+        workout.type = .strength
+        workout.startedAt = Date()
+        ctx.insert(workout)
+
+        #expect(PlanCoaching.creditWorkout(workout, to: plan, in: ctx) != nil)
+        #expect(session.status == .completed)
     }
 
     @Test func doesNotCreditWrongDiscipline() throws {
@@ -93,14 +114,24 @@ struct PlanCoachingTests {
         let future = futureEasyRun(in: ctx, p5k: 322)
         let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 322
 
-        // A hard 5k in 1600 s ⇒ ~320 s/km equivalent (within the 3% bound of 322).
-        let w = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 8)
-        let rec = PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx)
+        // Two-run confirmation: the first hard 5k (~320 s/km equivalent) BANKS evidence only.
+        let first = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 8)
+        #expect(PlanCoaching.recalibratePaces(from: first, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == 322)                   // untouched — one great day proves nothing
+        #expect(plan.pendingP5kAt != nil)                // …but the evidence is banked
+
+        // The second qualifying run confirms and applies.
+        let second = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 8)
+        let rec = PlanCoaching.recalibratePaces(from: second, plan: plan, in: ctx)
 
         #expect(rec != nil)
         #expect(abs(plan.p5kSPerKm - 320) < 1)                              // lowered to the equivalent
         #expect(rec?.sessionsUpdated == 1)
-        #expect(abs((future.targetPaceSPerKm ?? 0) - PlanEngine.pace(.easy, p5k: 320)) < 1)  // future pace re-derived
+        // Future pace re-derived — and snapped to the clean :15 easy grid on the way in.
+        #expect(abs((future.targetPaceSPerKm ?? 0)
+                    - RunRounding.snapPace(sPerKm: PlanEngine.pace(.easy, p5k: 320), unit: .metric, type: .easy)) < 1)
+        #expect(plan.pendingP5kAt == nil)                // evidence consumed
+        #expect(plan.lastRecalibratedAt != nil)          // weekly cap armed
     }
 
     @Test func bigImprovementIsCappedAtThreePercent() throws {
@@ -109,11 +140,79 @@ struct PlanCoachingTests {
         let future = futureEasyRun(in: ctx, p5k: 360)
         let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 360
 
-        // A blazing 5k in 1500 s ⇒ 300 s/km equivalent, but a single run may only drop p5k ~3%.
-        let w = run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9)
-        _ = PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx)
+        // Two blazing 5ks (300 s/km equivalent) confirm — but an applied update still moves ≤3%.
+        _ = PlanCoaching.recalibratePaces(from: run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9),
+                                          plan: plan, in: ctx)
+        _ = PlanCoaching.recalibratePaces(from: run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9),
+                                          plan: plan, in: ctx)
 
         #expect(abs(plan.p5kSPerKm - 360 * 0.97) < 1)   // 349.2, not 300
+    }
+
+    @Test func raceResultBypassesTwoRunConfirmation() throws {
+        // A finished goal race is maximal, definitive evidence — no second run required.
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let raceDay = PlannedSession()
+        raceDay.date = Calendar.current.startOfDay(for: Date())
+        raceDay.discipline = .running; raceDay.runType = .race; raceDay.status = .planned
+        let future = futureEasyRun(in: ctx, p5k: 322)
+        let plan = makePlan(in: ctx, sessions: [raceDay, future]); plan.p5kSPerKm = 322
+
+        let w = run(in: ctx, distanceM: 5000, durationS: 1600, rpe: 9)
+        PlanCoaching.markComplete(raceDay, with: w, in: ctx)
+        let rec = PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx)
+
+        #expect(rec != nil)
+        #expect(abs(plan.p5kSPerKm - 320) < 1)
+    }
+
+    @Test func appliedRecalibrationIsCappedToOncePerWeek() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let future = futureEasyRun(in: ctx, p5k: 340)
+        let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 340
+        plan.lastRecalibratedAt = Calendar.current.date(byAdding: .day, value: -2, to: Date())
+
+        // A qualifying faster run two days after an applied update: nothing moves, nothing banks.
+        let w = run(in: ctx, distanceM: 5000, durationS: 1650, rpe: 8)
+        #expect(PlanCoaching.recalibratePaces(from: w, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == 340)
+        #expect(plan.pendingP5kAt == nil)
+    }
+
+    @Test func movedSessionsGetAdaptedToo() throws {
+        // reconcileMissed rolls slipped sessions forward as `.moved` — they must still receive
+        // eases and pace updates, or the athlete who misses days keeps stale prescriptions on
+        // exactly the sessions ahead of them.
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let moved = PlannedSession()
+        moved.date = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        moved.discipline = .running; moved.runType = .tempo; moved.status = .moved
+        moved.targetDistanceM = 8000
+        moved.targetPaceSPerKm = PlanEngine.sessionPace(.tempo, p5k: 330, intervals: nil, raceDistanceM: nil)
+        let plan = makePlan(in: ctx, sessions: [moved]); plan.p5kSPerKm = 330
+
+        #expect(PlanCoaching.apply(.ease, to: plan, in: ctx) == 1)   // the moved session was eased
+        #expect((moved.targetDistanceM ?? 0) < 8000)
+    }
+
+    @Test func easeQualityPacesHasAWeeklyCooldown() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let future = futureEasyRun(in: ctx, p5k: 330)
+        let plan = makePlan(in: ctx, sessions: [future]); plan.p5kSPerKm = 330
+
+        #expect(PlanCoaching.canEasePaces(plan))
+        #expect(PlanCoaching.easeQualityPaces(plan, in: ctx) == 1)   // first ease applies (+2%)
+        let eased = plan.p5kSPerKm
+        #expect(abs(eased - 330 * 1.02) < 0.01)
+
+        // A second tap inside the week is refused — the ratchet has a brake.
+        #expect(!PlanCoaching.canEasePaces(plan))
+        #expect(PlanCoaching.easeQualityPaces(plan, in: ctx) == 0)
+        #expect(plan.p5kSPerKm == eased)
     }
 
     @Test func easyRunDoesNotChangePaces() throws {
@@ -157,10 +256,12 @@ struct PlanCoachingTests {
         return w
     }
 
-    /// 10 equal sessions weighted so the acute:chronic ratio lands ~1.6 ⇒ "ease".
+    /// 10 equal sessions weighted so the acute:chronic ratio lands ~1.54 ⇒ "ease".
+    /// (Chronic load is normalized to the history that exists — oldest at day 27 keeps the
+    /// divisor ≈ 3.86 and this genuinely overreaching; day 28 would sit on the window boundary.)
     private func overreachingHistory(in ctx: ModelContext) {
         for d in [0, 2, 4, 6] { _ = loggedWorkout(in: ctx, daysAgo: d) }       // acute (last 7d)
-        for d in [10, 12, 14, 18, 22, 26] { _ = loggedWorkout(in: ctx, daysAgo: d) }  // chronic-only
+        for d in [10, 12, 14, 18, 22, 27] { _ = loggedWorkout(in: ctx, daysAgo: d) }  // chronic-only
     }
 
     @Test func autoEasesWhenOverreaching() throws {
@@ -303,7 +404,7 @@ struct PlanCoachingTests {
         let changed = PlanCoaching.apply(proposal.rec, to: plan, in: ctx)
 
         #expect(changed == 1)
-        #expect((future.targetDistanceM ?? 0) == 6600)   // bumped ~10% (the engine's number, on confirm)
+        #expect((future.targetDistanceM ?? 0) == 6500)   // bumped ~10% (6000→6600), snapped to a clean 6.5 km
         #expect(plan.lastAdaptedAt != nil)
     }
 
@@ -470,11 +571,11 @@ struct PlanCoachingTests {
 
         #expect(missed.allSatisfy { $0.status == .moved })
         #expect(upcoming.runType == .easy)                        // hard work softened for re-entry
-        #expect(upcoming.targetDistanceM == 5600)                 // 8000 × 0.7
+        #expect(upcoming.targetDistanceM == 5500)                 // 8000 × 0.7 = 5600, snapped to a clean 5.5 km
         #expect(upcoming.rationale?.lowercased().contains("rebuild") == true)
         // Idempotent: a second reconcile finds nothing past-due and can't re-shrink.
         PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
-        #expect(upcoming.targetDistanceM == 5600)
+        #expect(upcoming.targetDistanceM == 5500)
     }
 
     @Test func twoMissesJustRescheduleWithoutRebuild() throws {
@@ -504,5 +605,412 @@ struct PlanCoachingTests {
         #expect(PlanCoaching.easeStrengthOnRPECreep(plan, workouts: [w1, w2], in: ctx) == nil)
         #expect(pe.targetSets == 4)
         #expect(plan.lastAdaptedAt == nil)
+    }
+
+    // MARK: Post-race continuation (PlanService.completeRace — the arc's close)
+
+    /// A real race plan whose race date is already `raceDaysAgo` in the past: generated from far
+    /// enough back that the race session landed on the calendar.
+    /// `now` is injectable so a fixture can pin the weekday — the post-race carry-over behaves
+    /// differently depending on whether race day falls in the same calendar week as the rebuild.
+    private func raceProfile(in ctx: ModelContext, raceDaysAgo: Int, now: Date = Date()) -> UserProfile {
+        let cal = Calendar.current
+        let profile = UserProfile()
+        profile.distanceUnit = "metric"
+        profile.disciplines = ["running"]
+        profile.goal = .raceDistance
+        profile.daysPerWeek = 4
+        profile.raceDate = cal.date(byAdding: .day, value: -raceDaysAgo, to: cal.startOfDay(for: now))
+        profile.raceDistanceM = 42_195
+        ctx.insert(profile)
+        let start = cal.date(byAdding: .weekOfYear, value: -8, to: now)!
+        PlanService.regenerate(for: profile, startDate: start, in: ctx)
+        return profile
+    }
+
+    /// A goal race that lands in the PREVIOUS calendar week still survives the post-race rebuild.
+    /// `PlanService.persist` scopes its carry-over to the current week, and `completeRace` runs the
+    /// day AFTER race day — so a Saturday race opened on Monday fell outside that window and the
+    /// finished race was cascade-deleted, erasing the season's defining session at its emotional peak.
+    /// The dates are pinned because the bug only reproduced on the ~3 weekdays where race day crosses
+    /// the boundary: a `Date()`-relative test passed four days in seven. Saturday→Monday straddles the
+    /// boundary whether the locale starts its weeks on Sunday or Monday, so this holds anywhere.
+    @Test func raceInThePreviousCalendarWeekSurvivesTheRebuild() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let raceDay = try #require(DateComponents(calendar: cal, year: 2026, month: 9, day: 12).date)  // Saturday
+        let monday = try #require(DateComponents(calendar: cal, year: 2026, month: 9, day: 14).date)   // Monday
+        #expect(!cal.isDate(raceDay, equalTo: monday, toGranularity: .weekOfYear),
+                "fixture must straddle a week boundary or it isn't exercising the bug")
+
+        let profile = raceProfile(in: ctx, raceDaysAgo: 2, now: monday)
+        let plan = try #require(profile.plan)
+        let raceSession = try #require(plan.sessions.first { $0.runType == .race },
+                                       "race plan must carry its race session")
+        let race = Workout()
+        race.type = .run
+        race.startedAt = raceSession.date
+        race.durationS = 10_800
+        ctx.insert(race)
+        PlanCoaching.markComplete(raceSession, with: race, in: ctx)
+
+        #expect(PlanService.completeRace(for: profile, today: monday, in: ctx) != nil)
+        let next = try #require(profile.plan)
+        // The race the athlete just ran is still on the board, completed — never erased.
+        #expect(next.sessions.contains { $0.runType == .race && $0.status == .completed })
+        // And carrying it did NOT drag the block's anchor back into last week: the macrocycle still
+        // starts on the rebuild day, so week 1 stays week 1 and the phase labels don't slide.
+        #expect(next.blockStart.map { cal.isDate($0, inSameDayAs: monday) } == true)
+    }
+
+    @Test func completeRaceRecalibratesAndOpensRecoveryBlock() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = raceProfile(in: ctx, raceDaysAgo: 2)
+        let plan = try #require(profile.plan)
+        let raceSession = try #require(plan.sessions.first { $0.runType == .race },
+                                       "race plan must carry its race session")
+        // The athlete ran a 3:00 marathon — a big fitness statement vs the assumed 330 s/km 5K.
+        let race = Workout()
+        race.type = .run
+        race.startedAt = raceSession.date
+        race.durationS = 10_800
+        ctx.insert(race)
+        PlanCoaching.markComplete(raceSession, with: race, in: ctx)
+
+        let headline = PlanService.completeRace(for: profile, today: Date(), in: ctx)
+        #expect(headline != nil)
+        let next = try #require(profile.plan)
+        // The goal cleared; the season's name went with it; the block counter advanced.
+        #expect(profile.raceDate == nil && profile.raceDistanceM == nil)
+        #expect(next.raceDate == nil)
+        #expect(next.blockIndex == 1)
+        #expect(next.name.isEmpty)
+        // The race result set the paces (3:00 marathon ⇒ Riegel 5k ≈ 225 s/km, was 330).
+        #expect(abs(next.p5kSPerKm - 225) < 3, "race result should recalibrate, got \(next.p5kSPerKm)")
+        // Marathon ⇒ the new block opens with a 2-week recovery lead-in, all easy. The finished
+        // race itself carries over as COMPLETED history (this week's story survives the rebuild) —
+        // the invariant is about what's PRESCRIBED, so completed sessions are excluded.
+        #expect(next.weekPhases.prefix(2).allSatisfy { $0 == PlanPhase.recovery.rawValue })
+        let cal = Calendar.current
+        let fortnight = cal.date(byAdding: .day, value: 14, to: cal.startOfDay(for: Date()))!
+        let leadIn = next.sessions.filter {
+            $0.date < fortnight && $0.discipline == .running && $0.status != .completed
+        }
+        #expect(!leadIn.isEmpty)
+        #expect(leadIn.allSatisfy { !($0.runType?.isQuality ?? false) })
+        // And the race the athlete just ran is still on the board, completed — never erased.
+        #expect(next.sessions.contains { $0.runType == .race && $0.status == .completed })
+        // Idempotent: the race is behind them — a second pass changes nothing.
+        #expect(PlanService.completeRace(for: profile, today: Date(), in: ctx) == nil)
+    }
+
+    @Test func missedRaceRollsForwardWithoutRecovery() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = raceProfile(in: ctx, raceDaysAgo: 3)   // race day passed, never run
+        let oldP5k = try #require(profile.plan).p5kSPerKm
+
+        let headline = PlanService.completeRace(for: profile, today: Date(), in: ctx)
+        #expect(headline != nil)
+        let next = try #require(profile.plan)
+        #expect(profile.raceDate == nil)
+        #expect(next.blockIndex == 1)
+        #expect(next.p5kSPerKm == oldP5k)                     // nothing to recalibrate from
+        // No race run ⇒ nothing to recover from ⇒ the block starts training immediately.
+        #expect(next.weekPhases.first != PlanPhase.recovery.rawValue)
+    }
+
+    @Test func completeRaceWaitsForRaceDayToPass() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = raceProfile(in: ctx, raceDaysAgo: 0)    // race is TODAY — hands off
+        #expect(PlanService.completeRace(for: profile, today: Date(), in: ctx) == nil)
+        #expect(profile.raceDate != nil)                      // the goal stands until the day passes
+        #expect(profile.plan?.blockIndex == 0)
+    }
+
+    // MARK: Rebuild keeps this week's finished work (Plan Settings' "Rebuild plan")
+
+    @Test func rebuildCarriesThisWeeksCompletedSessions() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let profile = UserProfile()
+        profile.distanceUnit = "metric"
+        profile.disciplines = ["running"]
+        profile.goal = .endurance
+        profile.daysPerWeek = 4
+        ctx.insert(profile)
+        PlanService.regenerate(for: profile, in: ctx)
+        let plan = try #require(profile.plan)
+
+        // Complete a session earlier THIS week (backdate it to the week's start so the rebuild
+        // happens "later in the week"), and one from BEFORE this week (older history).
+        let weekStart = try #require(cal.dateInterval(of: .weekOfYear, for: Date())?.start)
+        let doneThisWeek = try #require(plan.sessions.min { $0.date < $1.date })
+        doneThisWeek.date = weekStart
+        doneThisWeek.status = .completed
+        let doneID = doneThisWeek.id
+        let oldDone = PlannedSession()
+        oldDone.date = cal.date(byAdding: .day, value: -10, to: Date())!
+        oldDone.discipline = .running
+        oldDone.status = .completed
+        ctx.insert(oldDone)
+        plan.sessions.append(oldDone)
+        try ctx.save()
+
+        // The Plan Settings sheet's structural save path.
+        PlanService.rebuild(for: profile, in: ctx)
+
+        let next = try #require(profile.plan)
+        // Monday's finished run is still on the new plan — never a retroactive "Rest day".
+        #expect(next.sessions.contains { $0.id == doneID && $0.status == .completed })
+        // Older history stays with the replaced block (the strip anchors on the new block).
+        #expect(!next.sessions.contains { $0.id == oldDone.id })
+        // And the new block still generated real upcoming work.
+        #expect(next.sessions.contains { $0.status == .planned })
+    }
+
+    // MARK: Adjacent-day long-run credit (the ±1-day grace)
+
+    /// Saturday's long run planned, the athlete runs it Friday: same-day matching finds nothing,
+    /// so the long-run grace credits tomorrow's prescription — the week's marquee session must
+    /// never read as skipped because life moved it a day.
+    @Test func longRunDoneDayEarlyCreditsTomorrowsPrescription() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let long = PlannedSession()
+        long.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 5400
+        let g = GPSDetail(); g.distanceM = 15500; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx)?.id == long.id)
+        #expect(long.status == .completed)
+    }
+
+    /// The grace never weakens the fulfillment rule: a short Friday jog leaves Saturday's long run
+    /// exactly where it was.
+    @Test func shortJogNeverCreditsAdjacentLongRun() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let long = PlannedSession()
+        long.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 1200
+        let g = GPSDetail(); g.distanceM = 4000; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx) == nil)
+        #expect(long.status == .planned)
+    }
+
+    /// A same-day session always wins over an adjacent long run — the grace is a fallback, never
+    /// a competitor.
+    @Test func sameDaySessionOutranksAdjacentLongRun() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let today = PlannedSession()
+        today.date = cal.startOfDay(for: Date())
+        today.discipline = .running
+        today.runType = .easy
+        today.targetDistanceM = 14000
+        today.status = .planned
+        let tomorrowLong = PlannedSession()
+        tomorrowLong.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        tomorrowLong.discipline = .running
+        tomorrowLong.runType = .long
+        tomorrowLong.targetDistanceM = 16000
+        tomorrowLong.status = .planned
+        let plan = makePlan(in: ctx, sessions: [today, tomorrowLong])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 5000
+        let g = GPSDetail(); g.distanceM = 15000; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx)?.id == today.id)
+        #expect(today.status == .completed)
+        #expect(tomorrowLong.status == .planned)
+    }
+
+    /// The grace applies only to long runs — an adjacent-day interval session is never swallowed
+    /// by a free run the day before.
+    @Test func adjacentQualitySessionNeverCredited() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let intervals = PlannedSession()
+        intervals.date = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        intervals.discipline = .running
+        intervals.runType = .intervals
+        intervals.targetDistanceM = 8000
+        intervals.status = .planned
+        let plan = makePlan(in: ctx, sessions: [intervals])
+
+        let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 3000
+        let g = GPSDetail(); g.distanceM = 8000; w.gps = g
+        ctx.insert(w)
+
+        #expect(PlanCoaching.creditWorkout(w, to: plan, in: ctx) == nil)
+        #expect(intervals.status == .planned)
+    }
+
+    // MARK: Brief — the eyebrow variant
+
+    /// Surfaces whose eyebrow already names the kind drop the leading type word; the full brief is
+    /// untouched (default), and dropping never produces an empty line.
+    @Test func briefDropsLeadingTypeUnderAnEyebrow() {
+        let s = PlannedSession()
+        s.discipline = .running
+        s.runType = .tempo
+        s.targetDistanceM = 6000
+        s.targetPaceSPerKm = 300
+        let full = PlanCoaching.brief(for: s, distanceUnit: .metric)
+        let bare = PlanCoaching.brief(for: s, distanceUnit: .metric, dropLeadingType: true)
+        #expect(full.hasPrefix("Tempo "))
+        #expect(!bare.hasPrefix("Tempo"))
+        #expect(bare.contains("6 km"))
+        #expect(bare.contains("5:00"))
+
+        // No distance to carry the line → the label stays, even when asked to drop it.
+        let bareOnly = PlannedSession()
+        bareOnly.discipline = .running
+        bareOnly.runType = .easy
+        #expect(!PlanCoaching.brief(for: bareOnly, distanceUnit: .metric, dropLeadingType: true).isEmpty)
+    }
+
+    // MARK: Race countdown — one unit scheme everywhere
+
+    @Test func raceCountdownSpeaksDaysInsideTwoWeeksWeeksBeyond() {
+        #expect(Formatters.raceCountdown(days: 0) == "Race day")
+        #expect(Formatters.raceCountdown(days: 1) == "1 day to go")
+        #expect(Formatters.raceCountdown(days: 13) == "13 days to go")
+        #expect(Formatters.raceCountdown(days: 14) == "2 weeks to go")
+        #expect(Formatters.raceCountdown(days: 84) == "12 weeks to go")
+        #expect(Formatters.raceCountdown(days: 85) == "13 weeks to go")
+    }
+
+    // MARK: - Crediting the session the athlete LAUNCHED (`creditLaunched`)
+
+    /// The regression: starting today's long run from the plan and stopping a kilometre in used to
+    /// check the session off outright — the launched path skipped `PlanCredit` entirely — and a
+    /// completed session is skipped by missed-session reconciliation, so the week's marquee run
+    /// silently vanished from the plan.
+    @Test func launchedSessionIsNotCompletedByAFractionOfIt() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let long = PlannedSession()
+        long.date = Calendar.current.startOfDay(for: Date())
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16_000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let bailed = Workout()
+        bailed.type = .run
+        bailed.startedAt = Date()
+        bailed.durationS = 380
+        let gps = GPSDetail()
+        gps.distanceM = 1_200                 // 7.5% of the prescription
+        bailed.gps = gps
+        ctx.insert(bailed)
+
+        let credited = PlanCoaching.creditLaunched(long, with: bailed, to: plan, in: ctx)
+        #expect(credited == nil)
+        #expect(long.status == .planned, "an under-fulfilled session stays on the board")
+        #expect(long.completedWorkout == nil)
+        #expect(bailed.plannedSession == nil)
+    }
+
+    @Test func launchedSessionIsCompletedWhenTheWorkIsActuallyDone() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let long = PlannedSession()
+        long.date = Calendar.current.startOfDay(for: Date())
+        long.discipline = .running
+        long.runType = .long
+        long.targetDistanceM = 16_000
+        long.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long])
+
+        let run = Workout()
+        run.type = .run
+        run.startedAt = Date()
+        run.durationS = 5_400
+        let gps = GPSDetail()
+        gps.distanceM = 15_800                // just under, comfortably past the 70% bar
+        run.gps = gps
+        ctx.insert(run)
+
+        #expect(PlanCoaching.creditLaunched(long, with: run, to: plan, in: ctx) != nil)
+        #expect(long.status == .completed)
+        #expect(run.plannedSession?.id == long.id)
+    }
+
+    /// A session with no measurable target (a strength day) is completed by any real session —
+    /// exactly as `PlanCredit.bestMatch` treats an untargeted candidate. Unchanged behaviour.
+    @Test func launchedSessionWithoutATargetStillCompletes() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let lift = PlannedSession()
+        lift.date = Calendar.current.startOfDay(for: Date())
+        lift.discipline = .strength
+        lift.status = .planned
+        let plan = makePlan(in: ctx, sessions: [lift])
+
+        let workout = Workout()
+        workout.type = .strength
+        workout.startedAt = Date()
+        workout.durationS = 2_700
+        ctx.insert(workout)
+
+        #expect(PlanCoaching.creditLaunched(lift, with: workout, to: plan, in: ctx) != nil)
+        #expect(lift.status == .completed)
+    }
+
+    /// Falling short of the launched session still credits a smaller open one it genuinely covers —
+    /// the athlete who set out for the long run and ran the easy run gets the easy run.
+    @Test func shortOfTheLaunchedSessionCreditsOneItDoesFulfil() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let today = Calendar.current.startOfDay(for: Date())
+        let long = PlannedSession()
+        long.date = today; long.discipline = .running; long.runType = .long
+        long.targetDistanceM = 16_000; long.status = .planned
+        let easy = PlannedSession()
+        easy.date = today; easy.discipline = .running; easy.runType = .easy
+        easy.targetDistanceM = 5_000; easy.status = .planned
+        let plan = makePlan(in: ctx, sessions: [long, easy])
+
+        let run = Workout()
+        run.type = .run
+        run.startedAt = Date()
+        run.durationS = 1_800
+        let gps = GPSDetail()
+        gps.distanceM = 5_100
+        run.gps = gps
+        ctx.insert(run)
+
+        let credited = PlanCoaching.creditLaunched(long, with: run, to: plan, in: ctx)
+        #expect(credited?.id == easy.id)
+        #expect(easy.status == .completed)
+        #expect(long.status == .planned)
     }
 }

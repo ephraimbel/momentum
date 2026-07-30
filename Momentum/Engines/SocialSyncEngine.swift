@@ -19,6 +19,9 @@ enum SocialSyncEngine {
         let publicLocation: String?
         var avatarPath: String?
         let discoverable: Bool
+        /// The paid checkmark (X-style). Stamped from the live entitlement at publish; the feed
+        /// returns it so every viewer sees who's verified. Display status, never a server gate.
+        var isPro: Bool = false
     }
 
     /// One feed post (mirrors the Supabase `posts` table). `photoPaths` is filled in by the
@@ -67,6 +70,11 @@ enum SocialSyncEngine {
         let reactionCount: Int
         let viewerReacted: Bool
         let createdAt: Date
+        /// Optional for wire back-compat: absent until the server migration lands.
+        var authorPro: Bool? = nil
+        /// Trailing column (2026-07-30): the post's real comment count, blocked-filtered. Optional
+        /// for the same back-compat reason as `authorPro`.
+        var commentCount: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -87,6 +95,8 @@ enum SocialSyncEngine {
             case reactionCount = "reaction_count"
             case viewerReacted = "viewer_reacted"
             case createdAt = "created_at"
+            case authorPro = "author_pro"
+            case commentCount = "comment_count"
         }
     }
 
@@ -101,6 +111,7 @@ enum SocialSyncEngine {
             authorHandle: row.authorHandle,
             location: row.authorLocation,
             isCommunity: false,
+            isPro: row.authorPro ?? false,
             type: WorkoutType(rawValue: row.workoutType) ?? .run,
             date: row.startedAt,
             title: row.title,
@@ -117,7 +128,8 @@ enum SocialSyncEngine {
             baseReactions: max(0, row.reactionCount - (row.viewerReacted ? 1 : 0)),
             photosData: photos,
             avatarData: avatar,
-            aiRead: row.aiRead)
+            aiRead: row.aiRead,
+            remoteCommentCount: row.commentCount)
     }
 
     /// The publish sweep (runs opportunistically with the workout sync): which workouts need a
@@ -133,14 +145,15 @@ enum SocialSyncEngine {
 
     /// The public projection of a profile. Location is redacted here (granularity → city or
     /// nothing) — the raw city string never uploads unless the athlete opted in.
-    static func profileDTO(for profile: UserProfile) -> ProfileDTO {
+    static func profileDTO(for profile: UserProfile, isPro: Bool = false) -> ProfileDTO {
         ProfileDTO(
             handle: SocialPrivacy.normalizedHandle(profile.handle),
             displayName: profile.displayName.trimmingCharacters(in: .whitespaces),
             bio: profile.bio.trimmingCharacters(in: .whitespaces),
             publicLocation: SocialPrivacy.publicLocation(profile),
             avatarPath: nil,
-            discoverable: profile.discoverable)
+            discoverable: profile.discoverable,
+            isPro: isPro)
     }
 
     /// Build the publishable post for a workout — nil when the workout isn't shared. The stat
@@ -172,7 +185,7 @@ enum SocialSyncEngine {
             prBadge: nil,
             muscles: FeedAssembler.muscleMap(w).map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) },
             route: route,
-            mapStyle: MapStyleOption.standard.rawValue,
+            mapStyle: (w.gps?.mapStyle ?? .standard).rawValue,
             aiRead: w.aiSummary)
     }
 }

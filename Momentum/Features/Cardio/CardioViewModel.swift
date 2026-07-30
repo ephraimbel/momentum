@@ -43,6 +43,8 @@ final class CardioViewModel {
     // immediately on any pause-state flip.
     private var lastActivityPush = Date.distantPast
     private var lastActivityPaused = false
+    private var lastActivityGPSLost = false
+    private var lastActivityStep: String?
 
     /// True once a fix lands within the lock accuracy band — the cue to leave the "acquiring" gate
     /// and start the countdown (PRD §4.3; mirrors Strava's "GPS Signal Acquired").
@@ -89,6 +91,8 @@ final class CardioViewModel {
     private var structuredTask: Task<Void, Never>?
     private var structuredCompleteAnnounced = false
     private var lastPaceNudgeAt: TimeInterval = 0
+    private var lastEncouragementAt: TimeInterval = 0
+    private var encouragementCount = 0    // cycles the deterministic encouragement lines
     private var lastCountdownSecond = 0   // last whole-second countdown tick fired for the current step
 
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
@@ -181,7 +185,13 @@ final class CardioViewModel {
     /// Begin recording for real (called when the countdown hits GO). From here fixes accumulate
     /// into the route + distance; the elapsed clock starts now.
     func arm() async {
-        startedAt = Date()
+        // --live-run-midway (marketing shot): backdate the clock so the elapsed time agrees with the
+        // ~2 mi the route feed bursts in — the frame reads as a real mid-run, not "2 mi in 0:15".
+        // --ui-test-run4 (core-flow E2E) bursts a 4 mi trace fast, so backdate ~24 min (4 mi @ 6:00/mi)
+        // for an honest saved avg pace instead of "4 mi in 0:24".
+        startedAt = LocationService.isMidway ? Date().addingTimeInterval(-1080)
+            : LocationService.isRun4 ? Date().addingTimeInterval(-1350)
+            : Date()
         await engine.begin(now: startedAt)
         motion.start()      // begin cadence updates now that recording is live
         heartRate.start()   // scan for a BLE HR strap (no-op without one)
@@ -204,7 +214,9 @@ final class CardioViewModel {
                    self.state == .tracking {
                     await self.engine.markGPSLost()
                     self.snapshot = await self.engine.snapshot()
-                    self.liveActivity.update(self.liveState())
+                    // Through the shared path so the gpsLost flip forces past the throttle AND the
+                    // bookkeeping stays in sync (a direct update would re-force on the next tick).
+                    self.pushLiveActivityIfDue()
                 }
             }
         }
@@ -212,11 +224,16 @@ final class CardioViewModel {
         // independent of GPS-fix cadence so timed recoveries count down while you stand still.
         if let step = tracker?.current {
             Haptics.medium()   // the "go" cue at step one, matching every later transition
+            // The coach's opening line — the day's shape before the first step is called.
+            if let structured { voice?.announce(CoachingCueBuilder.workoutIntro(structured)) }
             voice?.announce(CoachingCueBuilder.stepStart(step))
             structuredTask = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self else { break }
                     self.tickStructured()
+                    // Step flips must reach the lock screen even between GPS fixes (a timed
+                    // recovery while standing still) — the push itself stays throttled.
+                    self.pushLiveActivityIfDue()
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
@@ -274,16 +291,30 @@ final class CardioViewModel {
         voice?.announce(CoachingCueBuilder.workoutComplete())
     }
 
-    /// A throttled pace nudge inside a work step when you drift outside the target band. Held off for
-    /// the first ~10 s of a step so the smoothed pace (EMA) has caught up from the previous step's
-    /// effort — otherwise a rep would open with a spurious "pick it up".
+    /// A throttled pace nudge inside a work step when you drift outside the target band, plus a far
+    /// sparser word of encouragement when you're holding it. Held off for the first ~10 s of a step
+    /// so the smoothed pace (EMA) has caught up from the previous step's effort — otherwise a rep
+    /// would open with a spurious "pick it up".
     private func maybeNudgePace(at now: TimeInterval) {
-        guard voice != nil, now - lastPaceNudgeAt > 25,
-              let t = tracker, now - t.anchorElapsedS > 10 else { return }
+        guard voice != nil, let t = tracker, now - t.anchorElapsedS > 10 else { return }
         let a = stepAdherence
-        guard a == .tooFast || a == .tooSlow else { return }
-        lastPaceNudgeAt = now
-        voice?.announce(CoachingCueBuilder.paceNudge(a))
+        switch a {
+        case .tooFast, .tooSlow:
+            guard now - lastPaceNudgeAt > 25 else { return }
+            lastPaceNudgeAt = now
+            voice?.announce(CoachingCueBuilder.paceNudge(a))
+        case .onPace:
+            // Encouragement is earned and rare: ~30 s into the step actually holding pace, at most
+            // every 2½ minutes, and never on the heels of a correction — silence stays the norm.
+            guard now - t.anchorElapsedS > 30,
+                  now - lastEncouragementAt > 150,
+                  now - lastPaceNudgeAt > 45 else { return }
+            lastEncouragementAt = now
+            voice?.announce(CoachingCueBuilder.encouragement(encouragementCount))
+            encouragementCount += 1
+        case .noTarget:
+            break
+        }
     }
 
     /// Tear down the stream when the user backs out before arming (no workout was ever created).
@@ -326,14 +357,19 @@ final class CardioViewModel {
     func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); pushLiveActivityIfDue(); announcePauseIfChanged() }
 
     /// Push to the Live Activity at most every `liveActivityUpdateS`, or immediately when the
-    /// paused state flips (that change must never wait out the throttle).
+    /// paused state flips or a guided step transitions (those changes must never wait out the
+    /// throttle — the lock screen would show the old rep while you're already recovering).
     private func pushLiveActivityIfDue() {
         let paused = isPaused
-        guard paused != lastActivityPaused
+        let lost = gpsLost
+        let step = structured == nil ? nil : stepTitle
+        guard paused != lastActivityPaused || lost != lastActivityGPSLost || step != lastActivityStep
             || Date().timeIntervalSince(lastActivityPush) >= GPSTrackingEngine.Const.liveActivityUpdateS
         else { return }
         lastActivityPush = Date()
         lastActivityPaused = paused
+        lastActivityGPSLost = lost
+        lastActivityStep = step
         liveActivity.update(liveState())
     }
 
@@ -343,6 +379,11 @@ final class CardioViewModel {
         let end = pauseStartedAt ?? now
         return max(0, end.timeIntervalSince(startedAt) - pausedTotalS)
     }
+
+    /// Wall-clock time since recording began, pauses INCLUDED — the workout's `elapsedS`, and the
+    /// window every Health read (HR series, time in zones) has to span. Distinct from `elapsed()`,
+    /// which is the moving time the athlete watches and every pace divides by.
+    func totalElapsed(at now: Date = Date()) -> TimeInterval { max(0, now.timeIntervalSince(startedAt)) }
 
     /// Elapsed time for structured timed steps — freezes only on MANUAL pause. A timed recovery keeps
     /// counting through GPS auto-pause (when you slow to a walk or stop during the recovery), so a guided
@@ -385,7 +426,7 @@ final class CardioViewModel {
             t.skip(distanceM: distanceM, elapsedS: structuredElapsed())
             tracker = t
         }
-        await engine.finish(durationOverrideS: elapsed())
+        await engine.finish(durationOverrideS: elapsed(), elapsedOverrideS: totalElapsed())
         // Persist the run's average cadence + heart rate when the sensors produced readings.
         if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
         if let avgHR = RunSignals.mean(hrReadings) { await store.attachHR(avgHR) }
@@ -393,11 +434,26 @@ final class CardioViewModel {
         if let reps = tracker?.completedReps, !reps.isEmpty, let data = try? JSONEncoder().encode(reps) {
             await store.attachStructuredReps(data)
         }
-        // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5) — do
-        // this synchronously so the summary always opens with a route image.
+        // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5),
+        // with the athlete's chosen map style (the map they actually ran on), not a hardcoded
+        // basemap. NOT awaited: the save screen's hero is a live RouteMapView, so nothing on it
+        // needs this image — and a slow tile fetch right after an outdoor run was holding the
+        // finish for many seconds. If the render fails, WorkoutSnapshotHealer recovers it from the
+        // grid/History/launch sweep.
         let coords = coordinates
-        if coords.count > 1, let data = await RouteSnapshotter.snapshot(coordinates: coords) {
-            await store.attachSnapshot(data)
+        if coords.count > 1 {
+            let store = self.store
+            let snapshotStyle = MapStyleOption.persisted
+            Task.detached(priority: .userInitiated) {
+                // Card renders on the clean canvas; the athlete's style is still stamped so the
+                // full-screen pager honors it.
+                if let data = await RouteSnapshotter.snapshot(
+                    coordinates: coords, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: RouteSnapshotter.tileStyle,
+                    insets: RouteSnapshotter.workoutTileInsets) {
+                    await store.attachSnapshot(data, styleRaw: snapshotStyle.rawValue)
+                }
+            }
         }
         // Stage 3 (§8.5): snap the finished route to the road/path network in the background, then
         // upgrade the stored route + snapshot. Not awaited — the summary shows the raw trace instantly
@@ -406,7 +462,7 @@ final class CardioViewModel {
         if MapMatchingService.isEnabled, coords.count > 1 {
             let store = self.store
             let type = self.type
-            let log = Logger(subsystem: "com.momentum.app", category: "map-matching")
+            let log = Logger(subsystem: "com.ephraimbel.momentum.app", category: "map-matching")
             Task.detached(priority: .utility) {
                 guard let match = await MapMatchingService().match(coordinates: coords,
                                                                    profile: MapMatchingService.profile(for: type)) else {
@@ -421,7 +477,15 @@ final class CardioViewModel {
                 let pairs = match.coordinates.map { [$0.latitude, $0.longitude] }
                 guard let routeData = try? JSONEncoder().encode(pairs) else { return }
                 await store.attachMatchedRoute(routeData)
-                if let snapshot = await RouteSnapshotter.snapshot(coordinates: match.coordinates) {
+                if let snapshot = await RouteSnapshotter.snapshot(
+                    coordinates: match.coordinates, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: RouteSnapshotter.tileStyle,
+                    insets: RouteSnapshotter.workoutTileInsets) {
+                    // No style stamp: matching lands seconds-to-minutes after finish, often AFTER the
+                    // athlete picked this run's basemap on the save screen. Re-reading the app-wide
+                    // style here overwrote that choice with the global one — the picker looked like
+                    // it hadn't stuck. The image itself is style-independent (always the clean tile
+                    // canvas), so leaving the stamp alone is both correct and sufficient.
                     await store.attachSnapshot(snapshot)
                 }
             }
@@ -558,10 +622,39 @@ final class CardioViewModel {
         return .init(
             timerStart: Date().addingTimeInterval(-e),
             paused: isPaused,
+            gpsLost: gpsLost,
             elapsedText: Formatters.duration(s: e),
             distanceText: secondaryDistance,
             paceText: pace.value,
             paceLabel: pace.label,
-            goalFraction: goalMeters.map { $0 > 0 ? max(0, min(1, distanceM / $0)) : 0 })
+            goalFraction: goalMeters.map { $0 > 0 ? max(0, min(1, distanceM / $0)) : 0 },
+            stepText: structured == nil ? nil : stepTitle,
+            route: liveRouteSample())
+    }
+
+    /// The trace downsampled for the Live Activity payload: ≤60 points, normalized into the unit
+    /// square with the geographic aspect preserved (longitude scaled by cos φ), centered on the
+    /// minor axis, y flipped to screen-down, rounded to 3 dp so the encoded payload stays a few
+    /// hundred bytes. The widget strokes it verbatim.
+    private func liveRouteSample() -> [Double]? {
+        let coords = coordinates
+        guard coords.count > 1 else { return nil }
+        let step = max(1, coords.count / 60)
+        var pts = Swift.stride(from: 0, to: coords.count, by: step).map { coords[$0] }
+        if pts.last?.latitude != coords.last?.latitude || pts.last?.longitude != coords.last?.longitude {
+            pts.append(coords.last!)
+        }
+        let lats = pts.map(\.latitude), lons = pts.map(\.longitude)
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLon = lons.min(), let maxLon = lons.max() else { return nil }
+        let cosф = cos((minLat + maxLat) / 2 * .pi / 180)
+        let spanX = (maxLon - minLon) * cosф, spanY = maxLat - minLat
+        let span = max(spanX, spanY, 1e-6)
+        let padX = (1 - spanX / span) / 2, padY = (1 - spanY / span) / 2
+        return pts.flatMap { c in
+            let x = padX + (c.longitude - minLon) * cosф / span
+            let y = padY + (maxLat - c.latitude) / span
+            return [(x * 1000).rounded() / 1000, (y * 1000).rounded() / 1000]
+        }
     }
 }

@@ -11,6 +11,10 @@ struct ExerciseCatalogItem: Sendable, Equatable {
     let equipment: EquipmentType
     let category: ExerciseCategory
     let defaultRestS: Double
+    /// How the exercise is measured. The engine MUST see this: without it the catalog looked
+    /// rep-shaped all the way down, so `scheme(…)` happily prescribed "3 × 10–15" for a plank.
+    /// `selectExercise` now uses it to auto-prescribe rep-countable exercises ONLY.
+    var trackingMode: TrackingMode = .weightReps
 }
 
 /// Optional calibration seeds gathered in onboarding (§26).
@@ -69,9 +73,11 @@ struct GeneratedWeek: Sendable, Equatable {
     var phase: PlanPhase = .build
     var sessions: [GeneratedSession]
 
-    /// Total prescribed running distance for the week (meters) — for the ≤10%/wk invariant.
+    /// Total prescribed running TRAINING distance for the week (meters) — for the ≤10%/wk and ACWR
+    /// invariants. The race session is deliberately excluded: the race is the objective the ramp
+    /// delivers you to, not ramp load to govern (nothing trains after it — race week is cleared).
     var runVolumeM: Double {
-        sessions.filter { $0.discipline == .running || $0.discipline == .walking }
+        sessions.filter { ($0.discipline == .running || $0.discipline == .walking) && $0.runType != .race }
             .reduce(0) { $0 + ($1.targetDistanceM ?? 0) }
     }
 }

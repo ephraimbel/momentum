@@ -14,13 +14,6 @@ enum PlanCoaching {
             .sorted { $0.date < $1.date }
     }
 
-    static func weekSessions(_ plan: TrainingPlan?, containing date: Date, calendar: Calendar = .current) -> [PlannedSession] {
-        guard let plan, let interval = calendar.dateInterval(of: .weekOfYear, for: date) else { return [] }
-        return plan.sessions
-            .filter { interval.contains($0.date) }
-            .sorted { $0.date < $1.date }
-    }
-
     /// Link a finished workout to its planned session.
     static func markComplete(_ session: PlannedSession, with workout: Workout, in context: ModelContext) {
         session.completedWorkout = workout
@@ -52,24 +45,101 @@ enum PlanCoaching {
         try? context.save()
     }
 
+    /// Credit the session the athlete **launched from the plan** — but only if the work they did
+    /// actually fulfils it.
+    ///
+    /// Tapping Start on today's 16 km long run and stopping at 1 km used to check that session off
+    /// outright: the launched branch skipped `PlanCredit` entirely, and a completed session is
+    /// skipped by missed-session reconciliation, so the week's marquee run silently disappeared from
+    /// the plan — the exact failure `PlanCredit` exists to prevent ("a false credit silently deletes
+    /// the athlete's key session"). Under-fulfilled now falls through to the same magnitude-aware
+    /// matching a free workout gets, so the effort can still credit a smaller session it *does*
+    /// cover; otherwise the prescription simply stays open and rolls forward. No shame either way —
+    /// the summary says plainly how much of it the run covered.
+    ///
+    /// A session with no measurable target (a strength day, an open-ended session) is completed by
+    /// any real workout, exactly as `PlanCredit.bestMatch` treats an untargeted candidate.
+    @discardableResult
+    static func creditLaunched(_ session: PlannedSession, with workout: Workout, to plan: TrainingPlan?,
+                               in context: ModelContext, calendar: Calendar = .current) -> PlannedSession? {
+        let candidate = PlanCredit.Candidate(targetDistanceM: session.targetDistanceM,
+                                             targetDurationS: session.targetDurationS)
+        let ratio = PlanCredit.fulfillment(of: candidate, distanceM: workout.gps?.distanceM ?? 0,
+                                           durationS: workout.durationS)
+        if ratio == nil || ratio! >= PlanCredit.minFulfillment {
+            markComplete(session, with: workout, in: context)
+            return session
+        }
+        return creditWorkout(workout, to: plan, in: context, calendar: calendar)
+    }
+
     /// Credit a free workout toward today's matching planned session, if still open. Magnitude-aware
     /// (`PlanCredit`): the workout must plausibly *fulfill* the prescription — a short recovery jog
     /// leaves the day's long run open instead of silently completing it.
+    ///
+    /// The long run gets a ±1-day grace: it's the week's marquee session and real life routinely
+    /// shifts it a day (Saturday's 16 km done Friday). Same-day sessions always win; only when
+    /// nothing today credits do we look one day out, and only at long runs — the fulfillment rule
+    /// still applies, so a short Friday jog never swallows Saturday's prescription.
     @discardableResult
     static func creditWorkout(_ workout: Workout, to plan: TrainingPlan?, in context: ModelContext,
                               calendar: Calendar = .current) -> PlannedSession? {
         guard let plan else { return nil }
-        let open = todaySessions(plan, on: workout.startedAt, calendar: calendar).filter {
-            $0.status == .planned && $0.completedWorkout == nil && $0.discipline == workout.type.discipline
+        if let hit = credit(among: todaySessions(plan, on: workout.startedAt, calendar: calendar),
+                            workout: workout, in: context) {
+            return hit
+        }
+        let adjacentLongs = [-1, 1].flatMap { delta -> [PlannedSession] in
+            guard let day = calendar.date(byAdding: .day, value: delta, to: workout.startedAt) else { return [] }
+            return todaySessions(plan, on: day, calendar: calendar).filter { $0.runType == .long }
+        }
+        return credit(among: adjacentLongs, workout: workout, in: context)
+    }
+
+    /// The log composer's receipt line: which open session WOULD this workout credit — the exact
+    /// matching `creditWorkout` runs (same-day best match, then the long run's ±1-day grace), with
+    /// zero mutation, so the athlete sees "checks off today's planned session" before confirming.
+    static func creditCandidate(type: WorkoutType, distanceM: Double, durationS: Double, on date: Date,
+                                plan: TrainingPlan?, calendar: Calendar = .current) -> PlannedSession? {
+        guard let plan else { return nil }
+        if let hit = match(among: todaySessions(plan, on: date, calendar: calendar),
+                           type: type, distanceM: distanceM, durationS: durationS) {
+            return hit
+        }
+        let adjacentLongs = [-1, 1].flatMap { delta -> [PlannedSession] in
+            guard let day = calendar.date(byAdding: .day, value: delta, to: date) else { return [] }
+            return todaySessions(plan, on: day, calendar: calendar).filter { $0.runType == .long }
+        }
+        return match(among: adjacentLongs, type: type, distanceM: distanceM, durationS: durationS)
+    }
+
+    /// The shared matching pass: filter to open sessions of the workout's discipline, then let
+    /// `PlanCredit` pick the best fulfilled prescription. `.moved` counts as open: reconcileMissed
+    /// rolls every past-due session forward as .moved (routine after any slipped day), and the
+    /// athlete who then does the work must get the credit — markComplete already accepts moved.
+    private static func credit(among sessions: [PlannedSession], workout: Workout,
+                               in context: ModelContext) -> PlannedSession? {
+        guard let hit = match(among: sessions, type: workout.type,
+                              distanceM: workout.gps?.distanceM ?? 0, durationS: workout.durationS)
+        else { return nil }
+        markComplete(hit, with: workout, in: context)
+        return hit
+    }
+
+    /// Pure selection — shared by the crediting write path and the receipt preview so the two can
+    /// never disagree about which session a workout fulfills.
+    private static func match(among sessions: [PlannedSession], type: WorkoutType,
+                              distanceM: Double, durationS: Double) -> PlannedSession? {
+        let open = sessions.filter {
+            ($0.status == .planned || $0.status == .moved)
+                && $0.completedWorkout == nil && $0.discipline == type.discipline
         }
         guard !open.isEmpty else { return nil }
         let candidates = open.map {
             PlanCredit.Candidate(targetDistanceM: $0.targetDistanceM, targetDurationS: $0.targetDurationS)
         }
-        guard let idx = PlanCredit.bestMatch(distanceM: workout.gps?.distanceM ?? 0,
-                                             durationS: workout.durationS,
+        guard let idx = PlanCredit.bestMatch(distanceM: distanceM, durationS: durationS,
                                              candidates: candidates) else { return nil }
-        markComplete(open[idx], with: workout, in: context)
         return open[idx]
     }
 
@@ -92,6 +162,7 @@ enum PlanCoaching {
         for session in plan.sessions
             where session.status == .planned
             && session.completedWorkout == nil
+            && session.runType != .race        // a missed race never auto-reschedules — that's the athlete's call
             && calendar.startOfDay(for: session.date) < todayStart {
 
             var moved = false
@@ -117,31 +188,63 @@ enum PlanCoaching {
         }
 
         // Rebuild week after a real absence (PRD §9.4: ≥3 misses → the week restarts at ~70%).
-        if movedCount >= 3, let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
+        // Shrinking load is a structural change, so it shares the ≤1-change/week `lastAdaptedAt` gate
+        // — never stack a rebuild-week on top of another ease/bump (or vice-versa) in the same week.
+        let recentlyAdapted = plan.lastAdaptedAt.map {
+            (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) < 7
+        } ?? false
+        if movedCount >= 3, !recentlyAdapted, !plan.isSelfCoached,
+           let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
+            let unit = displayUnit(in: context)
+            // Comeback paces: time away costs fitness, so the assumed 5k eases ~2% BEFORE the week
+            // is softened (the converted easy sessions then price at the eased fitness). Recalibration
+            // earns it back the first time a quality run proves the old level — paces only ever
+            // tighten from evidence, so this can't spiral downward.
+            if plan.p5kSPerKm > 0 { plan.p5kSPerKm *= 1.02 }
             for s in plan.sessions
-                where s.status != .completed && s.completedWorkout == nil
+                where s.status != .completed && s.completedWorkout == nil && s.runType != .race
                       && calendar.startOfDay(for: s.date) >= todayStart && s.date < horizon {
-                if let d = s.targetDistanceM { s.targetDistanceM = (d * 0.7).rounded() }
+                if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.7, unit: unit) }
                 if let dur = s.targetDurationS { s.targetDurationS = (dur * 0.7).rounded() }
                 if let rt = s.runType, rt.isQuality {
                     s.runType = .easy
                     s.intervals = nil
-                    s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: plan.p5kSPerKm)
                 }
                 for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.7).rounded())) }
                 s.rationale = "Rebuild week — easing back in at ~70% after time away. The plan meets you here."
             }
+            // Re-derive every future planned pace at the eased fitness (this week's converted easies
+            // AND the weeks beyond — a comeback's interval day shouldn't demand last month's legs).
+            for s in plan.sessions
+                where s.status != .completed && s.completedWorkout == nil
+                      && calendar.startOfDay(for: s.date) >= todayStart {
+                guard let rt = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.sessionPace(rt, p5k: plan.p5kSPerKm, intervals: s.intervals,
+                                                   raceDistanceM: goalRaceDistanceM(in: context)),
+                    unit: unit, type: rt)
+            }
+            plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
             CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
-                                 detail: "You were away a bit, so this week restarts at about 70%. Cramming the missed work back in is how comebacks end early.",
+                                 detail: "You were away a bit, so this week restarts at about 70% and your paces ease a touch. One good session earns them right back.",
                                  on: today, in: context, calendar: calendar)
         }
         if changed { try? context.save() }
     }
 
-    /// Apply the Progress coach's recommendation to **future** planned sessions (PRD §4.7, §9).
-    /// Adjusts only sessions dated today-or-later and still `.planned` — completed work and history
-    /// are never touched. Deterministic: rules reshape the plan, the coach only narrates it.
-    /// Returns the number of sessions changed (0 ⇒ nothing upcoming, or an advisory-only rec).
+    /// An open (adaptable) session: still ahead of the athlete, whether it sat where planned or was
+    /// rolled forward by reconcileMissed. `.moved` MUST count — the paths that filtered `.planned`
+    /// only left every slipped-then-rolled session immune to eases and pace updates, i.e. the
+    /// athlete who misses days (exactly who needs adaptation) kept stale prescriptions.
+    private static func isOpen(_ s: PlannedSession) -> Bool {
+        (s.status == .planned || s.status == .moved) && s.completedWorkout == nil
+    }
+
+    /// Apply the Progress coach's recommendation to **future** open sessions (PRD §4.7, §9).
+    /// Adjusts only sessions dated today-or-later and still open (`.planned` or `.moved`) —
+    /// completed work and history are never touched. Deterministic: rules reshape the plan, the
+    /// coach only narrates it. Returns the number of sessions changed (0 ⇒ nothing upcoming, or an
+    /// advisory-only rec).
     ///
     /// Note: the recommendation is derived from *completed* load, not from the plan, so applying
     /// the same rec repeatedly compounds. The UI confirms once and disables re-tapping per render.
@@ -153,22 +256,27 @@ enum PlanCoaching {
         let todayStart = calendar.startOfDay(for: date)
         // Injury-converted sessions are off-limits: softening one would corrupt the swap (easy-run
         // fields on a cycling session) and overwrite the marker `resume` needs to restore it.
+        // Race day is untouchable too — you don't run 110% (or 85%) of a marathon; adaptations
+        // shape the training around it, never the race itself.
         let future = plan.sessions
-            .filter { $0.status == .planned && $0.completedWorkout == nil
+            .filter { isOpen($0)
                       && calendar.startOfDay(for: $0.date) >= todayStart
+                      && $0.runType != .race
                       && !($0.rationale?.hasPrefix(InjuryResponse.marker) ?? false) }
             .sorted { $0.date < $1.date }
         guard !future.isEmpty else { return 0 }
         let p5k = plan.p5kSPerKm
+        let unit = displayUnit(in: context)   // keep rescaled prescriptions clean
 
         // Scale a cardio session's targets and soften any hard quality work to easy.
         func soften(_ s: PlannedSession, factor: Double, note: String) {
-            if let d = s.targetDistanceM { s.targetDistanceM = (d * factor).rounded() }
+            if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * factor, unit: unit) }
             if let dur = s.targetDurationS { s.targetDurationS = (dur * factor).rounded() }
             if let rt = s.runType, rt.isQuality || rt == .long {
                 s.runType = .easy
                 s.intervals = nil
-                s.targetPaceSPerKm = PlanEngine.pace(.easy, p5k: p5k)
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: unit, type: .easy)
             }
             s.rationale = note
         }
@@ -176,7 +284,7 @@ enum PlanCoaching {
         switch rec {
         case .increase:
             for s in future {
-                if let d = s.targetDistanceM { s.targetDistanceM = (d * 1.1).rounded() }
+                if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 1.1, unit: unit) }
                 if let dur = s.targetDurationS { s.targetDurationS = (dur * 1.1).rounded() }
                 for pe in s.strengthTargets { pe.targetSets = min(6, pe.targetSets + 1) }
                 s.rationale = "Nudged up ~10% — your load says you've earned more."
@@ -196,8 +304,9 @@ enum PlanCoaching {
             if next.strengthTargets.isEmpty {
                 next.runType = .recovery
                 next.intervals = nil
-                next.targetDistanceM = min(next.targetDistanceM ?? 3200, 3200)
-                next.targetPaceSPerKm = PlanEngine.pace(.recovery, p5k: p5k)
+                next.targetDistanceM = RunRounding.snap(meters: min(next.targetDistanceM ?? 3200, 3200), unit: unit)
+                next.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.recovery, p5k: p5k), unit: unit, type: .recovery)
             } else {
                 for pe in next.strengthTargets { pe.targetSets = 2 }
             }
@@ -215,6 +324,13 @@ enum PlanCoaching {
         (try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.raceDistanceM
     }
 
+    /// The athlete's resolved display unit — so adaptations keep prescriptions clean (`RunRounding`)
+    /// after scaling. Internal so the sibling recovery/injury engines reuse it.
+    static func displayUnit(in context: ModelContext) -> DistanceUnit {
+        ((try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.distanceUnit)
+            .flatMap(DistanceUnit.init(rawValue:))?.resolved() ?? .metric
+    }
+
     /// The outcome of a pace recalibration, so the caller can narrate/notify it ("you're getting faster").
     struct Recalibration: Sendable, Equatable {
         let oldP5kSPerKm: Double
@@ -226,13 +342,20 @@ enum PlanCoaching {
     /// than the plan currently assumes, lower the athlete's `p5kSPerKm` and re-derive **future**
     /// running paces. Conservative on purpose:
     ///  • only quality/hard efforts count (never recalibrate off an easy/long run, which is slow by design),
-    ///  • paces only ever get *faster* from a single run (a bad day never slows you down — no-shame),
-    ///  • a single run moves p5k at most ~3%, with a sane floor.
-    /// Returns the change if one was made (else `nil`). Deterministic + bounded; the AI only narrates it.
+    ///  • paces only ever get *faster* here (a bad day never slows you down — no-shame),
+    ///  • **two-run confirmation**: one strong run banks a pending candidate; a second qualifying
+    ///    run within 14 days confirms and applies. The evidence standard is 2–3 confirming sessions
+    ///    before raising fitness — never off one great day. A finished goal RACE is definitive and
+    ///    bypasses confirmation.
+    ///  • at most ~3% per applied update, applied at most once per 7 days, with a sane floor —
+    ///    so a great week sharpens the plan once, not every morning.
+    /// Returns the change if one was applied (`nil` for non-qualifying runs AND for the banked
+    /// first-evidence run — the bank records its own coaching event). Deterministic + bounded.
     @discardableResult
     static func recalibratePaces(from workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                                  in context: ModelContext, calendar: Calendar = .current) -> Recalibration? {
         guard let plan, workout.type.discipline == .running, let gps = workout.gps else { return nil }
+        guard !plan.isSelfCoached else { return nil }   // their targets are theirs — never rewritten
         let dist = gps.distanceM, time = workout.durationS, current = plan.p5kSPerKm
         // Need a meaningful distance to extrapolate a 5k from — Riegel off a 400 m rep is noise.
         guard dist >= 2000, time > 0, current > 0 else { return nil }
@@ -248,57 +371,101 @@ enum PlanCoaching {
         // Treat the run as a 5k-equivalent (Riegel). Most efforts aren't maximal, so this *under*-states
         // true fitness — beating the stored p5k is therefore a strong, conservative signal.
         let equivalent = PlanEngine.riegelP5k(distanceM: dist, timeS: time)
-        guard equivalent < current else { return nil }       // only get faster from a single run
+        guard equivalent < current else { return nil }       // only ever faster from evidence
         let bounded = max(equivalent, current * 0.97, 150)   // ≤3%/update; sane floor
         guard current - bounded >= 0.5 else { return nil }   // ignore sub-second-per-km noise
 
+        // Weekly cap on APPLIED updates: strong runs can come daily; the plan sharpens once a week.
+        if let last = plan.lastRecalibratedAt,
+           (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+
+        // Two-run confirmation. A race result is maximal, definitive evidence — apply immediately.
+        let isRaceResult = workout.plannedSession?.runType == .race
+        let hasFreshEvidence = plan.pendingP5kAt.map {
+            (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) <= 14
+        } ?? false
+        guard isRaceResult || hasFreshEvidence else {
+            plan.pendingP5kSPerKm = equivalent
+            plan.pendingP5kAt = today
+            try? context.save()
+            CoachingEvent.record(kind: .recalibrate, headline: "Strong run banked",
+                                 detail: "That looked faster than your training paces assume. One more strong session in the next two weeks and I'll sharpen them — real fitness shows up twice.",
+                                 on: today, in: context, calendar: calendar)
+            return nil
+        }
+        plan.pendingP5kSPerKm = nil
+        plan.pendingP5kAt = nil
+        plan.lastRecalibratedAt = today
         plan.p5kSPerKm = bounded
 
-        // Re-derive paces on future, still-planned running sessions (today's history is never touched).
+        // Re-derive paces on future, still-open running sessions — `.moved` included, so the
+        // athlete who slipped a day doesn't carry stale targets on exactly the sessions ahead.
         let todayStart = calendar.startOfDay(for: today)
         var updated = 0
         for s in plan.sessions
-            where s.status == .planned && s.completedWorkout == nil
-                  && calendar.startOfDay(for: s.date) >= todayStart {
+            where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
-                                                        raceDistanceM: goalRaceDistanceM(in: context))
+            s.targetPaceSPerKm = RunRounding.snapPace(
+                sPerKm: PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
+                                               raceDistanceM: goalRaceDistanceM(in: context)),
+                unit: displayUnit(in: context), type: runType)
             updated += 1
         }
         try? context.save()
         if updated > 0 {
             let delta = Int((current - bounded).rounded())
+            let why = isRaceResult
+                ? "A race is the truest fitness test there is, so I sharpened your target paces by about \(delta) s/km. You've earned it."
+                : "Two strong runs in two weeks — that's real fitness, so I sharpened your target paces by about \(delta) s/km. You've earned it."
             CoachingEvent.record(kind: .recalibrate, headline: "Your paces got faster",
-                                 detail: "That run showed real fitness, so I sharpened your target paces by about \(delta) s/km. You've earned it.",
-                                 on: today, in: context, calendar: calendar)
+                                 detail: why, on: today, in: context, calendar: calendar)
         }
         return Recalibration(oldP5kSPerKm: current, newP5kSPerKm: bounded, sessionsUpdated: updated)
     }
 
+    /// Whether a consented pace-ease is currently available — false inside the 7-day cooldown after
+    /// the last one, so every offer surface (post-run card, coach intent) can hide/decline instead
+    /// of silently no-oping. The +2% ease is honest once; tapped after every session it's a slow
+    /// downward ratchet with no brake, which is exactly what the cooldown is.
+    static func canEasePaces(_ plan: TrainingPlan?, today: Date = Date(),
+                             calendar: Calendar = .current) -> Bool {
+        guard let plan else { return false }
+        guard let last = plan.lastPaceEasedAt else { return true }
+        return (calendar.dateComponents([.day], from: last, to: today).day ?? .max) >= 7
+    }
+
     /// The consent-required inverse of `recalibratePaces`, offered by the session pace review when a
     /// guided run's targets consistently ran hot ("Review"): ease the plan's assumed 5k a small
-    /// bounded step and re-derive **future** planned running paces so the prescription stays honest.
+    /// bounded step and re-derive **future** open running paces so the prescription stays honest.
     /// Never touches history; bounded to +2% per approval (mirrors recalibrate's ≤3% in the other
-    /// direction) so a tap can't lurch the plan. No-shame: this is "make the targets fit", never a
-    /// demotion. Returns the number of future sessions updated (0 ⇒ nothing upcoming to change).
+    /// direction) and at most once per 7 days (`canEasePaces`) so taps can't compound. No-shame:
+    /// this is "make the targets fit", never a demotion. Returns the number of future sessions
+    /// updated (0 ⇒ nothing upcoming to change, or inside the cooldown).
     @discardableResult
     static func easeQualityPaces(_ plan: TrainingPlan?, from date: Date = Date(),
                                  in context: ModelContext, calendar: Calendar = .current) -> Int {
         guard let plan, plan.p5kSPerKm > 0 else { return 0 }
+        guard canEasePaces(plan, today: date, calendar: calendar) else { return 0 }
         let newP5k = plan.p5kSPerKm * 1.02
         let todayStart = calendar.startOfDay(for: date)
         var updated = 0
         for s in plan.sessions
-            where s.status == .planned && s.completedWorkout == nil
-                  && calendar.startOfDay(for: s.date) >= todayStart {
+            where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
-                                                        raceDistanceM: goalRaceDistanceM(in: context))
+            s.targetPaceSPerKm = RunRounding.snapPace(
+                sPerKm: PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
+                                               raceDistanceM: goalRaceDistanceM(in: context)),
+                unit: displayUnit(in: context), type: runType)
             updated += 1
         }
         guard updated > 0 else { return 0 }   // nothing to change → don't move p5k either
         let delta = Int((newP5k - plan.p5kSPerKm).rounded())
         plan.p5kSPerKm = newP5k
+        plan.lastPaceEasedAt = date
+        // An eased plan also clears any banked sharpening evidence — the athlete just told us the
+        // old targets ran hot; a pre-ease "strong run" must not confirm against the new baseline.
+        plan.pendingP5kSPerKm = nil
+        plan.pendingP5kAt = nil
         try? context.save()
         CoachingEvent.record(kind: .recalibrate, headline: "Eased your target paces",
                              detail: "You asked for honest targets, so I eased your paces by about \(max(1, delta)) s/km. The reps will land the way they should.",
@@ -317,7 +484,7 @@ enum PlanCoaching {
     @discardableResult
     static func autoAdapt(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                           in context: ModelContext, calendar: Calendar = .current) -> ProgressInsights.Recommendation? {
-        guard let plan else { return nil }
+        guard let plan, !plan.isSelfCoached else { return nil }   // self-coached: we never touch it
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
 
@@ -386,7 +553,7 @@ enum PlanCoaching {
     @discardableResult
     static func adaptToEffort(_ workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                               in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
-        guard let plan, workout.type.discipline == .running else { return nil }
+        guard let plan, !plan.isSelfCoached, workout.type.discipline == .running else { return nil }
         let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort, runType: workout.plannedSession?.runType)
         let rec: ProgressInsights.Recommendation
         switch outcome {
@@ -422,7 +589,7 @@ enum PlanCoaching {
     /// Returns `nil` when there's nothing to offer. Deterministic — this is what `apply` would do.
     static func proposeAdjustment(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                                   calendar: Calendar = .current) -> Proposal? {
-        guard let plan else { return nil }
+        guard let plan, !plan.isSelfCoached else { return nil }   // no load proposals on their plan
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
         // Only the consent-required direction. ease/rest are auto-applied; hold/start are advisory.
@@ -440,8 +607,61 @@ enum PlanCoaching {
                         sessionsAffected: future.count)
     }
 
+    /// Pause the plan (travel, illness, life): shift every future, still-planned session forward by
+    /// `days` and stamp `pausedUntil`. Scheduling only — never load adaptation, so `lastAdaptedAt` is
+    /// untouched. The race date is NEVER moved; the caller is honest about compressed runway instead.
+    /// Returns the number of sessions shifted.
+    @discardableResult
+    static func pause(_ plan: TrainingPlan?, days: Int, from today: Date,
+                      in context: ModelContext, calendar: Calendar = .current) -> Int {
+        guard let plan, days > 0 else { return 0 }
+        let todayStart = calendar.startOfDay(for: today)
+        guard let until = calendar.date(byAdding: .day, value: days, to: todayStart) else { return 0 }
+        var shifted = 0
+        for s in plan.sessions
+            where s.status != .completed && s.completedWorkout == nil
+                  && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { continue }
+            s.date = moved
+            shifted += 1
+        }
+        plan.pausedUntil = until
+        try? context.save()
+        return shifted
+    }
+
+    /// End a pause early: pull the shifted sessions back by the *unused* remainder of the window and
+    /// clear `pausedUntil`. Resuming on/after the window's end just clears the flag (nothing to pull).
+    /// Returns the number of sessions moved back.
+    @discardableResult
+    static func resume(_ plan: TrainingPlan?, from today: Date,
+                       in context: ModelContext, calendar: Calendar = .current) -> Int {
+        guard let plan, let until = plan.pausedUntil else { return 0 }
+        let todayStart = calendar.startOfDay(for: today)
+        let remaining = calendar.dateComponents([.day], from: todayStart,
+                                                to: calendar.startOfDay(for: until)).day ?? 0
+        plan.pausedUntil = nil
+        guard remaining > 0 else { try? context.save(); return 0 }
+        var moved = 0
+        for s in plan.sessions
+            where s.status != .completed && s.completedWorkout == nil
+                  && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let back = calendar.date(byAdding: .day, value: -remaining, to: s.date),
+                  calendar.startOfDay(for: back) >= todayStart else { continue }
+            s.date = back
+            moved += 1
+        }
+        try? context.save()
+        return moved
+    }
+
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.
-    static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto) -> String {
+    ///
+    /// `dropLeadingType`: surfaces that already name the session's kind in an eyebrow ("TEMPO RUN")
+    /// pass true so the line reads "4 mi ~8:05 /mi" instead of restating "Tempo" twice. Falls back
+    /// to the full brief whenever dropping the label would leave nothing to say.
+    static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto,
+                      dropLeadingType: Bool = false) -> String {
         if session.discipline == .strength {
             let label = session.strengthTargets.count >= 5 ? "Full body" : "Strength"
             let n = session.strengthTargets.count
@@ -452,17 +672,73 @@ enum PlanCoaching {
             if let dur = session.targetDurationS, dur > 0 { return "\(wt.title) \(Formatters.duration(s: dur))" }
             return wt.title
         }
+        // A structured quality session headlines its SHAPE — "10 × 400m @ 8:24 /mi" — never the
+        // continuous-run reading. "Intervals 3.73 mi ~8:24 /mi" tells an athlete they're running
+        // 3.7 steady miles at 8:24; the truth is 400 m REPS at 8:24 with jogs between, and the
+        // total includes warm-up and cool-down. The shape is what a coach would say out loud.
+        if let shape = structuredShape(session, unit: distanceUnit, dropLeadingType: dropLeadingType) {
+            return shape
+        }
         // GPS: a run keeps its quality label (Easy/Tempo/Long); ride/walk/etc. use the sport name.
         let label: String = {
             if let wt = session.workoutType, wt != .run { return wt.title }
             return session.runType?.rawValue.capitalized ?? "Session"
         }()
         let dist = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? ""
-        let base = "\(label) \(dist)".trimmingCharacters(in: .whitespaces)
+        let lead = (dropLeadingType && !dist.isEmpty) ? dist : "\(label) \(dist)"
+        let base = lead.trimmingCharacters(in: .whitespaces)
         if let pace = session.targetPaceSPerKm, pace > 0 {
             return "\(base) ~\(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
         }
         return base
+    }
+
+    /// The shape headline for a structured running session, parsed from the same `intervals`
+    /// grammar the guided-run builder reads — so the words and the workout can never disagree.
+    /// nil for plain runs (no grammar) → the caller's continuous distance/pace form is correct.
+    private static func structuredShape(_ session: PlannedSession, unit: DistanceUnit,
+                                        dropLeadingType: Bool) -> String? {
+        guard session.discipline == .running, let type = session.runType else { return nil }
+        let pace = session.targetPaceSPerKm.flatMap { p in
+            p > 0 ? "@ \(Formatters.pace(secPerKm: p, unit: unit))" : nil
+        }
+        switch type {
+        case .intervals:
+            // Rep pace is the workout's defining number — "10 × 400m @ 8:24 /mi".
+            if let d = StructuredWorkoutBuilder.parseIntervals(session.intervals) {
+                let rep = StructuredWorkoutBuilder.repDistanceLabel(d.distanceM)
+                return ["\(d.reps) × \(rep)", pace].compactMap(\.self).joined(separator: " ")
+            }
+            if let t = StructuredWorkoutBuilder.parseTimeReps(session.intervals) {
+                return ["\(t.reps) × \(StructuredWorkoutBuilder.minLabel(t.seconds))", pace]
+                    .compactMap(\.self).joined(separator: " ")
+            }
+            return nil
+        case .fartlek:
+            // Speed play runs by feel — no pace on the marquee.
+            guard let f = StructuredWorkoutBuilder.parseFartlek(session.intervals) else { return nil }
+            return "\(f.reps) × \(StructuredWorkoutBuilder.secLabel(f.onS)) surges"
+        case .hills:
+            guard let h = StructuredWorkoutBuilder.parseTimedReps(session.intervals, keyword: "hill")
+            else { return nil }
+            return "\(h.reps) × \(StructuredWorkoutBuilder.secLabel(h.seconds)) hills"
+        case .strides:
+            guard let st = StructuredWorkoutBuilder.parseTimedReps(session.intervals, keyword: "stride")
+            else { return nil }
+            let lead = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: unit) + " easy" }
+                ?? "Easy run"
+            return "\(lead) + \(st.reps) strides"
+        case .long:
+            guard let finishM = StructuredWorkoutBuilder.parseRaceFinish(session.intervals),
+                  let total = session.targetDistanceM, total > 0 else { return nil }
+            let lead = dropLeadingType ? "" : "Long "
+            return "\(lead)\(Formatters.distance(meters: total, unit: unit)) · last \(Formatters.distance(meters: finishM, unit: unit)) @ race pace"
+        default:
+            guard let rw = StructuredWorkoutBuilder.parseRunWalk(session.intervals) else { return nil }
+            let ratio = "\(Int(rw.runS / 60)):\(Int(rw.walkS / 60))"
+            let duration = session.targetDurationS.flatMap { $0 > 0 ? " · \(Formatters.duration(s: $0))" : nil } ?? ""
+            return "Run/walk \(ratio)\(duration)"
+        }
     }
 
     /// The SF Symbol for a session — the precise sport when chosen, else the discipline glyph.

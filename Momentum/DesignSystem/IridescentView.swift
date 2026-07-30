@@ -11,10 +11,15 @@ struct IridescentView: View {
     var intensity: Double = 0.5
     /// Force a static (non-animating) state regardless of motion settings.
     var isStatic: Bool = false
+    /// Multiplier on the control-point drift range. 1 = the classic quiet shimmer (right for
+    /// rings/small fills). Full-bleed canvases need ~2–3× — at small amplitudes a blurred mesh
+    /// translates almost uniformly and the motion, though real, is imperceptible (paywall lesson,
+    /// 2026-07-29). Corners stay pinned at any amplitude, so the bounds always stay filled.
+    var amplitude: Double = 1
+    /// Seconds per drift cycle. Slower fits larger surfaces — same perceived blob speed.
+    var loop: Double = 8
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private let loop: Double = 8 // seconds
 
     var body: some View {
         let frozen = isStatic || reduceMotion
@@ -32,8 +37,10 @@ struct IridescentView: View {
     /// 3×3 grid. Corners pinned to fill the bounds; edge-mids and center drift gently.
     private func points(at t: Double) -> [SIMD2<Float>] {
         let phase = t / loop * 2 * .pi
+        let scale = Float(amplitude)
         func drift(_ base: Float, _ amp: Float, _ off: Double) -> Float {
-            base + amp * Float(sin(phase + off))
+            // Clamp so even large amplitudes can't push an interior point past the bounds.
+            min(0.95, max(0.05, base + amp * scale * Float(sin(phase + off))))
         }
         return [
             SIMD2(0, 0),

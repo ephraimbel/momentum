@@ -75,6 +75,17 @@ struct SocialPrivacyTests {
         #expect(SocialPrivacy.publicLocation(p) == nil)             // empty city → nothing
     }
 
+    /// Filling the Edit Profile location field IS the opt-in; clearing it takes the location back
+    /// off the wire; a coarser choice already made is never silently sharpened.
+    @Test func typingALocationOptsInAtCityPrecision() {
+        let off = LocationGranularity.off.rawValue
+        #expect(SocialPrivacy.granularity(forCity: "Austin, TX", current: off) == .city)
+        #expect(SocialPrivacy.granularity(forCity: "", current: LocationGranularity.city.rawValue) == .off)
+        #expect(SocialPrivacy.granularity(forCity: "   ", current: LocationGranularity.city.rawValue) == .off)
+        #expect(SocialPrivacy.granularity(forCity: "Austin, TX",
+                                          current: LocationGranularity.region.rawValue) == .region)
+    }
+
     @Test func exposureSummaryReflectsOptIns() {
         let p = UserProfile()
         p.defaultWorkoutVisibility = WorkoutPrivacy.public.rawValue

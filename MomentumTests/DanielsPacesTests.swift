@@ -62,6 +62,35 @@ struct DanielsPacesTests {
         }
     }
 
+    // MARK: Endurance correction — predictions past ~3 h, never the training zones
+
+    @Test func fiftyKPredictionIsHonestlySlowerThanMarathon() {
+        // The raw %max curve floors at 80% VO₂max, so an uncorrected 50K predicts barely slower
+        // than marathon pace ("9:59-pace ultra"). The corrected prediction opens a real gap.
+        // Relative, because the (4-hour) marathon prediction is corrected too: the 50K must sit a
+        // real ≥3% slower per km than the marathon, not the rounding-error gap the raw curve gave.
+        let marathon = DanielsPaces.racePaceSPerKm(distanceM: 42_195, p5kSPerKm: 300)
+        let fiftyK = DanielsPaces.racePaceSPerKm(distanceM: 50_000, p5kSPerKm: 300)
+        #expect(fiftyK >= marathon * 1.03, "50K pace \(fiftyK) vs marathon \(marathon) — gap too small")
+    }
+
+    @Test func enduranceCorrectionNeverTouchesShortRaces() {
+        // Under the 3 h horizon the corrected wrapper equals the raw curve exactly.
+        let vdot = DanielsPaces.vdot(p5kSPerKm: 300)
+        let raw10K = DanielsPaces.racePaceSPerKm(distanceM: 10_000, vdot: vdot)!
+        #expect(abs(DanielsPaces.racePaceSPerKm(distanceM: 10_000, p5kSPerKm: 300) - raw10K.rounded()) < 1)
+        #expect(DanielsPaces.enduranceCorrected(raceTimeS: 2.9 * 3600) == 2.9 * 3600)
+    }
+
+    @Test func trainingZoneMarathonPaceStaysUncorrected() {
+        // The M ZONE anchors progression thirds and must sit between T and E for every athlete —
+        // it never takes the endurance tax (a slow athlete's corrected race pace can sit slower
+        // than easy pace, which is honest for a PREDICTION and nonsense for a zone).
+        let vdot = DanielsPaces.vdot(p5kSPerKm: 420)
+        let rawM = DanielsPaces.racePaceSPerKm(distanceM: 42_195, vdot: vdot)!
+        #expect(abs(DanielsPaces.marathonPaceSPerKm(p5kSPerKm: 420) - rawM.rounded()) < 1)
+    }
+
     // MARK: Inversion (StructuredWorkoutBuilder's p5k recovery)
 
     @Test func p5kRecoveryRoundTrips() {

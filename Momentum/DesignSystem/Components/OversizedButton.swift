@@ -11,8 +11,6 @@ struct OversizedButton: View {
     var isEnabled: Bool = true
     let action: () -> Void
 
-    @State private var pressed = false
-
     var body: some View {
         Button {
             Haptics.light()
@@ -35,16 +33,9 @@ struct OversizedButton: View {
                     }
             }
         }
-        .buttonStyle(.plain)
-        .scaleEffect(pressed ? 0.97 : 1)
+        .buttonStyle(PressableScaleStyle())
         .opacity(isEnabled ? 1 : 0.35)
         .disabled(!isEnabled)
-        .animation(Motion.lively, value: pressed)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
-                .onEnded { _ in pressed = false }
-        )
     }
 }
 

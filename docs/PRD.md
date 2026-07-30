@@ -760,7 +760,7 @@ Freemium subscription. Free fuels adoption + reviews + (future) virality; the AI
 **Free:** track all disciplines (run/ride/walk/strength), basic post-workout summaries, manual strength logging + full exercise library, limited history, a single plan glimpse, basic share card.
 **Pro:** the adaptive **AI coach** + full multi-discipline plans + programs + adaptation; **AI reads**; **advanced analytics** (working-sets-per-muscle, e1RM trends, training load, pace/speed trends); full history; all templates; all share templates; cadence metronome / voice coach; (v1) Watch premium.
 
-**Pricing (validate):** ~**$9.99/mo**, ~**$59.99/yr**, **7-day trial on annual**. Just under multi-app bundles (Strava + Hevy + Fitbod separately cost more). A/B via Superwall. **Show renewal date plainly; one-tap cancel; reminder before renewal.**
+**Pricing (repriced 2026-07-29; previously $14.99/$109.99 from 2026-07-14):** **$9.99/mo** (no trial), **$59.99/yr** with a **7-day trial** (annual only — owner call 2026-07-30). Mass-market positioning — half Runna's annual (~$119.99), under Strava's ($79.99); annual < $5/mo (real ~50% off monthly, badge reads **save 50%**). The hard paywall makes the annual price the conversion funnel. A/B via Superwall. **Show renewal date plainly; one-tap cancel; reminder before renewal.**
 **RevenueCat:** entitlement `pro`; offering `default`; products `momentum_pro_monthly`, `momentum_pro_annual`. **Superwall placements:** `onboarding_complete` (after reveal), `ai_read`, `full_plan`, `analytics_locked`, `history_locked`. Single `Feature` enum is the source of truth for gating.
 
 ---
@@ -797,7 +797,7 @@ Lean into your edges: Apple Search Ads, content production, build-in-public, cli
 No workout is ever lost: GPS samples and completed sets persist as they occur; crashes/kills recover on relaunch. Rest timers and Live Activities survive backgrounding via scheduled notifications. Graceful degradation when GPS, HR, or network is unavailable. Crash-free sessions > 99.5%.
 
 ### 13.3 Security & privacy
-Health and location data are sensitive. **Sign in with Apple** (anonymous allowed for free tracking, upgradeable). **RLS owner-only** on every Supabase table:
+Health and location data are sensitive. **Sign in with Apple** (anonymous allowed for free tracking, upgradeable). *Ordering, 2026-07-27: the account is asked for on the LAST beat of onboarding, after the paywall — never at launch. The welcome hero enters setup with no credentials, so an athlete is a guest (local-only, no cloud) until they choose otherwise, and "I already have an account" on the welcome is the returning athlete's door.* **RLS owner-only** on every Supabase table:
 ```sql
 alter table workouts enable row level security;
 create policy "own workouts" on workouts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -826,7 +826,7 @@ Unit tests for the deterministic engines (plan generation, progression schemes, 
 ### 13.10 Screen inventory & routing (single NavigationStack per tab; onboarding is a gated fullScreenCover)
 | Screen | Presentation | Pro-gated |
 |---|---|---|
-| OnboardingFlow (→ reveal → paywall → primers) | fullScreenCover | — |
+| OnboardingFlow (→ reveal → notifications → primers → rating → paywall → **account**) | fullScreenCover | — |
 | Today (tab) | tab root | no |
 | ActivityChooser | sheet | no |
 | CardioLive (run/ride/walk) | fullScreenCover | no |

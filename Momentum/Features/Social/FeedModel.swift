@@ -10,7 +10,12 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let authorName: String
     let authorHandle: String?
     let location: String?
-    let isCommunity: Bool          // drives the "Momentum community" badge (honest labeling)
+    let isCommunity: Bool          // drives the "Momentum community" label (honest labeling)
+    /// Verified Pro athlete → the checkmark next to the name. Remote posts carry it from the
+    /// server profile; the viewer's own posts stamp it from the live entitlement; seeded community
+    /// members carry `CommunityGenerator.isPro(handle:)` — deterministic, ~62%, so byline, pager,
+    /// and profile always agree (owner call 2026-07-30; replaced the iridescent "Momentum" pill).
+    var isPro: Bool = false
     let type: WorkoutType
     let date: Date
     let title: String
@@ -26,16 +31,28 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var mapStyle: MapStyleOption = .standard
     /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
     var baseReactions: Int = 0
-    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Take priority over
-    /// the route map; >1 renders as a swipeable carousel.
+    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Since 2026-07-29
+    /// they page BEHIND the activity's own visual — see `coverIsPhoto`.
     var photosData: [Data] = []
+    /// The cover rule: the activity's own visual (route/muscle/glyph) covers the tile and leads
+    /// the pager; a photo covers only when the author explicitly chose it.
+    var coverIsPhoto: Bool = false
     /// The hero photo — the first attached photo (convenience for tile/thumbnail contexts).
     var photoData: Data? { photosData.first }
-    /// The author's profile photo (the user's own posts); nil → initials avatar (community).
+    /// The author's profile photo (the user's own posts); nil → initials/bundled avatar (community).
     var avatarData: Data? = nil
+    /// The bundled synthetic-face asset for a seeded community author (deterministic per name), so
+    /// community posts show a real-feeling face instead of an initials chip. nil for the user's own
+    /// and real network posts (they carry `avatarData`). See `CommunityAvatars`.
+    var communityAvatarAsset: String? { isCommunity ? authorHandle.flatMap { CommunityAvatars.assetName(forHandle: $0) } : nil }
+    /// The hash-assigned preset look for face-less community athletes (see `CommunityAvatars.preset`).
+    var communityPreset: AvatarPreset? { isCommunity ? authorHandle.flatMap { CommunityAvatars.preset(forHandle: $0) } : nil }
     /// The optional public AI read of the workout — shown as the "Momentum read" pull-quote in the
     /// post's reading view. The user's own posts carry their `aiSummary`; community posts are seeded.
     var aiRead: String? = nil
+    /// REMOTE posts only: the server's comment count for the rail (blocked-filtered, from
+    /// `feed_page.comment_count`). nil for seeded/own posts — their counts are computed locally.
+    var remoteCommentCount: Int? = nil
 
     /// Route as map coordinates for `RouteMapView`.
     var routeCoordinates: [CLLocationCoordinate2D]? {
@@ -74,10 +91,10 @@ struct FeedMetric: Identifiable, Sendable, Hashable {
 /// athlete opted route maps in.
 enum FeedAssembler {
     static func feed(userWorkouts: [Workout], profile: UserProfile?,
-                     community: [FeedItem], now: Date = Date()) -> [FeedItem] {
+                     community: [FeedItem], viewerIsPro: Bool = false, now: Date = Date()) -> [FeedItem] {
         let mine = userWorkouts
             .filter { SocialPrivacy.isShared($0) }
-            .map { item(from: $0, profile: profile) }
+            .map { item(from: $0, profile: profile, isPro: viewerIsPro) }
         return (mine + community).sorted { $0.date > $1.date }
     }
 
@@ -88,7 +105,7 @@ enum FeedAssembler {
     }
 
     /// Map a shared `Workout` into a feed card from the owner's point of view.
-    static func item(from w: Workout, profile: UserProfile?) -> FeedItem {
+    static func item(from w: Workout, profile: UserProfile?, isPro: Bool = false) -> FeedItem {
         let weightUnit = WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg
         let distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
         let showRoute = profile.map { SocialPrivacy.showsRoute(w, profile: $0) } ?? false
@@ -100,6 +117,7 @@ enum FeedAssembler {
             authorHandle: profile.flatMap { $0.handle.isEmpty ? nil : $0.handle },
             location: profile.flatMap(SocialPrivacy.publicLocation),
             isCommunity: false,
+            isPro: isPro,
             type: w.type,
             date: w.startedAt,
             title: w.title.isEmpty ? w.type.title : w.title,
@@ -108,8 +126,10 @@ enum FeedAssembler {
             prBadge: nil,
             muscles: muscles,
             routeLatLon: route,
-            mapStyle: .standard,
+            // The athlete's own posts render the map THEY saved the run with (save-screen choice).
+            mapStyle: w.gps?.mapStyle ?? .standard,
             photosData: w.orderedPhotosData,
+            coverIsPhoto: w.coverIsPhoto,
             avatarData: profile?.avatarData,
             aiRead: w.aiSummary)
     }

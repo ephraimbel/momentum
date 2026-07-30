@@ -9,22 +9,82 @@ import SwiftUI
 /// Today's "done today" and the History feed.
 @MainActor
 enum RouteSnapshotter {
+    /// The canonical size for a WORKOUT's persisted snapshot: portrait 3:4, native to the profile
+    /// grid tile (landscape images had to letterbox there, which read as a cut-off route).
+    static let workoutTileSize = CGSize(width: 660, height: 880)
+    /// Insets for workout snapshots. Strava-style breathing room: ~14% at the sides, more above
+    /// and below (the old 34 px sides pressed the route against the tile edges — "cut off").
+    /// The route still stays inside the CENTER SQUARE (y 110–770 of the 880), so the 52×52
+    /// History thumbnail (a square crop of this portrait image) never clips it.
+    static let workoutTileInsets = UIEdgeInsets(top: 180, left: 90, bottom: 180, right: 90)
+    /// The route card's FALLBACK canvas — Mapbox Light, the brand's clean muted monochrome basemap.
+    ///
+    /// ⚠️ No longer the universal rule. v4 pinned every card here because the athlete's app-wide
+    /// style silently re-skinned all of them, and busy POI-pinned basemaps drowned the pastel trace
+    /// ("tacky"). v5 (2026-07-28, owner call) makes a card render in **the style its run was saved
+    /// with** — which is what the save screen's picker has claimed all along ("saved with the
+    /// workout (grid tile, History, feed post)") while `WorkoutSnapshotHealer` quietly discarded the
+    /// argument and rendered Light anyway. This is now only the floor for a run with no style at all.
+    static let tileStyle: StyleURI = .light
+    /// Bump when the rendered LOOK changes — the healer re-renders stale-version snapshots so
+    /// old workouts pick up the new aesthetic without being reopened.
+    /// v4 (2026-07-24): route cards always on the clean Light canvas (was the athlete's live style —
+    /// busy POI-pinned basemaps read tacky), solid route-purple trace (was a periwinkle→lilac
+    /// gradient — iridescence is earned), generous Strava framing, a weightier stroke, and a soft
+    /// dark casing that lifts the pastel trace so it never washes out over pale water.
+    /// v5 (2026-07-28): the card renders in the run's OWN style rather than always Light, so every
+    /// existing snapshot is stale by definition — the healer re-renders them onto the canvas their
+    /// workout was actually saved with.
+    /// v7 (2026-07-30): the workout tile is CLEAN — no start/finish marks. (v6 briefly baked them
+    /// into every persisted snapshot; the owner's call is that a grid of thumbnails stays a grid of
+    /// shapes and the marks belong to the opened route, so the healer re-renders v6 images back to
+    /// an unmarked tile.)
+    static let renderVersion = 7
+
+    /// Start/finish mark size **in the rendered image's point space**, for the surfaces that carry
+    /// marks at all.
+    ///
+    /// **Grids don't** (owner call 2026-07-30): a wall of thumbnails is a wall of shapes, and marks
+    /// on every 130pt tile read as clutter — you see where a run began and ended when you open it.
+    /// So `endpointDiameter` defaults to nil (no marks) and only the full-view surfaces pass one.
+    enum EndpointMark {
+        /// Full-bleed pages and full-width cards, rendered at roughly display size (1:1, so this is
+        /// the on-screen size — deliberately small, to match the live map's marks).
+        static let fullBleed: CGFloat = 13
+    }
+
     static func snapshot(coordinates: [CLLocationCoordinate2D],
                          size: CGSize = CGSize(width: 640, height: 360),
-                         styleURI: StyleURI = .light) async -> Data? {
+                         styleURI: StyleURI = .light,
+                         insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
+                         routeWidth: CGFloat = 8,
+                         endpointDiameter: CGFloat? = nil) async -> Data? {
         guard coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
-        // (Strava's default), then smooth. Frame to the clipped path so the hidden ends aren't
-        // re-revealed by the map's centering.
-        let drawn = RouteSmoothing.smooth(clippingEnds(coordinates))
+        // (Strava's default). Frame to the clipped path so the hidden ends aren't re-revealed by
+        // the map's centering. Smooth only DENSE real-GPS captures (fixes land 2–5m apart — the
+        // spline + denoise removes capture wobble): sparse street-following geometry (the community
+        // loops from the Directions API carry a vertex per turn) is already EXACT, and smoothing
+        // averaged its corners tens of meters into the buildings — the single loudest "fake route"
+        // tell. An exact polyline with round joins reads Strava-crisp.
+        let clipped = clippingEnds(coordinates)
+        let drawn = meanSpanMeters(clipped) < 15 ? RouteSmoothing.smooth(clipped) : clipped
         guard drawn.count > 1 else { return nil }
 
-        let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2))
+        // No Mapbox logo/attribution baked into the image — these are in-feed workout cards, not
+        // standalone maps (user call 2026-07-10).
+        let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2,
+                                                                  showsLogo: false, showsAttribution: false))
         snapshotter.styleURI = styleURI
         snapshotter.setCamera(to: snapshotter.camera(
-            for: drawn, padding: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26), bearing: 0, pitch: 0))
-        let gradientStart = UIColor(Theme.route), gradientEnd = UIColor(Theme.iridescent[3])
+            for: drawn, padding: insets, bearing: 0, pitch: 0))
+        // The SAME solid route purple the live map draws — one trace color everywhere. (The old
+        // periwinkle→lilac gradient read as iridescence, which is reserved for earned progress.)
+        // Resolved to the LIGHT variant explicitly: snapshots draw onto light basemaps, and a
+        // dark-mode phone must not bake the dark-trait tint into a persisted image.
+        let routeColor = UIColor(Theme.route).resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: .light))
 
         // Wait for the style to load, then snapshot and stroke the route over it in the overlay
         // handler (Core Graphics). Resume with the Sendable PNG `Data`.
@@ -37,23 +97,40 @@ enum RouteSnapshotter {
                 tokens.removeAll()
                 cont.resume(returning: data)
             }
+            // Casing follows the basemap so the trace lifts on any canvas:
+            //  • DARK map — a near-black hairline (a white halo bloomed into a fat glow that
+            //    swallowed streets, user report 2026-07-15).
+            //  • LIGHT canvas (the route card) — a soft dark lift, since a white halo is invisible
+            //    on near-white and the pastel periwinkle would otherwise wash out over pale water.
+            //  • COLOURED map (Standard/Streets/Satellite) — the classic white halo.
+            let darkBase = styleURI.rawValue.lowercased().contains("dark")
+            let lightBase = styleURI == .light
+            let casingColor: UIColor = darkBase ? UIColor(white: 0.07, alpha: 0.8)
+                : lightBase ? UIColor(white: 0.16, alpha: 0.32)
+                : UIColor.white.withAlphaComponent(0.95)
             snapshotter.onStyleLoaded.observeNext { _ in
                 snapshotter.start(overlayHandler: { overlay in
                     let ctx = overlay.context
                     let pts = drawn.map(overlay.pointForCoordinate)
                     guard pts.count > 1 else { return }
                     ctx.setLineJoin(.round); ctx.setLineCap(.round)
-                    // White casing under the route so it pops on the muted map.
-                    ctx.setLineWidth(8.5); ctx.setStrokeColor(UIColor.white.cgColor)
+                    // Hairline casing under the route so it pops without haloing.
+                    ctx.setLineWidth(routeWidth * 1.45); ctx.setStrokeColor(casingColor.cgColor)
                     ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
                     ctx.strokePath()
-                    // Periwinkle→lilac gradient, drawn per segment so the colour follows the path.
-                    ctx.setLineWidth(6)
-                    for i in 0..<(pts.count - 1) {
-                        let frac = Double(i) / Double(pts.count - 1)
-                        ctx.setStrokeColor(lerp(gradientStart, gradientEnd, frac).cgColor)
-                        ctx.beginPath(); ctx.move(to: pts[i]); ctx.addLine(to: pts[i + 1])
-                        ctx.strokePath()
+                    // One solid stroke of route purple. `routeWidth` is per-surface: Strava-thin —
+                    // the route is a precise trace of the streets, never a marker swipe that
+                    // covers whole blocks at city zoom.
+                    ctx.setLineWidth(routeWidth); ctx.setStrokeColor(routeColor.cgColor)
+                    ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
+                    ctx.strokePath()
+                    // Where the run began and where it ended (owner call 2026-07-30) — only on the
+                    // surfaces that ask (full views, never grid thumbnails). These sit at the ends
+                    // of the DRAWN path, which `clippingEnds` has already pulled ~200m in from the
+                    // athlete's door, so the marks add no location the image wasn't showing.
+                    if let endpointDiameter {
+                        RouteEndpoints.draw(in: ctx, start: pts[0], finish: pts[pts.count - 1],
+                                            diameter: endpointDiameter)
                     }
                 }, completion: { result in
                     switch result {
@@ -62,8 +139,15 @@ enum RouteSnapshotter {
                     }
                 })
             }.store(in: &tokens)
-            // Never hang the caller if the style/tiles fail to load.
-            snapshotter.onMapLoadingError.observeNext { _ in finish(nil) }.store(in: &tokens)
+            // Only a STYLE failure is fatal (nothing renders without a style). Tile/sprite/glyph
+            // errors are partial and transient — the snapshot still completes with what loaded.
+            // Failing the whole image on one missed tile left feed cards permanently mapless
+            // (user report 2026-07-10).
+            snapshotter.onMapLoadingError.observe { error in
+                if error.type == .style { finish(nil) }
+            }.store(in: &tokens)
+            // And never hang the caller if neither signal ever fires (offline, no cached style).
+            Task { try? await Task.sleep(for: .seconds(25)); finish(nil) }
         }
     }
 
@@ -85,13 +169,17 @@ enum RouteSnapshotter {
         return trimmed.count >= 2 ? trimmed : coords
     }
 
-    /// Linear interpolation between two colours (for the route gradient).
-    private static func lerp(_ a: UIColor, _ b: UIColor, _ t: Double) -> UIColor {
-        var (ar, ag, ab, aa): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
-        var (br, bg, bb, ba): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
-        a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
-        b.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
-        let f = CGFloat(min(1, max(0, t)))
-        return UIColor(red: ar + (br - ar) * f, green: ag + (bg - ag) * f, blue: ab + (bb - ab) * f, alpha: aa + (ba - aa) * f)
+    /// Mean gap between consecutive points, in meters — separates dense real-GPS captures (2–5m per
+    /// fix) from sparse street-following route geometry (tens of meters per vertex), which must be
+    /// drawn exactly, never smoothed.
+    private static func meanSpanMeters(_ coords: [CLLocationCoordinate2D]) -> Double {
+        guard coords.count > 1 else { return 0 }
+        var total = 0.0
+        for i in 1..<coords.count {
+            total += CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude)
+                .distance(from: CLLocation(latitude: coords[i - 1].latitude, longitude: coords[i - 1].longitude))
+        }
+        return total / Double(coords.count - 1)
     }
+
 }

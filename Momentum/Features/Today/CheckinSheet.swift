@@ -46,6 +46,7 @@ struct CheckinSheet: View {
 
                     // Pain is never a rating — it's a door into the injury loop.
                     Button {
+                        Haptics.light()
                         save()
                         dismiss()
                         onPain()
@@ -117,6 +118,8 @@ struct CheckinSheet: View {
         guard energy != nil || legs != nil else { return }
         let checkin = DailyCheckin(energy: energy ?? .ok, legs: legs ?? .ok)
         context.insert(checkin)
-        try? context.save()
+        // Low-stakes data (a mood tap), so no alert — but never leave an orphaned insert to be
+        // swept into some later unrelated save.
+        do { try context.save() } catch { context.delete(checkin) }
     }
 }

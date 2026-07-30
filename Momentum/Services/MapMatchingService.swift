@@ -3,8 +3,8 @@ import CoreLocation
 
 /// Stage 3 of the tracing pipeline (§8.5): snaps a finished GPS trace onto the road/path network via
 /// the **Mapbox Map Matching API**, so a city run or ride sits exactly on the sidewalk instead of
-/// wobbling beside it. Same publishable token + `URLSession`/JSON approach as `MapboxSpotsProvider`
-/// (no extra SDK — `MapboxDirections` is a separate package we deliberately don't pull in).
+/// wobbling beside it. A direct publishable-token + `URLSession`/JSON call — no extra SDK
+/// (`MapboxDirections` is a separate package we deliberately don't pull in).
 ///
 /// **Confidence-gated, and that gate is the whole safety story.** Map matching is wrong for
 /// off-network activity (trail runs, tracks, open-water) — snapping to the nearest road would falsify

@@ -22,7 +22,7 @@ final class AIService: AIServing {
         guard let endpoint, let bearer else { return template }
 
         let request = AnalysisRequest(
-            workout: WorkoutDigest(workout),
+            workout: WorkoutDigest(workout, distanceUnit: distanceUnit),
             planned: plannedDigest(workout, planned: planned),
             units: .init(weight: weightUnit == .lb ? "lb" : "kg", distance: distanceUnit.rawValueString),
             athlete: athleteContext()
@@ -74,7 +74,9 @@ final class AIService: AIServing {
             AthleteContextDTO.NoteDTO(id: $0.id.uuidString, category: $0.category,
                                       text: $0.text, confidence: $0.confidence, pinned: $0.pinned)
         }
-        let recent = profile.workouts.sorted { $0.startedAt > $1.startedAt }
+        // `profile.workouts` has no inverse so it never populates — read every workout from the store.
+        let workouts = (try? mainContext.fetch(FetchDescriptor<Workout>())) ?? []
+        let recent = workouts.sorted { $0.startedAt > $1.startedAt }
             .prefix(2).compactMap(\.aiSummary)
         return AthleteContextDTO(facts: Self.compactFacts(m), notes: notes, recentNarratives: Array(recent))
     }

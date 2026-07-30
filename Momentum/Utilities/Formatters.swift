@@ -47,13 +47,55 @@ enum Formatters {
         return String(format: "%.1f %@", value, suffix)
     }
 
-    // MARK: Distance — 2 decimals < 100, else integer
+    // MARK: Distance — up to 2 decimals, trailing zeros dropped so a clean prescription reads "6 mi"
+    // / "3.5 mi" (not "6.00" / "3.50"), while a recorded run keeps its precision ("5.03 mi").
     static func distance(meters: Double, unit: DistanceUnit) -> String {
         let u = unit.resolved()
         let value = u == .imperial ? meters / metersPerMile : meters / 1000
-        let suffix = u == .imperial ? "mi" : "km"
-        let str = value < 100 ? String(format: "%.2f", value) : String(Int(value.rounded()))
-        return "\(str) \(suffix)"
+        return "\(distanceNumeral(value)) \(u == .imperial ? "mi" : "km")"
+    }
+
+    /// The numeral alone, already in display units — for heroes that render the unit as a separate
+    /// label beneath. Same rounding as `distance(meters:unit:)`, which is written in terms of it.
+    static func distanceNumeral(_ value: Double) -> String {
+        if value >= 100 { return String(Int(value.rounded())) }
+        let hundredths = (value * 100).rounded() / 100
+        if hundredths == hundredths.rounded() {
+            return String(Int(hundredths))                          // 6.00 → "6"
+        } else if (hundredths * 10) == (hundredths * 10).rounded() {
+            return String(format: "%.1f", hundredths)               // 3.50 → "3.5"
+        }
+        return String(format: "%.2f", hundredths)                   // 5.03 → "5.03"
+    }
+
+    /// A numeral formatter for a count-up hero: the decimal places are chosen from the FINAL value
+    /// and then held for every frame.
+    ///
+    /// Dropping trailing zeros per-frame the way `distanceNumeral` does would change the number's
+    /// digit COUNT mid-animation ("3" → "3.1" → "3.14"), and the number would visibly change width
+    /// as it counted. Tabular figures can't fix that — they equalise digit *width*, not how many
+    /// there are. So a clean 5 km run counts "0 → 5", and a 4.45 counts "0.00 → 4.45".
+    static func steadyNumeral(target: Double) -> (Double) -> String {
+        let hundredths = (target * 100).rounded() / 100
+        let places: Int
+        if target >= 100 || hundredths == hundredths.rounded() {
+            places = 0
+        } else if (hundredths * 10) == (hundredths * 10).rounded() {
+            places = 1
+        } else {
+            places = 2
+        }
+        return { String(format: "%.\(places)f", $0) }
+    }
+
+    /// Whole distance units for stat tiles that render the number and its unit separately — a big
+    /// numeral above a small "mi · 12 wk" caption. Exists so a tile never hardcodes "km": doing that
+    /// told every imperial athlete their mileage was kilometres, in an app whose default resolves to
+    /// imperial for its largest market.
+    static func wholeDistance(meters: Double, unit: DistanceUnit) -> (value: Int, unit: String) {
+        let u = unit.resolved()
+        let value = u == .imperial ? meters / metersPerMile : meters / 1000
+        return (Int(value.rounded()), u == .imperial ? "mi" : "km")
     }
 
     // MARK: Weight — rounded to nearest 0.5 kg or 1 lb
@@ -78,9 +120,16 @@ enum Formatters {
             : String(format: "%d:%02d", m, sec)
     }
 
-    // MARK: Time of day
-    static func clock(date: Date) -> String {
-        date.formatted(date: .omitted, time: .shortened)
+    // MARK: Race countdown — one rule everywhere: days inside two weeks, weeks beyond
+    /// "Race day" / "5 days to go" / "12 weeks to go". Every countdown surface (Plan header, race
+    /// projection card, reveal) speaks this unit scheme so the same race never reads as "84 days"
+    /// on one card and "12 weeks" on the next.
+    static func raceCountdown(days: Int) -> String {
+        switch days {
+        case ..<1: return "Race day"
+        case 1...13: return "\(days) day\(days == 1 ? "" : "s") to go"
+        default: return "\(Int(ceil(Double(days) / 7.0))) weeks to go"
+        }
     }
 
     // MARK: Compact number — "12.4k", "1.2M", or an integer below 1,000 (no unit)

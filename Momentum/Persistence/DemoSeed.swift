@@ -2,13 +2,154 @@
 import Foundation
 import SwiftData
 import CoreLocation
+import UIKit
 
 /// DEBUG-only sample data for visual iteration. Runs **only** when launched with `--seed-demo`
 /// and the store has no profile yet. Never ships behavior in release builds.
 @MainActor
 enum DemoSeed {
+    /// ~4 months of journal days (roughly 5 of every 7), 1–3 meals each, from a small table of
+    /// plausible athlete foods with full macro + micro numbers. Deterministic (seeded RNG) so
+    /// History screenshots and manual browsing are repeatable. Skips if history already exists.
+    private static func seedFuelHistory(_ context: ModelContext) {
+        let existing = (try? context.fetchCount(FetchDescriptor<Meal>())) ?? 0
+        guard existing < 10 else { return }
+        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca)
+        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int)] = [
+            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80),
+            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90),
+            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60),
+            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90),
+            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260),
+            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120),
+            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120),
+            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20),
+            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240),
+            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220),
+            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90),
+            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180),
+        ]
+        var rng = SeededRNG(20260716)
+        let cal = Calendar.current
+        for back in 1...120 {
+            guard rng.int(0...6) < 5 else { continue }   // ~5 of 7 days logged
+            guard let day = cal.date(byAdding: .day, value: -back, to: cal.startOfDay(for: Date())) else { continue }
+            for slot in 0..<(1 + rng.int(0...2)) {
+                let f = foods[rng.int(0...(foods.count - 1))]
+                let meal = Meal()
+                meal.text = f.0
+                meal.eatenAt = day.addingTimeInterval(Double(8 + slot * 5) * 3600 + Double(rng.int(0...50)) * 60)
+                meal.kcal = f.1; meal.carbsG = f.2; meal.proteinG = f.3; meal.fatG = f.4
+                meal.sodiumMg = f.5; meal.potassiumMg = f.6; meal.magnesiumMg = f.7
+                meal.ironMg = f.8; meal.calciumMg = f.9
+                meal.source = "ai"
+                meal.confidence = 0.8
+                context.insert(meal)
+            }
+        }
+        try? context.save()
+    }
+
+    /// The screenshot-hero fueling day: staggered real-feel meals whose totals clear every floor
+    /// (carbs ≈390 g, protein ≈138 g, fat ≈88 g, sodium ≈2,590 mg, ≈3,050 kcal) so the whole ring
+    /// row earns its iridescence. DEBUG-only, like everything here.
+    private static func seedFuelToday(_ context: ModelContext) {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        let existingToday = ((try? context.fetch(FetchDescriptor<Meal>())) ?? [])
+            .filter { cal.isDateInToday($0.eatenAt) }
+        guard existingToday.count < 2 else { return }
+        // (hour, minute, text, kcal, carbs, protein, fat, sodium, note?)
+        let day: [(Double, Double, String, Int, Int, Int, Int, Int, String?)] = [
+            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190,
+             "Strong carb start — this is the fuel today's session runs on."),
+            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, nil),
+            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150,
+             "Great mixed plate — carbs restocked, protein covered."),
+            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, nil),
+            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480,
+             "Recovery-forward dinner — protein and healthy fats where they count."),
+            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, nil),
+        ]
+        for m in day where m.0 <= Double(cal.component(.hour, from: Date())) || true {
+            let meal = Meal()
+            meal.text = m.2
+            meal.eatenAt = start.addingTimeInterval(m.0 * 3600 + m.1 * 60)
+            meal.kcal = m.3; meal.carbsG = m.4; meal.proteinG = m.5
+            meal.fatG = m.6; meal.sodiumMg = m.7
+            meal.note = m.8
+            meal.source = "ai"
+            meal.confidence = 0.85
+            context.insert(meal)
+        }
+        try? context.save()
+    }
+
     static func seedIfRequested(_ context: ModelContext) {
+        // --reset-store: empty the local store before seeding, so a launch gets the SAME container
+        // a fresh install would.
+        //
+        // The UI suite has no isolation: XCUITest relaunches the app per test but the container
+        // persists across a whole batch, and `--seed-demo` below bails the moment a profile exists
+        // (`guard existing.isEmpty`). So every test after the first inherits whatever the previous
+        // one left behind — and some of them mutate persisted state deliberately (the Settings units
+        // test switches the athlete to Km/Kg, the sport picker switches them to Swim). Four suites
+        // that pass individually failed in a 20-suite batch for exactly this reason, which is also
+        // how a run-detail section that rendered nothing at all survived weeks of green runs.
+        //
+        // Ordered children-first so no delete strands a dangling reference mid-pass.
+        if ProcessInfo.processInfo.arguments.contains("--reset-store") {
+            try? context.delete(model: SetEntry.self);           try? context.delete(model: WorkoutExercise.self)
+            try? context.delete(model: StrengthSession.self);    try? context.delete(model: LocationSample.self)
+            try? context.delete(model: HeartRateSample.self);    try? context.delete(model: Split.self)
+            try? context.delete(model: GPSDetail.self);          try? context.delete(model: WorkoutPhoto.self)
+            try? context.delete(model: Workout.self);            try? context.delete(model: PlannedExercise.self)
+            try? context.delete(model: PlannedSession.self);     try? context.delete(model: TrainingPlan.self)
+            try? context.delete(model: MemoryNote.self);         try? context.delete(model: FitnessSnapshot.self)
+            try? context.delete(model: AthleteModel.self);       try? context.delete(model: PersonalRecord.self)
+            try? context.delete(model: EarnedAward.self);        try? context.delete(model: ChatMessage.self)
+            try? context.delete(model: CoachingEvent.self);      try? context.delete(model: AppNotification.self)
+            try? context.delete(model: DailyCheckin.self);       try? context.delete(model: Meal.self)
+            try? context.delete(model: UserProfile.self)
+            // NOT `Exercise`. The library is shared reference data, seeded by
+            // `ExerciseLibrarySeed.seedIfNeeded` in `PersistenceController.init` — which already ran
+            // for THIS launch by the time we get here, and won't run again. Deleting it left the app
+            // with an empty exercise catalog and no way back, which is worse than the staleness this
+            // whole reset exists to remove.
+            try? context.save()
+            // One-shot migrations gate on UserDefaults, not on the store, so wiping the rows alone
+            // leaves them believing they already ran: the record book came back permanently empty
+            // because `RecordsBook.backfillIfNeeded` had ticked its v4 flag on a previous launch.
+            // A reset that only clears half the state is a worse lie than no reset at all.
+            UserDefaults.standard.removeObject(forKey: "com.momentum.records.backfill.v4")
+        }
+        // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
+        if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
+            for meal in (try? context.fetch(FetchDescriptor<Meal>())) ?? [] { context.delete(meal) }
+            try? context.save()
+        }
+        // --seed-fuel-history: months of plausible journal days (deterministic) so the History
+        // page's month grouping + search can be exercised and screenshotted at real scale.
+        if ProcessInfo.processInfo.arguments.contains("--seed-fuel-history") {
+            seedFuelHistory(context)
+        }
+        // --seed-fuel-today: a curated FULL day (every floor met → every ring iridescent) for
+        // the hero Fuel screenshot. Idempotent: skips if today already has meals.
+        if ProcessInfo.processInfo.arguments.contains("--seed-fuel-today") {
+            seedFuelToday(context)
+        }
+        // --seed-plan-name on an ALREADY-seeded container: name the existing plan too, so UI
+        // tests get the named-plan experience regardless of which test seeded the store first.
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-name"),
+           let plan = try? context.fetch(FetchDescriptor<TrainingPlan>()).first, plan.name.isEmpty {
+            plan.name = "Austin Marathon"
+            try? context.save()
+        }
         seedInterruptedWorkoutIfRequested(context)
+        // --seed-empty: a genuine JUST-ONBOARDED user — a profile + a generated plan and NOTHING else
+        // (zero workouts, PRs, notifications, coaching history), so the true new-user empty slate can be
+        // screenshotted deterministically without driving the onboarding UI. DEBUG-only, like the rest.
+        if ProcessInfo.processInfo.arguments.contains("--seed-empty") { seedEmptyProfile(context); return }
         guard ProcessInfo.processInfo.arguments.contains("--seed-demo") else { return }
         let existing = (try? context.fetch(FetchDescriptor<UserProfile>())) ?? []
         guard existing.isEmpty else { return }
@@ -16,6 +157,15 @@ enum DemoSeed {
         let profile = UserProfile()
         profile.displayName = "Alex Rivera"
         profile.handle = "alexrivera"   // display name and @handle are distinct (username vs name)
+        // A filled-in location, so the "@handle · City" byline line renders on every surface that
+        // draws it (own post pager, profile identity). Real athletes type this in Edit Profile;
+        // typing it IS the opt-in, which is why the granularity moves with it.
+        profile.city = "Austin, TX"
+        profile.locationGranularity = LocationGranularity.city.rawValue
+        // --seed-female: render the demo athlete as female (the true female anatomy figure) — a
+        // deterministic path to verify the figure on every body surface.
+        if ProcessInfo.processInfo.arguments.contains("--seed-female") { profile.sex = "female" }
+        profile.publicRouteMaps = true  // DEBUG demo shares (fuzzed) routes so feed posts show the run's map
         profile.disciplines = ["running", "strength"]
         profile.goal = .buildMuscle
         profile.daysPerWeek = 4
@@ -23,8 +173,53 @@ enum DemoSeed {
         profile.weightUnit = WeightUnit.default().rawValue   // locale display units (lb in US/UK)
         profile.maxHR = 188                                  // HR zones (Karvonen) render personalized
         profile.restingHR = 52
+        // Alex Rivera's profile photo — the same portrait everywhere (Today header avatar + Profile).
+        if let url = Bundle.main.url(forResource: "demo-avatar", withExtension: "jpg"),
+           let data = try? Data(contentsOf: url) {
+            // --no-avatar: leave the seeded athlete photo-less so the monogram default and the
+            // route-avatar offer are verifiable on the sim (the portrait otherwise wins everywhere).
+            if !ProcessInfo.processInfo.arguments.contains("--no-avatar") {
+                profile.avatarData = data
+            }
+        }
         context.insert(profile)
+        // --seed-race-plan: a dated half-marathon race THIS week (2 days out) — the race-day
+        // session, shakeout, and taper phases all render on the current week's Plan board.
+        if ProcessInfo.processInfo.arguments.contains("--seed-race-plan") {
+            profile.goal = .raceDistance
+            profile.raceDistanceM = RaceDistance.half.meters
+            profile.raceDate = Calendar.current.date(byAdding: .day, value: 2, to: Date())
+            profile.goalFinishTimeS = 5_400   // chasing 1:30
+        }
+        // --seed-plan-5day: the committed 5-day athlete — experienced, aggressive, 50 km/wk, half
+        // marathon ~7 weeks out, with generation backdated 5 weeks so "this week" lands mid-BUILD.
+        // The plan-texture showcase: the two-quality week (threshold cruise + VO₂ touch), the
+        // medium-long/recovery-jog fill texture, and the plateau'd long-run wave all render on the
+        // current week's board without any week-hopping.
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-5day") {
+            profile.disciplines = ["running"]
+            profile.goal = .raceDistance
+            profile.daysPerWeek = 5
+            profile.experience = ["running": "experienced"]
+            profile.planIntensity = PlanIntensity.aggressive.rawValue
+            profile.weeklyRunVolumeM = 50_000
+            profile.longestRunM = 16_000
+            profile.raceDistanceM = RaceDistance.half.meters
+            profile.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 7, to: Date())
+        }
         PlanService.regenerate(for: profile, in: context)
+        // --plan-renewal: regenerate the rolling block starting ~6 weeks back so "today" lands at the
+        // end of the block, surfacing the Plan page's block-renewal checkpoint card for verification.
+        if ProcessInfo.processInfo.arguments.contains("--plan-renewal"),
+           let back = Calendar.current.date(byAdding: .weekOfYear, value: -6, to: Date()) {
+            PlanService.regenerate(for: profile, startDate: back, in: context)
+        }
+        // The 5-day showcase backdates the same plan so today sits in a build week (see above).
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-5day"),
+           let back = Calendar.current.date(byAdding: .weekOfYear, value: -5, to: Date()) {
+            PlanService.regenerate(for: profile, startDate: back, in: context)
+            profile.plan?.name = "Berlin Half"
+        }
         // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
         if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
             profile.plan?.name = "Austin Marathon"
@@ -32,8 +227,23 @@ enum DemoSeed {
 
         // A small demo lift library with real muscle mapping, so strength posts light the body map
         // (chest/back/legs/shoulders) instead of falling back to a glyph.
-        let lifts = demoLifts()
-        lifts.forEach(context.insert)
+        let lifts = demoLifts(in: context)
+
+        // --marketing-profile: seed a full, established athlete (hundreds of real-route posts, a deep
+        // lifetime, dense consistency) for the website's Profile screenshot — the "full account" look.
+        // Follower/Following counts are overridden marketing-only in ProfileScreen (the shipping app
+        // never fabricates an audience). Everything else here is a genuine, coherent training history.
+        if ProcessInfo.processInfo.arguments.contains("--marketing-profile") {
+            seedMarketingProfile(context, profile: profile, lifts: lifts)
+            return
+        }
+
+        // --marathon-hero: one finished Austin Marathon (the real course + finish data) for the
+        // website hero's post-run summary — the "you just ran a marathon" moment (Runna-style).
+        if ProcessInfo.processInfo.arguments.contains("--marathon-hero") {
+            seedMarathonRun(context)
+            return
+        }
 
         // ~5 weeks of history with a gently building trend, so Progress charts + ACWR populate.
         var runIndex = 0
@@ -44,6 +254,13 @@ enum DemoSeed {
                 let sw = Workout(); sw.type = .strength; sw.startedAt = start
                 sw.durationS = 2700 + Double(14 - daysAgo) * 20
                 sw.strength = strengthSession(lifts: lifts, week: week)
+                // Today's lift is the demo athlete's public post (see the run branch note), and it
+                // carries two GENERATED placeholder photos so the multi-photo carousel (pager
+                // paging + "1/2" pill) is sim-verifiable. DEBUG demo only — never ships.
+                if daysAgo == 0 {
+                    sw.privacy = .public
+                    sw.photos = demoPhotos()
+                }
                 context.insert(sw)
             } else {
                 let run = Workout(); run.type = .run; run.startedAt = start
@@ -52,13 +269,45 @@ enum DemoSeed {
                 run.durationS = dist / 1000 * pace
                 let gps = GPSDetail(); gps.distanceM = dist; gps.elevationGainM = 30 + Double(daysAgo % 5) * 8
                 gps.avgPaceSPerKm = pace
+                gps.avgCadence = 182 - Int(week * 2) + (daysAgo % 3)   // steps/min — powers the cadence trend
                 gps.samples = loopSamples(start: start, variant: runIndex)   // a distinct route per run
                 gps.hrSamples = hrTrace(start: start, durationS: run.durationS, variant: runIndex)
                 gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
+                // The demo athlete shares their freshest run: with `--community` it joins today's
+                // lift as the OWN posts on the wall (Friends scope shows exactly these), proving
+                // the save→feed pipeline. Invisible in solo builds — nothing reads privacy there.
+                if daysAgo == 2 { run.privacy = .friends }
                 run.gps = gps; context.insert(run)
                 runIndex += 1
             }
         }
+
+        // --seed-ultra-run: one finished 50K (~6:20/km, ten days back) with real accepted samples,
+        // so the record-book backfill mints the Fastest 50K row through the genuine pipeline
+        // (fastest-window over the samples — never a hand-planted PersonalRecord).
+        if ProcessInfo.processInfo.arguments.contains("--seed-ultra-run") {
+            let start = Date().addingTimeInterval(-10 * 86_400 - 7 * 3600)
+            let w = Workout(); w.type = .run; w.startedAt = start
+            let paceSPerKm = 380.0, distanceM = 50_500.0
+            w.durationS = distanceM / 1000 * paceSPerKm
+            let gps = GPSDetail(); gps.distanceM = distanceM
+            gps.avgPaceSPerKm = paceSPerKm
+            gps.elevationGainM = 260
+            let step = 100.0
+            var ultraSamples: [LocationSample] = []
+            for i in 0...Int(distanceM / step) {
+                let s = LocationSample()
+                s.t = start.addingTimeInterval(Double(i) * step / 1000 * paceSPerKm)
+                s.lat = 30.1 + Double(i) * step / HeatmapBinning.metersPerDegLat
+                s.lon = -97.8
+                s.accepted = true
+                ultraSamples.append(s)
+            }
+            gps.samples = ultraSamples
+            w.gps = gps
+            context.insert(w)
+        }
+
         // Give the most recent run a guided-session rep breakdown so the summary's Reps section shows.
         if let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
             .filter({ $0.type == .run && $0.gps != nil })
@@ -74,6 +323,48 @@ enum DemoSeed {
             ps.discipline = .running; ps.runType = .intervals; ps.date = recent.startedAt
             ps.status = .completed; ps.intervals = "6×400m @ 5K"
             context.insert(ps); recent.plannedSession = ps
+        }
+
+        // --seed-route-history: five outings on ONE loop.
+        //
+        // Seeded AFTER the guided-session block above, deliberately. That block hands its rep
+        // breakdown and prescribed session to "the most recent run" by refetching, so seeding these
+        // first (they land an hour ago, ahead of the demo's newest) quietly stole both — and with
+        // them what `--ui-test-run-detail` and `--save-screen` open. A verification flag must not
+        // change what it is verifying.
+        //
+        // This is the shape a real athlete's history actually has and the one thing the standard
+        // demo cannot produce: every run above is scattered around its own Austin neighbourhood so
+        // the profile grid looks varied, which means no two of them ever retrace each other and
+        // `RouteMatch` finds nothing. Seeded through the genuine pipeline (real accepted fixes,
+        // distance accumulated from the trace) so the matcher does the same work it does on a run
+        // that just finished.
+        //
+        // Tuned so the run on screen is the *verdict*, not a badge: distances sit just under 5 km
+        // (below the demo's longest, and short of the 5K benchmark window) and paces well off its
+        // quickest, so `CardioAchievements` stays quiet. The newest outing is the route best; the
+        // one two weeks back is a shade slower than the outing before it at eight fewer beats,
+        // which is the heart-rate rung.
+        if ProcessInfo.processInfo.arguments.contains("--seed-route-history") {
+            let outings: [(hoursAgo: Double, paceSPerKm: Double, hr: Int)] = [
+                (35 * 24, 350, 168), (28 * 24, 345, 165), (21 * 24, 342, 160), (14 * 24, 348, 152), (1, 330, 158),
+            ]
+            for (i, o) in outings.enumerated() {
+                let start = Date().addingTimeInterval(-o.hoursAgo * 3600)
+                let w = Workout(); w.type = .run; w.startedAt = start
+                let trace = repeatRouteSamples(start: start, paceSPerKm: o.paceSPerKm, jitterSeed: i)
+                w.durationS = trace.distanceM / 1000 * o.paceSPerKm
+                w.elapsedS = w.durationS
+                let gps = GPSDetail()
+                gps.distanceM = trace.distanceM
+                gps.avgPaceSPerKm = o.paceSPerKm
+                gps.elevationGainM = 44
+                gps.avgHR = o.hr
+                gps.avgCadence = 178
+                gps.samples = trace.samples
+                w.gps = gps
+                context.insert(w)
+            }
         }
         // A few coaching-history entries so the "How your plan adapted" timeline populates.
         let cal = Calendar.current
@@ -110,11 +401,249 @@ enum DemoSeed {
                 // by timestamp or the snapshot draws a scribble instead of the route.
                 let coords = gps.samples.sorted { $0.t < $1.t }
                     .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                if let data = await RouteSnapshotter.snapshot(coordinates: coords) {
+                // Render each card on the basemap its own run was saved with — the same rule the
+                // healer now follows, so a seeded tile and a real save are indistinguishable.
+                // Portrait tile-native size, exactly like a real save.
+                let seedStyle = gps.mapStyle
+                if let data = await RouteSnapshotter.snapshot(
+                    coordinates: coords, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: seedStyle.styleURI,
+                    insets: RouteSnapshotter.workoutTileInsets) {
                     gps.mapSnapshotData = data
+                    gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
+                    gps.mapStyleRaw = seedStyle.rawValue
                     try? context.save()
                 }
             }
+        }
+    }
+
+    /// The basemaps seeded runs are saved with, in rotation. Seven entries against a 3-column grid
+    /// means the pattern never lines up into stripes. Curated, not all nine `MapStyleOption`s:
+    /// Dusk and Night bake identically to Realistic (a `StyleURI` can't carry the Standard light
+    /// preset), so including them would just repeat a look.
+    static let cardStyleRotation: [MapStyleOption] =
+        [.standard, .dark, .outdoors, .realistic, .satellite, .streets, .standardSatellite]
+
+    // MARK: Marketing (full account)
+
+    /// The website's "full, vibrant account" seed: an established marathoner with a deep body of work.
+    /// The visible top of the grid is a rotation of real city street-loops (rendered Mapbox tiles);
+    /// the long tail backfills the Posts count and lifetime totals with lighter route silhouettes.
+    private static func seedMarketingProfile(_ context: ModelContext, profile: UserProfile, lifts: [Exercise]) {
+        profile.bio = "Marathon build in full swing — chasing a sub-3 and logging every mile of it."
+        profile.city = "Austin, TX"
+        profile.locationGranularity = LocationGranularity.city.rawValue
+        // (avatarData is set in the common seed path — same portrait everywhere.)
+
+        let cal = Calendar.current
+        func date(_ daysAgo: Double) -> Date { Date().addingTimeInterval(-daysAgo * 86_400 - 3 * 3600) }
+
+        // Build one run post from a real city loop, repeated `laps` times for the long ones. `dense`
+        // keeps full route fidelity + HR (the featured tiles we render maps for); the backfill runs
+        // downsample and skip HR so seeding 200 posts stays quick.
+        func addRun(city: String, laps: Int, daysAgo: Double, dense: Bool, variant: Int,
+                    style: MapStyleOption? = nil) {
+            guard let loop = CommunityRoutes.loop(city: city, discipline: .run, nearestKm: 10) else { return }
+            let laps = max(1, laps)
+            let start = date(daysAgo)
+            let distanceM = loop.km * 1000 * Double(laps)
+            let pace = 288.0 + Double(variant % 5) * 7      // ~4:48–5:16 /km, varying run to run
+            let durationS = distanceM / 1000 * pace
+            let run = Workout(); run.type = .run; run.startedAt = start; run.durationS = durationS
+            let gps = GPSDetail()
+            gps.distanceM = distanceM
+            gps.elevationGainM = 40 + Double(variant % 6) * 22 * Double(laps)
+            gps.avgPaceSPerKm = pace
+            gps.avgCadence = 178 + variant % 8
+            gps.samples = samplesFromLoop(loop, laps: laps, start: start,
+                                          durationS: durationS, speedMS: 1000 / pace, dense: dense)
+            if dense {
+                gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: variant)
+                gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
+            }
+            // Each run keeps the basemap it was "saved with" — cards render in their own style
+            // since v5, so rotating here is what gives the grid its range instead of 200 tiles of
+            // the same pale map. Rotation order alternates pale/dark/photographic so neighbouring
+            // tiles never repeat: the mosaic is 3 columns, and 7 shares no factor with 3.
+            gps.mapStyleRaw = (style ?? Self.cardStyleRotation[variant % Self.cardStyleRotation.count]).rawValue
+            run.gps = gps
+            context.insert(run)
+        }
+
+        // ── Featured, most-recent posts: real scenic street loops, a marathoner's mix of easy runs
+        //    (1 lap ≈ 10 km) and long runs (2–3 laps ≈ 20–30 km). These get rendered Mapbox tiles.
+        let featured: [(String, Int)] = [
+            ("Austin, TX", 3), ("San Francisco, CA", 1), ("Boston, MA", 2), ("Austin, TX", 1),
+            ("Vancouver", 1), ("New York, NY", 3), ("Seattle, WA", 2), ("Boulder, CO", 1),
+            ("Chicago, IL", 1), ("Portland, OR", 2), ("London", 1), ("San Diego, CA", 3),
+            ("Sydney", 1), ("Denver, CO", 2), ("Barcelona", 1), ("Brooklyn, NY", 1),
+            ("Cape Town", 2), ("Oakland, CA", 1), ("Nashville, TN", 1), ("Miami, FL", 2),
+        ]
+        // The opening composition. The first screenful is the one anybody actually judges (and the
+        // one that gets screenshotted), so these are hand-placed rather than left to the rotation:
+        // pale · photographic · dark in the first row, then a green and a colour, so no two
+        // neighbours share a canvas and the range is legible immediately. Strength tiles land at
+        // days 3.4/10.4/17.4 and break the run of them up further.
+        let opening: [MapStyleOption] = [.standard, .satellite, .dark, .outdoors, .streets,
+                                         .standardSatellite, .realistic, .dark, .standard]
+        for (i, spec) in featured.enumerated() {
+            addRun(city: spec.0, laps: spec.1, daysAgo: 1 + Double(i) * 3, dense: true, variant: i,
+                   style: i < opening.count ? opening[i] : nil)
+        }
+
+        // A few strength sessions threaded into the recent weeks so the grid also shows iridescent
+        // muscle-map tiles (strength-for-runners), not only routes.
+        for (k, daysAgo) in [3.0, 10.0, 17.0].enumerated() {
+            let sw = Workout(); sw.type = .strength; sw.startedAt = date(daysAgo + 0.4)
+            sw.durationS = 2_700 + Double(k) * 240
+            sw.strength = strengthSession(lifts: lifts, week: Double(k))
+            context.insert(sw)
+        }
+
+        // ── Backfill: ~185 older posts across many cities to make Posts, lifetime distance, and the
+        //    consistency grid read as a real ~16-month history. Light routes (no HR, no map render).
+        let cities = ["Austin, TX", "Denver, CO", "Boulder, CO", "San Diego, CA", "Portland, OR",
+                      "Seattle, WA", "Chicago, IL", "New York, NY", "Boston, MA", "San Francisco, CA",
+                      "Nashville, TN", "Atlanta, GA", "Miami, FL", "Dallas, TX", "Houston, TX",
+                      "Philadelphia, PA", "Washington, DC", "Brooklyn, NY", "Oakland, CA", "Phoenix, AZ",
+                      "Salt Lake City, UT", "Minneapolis, MN", "Charlotte, NC", "Raleigh, NC", "Richmond, VA"]
+        var rng = SeededRNG(7)
+        for j in 0..<185 {
+            let city = cities[j % cities.count]
+            // Mostly single-loop training runs; a weekly long run of 2–3 laps.
+            let laps = (j % 7 == 0) ? rng.int(2...3) : 1
+            let daysAgo = 60 + Double(j) * 2.25 + rng.double(-0.6, 0.6)
+            addRun(city: city, laps: laps, daysAgo: daysAgo, dense: false, variant: j)
+        }
+
+        // A couple of inbox notifications + coaching history so the rest of the app looks lived-in too.
+        let notifs: [(AppNotification.Kind, String, String, Int)] = [
+            (.achievement, "New longest run", "You just logged your longest run yet — 32.1 km. Huge.", 0),
+            (.streak, "18-week streak", "You've trained every week since your build began. Incredible.", 1),
+            (.coaching, "Your paces got faster", "That tempo showed real fitness, so I sharpened your targets by ~6 s/km.", 2),
+        ]
+        for (kind, title, body, daysAgo) in notifs {
+            context.insert(AppNotification(kind: kind, title: title, body: body,
+                                           date: cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()))
+        }
+        try? context.save()
+
+        // Render real Mapbox tiles for just the most-recent runs (the visible grid) — snapshotting all
+        // ~200 would be needlessly slow; the rest ride the drawn silhouette + the on-appear healer.
+        let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
+            .filter { $0.type == .run && !($0.gps?.samples.isEmpty ?? true) }
+            .sorted { $0.startedAt > $1.startedAt }
+            .prefix(22)
+        Task { @MainActor in
+            for run in recent {
+                guard let gps = run.gps else { continue }
+                let coords = gps.samples.sorted { $0.t < $1.t }
+                    .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                // Each card on the basemap its own run was saved with — same rule the healer
+                // follows since v5, so a seeded tile is indistinguishable from a real save. This
+                // used to hardcode `.persisted` + `tileStyle` and then WRITE that back over
+                // `mapStyleRaw`, which silently flattened the newest 22 tiles (the whole visible
+                // grid) to one basemap while everything below them stayed varied.
+                let seedStyle = gps.mapStyle
+                if let data = await RouteSnapshotter.snapshot(
+                    coordinates: coords, size: RouteSnapshotter.workoutTileSize,
+                    styleURI: seedStyle.styleURI,
+                    insets: RouteSnapshotter.workoutTileInsets) {
+                    gps.mapSnapshotData = data
+                    gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
+                    try? context.save()
+                }
+            }
+        }
+    }
+
+    /// Map a real bundled loop (repeated `laps` times for long runs) into timed `LocationSample`s.
+    /// `dense: false` downsamples to ~24 points — enough for a route silhouette, cheap to seed en masse.
+    private static func samplesFromLoop(_ loop: CommunityRoutes.Loop, laps: Int, start: Date,
+                                        durationS: Double, speedMS: Double, dense: Bool) -> [LocationSample] {
+        var pts: [[Double]] = []
+        for _ in 0..<max(1, laps) { pts.append(contentsOf: loop.pts) }
+        if !dense, pts.count > 24 {
+            let step = pts.count / 24
+            pts = stride(from: 0, to: pts.count, by: max(1, step)).map { pts[$0] }
+        }
+        guard pts.count > 1 else { return [] }
+        var out: [LocationSample] = []
+        let last = Double(pts.count - 1)
+        for (i, p) in pts.enumerated() where p.count >= 2 {
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(durationS * Double(i) / last)
+            s.lat = p[0]; s.lon = p[1]
+            s.speedMS = speedMS
+            s.altitudeM = 150
+            s.accuracyM = 6
+            s.accepted = true
+            out.append(s)
+        }
+        return out
+    }
+
+    // MARK: Marathon (post-run hero)
+
+    /// One completed Austin Marathon — the real bundled course as the GPS trace, with a sub-3 finish
+    /// so the post-run summary reads a genuine 26.2 mi race (route map + distance/time/pace/HR).
+    private static func seedMarathonRun(_ context: ModelContext) {
+        guard let url = Bundle.main.url(forResource: "austin-marathon", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONDecoder().decode([String: [[Double]]].self, from: data),
+              let pts = obj["pts"], pts.count > 1 else { return }
+        let start = Date().addingTimeInterval(-4 * 3600)      // finished this morning
+        let durationS = 10_721.0                              // 2:58:41 (sub-3)
+        let distanceM = 42_195.0                              // 26.2 mi
+        let run = Workout(); run.type = .run; run.startedAt = start; run.durationS = durationS
+        let gps = GPSDetail()
+        gps.distanceM = distanceM
+        gps.elevationGainM = 178
+        gps.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS)  // ~4:14 /km
+        gps.avgCadence = 183
+        let speed = distanceM / durationS                     // ~3.94 m/s
+        let last = Double(pts.count - 1)
+        gps.samples = pts.enumerated().compactMap { i, p in
+            guard p.count >= 2 else { return nil }
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(durationS * Double(i) / last)
+            s.lat = p[0]; s.lon = p[1]
+            s.speedMS = speed
+            s.altitudeM = 150 + 30 * sin(Double(i) / 9)       // rolling Austin hills
+            s.accuracyM = 5
+            s.accepted = true
+            return s
+        }
+        gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: 1)
+        gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
+        gps.mapStyleRaw = MapStyleOption.dark.rawValue        // route map on the flat dark basemap
+        // The demo athlete shares their race: with `--community` this is the OWN post on the wall
+        // (tile + pager byline), proving the save→feed pipeline end to end. Privacy is invisible
+        // in solo builds, where no community surface exists to read it.
+        run.privacy = .public
+        run.gps = gps
+        context.insert(run)
+        try? context.save()
+    }
+
+    /// Two generated placeholder "photos" (soft dawn/dusk gradients with a horizon line) — enough
+    /// to exercise the photo tile, the full-bleed carousel, and its counter pill without bundling
+    /// stock imagery. Clearly synthetic, DEBUG-only.
+    private static func demoPhotos() -> [WorkoutPhoto] {
+        let palettes: [[UIColor]] = [
+            [UIColor(red: 0.98, green: 0.82, blue: 0.65, alpha: 1), UIColor(red: 0.55, green: 0.60, blue: 0.85, alpha: 1)],
+            [UIColor(red: 0.35, green: 0.42, blue: 0.60, alpha: 1), UIColor(red: 0.92, green: 0.65, blue: 0.55, alpha: 1)],
+        ]
+        return palettes.enumerated().map { i, colors in
+            let size = CGSize(width: 900, height: 1200)
+            let image = UIGraphicsImageRenderer(size: size).image { ctx in
+                let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                          colors: colors.map(\.cgColor) as CFArray, locations: [0, 1])!
+                ctx.cgContext.drawLinearGradient(gradient, start: .zero,
+                                                 end: CGPoint(x: 0, y: size.height), options: [])
+            }
+            return WorkoutPhoto(order: i, data: image.jpegData(compressionQuality: 0.8) ?? Data())
         }
     }
 
@@ -142,17 +671,31 @@ enum DemoSeed {
         ActiveWorkoutMarker.set(w.id)
     }
 
-    private static func demoLifts() -> [Exercise] {
-        [
-            Exercise(name: "Barbell Bench Press", primaryMuscles: [.chest], secondaryMuscles: [.triceps, .shoulders],
-                     equipment: .barbell, category: .compound),
-            Exercise(name: "Barbell Row", primaryMuscles: [.back], secondaryMuscles: [.biceps],
-                     equipment: .barbell, category: .compound),
-            Exercise(name: "Back Squat", primaryMuscles: [.quads, .glutes], secondaryMuscles: [.hamstrings],
-                     equipment: .barbell, category: .compound),
-            Exercise(name: "Overhead Press", primaryMuscles: [.shoulders], secondaryMuscles: [.triceps],
-                     equipment: .barbell, category: .compound),
-        ]
+    /// The minimal state of a user who JUST finished onboarding: a profile they filled in + the plan the
+    /// engine generated from it, and nothing else. No workouts, PRs, notifications, or coaching history —
+    /// so every screen renders its true empty state. Mirrors what `OnboardingViewModel.finish()` produces
+    /// in release (profile + `PlanService.regenerate`), minus the AI memory notes/coach hello.
+    private static func seedEmptyProfile(_ context: ModelContext) {
+        guard ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? []).isEmpty else { return }
+        let profile = UserProfile()
+        profile.displayName = "Sam Rivera"      // a name the user typed — not fabricated history
+        profile.handle = "samrivera"
+        profile.disciplines = ["running"]
+        profile.goal = .generalFitness
+        profile.daysPerWeek = 4
+        profile.experience = ["running": "some"]
+        profile.weightUnit = WeightUnit.default().rawValue
+        context.insert(profile)
+        PlanService.regenerate(for: profile, in: context)   // prescriptions only, all dated from today
+        try? context.save()
+    }
+
+    /// The four demo lifts, taken FROM the shared library (which seeds before us) — inserting
+    /// copies here is what once double-listed "Barbell Bench Press" in the exercise search.
+    private static func demoLifts(in context: ModelContext) -> [Exercise] {
+        let names = ["Barbell Bench Press", "Barbell Row", "Barbell Back Squat", "Overhead Press"]
+        let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
+        return names.compactMap { name in all.first { $0.name == name && !$0.isCustom } }
     }
 
     private static func strengthSession(lifts: [Exercise], week: Double) -> StrengthSession {
@@ -160,10 +703,22 @@ enum DemoSeed {
         var volume = 0.0, sets = 0
         for lift in lifts {
             let row = WorkoutExercise(); row.exercise = lift
-            let base = 60 + (5 - week) * 2                     // heavier as the athlete builds
+            // Per-lift strength ratios so the athlete's numbers look real (squat > bench > row > OHP),
+            // scaled by a gently-building base.
+            let ratio: Double = {
+                switch lift.name {
+                case "Barbell Back Squat": 1.6
+                case "Barbell Bench Press": 1.05
+                case "Barbell Row": 0.95
+                case "Overhead Press": 0.62
+                default: 1.0
+                }
+            }()
+            let base = (60 + (5 - week) * 2) * ratio           // heavier as the athlete builds
             let entries = (0..<4).map { _ -> SetEntry in
-                let s = SetEntry(); s.weightKg = base; s.reps = 6; s.isComplete = true; s.type = .working
-                volume += base * 6; sets += 1
+                let s = SetEntry(); s.weightKg = (base / 2.5).rounded() * 2.5; s.reps = 6
+                s.isComplete = true; s.type = .working
+                volume += s.weightKg! * 6; sets += 1
                 return s
             }
             row.sets = entries
@@ -197,6 +752,48 @@ enum DemoSeed {
 
     /// A distinct 2-lap loop (shape + location vary by `variant`) with realistic per-sample speed and
     /// rolling altitude, so the post-run pace/elevation/splits charts have believable data to draw.
+    /// One fixed loop, run again on a different day. Roughly 5 km over two laps of a ~400 m-radius
+    /// circle east of downtown, clear of the five neighbourhoods `loopSamples` uses so the repeat
+    /// route can never be confused with them.
+    ///
+    /// Each outing is jittered by up to ten metres, deterministically per index. That matters: two
+    /// runs of one loop are never the same fixes, and a fixture built from an identical trace would
+    /// let `RouteMatch` pass without its tolerance ever being exercised. Distance is accumulated
+    /// from the trace rather than assumed, so the seeded run is internally consistent the way a
+    /// captured one is.
+    private static func repeatRouteSamples(start: Date, paceSPerKm: Double,
+                                           jitterSeed: Int) -> (samples: [LocationSample], distanceM: Double) {
+        let centerLat = 30.2500, centerLon = -97.7300
+        let radiusDeg = 0.003574                       // ≈ 398 m → ~2.5 km a lap
+        let lonScale = 1 / cos(centerLat * .pi / 180)  // longitude degrees are shorter this far north
+        let perLap = 90, laps = 2
+        var out: [LocationSample] = []
+        var distanceM = 0.0, elapsed = 0.0
+        var prevLat = 0.0, prevLon = 0.0
+        for i in 0..<(laps * perLap) {
+            let a = Double(i) / Double(perLap) * 2 * .pi
+            let driftLat = 10 * sin(Double(i) * 0.7 + Double(jitterSeed)) / HeatmapBinning.metersPerDegLat
+            let driftLon = 10 * cos(Double(i) * 0.5 + Double(jitterSeed) * 1.3) * lonScale / HeatmapBinning.metersPerDegLat
+            let lat = centerLat + radiusDeg * sin(a) + driftLat
+            let lon = centerLon + radiusDeg * cos(a) * lonScale + driftLon
+            if i > 0 {
+                let step = Geo.distance(lat1: prevLat, lon1: prevLon, lat2: lat, lon2: lon)
+                distanceM += step
+                elapsed += step / 1000 * paceSPerKm
+            }
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(elapsed)
+            s.lat = lat; s.lon = lon
+            s.speedMS = 1000 / paceSPerKm
+            s.altitudeM = 150 + 12 * sin(a * 2)
+            s.accuracyM = 6
+            s.accepted = true
+            out.append(s)
+            prevLat = lat; prevLon = lon
+        }
+        return (out, distanceM)
+    }
+
     private static func loopSamples(start: Date, variant: Int) -> [LocationSample] {
         // Scatter each run around a different Austin neighbourhood so the maps look different.
         let centers = [(30.2672, -97.7431), (30.2849, -97.7341), (30.2530, -97.7594),

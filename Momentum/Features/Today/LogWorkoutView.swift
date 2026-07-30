@@ -8,16 +8,55 @@ import SwiftData
 struct LogWorkoutView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(Services.self) private var services   // records → Health mirror → funnel, same as a tracked save
     @Query private var library: [Exercise]
     @Query private var profiles: [UserProfile]
 
     @State private var type: WorkoutType
     @State private var showTypePicker = false
 
+    /// Draft-return mode (the log composer's per-card editor): Save hands the form's values BACK
+    /// to the caller instead of writing a workout — the composer folds them into its card and
+    /// nothing saves until the athlete confirms the whole receipt.
+    private let onDraftReturn: ((LogWorkoutPrefill) -> Void)?
+
     /// Open pre-set to the activity the athlete is currently looking at (Today's sport), so a lifter
-    /// lands on the strength form and a runner on the run form.
-    init(initialType: WorkoutType = .run) {
-        _type = State(initialValue: initialType)
+    /// lands on the strength form and a runner on the run form. With a `prefill` (the log composer's
+    /// card editor), every field opens holding the parse — this form is the receipt's editor.
+    init(initialType: WorkoutType = .run, prefill: LogWorkoutPrefill? = nil,
+         onDraftReturn: ((LogWorkoutPrefill) -> Void)? = nil) {
+        self.onDraftReturn = onDraftReturn
+        _type = State(initialValue: prefill?.type ?? initialType)
+        guard let p = prefill else { return }
+        _date = State(initialValue: p.date)
+        _hours = State(initialValue: Int(p.durationS) / 3600)
+        _minutes = State(initialValue: (Int(p.durationS) % 3600) / 60)
+        _indoor = State(initialValue: p.indoor)
+        _effort = State(initialValue: p.effort)
+        if p.distanceM > 0 {
+            let unit = DistanceUnit.auto.resolved()
+            let v = unit == .imperial ? p.distanceM / Formatters.metersPerMile : p.distanceM / 1000
+            _distanceText = State(initialValue: String(format: v.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.2f", v))
+        }
+        if !p.exercises.isEmpty {
+            let unit = WeightUnit.default()
+            _exercises = State(initialValue: p.exercises.map { line in
+                var draft = DraftExercise()
+                draft.name = line.name
+                draft.sets = (0..<max(1, line.sets)).map { _ in
+                    var set = DraftSet()
+                    set.reps = line.reps
+                    if let kg = line.weightKg {
+                        // Snap to the nearest half — real plates come in halves, and unit
+                        // round-trips otherwise leave "185.0" / "225.1" in the field.
+                        let w = ((unit == .lb ? kg / Formatters.kgPerLb : kg) * 2).rounded() / 2
+                        set.weightText = String(format: w.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", w)
+                    }
+                    return set
+                }
+                return draft
+            })
+        }
     }
 
     @State private var date = Date()
@@ -28,6 +67,7 @@ struct LogWorkoutView: View {
     @State private var exercises: [DraftExercise] = [DraftExercise()]
     @State private var effort: Int?
     @State private var notes = ""
+    @State private var saveFailed = false
 
     private var distanceUnit: DistanceUnit { DistanceUnit.auto.resolved() }
     private var weightUnit: WeightUnit { .default() }
@@ -42,9 +82,14 @@ struct LogWorkoutView: View {
     private var canSave: Bool {
         guard durationS > 0 else { return false }
         if type.isStrengthStyle {
-            return exercises.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && !$0.sets.isEmpty }
+            // Direct saves need at least one named exercise; the composer's card editor doesn't —
+            // a duration-only lift is a real lift there (the receipt's own rule).
+            return onDraftReturn != nil
+                || exercises.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && !$0.sets.isEmpty }
         }
-        if type.isGPS { return distanceMeters > 0 }
+        // Same relaxation for cardio: the composer logs "walked 30 min" without a distance, so
+        // its card editor can't demand one. Direct adds keep the stricter typed-flow rule.
+        if type.isGPS { return onDraftReturn != nil || distanceMeters > 0 }
         return true   // timed sports need only a duration
     }
 
@@ -60,7 +105,7 @@ struct LogWorkoutView: View {
                 }
                 detailsSection
             }
-            .navigationTitle("Add a workout")
+            .navigationTitle(onDraftReturn == nil ? "Add a workout" : "Adjust workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
@@ -70,6 +115,11 @@ struct LogWorkoutView: View {
             }
             .sheet(isPresented: $showTypePicker) {
                 SportPicker(selection: $type) { showTypePicker = false }
+            }
+            .alert("Couldn't save your workout", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong writing to storage. Everything you entered is still here — try Save again.")
             }
         }
     }
@@ -95,6 +145,15 @@ struct LogWorkoutView: View {
         Section("When") {
             DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
+            // One tap for the everyday lengths — the steppers below still handle anything odd.
+            // Reaching 45 minutes used to be nine taps on a stepper, and this form is exactly where
+            // an athlete lands when the composer couldn't work out how long they trained.
+            QuickDurationRow(selected: durationS > 0 ? durationS : nil) { picked in
+                hours = Int(picked) / 3600
+                minutes = (Int(picked) % 3600) / 60
+            }
+            .padding(.vertical, 2)
+            .listRowSeparator(.hidden)
             Stepper(value: $hours, in: 0...12) {
                 HStack {
                     Text("Hours").font(.rounded(Theme.FontSize.body, weight: .medium))
@@ -240,29 +299,97 @@ struct LogWorkoutView: View {
     // MARK: Save
 
     private func save() {
+        // Card-editor mode: the values go back to the composer's receipt, not to storage.
+        if let onDraftReturn {
+            onDraftReturn(currentDraft())
+            Haptics.success()
+            dismiss()
+            return
+        }
         let inputs = exercises.map { draft in
             LogWorkoutBuilder.ExerciseInput(
                 name: draft.name,
                 sets: draft.sets.map { LogWorkoutBuilder.SetInput(reps: $0.reps, weightKg: $0.weightKg(unit: weightUnit)) })
         }
+        // Resolve each name once per save: the `library` @Query snapshot doesn't refresh mid-save,
+        // so two sections naming the same NEW exercise would otherwise create twin custom rows.
+        var resolved: [String: Exercise] = [:]
+        let cachedRef: (String) -> Exercise = { name in
+            let key = name.lowercased()
+            if let hit = resolved[key] { return hit }
+            let e = exerciseRef(named: name)
+            resolved[key] = e
+            return e
+        }
         let w = LogWorkoutBuilder.make(type: type, date: date, durationS: durationS, distanceM: distanceMeters,
                                        indoor: indoor, effort: effort, note: notes,
-                                       exercises: inputs, resolveExercise: exerciseRef)
+                                       exercises: inputs, resolveExercise: cachedRef)
         // A logged workout is a real workout: same calorie estimate and plan credit as a tracked one
         // (otherwise a treadmill run leaves today's planned session open and shows a blank calorie
         // stat forever). Deliberately no pace recalibration — hand-entered numbers are too coarse
         // to move the plan's fitness model.
         w.calories = CalorieEstimator.kcal(for: w, bodyMassKg: profiles.first?.bodyMassKg)
+        // A logged workout is a post like any tracked one: it takes the athlete's default
+        // visibility (their own last explicit choice). Community builds only — solo stays private.
+        if CommunityAccess.enabled, let p = profiles.first {
+            w.privacy = SocialPrivacy.defaultVisibility(p)
+        }
         context.insert(w)
-        try? context.save()
+        // Never report success on a write that didn't land (the finish-flow save screens'
+        // rule) — the hand-typed workout would vanish while the screen buzzed "saved".
+        do { try context.save() } catch {
+            context.delete(w)   // roll back the orphaned insert so a retry can't double-log
+            saveFailed = true
+            return
+        }
         PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
+        // …and it earns records, reaches Apple Health, and counts in the funnel like a tracked one.
+        // None of that used to happen here, so a hand-logged personal best simply never existed.
+        RecordsBook.record(w, in: context)
+        services.analytics.log(.workoutCompleted(type: w.type.rawValue))
+        if w.durationS >= 60 || (w.gps?.distanceM ?? 0) > 0 {
+            let saved = w
+            Task { await services.health.save(saved) }
+        }
+        AppReview.recordWorkoutSaved()
+        // A logged workout moves streak/session/distance awards like a tracked one (deferred).
+        AwardsBook.syncSoon()
         Haptics.success()
         dismiss()
     }
 
+    /// The form's current values as a prefill — what draft-return hands back to the composer.
+    /// Consecutive identical sets collapse into one uniform line ("4×8 · 185"); a hand-varied
+    /// set breaks into its own line, so nothing the athlete typed is flattened away.
+    private func currentDraft() -> LogWorkoutPrefill {
+        var lines: [LogWorkoutPrefill.ExerciseLine] = []
+        if type.isStrengthStyle {
+            for ex in exercises {
+                let name = ex.name.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { continue }
+                var runs: [(reps: Int, weightKg: Double?, count: Int)] = []
+                for set in ex.sets {
+                    let kg = set.weightKg(unit: weightUnit)
+                    if let last = runs.last, last.reps == set.reps, last.weightKg == kg {
+                        runs[runs.count - 1].count += 1
+                    } else {
+                        runs.append((set.reps, kg, 1))
+                    }
+                }
+                for r in runs {
+                    lines.append(.init(name: name, sets: r.count, reps: r.reps, weightKg: r.weightKg))
+                }
+            }
+        }
+        return LogWorkoutPrefill(type: type, date: date, durationS: durationS,
+                                 distanceM: type.isGPS ? distanceMeters : 0,
+                                 indoor: indoor, effort: effort, exercises: lines)
+    }
+
     /// Find an existing library/custom exercise by name, else create a custom one so the lift is real.
+    /// Shorthand-aware ("bench press" → Barbell Bench Press) so voice logs never mint doubles.
     private func exerciseRef(named name: String) -> Exercise {
-        if let found = library.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { return found }
+        if let found = ExerciseNameMatch.find(name, in: library) { return found }
         let e = Exercise()
         e.name = name
         e.isCustom = true
@@ -315,8 +442,8 @@ enum LogWorkoutBuilder {
             let gps = GPSDetail()
             gps.distanceM = distanceM
             if durationS > 0, distanceM > 0 {
-                if isBike { gps.avgSpeedMS = distanceM / durationS }
-                else { gps.avgPaceSPerKm = durationS / (distanceM / 1000) }
+                if isBike { gps.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: distanceM, durationS: durationS) }
+                else { gps.avgPaceSPerKm = CardioMetrics.averagePaceSPerKm(distanceM: distanceM, durationS: durationS) }
             }
             w.gps = gps
         } else if type.isStrengthStyle {
@@ -343,7 +470,10 @@ enum LogWorkoutBuilder {
             }
             s.totalSets = totalSets
             s.totalVolumeKg = totalVol
-            w.strength = s
+            // A duration-only lift ("lifted for an hour", no sets given) matches the HealthKit
+            // import shape — type .strength, no StrengthSession — which every surface already
+            // handles. An empty session object would be a third shape for nothing.
+            if !s.exercises.isEmpty { w.strength = s }
         }
         return w
     }

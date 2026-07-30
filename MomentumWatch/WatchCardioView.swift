@@ -1,148 +1,85 @@
 import SwiftUI
 import WatchKit
 
-/// On-wrist live cardio (PRD §4.10) — a paged experience like Apple Workout / Strava: a big
-/// colour-coded **metrics** page (time hero, pace, distance, heart rate, calories) and a **controls**
-/// page (round Pause/End/Water-lock). Numbers come from `WatchCardioModel` (HealthKit live workout);
-/// the clock ticks via `TimelineView`. Real HR/distance need a physical Watch — on the sim the layout
-/// renders and the clock runs while sensor values stay at zero.
+/// On-wrist live cardio (PRD §4.10), rebuilt on the patterns the best wrist trainers share:
+/// a **3-2-1 countdown** with per-tick haptics (Apple Workout / Strava), then a crown-scrollable
+/// vertical pager of session pages — **Metrics · Zones · Map · Controls** (Apple's watchOS 10
+/// Workout idiom, with Garmin/COROS's zone gauge and auto-lap splits) — and a celebratory
+/// **summary** when the workout ends (Runna's finish moment). Numbers come from
+/// `WatchCardioModel`; the clock ticks via `TimelineView`. Real HR/distance/GPS need a physical
+/// Watch — on the sim use `--watch-demo` for a synthetic session.
 struct WatchCardioView: View {
     let type: WorkoutType
     @Environment(\.dismiss) private var dismiss
     @State private var model: WatchCardioModel?
+    @State private var phase: SessionPhase = .countdown
+    @State private var page: LivePage = .metrics
     @State private var ending = false
-
-    private let unit: DistanceUnit = .auto
 
     var body: some View {
         Group {
-            if let model {
-                if model.failed { unavailable } else { live(model) }
-            } else {
+            switch phase {
+            case .countdown:
+                CountdownView { phase = .starting }
+            case .starting:
                 ProgressView()
                     .task {
+                        // Publish the model before the (possibly long) start so teardown on
+                        // disappear always has something to end — no orphan sessions.
                         let m = WatchCardioModel(type: type)
-                        await m.start()
                         model = m
+                        await m.start()
+                        guard !Task.isCancelled else { return }
+                        if m.guide != nil, page == .metrics { page = .guide }
+                        phase = .live
                     }
+            case .live:
+                if let model {
+                    if model.failed { unavailable } else { live(model) }
+                }
+            case .summary:
+                if let model {
+                    WatchSummaryView(model: model) { dismiss() }
+                }
             }
         }
-        .navigationTitle(type.title)
         .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)   // Apple Workout style: the session owns the screen
+        .onAppear(perform: applyLaunchPage)
+        .onDisappear {
+            // Safety net for every exit that isn't the End button (failure Close, any pop):
+            // end() is idempotent, so the normal Done path makes this a no-op.
+            let m = model
+            Task { await m?.end() }
+        }
     }
 
-    // MARK: Paged live view
+    // MARK: Live pager — crown/swipe between session pages, Metrics first
 
     private func live(_ model: WatchCardioModel) -> some View {
-        TabView {
-            metricsPage(model)
-            controlsPage(model)
-        }
-        .tabViewStyle(.page)
-    }
-
-    private func metricsPage(_ model: WatchCardioModel) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 11) {
-                    if model.paused { pausedChip }
-                    Text(Formatters.duration(s: model.elapsed))
-                        .font(.system(size: 46, weight: .bold, design: .rounded)).monospacedDigit()
-                        .foregroundStyle(WatchTheme.ink)
-                        .minimumScaleFactor(0.6).lineLimit(1)
-                        .opacity(model.paused ? 0.55 : 1)
-
-                    metric(heroLabel, heroValue(model), WatchTheme.accent)
-                    metric("Distance", Formatters.distance(meters: model.distanceM, unit: unit), WatchTheme.ink)
-                    metric("Heart Rate", "\(model.heartRateBPM)", WatchTheme.heart, icon: "heart.fill", suffix: "BPM")
-                    metric("Active Cal", "\(Int(model.activeEnergyKcal))", WatchTheme.energy)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 4)
+        TabView(selection: $page) {
+            // A guided session leads with its coaching page — the wrist tells you what you're
+            // doing and how much is left before it tells you anything else.
+            if model.guide != nil {
+                GuidePage(model: model).tag(LivePage.guide)
             }
+            MetricsPage(model: model).tag(LivePage.metrics)
+            ZonesPage(model: model).tag(LivePage.zones)
+            MapPage(model: model).tag(LivePage.map)
+            ControlsPage(model: model, onEnd: endWorkout).tag(LivePage.controls)
         }
+        .tabViewStyle(.verticalPage)
+        .disabled(ending)   // finishWorkout() can take a beat — no taps into a closing session
     }
 
-    private func controlsPage(_ model: WatchCardioModel) -> some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 20) {
-                controlButton(model.paused ? "Resume" : "Pause",
-                              icon: model.paused ? "play.fill" : "pause.fill",
-                              tint: WatchTheme.accent, iconColor: .black) {
-                    model.togglePause()
-                }
-                controlButton("End", icon: "stop.fill", tint: .red, iconColor: .white) {
-                    guard !ending else { return }
-                    ending = true
-                    Task { await model.end(); dismiss() }
-                }
-            }
-            controlButton("Lock", icon: "drop.fill", tint: WatchTheme.control, iconColor: .white, compact: true) {
-                WKInterfaceDevice.current().enableWaterLock()
-            }
+    private func endWorkout() {
+        guard !ending, let model else { return }
+        ending = true
+        Task {
+            await model.end()
+            WKInterfaceDevice.current().play(.success)
+            withAnimation(.smooth(duration: 0.4)) { phase = .summary }
         }
-        .padding(.horizontal, 4)
-    }
-
-    // MARK: Pieces
-
-    private var pausedChip: some View {
-        Text("PAUSED")
-            .font(.system(size: 11, weight: .bold)).tracking(1.2)
-            .foregroundStyle(WatchTheme.accent)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Capsule().fill(WatchTheme.accent.opacity(0.18)))
-    }
-
-    private func metric(_ label: String, _ value: String, _ color: Color,
-                        icon: String? = nil, suffix: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label.uppercased())
-                .font(.system(size: 11, weight: .semibold)).tracking(0.5)
-                .foregroundStyle(WatchTheme.inkSecondary)
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                if let icon {
-                    Image(systemName: icon).font(.system(size: 15, weight: .bold)).foregroundStyle(color)
-                }
-                Text(value)
-                    .font(.system(size: 30, weight: .bold, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(color).minimumScaleFactor(0.7).lineLimit(1)
-                if let suffix {
-                    Text(suffix).font(.system(size: 12, weight: .semibold)).foregroundStyle(WatchTheme.inkTertiary)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue(value)
-    }
-
-    private func controlButton(_ label: String, icon: String, tint: Color, iconColor: Color,
-                               compact: Bool = false, action: @escaping () -> Void) -> some View {
-        let size: CGFloat = compact ? 50 : 60
-        return VStack(spacing: 6) {
-            Button(action: action) {
-                ZStack {
-                    Circle().fill(tint)
-                    Image(systemName: icon).font(.system(size: compact ? 18 : 23, weight: .bold))
-                        .foregroundStyle(iconColor)
-                }
-                .frame(width: size, height: size)
-            }
-            .buttonStyle(.plain)
-            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(WatchTheme.inkSecondary)
-        }
-    }
-
-    private var heroLabel: String { type.discipline == .cycling ? "Speed" : "Pace" }
-
-    private func heroValue(_ model: WatchCardioModel) -> String {
-        let e = model.elapsed, d = model.distanceM
-        if type.discipline == .cycling {
-            return Formatters.speed(ms: e > 0 ? d / e : 0, unit: unit)
-        }
-        let secPerKm = (d > 0 && e > 0) ? e / (d / 1000) : 0
-        return Formatters.pace(secPerKm: secPerKm, unit: unit)
     }
 
     private var unavailable: some View {
@@ -151,6 +88,102 @@ struct WatchCardioView: View {
             Text("Health access needed").font(.headline).multilineTextAlignment(.center)
             Text("Allow workout access to track on your wrist.")
                 .font(.caption2).foregroundStyle(WatchTheme.inkSecondary).multilineTextAlignment(.center)
+            Button("Close") { dismiss() }
+                .font(.system(size: 14, weight: .semibold))
+                .padding(.top, 4)
         }
+    }
+
+    /// DEBUG: `--watch-page=metrics|zones|map|controls` skips the countdown and opens that page —
+    /// deterministic screenshots on the sim (taps/crown are unreliable there).
+    private func applyLaunchPage() {
+        #if DEBUG
+        guard let arg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--watch-page=") })
+        else { return }
+        let raw = String(arg.dropFirst("--watch-page=".count))
+        if raw == "summary" {
+            let m = WatchCardioModel(type: type)
+            m.seedDemoSummary()
+            model = m
+            phase = .summary
+            return
+        }
+        guard let target = LivePage(rawValue: raw) else { return }
+        page = target
+        if phase == .countdown { phase = .starting }
+        #endif
+    }
+}
+
+enum SessionPhase { case countdown, starting, live, summary }
+
+enum LivePage: String, Hashable { case guide, metrics, zones, map, controls }
+
+// MARK: - Countdown (Apple Workout / Strava): 3 · 2 · 1 with a haptic per tick, GO in iridescence
+
+private struct CountdownView: View {
+    let onDone: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var count = 3
+    @State private var ringProgress = 0.0
+    @State private var landed = false
+
+    var body: some View {
+        ZStack {
+            WatchTheme.bg.ignoresSafeArea()
+            Circle()
+                .stroke(WatchTheme.surface, lineWidth: 6)
+                .padding(14)
+            Circle()
+                .trim(from: 0, to: ringProgress)
+                .stroke(WatchTheme.iridescentAngular, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .padding(14)
+            Group {
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 86, weight: .black, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(WatchTheme.ink)
+                } else {
+                    Text("GO")
+                        .font(.system(size: 52, weight: .black, design: .rounded))
+                        .foregroundStyle(WatchTheme.iridescent)
+                }
+            }
+            .id(count)
+            .scaleEffect(landed || reduceMotion ? 1 : 1.35)
+            .opacity(landed ? 1 : 0)
+            // The morning's number sees the athlete off — the whole story in one chip.
+            if let r = WatchSyncStore.shared.todayReadiness {
+                VStack {
+                    Spacer()
+                    Text("\(bandWord(r.band).uppercased()) · \(r.score)")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.8).monospacedDigit()
+                        .foregroundStyle(WatchTheme.inkSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(Capsule().fill(WatchTheme.surface))
+                        .padding(.bottom, 2)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onDone)   // impatient? tap to start now
+        .task(run)
+    }
+
+    @Sendable private func run() async {
+        for n in stride(from: 3, through: 0, by: -1) {
+            count = n
+            landed = false
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) { landed = true }
+            WKInterfaceDevice.current().play(n > 0 ? .directionUp : .start)
+            // The ring FILLS toward GO — the start moment lands on a complete iridescent circle.
+            withAnimation(.linear(duration: n > 0 ? 0.95 : 0.3)) {
+                ringProgress = n > 0 ? Double(4 - n) / 3 : 1
+            }
+            try? await Task.sleep(for: .seconds(n > 0 ? 1.0 : 0.55))
+            if Task.isCancelled { return }
+        }
+        onDone()
     }
 }

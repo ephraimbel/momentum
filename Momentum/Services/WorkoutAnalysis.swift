@@ -21,6 +21,21 @@ struct WorkoutDigest: Codable, Sendable {
         let elevationGainM: Double
         let avgHR: Int?
         let splitSecondsPerUnit: [Double]
+        /// **Display-ready figures, so the model has nothing left to convert.**
+        ///
+        /// Everything above is SI, per the app's storage rule. The model was handed
+        /// `avgPaceSPerKm: 330` for an athlete who reads miles and asked to "reference concrete
+        /// data" — so it guessed. Sometimes it converted correctly, and sometimes it printed the
+        /// kilometre figure with a mile label ("5:30 per mile" on a 5:30/km run, observed on the
+        /// simulator). Wrong numbers stated as fact, on the one screen the whole app is honest for.
+        ///
+        /// These are the same strings every other surface shows, formatted once here. The splits
+        /// are the SI figures re-cut to the athlete's unit for the same reason: the raw list is
+        /// always kilometre splits, whatever the athlete reads.
+        let displayUnit: String
+        let distanceLabel: String
+        let avgPaceLabel: String?
+        let splitLabels: [String]
     }
     struct StrengthDigest: Codable, Sendable {
         let totalVolumeKg: Double
@@ -31,14 +46,34 @@ struct WorkoutDigest: Codable, Sendable {
         }
     }
 
-    init(_ w: Workout) {
+    /// - Parameter distanceUnit: the athlete's display unit, used ONLY to add the pre-formatted
+    ///   labels below. Every stored number stays SI.
+    init(_ w: Workout, distanceUnit: DistanceUnit = .auto) {
         type = w.type.rawValue
         durationS = w.durationS
         perceivedEffort = w.perceivedEffort
         if let g = w.gps, g.distanceM > 0 {
+            // `splitResults` — persisted rows when the run has them, computed from the samples when
+            // it doesn't. Reading the relationship directly handed the model an empty list on EVERY
+            // run, because nothing in the app ever wrote a `Split`.
+            let imperial = distanceUnit.resolved() == .imperial
+            let unitMeters = imperial ? Formatters.metersPerMile : 1000
+            // Re-cut to the athlete's unit. `splitResults` is always kilometre splits, so handing
+            // the mile-reading athlete's coach a list of kilometre times is how "1 mi 8:23" becomes
+            // a sentence about a mile that was actually a kilometre.
+            let displaySplits = CardioMetrics.splits(g.samplePoints(type: w.type), unitMeters: unitMeters)
+                .filter { !$0.isPartial }
             gps = GPSDigest(distanceM: g.distanceM, avgPaceSPerKm: g.avgPaceSPerKm,
                             avgSpeedMS: g.avgSpeedMS, elevationGainM: g.elevationGainM, avgHR: g.avgHR,
-                            splitSecondsPerUnit: g.splits.sorted { $0.index < $1.index }.map(\.durationS))
+                            splitSecondsPerUnit: g.splitResults(type: w.type)
+                                .filter { !$0.isPartial }.map(\.durationS),
+                            displayUnit: imperial ? "mi" : "km",
+                            distanceLabel: Formatters.distance(meters: g.distanceM, unit: distanceUnit),
+                            avgPaceLabel: g.avgPaceSPerKm > 0
+                                ? Formatters.pace(secPerKm: g.avgPaceSPerKm, unit: distanceUnit) : nil,
+                            splitLabels: displaySplits.map {
+                                Formatters.pace(secPerKm: $0.durationS / ($0.distanceM / 1000), unit: distanceUnit)
+                            })
         } else { gps = nil }
         if w.type.isStrengthStyle, let s = w.strength {
             var tops: [StrengthDigest.TopSet] = []

@@ -17,6 +17,27 @@ struct SessionDetailSheet: View {
     @State private var adjusting = false
     @State private var confirmRemove = false
 
+    /// The structured-workout expansion, memoized per input change — `body` needed it in two
+    /// places, and every distance-stepper tap re-rendered the whole sheet, so the builder was
+    /// running two to three times per render (heavy-work-in-body rule). A plain reference box
+    /// (fields unobserved), so filling it mid-body is invisible to SwiftUI.
+    private final class StructuredMemo { var key = "\u{0}"; var value: StructuredWorkout? }
+    @State private var structuredMemo = StructuredMemo()
+    private var structured: StructuredWorkout? {
+        let key = """
+        \(session.runType?.rawValue ?? "-")|\(session.intervals ?? "-")|\
+        \(session.targetDistanceM ?? -1)|\(session.targetDurationS ?? -1)|\
+        \(session.targetPaceSPerKm ?? -1)|\(profile?.plan?.p5kSPerKm ?? -1)|\(profile?.raceDistanceM ?? -1)
+        """
+        if structuredMemo.key != key {
+            structuredMemo.key = key
+            structuredMemo.value = StructuredWorkoutBuilder.build(
+                from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
+                raceDistanceM: profile?.raceDistanceM)
+        }
+        return structuredMemo.value
+    }
+
     /// Key off the precise sport when set (discipline buckets swim/row under running).
     private var isGPS: Bool { session.workoutType?.isGPS ?? (session.discipline != .strength) }
     private var isStrength: Bool { session.workoutType?.isStrengthStyle ?? (session.discipline == .strength) }
@@ -29,8 +50,13 @@ struct SessionDetailSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     statusChip
                     targets
+                    if let caveat = racePaceCaveat { note(caveat) }
                     fuelSection
-                    if let why = session.rationale, session.status == .moved {
+                    // The session's why — always, not only when it was moved. The engines write a
+                    // rationale onto eased, deload, rebuild-week, and injury-converted sessions too,
+                    // and "adaptation explained in plain words" means the athlete can read it HERE,
+                    // where they actually look, not only in a buried timeline.
+                    if let why = session.rationale, !why.isEmpty {
                         note(why)
                     }
                     if rescheduling { rescheduleStrip }
@@ -48,7 +74,7 @@ struct SessionDetailSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
         .confirmationDialog("Remove this session?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove", role: .destructive) { onRemove(); dismiss() }
+            Button("Remove", role: .destructive) { Haptics.medium(); onRemove(); dismiss() }
             Button("Cancel", role: .cancel) {}
         }
     }
@@ -119,7 +145,7 @@ struct SessionDetailSheet: View {
             }
             // Guided quality sessions (intervals/tempo/run-walk) expand into a step breakdown so the
             // athlete sees the shape of the session before starting the guided run.
-            if let workout = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) {
+            if let workout = structured {
                 structuredSection(workout)
             }
         }
@@ -147,53 +173,19 @@ struct SessionDetailSheet: View {
         }
     }
 
+    /// Shared with Today's confirm sheet (`StructuredWorkout.summaryLines`) so the prescription
+    /// reads identically on every surface.
     private func structuredLines(_ w: StructuredWorkout) -> [(label: String, detail: String)] {
-        // Repeating run/walk sessions collapse to a single summary line.
-        if w.workStepCount > 0, w.steps.allSatisfy({ $0.repTotal == nil }),
-           w.title.lowercased().contains("run/walk") {
-            return [("\(w.workStepCount) × run / walk", "alternating")]
-        }
-        var lines: [(String, String)] = []
-        var i = 0
-        let steps = w.steps
-        while i < steps.count {
-            let s = steps[i]
-            if s.kind == .work, let total = s.repTotal {
-                // A rep group (intervals / hills / strides / fartlek surges) → one collapsed line, named
-                // by the step's noun, then the recovery once.
-                let noun = s.title.map { " \($0.lowercased())s" } ?? ""   // "8 × 45 s hills"
-                let pace = s.paceSPerKm.map { "@ \(Formatters.pace(secPerKm: $0, unit: distanceUnit))" } ?? "by feel"
-                lines.append(("\(total) × \(targetLabel(s.target))\(noun)", pace))
-                if i + 1 < steps.count, steps[i + 1].kind == .recovery {
-                    let r = steps[i + 1]
-                    lines.append((r.title ?? "Recovery", targetLabel(r.target)))
-                }
-                // Skip the whole rep block (this group's work + recovery steps).
-                while i < steps.count, steps[i].kind == .work, steps[i].repTotal != nil { i += 1
-                    if i < steps.count, steps[i].kind == .recovery { i += 1 }
-                }
-            } else {
-                // A standalone block (warm-up, cool-down, tempo, progression thirds).
-                lines.append((s.displayNoun, stepDetail(s)))
-                i += 1
-            }
-        }
-        return lines
+        w.summaryLines(distanceUnit: distanceUnit)
     }
 
-    private func targetLabel(_ t: WorkoutStep.Target) -> String {
-        switch t {
-        case let .distance(d): return d < 1000 ? "\(Int(d)) m" : Formatters.distance(meters: d, unit: distanceUnit)
-        case let .duration(s): return s >= 60 ? "\(Int((s / 60).rounded())) min" : "\(Int(s)) s"
-        }
-    }
-
-    private func stepDetail(_ s: WorkoutStep) -> String {
-        let base = targetLabel(s.target)
-        if s.kind == .work, let p = s.paceSPerKm {
-            return "\(base) @ \(Formatters.pace(secPerKm: p, unit: distanceUnit))"
-        }
-        return base
+    /// "Race pace" work is priced at the athlete's *current predicted* pace, not the goal they
+    /// typed — coaching-correct, but a silent mismatch reads as a bug to anyone chasing a time.
+    /// One quiet sentence wherever race-pace reps appear turns that into a trust moment.
+    private var racePaceCaveat: String? {
+        let mentionsRacePace = session.intervals?.lowercased().contains("race") ?? false
+        guard mentionsRacePace || session.runType == .race else { return nil }
+        return "Race pace here is your current predicted pace — it moves with your fitness as training lands, so the plan always trains you where you are today."
     }
 
     private var exercisesSection: some View {
@@ -219,7 +211,7 @@ struct SessionDetailSheet: View {
         }
         // The raw intervals string ("6×400m @ 5K pace") is superseded by the grouped Workout section
         // for guided sessions; only show it as a chip when no structured breakdown will render.
-        if let iv = session.intervals, StructuredWorkoutBuilder.build(from: session, p5kSPerKm: profile?.plan?.p5kSPerKm) == nil { out.append(iv) }
+        if let iv = session.intervals, structured == nil { out.append(iv) }
         return out
     }
 
@@ -235,14 +227,9 @@ struct SessionDetailSheet: View {
 
     private func exerciseRow(_ ex: PlannedExercise) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                if let w = StrengthSuggest.label(for: ex, profile: profile) {
-                    Text("Start \(w)").font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
-                }
-            }
+            Text(ex.exercise?.name ?? "Exercise").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
             Spacer(minLength: Theme.Space.sm)
-            Text("\(ex.targetSets) × \(ex.targetRepLow)–\(ex.targetRepHigh)")
+            Text(ex.prescriptionText)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)

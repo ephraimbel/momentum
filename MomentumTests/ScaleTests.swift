@@ -52,4 +52,14 @@ struct ScaleTests {
         let small = Array(coords.prefix(50))
         #expect(RouteSilhouette.downsample(small, to: 120).count == 50)
     }
+
+    @Test func silhouetteCorrectsLongitudeScale() {
+        // At 60°N a degree of longitude is half a degree of latitude on the ground, so a
+        // ground-square loop spans 0.02° lat × 0.04° lon. Uncorrected it drew 2:1 wide.
+        let corners: [(Double, Double)] = [(60.0, 10.0), (60.0, 10.04), (60.02, 10.04), (60.02, 10.0), (60.0, 10.0)]
+        let coords = corners.map { CLLocationCoordinate2D(latitude: $0.0, longitude: $0.1) }
+        let box = RouteSilhouette(coords: coords)
+            .path(in: CGRect(x: 0, y: 0, width: 200, height: 200)).boundingRect
+        #expect(abs(box.width - box.height) < 1.0)
+    }
 }

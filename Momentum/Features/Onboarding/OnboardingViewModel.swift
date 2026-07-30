@@ -39,6 +39,10 @@ final class OnboardingViewModel {
     var preferredDays: Set<Int> = []                // Calendar weekday 1…7; empty → auto-spread
     var sex: BiologicalSex? = nil
     var heightCm: Double? = nil
+    /// Explicit unit choices from the metrics page (owner ask 2026-07-30) — nil = locale default.
+    /// Weight choice persists to the profile at finish; height choice is a display preference.
+    var weightUnitChoice: String? = nil     // WeightUnit rawValue ("kg" | "lb")
+    var heightMetricChoice: Bool? = nil     // true = cm, false = ft·in
     var birthYear: Int? = nil
     var bodyMassKg: Double? = nil
 
@@ -58,6 +62,14 @@ final class OnboardingViewModel {
     var feasibility: PlanFeasibility {
         let p5k = calibration.recentRun.map { PlanEngine.riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
             ?? calibration.estimatedP5kSPerKm
+        // If they gave a time AT the race distance (a marathoner's own marathon, say), that's the
+        // honest "now" — passing it lets feasibility skip the lossy 5K round-trip that would
+        // over-tax their fitness and make a real PR look unreachable.
+        let raceTimeS: Double? = {
+            guard goal == .raceDistance, let rd = raceDistance, let rr = calibration.recentRun,
+                  abs(rr.distanceM - rd.meters) < 100 else { return nil }
+            return rr.timeS
+        }()
         return PlanFeasibility.assess(
             raceDistanceM: goal == .raceDistance ? raceDistance?.meters : nil,
             goalFinishTimeS: goalFinishTimeS,
@@ -65,7 +77,10 @@ final class OnboardingViewModel {
             currentWeeklyVolumeM: weeklyRunVolumeM ?? 0,
             weeksAvailable: hasRace ? (weeksToRace ?? 16) : 999,   // no date → no time pressure
             experience: experience,
-            injuryProne: !injuryAreas.isEmpty)
+            injuryProne: !injuryAreas.isEmpty,
+            daysPerWeek: daysPerWeek,
+            intensity: intensity,   // the banner reacts to how hard they choose to push
+            currentRaceTimeS: raceTimeS)
     }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0
@@ -82,17 +97,16 @@ final class OnboardingViewModel {
     /// much cruder %-of-max fallback.
     var importedRestingHR: Int?
 
-    // Health import (ENDURANCE-FOCUS §4) — the baseline estimated from their recent runs. Set by the
-    // calibration step's import card; feeds the pace seed AND the current-volume inputs.
-    var importedBaseline: BaselineEstimator.RunningBaseline? {
-        didSet {
-            guard let b = importedBaseline else { return }
-            calibrationMode = .imported
-            // Real measured load beats self-report — feeds the plan's starting volume + feasibility.
-            weeklyRunVolumeM = b.weeklyVolumeM
-            longestRunM = b.longestRunM
-        }
-    }
+    /// A catalog race picked on the race step ("Chicago Marathon") — becomes the plan's name at
+    /// finish, so the season is branded with its occasion from day one.
+    var plannedRaceName: String?
+
+    // Health-derived pace estimation was removed from onboarding (2026-07-24): a baseline inferred
+    // from mixed Health run history was too unreliable to seed a plan's paces. Athletes now enter
+    // their fitness directly — by feel or a recent time (calibration step) and their weekly volume
+    // (runVolume step). Past workouts still backfill into the training log when they connect Apple
+    // Health at the `health` step — that imports REAL logged runs, which is accurate; it just no
+    // longer drives pace calibration.
 
     /// A balanced full-body activation for the anatomy animation, emphasized by the chosen focus.
     func targetMuscles() -> [MuscleGroup: Double] {
@@ -128,15 +142,26 @@ final class OnboardingViewModel {
         // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
         // everywhere it appears (focus step, building beat, reveal).
         // No cold-open — the welcome page (SignInView) is the brand entry; onboarding opens on the
-        // first question. Order flows broad→specific: who → goal → what you do → experience → about you
-        // → race specifics → schedule → equipment/focus → motivation → pace → build → reveal → opt-ins.
+        // first question. Order flows broad→specific: who → goal → what you do → running-level+pace →
+        // about you → race specifics → schedule → equipment/focus → motivation → build → reveal → opt-ins.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
-        // `identity` (the @handle claim) follows `name` — who you are, then your name on the
-        // Community feed, both before any training questions.
+        // `identity` (the profile photo — the @handle claim left with the community back-burner,
+        // 2026-07-16) follows `name`, both before any training questions.
+        // `experience` doubles as the running pace question (2026-07-24), so there's no separate
+        // `calibration` step any more — runners are asked their level once.
+        // `rateUs` sits between `primers` and the paywall (user call 2026-07-26).
+        // `account` is the LAST beat, AFTER the paywall (user call 2026-07-27): the sign-in/sign-up
+        // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
+        // someone. Setup now runs local-only (guest) and the account is offered once there's a plan
+        // worth saving. Skippable — `AccountOptionsView(.onboardingBeat)`.
+        // ⚠️ App Review guideline 5.6.3 says not to solicit ratings before real engagement, and this
+        // app was rejected under exactly that rule for a rating beat in onboarding. Shipping it again
+        // is a deliberate, informed decision by the owner — if a submission is rejected, this step is
+        // the first thing to pull (delete the case; the flow closes over it with no other changes).
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
-             calibration, health, intensity, building, reveal, notifications, primers
+             health, intensity, building, reveal, notifications, primers, rateUs, account
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -151,8 +176,11 @@ final class OnboardingViewModel {
             case .raceGoalTime: return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
+            // Session length only shapes STRENGTH days (it sets how many exercises fit); running is
+            // prescribed by distance under a time cap, so it means nothing to a pure runner. Show it
+            // only where it changes the plan (2026-07-24).
+            case .session:     return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
-            case .calibration: return running
             // Anything to train around — endurance athletes only (drives the protective ramp).
             case .injuries:    return running
             // The recovery-tracking consent beat (HealthKit) — shown to everyone; wearables sync there.
@@ -169,7 +197,9 @@ final class OnboardingViewModel {
     /// The answerable steps (drives the progress bar + the question chrome).
     private var questionSteps: [Step] {
         // `.health` is an opt-in consent beat (like notifications), not an answerable question.
-        steps.filter { ![.health, .building, .reveal, .notifications, .primers].contains($0) }
+        // `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
+        // bar (which would then never reach 100% on the last question).
+        steps.filter { ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0) }
     }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 
@@ -182,8 +212,12 @@ final class OnboardingViewModel {
 
     var canAdvance: Bool {
         switch step {
-        case .identity: return !SocialPrivacy.normalizedHandle(handle).isEmpty
-        case .disciplines: return !activities.isEmpty
+        case .identity: return true   // photo-only since the handle left (2026-07-16) — always optional
+        // Require at least one PROGRAMMABLE discipline (run/strength/…), not just any activity: extras
+        // like yoga/swim/row map to `discipline == nil`, and advancing on those alone made finish()
+        // silently inject a running plan the user never asked for. A training plan needs something the
+        // engine actually programs; the extras still ride along as cross-training.
+        case .disciplines: return !disciplines.isEmpty
         case .race: return raceDistance != nil
         default: return true
         }
@@ -193,6 +227,10 @@ final class OnboardingViewModel {
         guard let idx = steps.firstIndex(of: step), idx + 1 < steps.count else { return }
         step = steps[idx + 1]
     }
+
+    /// Whether there's a previous step to return to. The header hides its back chevron on the first
+    /// step rather than showing a control whose tap does nothing.
+    var canGoBack: Bool { (steps.firstIndex(of: step) ?? 0) > 0 }
 
     func back() {
         guard let idx = steps.firstIndex(of: step), idx > 0 else { return }
@@ -204,7 +242,6 @@ final class OnboardingViewModel {
         switch calibrationMode {
         case .time: seed.recentRun = (benchmark.meters, recentRunSeconds)
         case .feel: if let f = paceFeel { seed.estimatedP5kSPerKm = f.p5kSPerKm }
-        case .imported: seed.estimatedP5kSPerKm = importedBaseline?.p5kSPerKm
         case .none: break
         }
         return seed
@@ -277,26 +314,32 @@ final class OnboardingViewModel {
             if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
             return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label) — whenever you toe the line"
         }
-        // Running-first phrasing (Phase 0): the runner identity leads; strength reads as the support.
+        // Every other goal is named for exactly what the athlete CHOSE — the plan is aimed at their
+        // goal, and the reveal says so, rather than a generic "faster, stronger runner" for a
+        // fat-loss or stay-consistent athlete who never asked to race.
         let phrase: String
-        if running && lifting {
-            phrase = hasRace ? "Race-ready — and stronger everywhere" : "A faster runner — stronger everywhere"
-        } else if running {
-            phrase = hasRace ? "Race-ready" : "A faster, stronger runner"
-        } else if lifting {
-            phrase = goal == .getStronger ? "Stronger" : "Leaner & stronger"
-        } else {
-            phrase = "Fitter"
+        switch goal {
+        case .endurance:
+            phrase = running && lifting ? "Going farther — stronger everywhere" : "Going farther, running stronger"
+        case .loseFat:        phrase = "Leaner and fitter"
+        case .buildMuscle:    phrase = "Building real muscle"
+        case .getStronger:    phrase = "Getting stronger"
+        case .stayConsistent: phrase = "Consistent — moving for good"
+        case .generalFitness:
+            phrase = running && lifting ? "Fitter and stronger, all over"
+                : running ? "A fitter, stronger runner" : lifting ? "Leaner and stronger" : "Fitter, across the board"
+        case .raceDistance:   phrase = "Race-ready"   // handled above; kept for exhaustiveness
         }
         if hasRace { return "\(phrase) by \(raceDate.formatted(.dateTime.month().day()))" }
         return "\(phrase) — one week at a time"
     }
 
-    /// Whole weeks until race day (for the reveal countdown), if a dated race was set.
+    /// Whole weeks until race day (for the reveal countdown), if a dated race was set. Delegates to
+    /// the canonical `PlanEngine.weeksToRace` (inclusive of race week) so the feasibility verdict here
+    /// matches Plan Settings for the same race + date — they used to differ by one week.
     var weeksToRace: Int? {
         guard goal == .raceDistance, hasRace else { return nil }
-        let w = Calendar.current.dateComponents([.weekOfYear], from: Date(), to: raceDate).weekOfYear ?? 0
-        return max(0, w)
+        return PlanEngine.weeksToRace(startDate: Date(), raceDate: raceDate, calendar: .current)
     }
 
     /// Create the profile + plan. Returns the persisted profile.
@@ -318,8 +361,15 @@ final class OnboardingViewModel {
         profile.daysPerWeek = daysPerWeek
         profile.equipment = equipment
         profile.sessionMinutes = sessionMinutes
-        profile.raceDate = hasRace ? raceDate : nil
-        profile.raceDistanceM = (goal == .raceDistance) ? raceDistance?.meters : nil
+        // Day-granular (races have a DAY, not a time) — a time component here made Plan Settings'
+        // structural comparison read an untouched sheet as changed.
+        // Guard on the GOAL, not just `hasRace`. Picking a race and then switching the goal away
+        // (Run a race → Lose fat) used to leave `raceDate` set — the sibling fields below all guard
+        // on `goal == .raceDistance`, so the engine periodized the whole block toward a phantom race
+        // and the reveal promised "race-ready by <date>" for a goal that isn't racing.
+        let racing = goal == .raceDistance
+        profile.raceDate = (racing && hasRace) ? Calendar.current.startOfDay(for: raceDate) : nil
+        profile.raceDistanceM = racing ? raceDistance?.meters : nil
         // Only carried when the runVolume step applies (running, non-beginner); otherwise nil → the
         // engine's experience-tier defaults. Guarded so flipping back to "new" can't leak a seeded value.
         if running, experience != .new {
@@ -333,9 +383,10 @@ final class OnboardingViewModel {
         profile.muscleFocus = muscleFocus.map(\.rawValue)
         profile.preferredDays = Array(preferredDays).sorted()
         profile.crossTraining = extraActivities.map { $0.workoutType.rawValue }
-        // Default display units to the athlete's locale (lb + miles in the US/UK) so the whole app
-        // matches the imperial figures they just entered. Distance stays `auto` (locale-resolved).
-        profile.weightUnit = WeightUnit.default().rawValue
+        // Display units: the athlete's explicit choice from the metrics page wins; otherwise the
+        // locale default (lb + miles in the US/UK) so the app matches the figures they entered.
+        // Distance stays `auto` (locale-resolved).
+        profile.weightUnit = weightUnitChoice ?? WeightUnit.default().rawValue
         profile.sex = sex?.rawValue
         profile.heightCm = heightCm
         profile.birthYear = birthYear
@@ -351,6 +402,10 @@ final class OnboardingViewModel {
         context.insert(profile)
         // Build the plan (shared day budget + cross-training) — same path as the edit-settings rebuild.
         PlanService.rebuild(for: profile, calibration: calibration, in: context)
+        // A catalog race picked during onboarding names the season after its occasion.
+        if goal == .raceDistance, let raceName = plannedRaceName, profile.plan?.name.isEmpty != false {
+            profile.plan?.name = raceName
+        }
         // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).
         AthleteModelService().seedOnboarding(for: profile, in: context)
         return profile
@@ -402,8 +457,10 @@ enum ActivityChoice: String, CaseIterable, Identifiable {
 // MARK: - Calibration model
 
 /// How running paces get seeded in onboarding. `.none` = skipped (use experience default);
-/// `.imported` = estimated from their Apple Health run history (most precise, zero effort).
-enum CalibrationMode { case none, feel, time, imported }
+/// `.feel` = the by-feel self-assessment; `.time` = a manually entered recent race/benchmark time.
+/// (Health-derived estimation was removed 2026-07-24 — too unreliable to seed paces from.)
+/// String-raw so it serializes into the interruption-recovery draft like every other answer.
+enum CalibrationMode: String { case none, feel, time }
 
 /// A beginner-friendly "by feel" running self-assessment → an estimated 5k pace (s/km). Lets someone
 /// who has never timed a run still give the plan a sensible starting pace.
@@ -434,15 +491,57 @@ enum PaceFeel: String, CaseIterable, Identifiable {
     var p5kSPerKm: Double {
         switch self { case .newRunner: 420; case .easyJogger: 360; case .regular: 315; case .fast: 270 }
     }
+    /// The experience tier this running level implies — so a runner answers "how do you run" ONCE
+    /// and it seeds both the starting pace AND the plan's experience tier, instead of a separate,
+    /// redundant "how experienced are you?" page (2026-07-24).
+    var experienceLevel: ExperienceLevel {
+        switch self {
+        case .newRunner: .new
+        case .easyJogger, .regular: .some
+        case .fast: .experienced
+        }
+    }
 }
 
 /// A known recent effort the athlete can time, for a precise (Riegel) pace seed.
 enum RunBenchmark: String, CaseIterable, Identifiable {
-    case mile, fiveK, tenK
+    case mile, fiveK, tenK, half, marathon
     var id: String { rawValue }
-    var meters: Double { switch self { case .mile: 1_609.344; case .fiveK: 5_000; case .tenK: 10_000 } }
-    var label: String { switch self { case .mile: "1 mile"; case .fiveK: "5K"; case .tenK: "10K" } }
-    var defaultSeconds: Double { switch self { case .mile: 600; case .fiveK: 1_800; case .tenK: 3_600 } }
-    var range: ClosedRange<Double> { switch self { case .mile: 300...1_200; case .fiveK: 900...3_600; case .tenK: 1_800...7_200 } }
-    var step: Double { switch self { case .mile: 15; case .fiveK: 30; case .tenK: 60 } }
+    var meters: Double {
+        switch self {
+        case .mile: 1_609.344; case .fiveK: 5_000; case .tenK: 10_000
+        case .half: 21_097.5; case .marathon: 42_195
+        }
+    }
+    var label: String {
+        switch self {
+        case .mile: "1 mile"; case .fiveK: "5K"; case .tenK: "10K"
+        case .half: "Half"; case .marathon: "Marathon"
+        }
+    }
+    var defaultSeconds: Double {
+        switch self {
+        case .mile: 600; case .fiveK: 1_800; case .tenK: 3_600
+        case .half: 7_200; case .marathon: 14_400
+        }
+    }
+    /// Floors sit just under the world records (mile 3:43, 5K ~12:35, 10K ~26:11, half ~57:31,
+    /// marathon ~2:00:35) so ANY real athlete — including an elite — can enter their true time; the
+    /// engine's Daniels/VDOT zones are curvilinear and handle that fitness correctly. The old floors
+    /// (5:00 / 15:00 / 30:00) silently capped a sub-elite's seed and started their whole plan 8–15%
+    /// too slow. Half/marathon added 2026-07-24: a marathoner's own race is the truest seed for a
+    /// long-distance plan — a Riegel projection from their 5K systematically flatters marathon
+    /// fitness (speed ≠ endurance), so letting them give the real number calibrates the whole
+    /// block honestly.
+    var range: ClosedRange<Double> {
+        switch self {
+        case .mile: 210...1_200; case .fiveK: 720...3_600; case .tenK: 1_500...7_200
+        case .half: 3_300...12_600; case .marathon: 7_080...25_200
+        }
+    }
+    var step: Double {
+        switch self {
+        case .mile: 15; case .fiveK: 30; case .tenK: 60; case .half: 60; case .marathon: 120
+        }
+    }
 }

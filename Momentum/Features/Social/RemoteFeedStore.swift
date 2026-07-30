@@ -30,6 +30,12 @@ final class RemoteFeedStore {
         if let remoteFollowing = await backend.pullFollowing() {
             follows?.merge(remote: remoteFollowing)
         }
+        // Switching scope: drop the old scope's rows up front so a failed fetch yields an empty
+        // correct-scope list, never stale cross-scope athletes (e.g. Everyone's under Following).
+        if scope != scopeLoaded {
+            items = []
+            scopeLoaded = scope
+        }
         guard let page = await backend.feed(scope: scope, cursor: nil, limit: Self.pageSize) else { return }
         cursor = page.next
         scopeLoaded = scope
@@ -66,6 +72,24 @@ final class RemoteFeedStore {
             posts: posts,
             avatarData: avatar,
             isSample: false)
+    }
+
+    /// Search real, discoverable athletes by name or @handle. Empty for guests/offline/dark —
+    /// the seeded community results (searched locally by the caller) are the floor.
+    func search(_ query: String) async -> [CommunityAthlete] {
+        guard let backend, let hits = await backend.searchAthletes(query: query, limit: 25) else { return [] }
+        var out: [CommunityAthlete] = []
+        for hit in hits {
+            let avatar = await avatarData(path: hit.avatarPath, backend: backend)
+            out.append(CommunityAthlete(
+                handle: hit.handle,
+                name: hit.displayName.isEmpty ? "Athlete" : hit.displayName,
+                location: hit.location, bio: "",
+                totalWorkouts: 0, dayStreak: 0, totalDistanceM: 0,
+                lat: 0, lon: 0, posts: [],
+                avatarData: avatar, isSample: false))
+        }
+        return out
     }
 
     // MARK: Row → FeedItem (images through the cache; failures degrade to route/glyph media)

@@ -15,17 +15,23 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
     let lat: Double            // approximate home location for the globe (fuzzed — city-level)
     let lon: Double
     let posts: [FeedItem]
-    /// Real athletes (Supabase) carry their avatar; seeded community renders initials.
+    /// Real athletes (Supabase) carry their avatar; seeded community renders a bundled synthetic face.
     var avatarData: Data? = nil
     /// True for the seeded "Momentum community" (whose body-of-work is deterministic sample
     /// content); false for real network athletes — their profile shows only real data.
     var isSample: Bool = true
     var id: String { handle }
+    /// The seeded athlete's bundled synthetic-face asset (deterministic per name); nil for real
+    /// network athletes. See `CommunityAvatars`.
+    var communityAvatarAsset: String? { isSample ? CommunityAvatars.assetName(forHandle: handle) : nil }
+    /// The hash-assigned preset look for face-less community athletes (see `CommunityAvatars.preset`).
+    var communityPreset: AvatarPreset? { isSample ? CommunityAvatars.preset(forHandle: handle) : nil }
 }
 
 enum CommunityDirectory {
-    // Generated once per launch (≈250 athletes) so the feed + globe are stable and not rebuilt on each
-    // access. Featured (hand-curated) athletes lead; the generated community fills out the rest.
+    // Generated once per launch (≈950 athletes) so the feed + globe are stable and not rebuilt on
+    // each access. Featured (hand-curated) athletes lead; the generated community fills out the
+    // rest. Identities are launch-stable; post content rotates daily (CommunityGenerator).
     private static let baseDate = Date()
     private static let cached: [CommunityAthlete] = featured(now: baseDate) + CommunityGenerator.generate(now: baseDate)
 
@@ -39,10 +45,13 @@ enum CommunityDirectory {
         /// literal `stat`. City must match a `CommunityRoutes` key.
         func post(_ n: Int, _ a: CommunityAuthor, _ type: WorkoutType, _ when: Date, _ title: String,
                   _ caption: String?, _ stat: String = "", city: String? = nil,
-                  targetKm: Double = 8, paceSecPerKm: Double = 340,
+                  targetKm: Double = 8, paceSecPerKm: Double = 340, mapless: Bool = false,
                   pr: String? = nil, reactions: Int = 0, ai: String? = nil) -> FeedItem {
             var rng = SeededRNG(n &* 99_173)
-            let loop = type.isGPS
+            // `mapless` = the generator's honesty rule for the hand-curated voices too: a title
+            // that claims a workout or terrain ("tempo", "Hill repeats", a trail) must never sit
+            // over a downtown street loop (CommunityContentAuditTests trips otherwise).
+            let loop = (type.isGPS && !mapless)
                 ? (city ?? a.location).flatMap { CommunityRoutes.loop(city: $0, discipline: type, nearestKm: targetKm) }
                 : nil
             let statLine = loop.map {
@@ -71,17 +80,17 @@ enum CommunityDirectory {
             CommunityAthlete(handle: maya.handle, name: maya.name, location: maya.location,
                 bio: "Marathoner chasing a sub-3. Coffee, then miles.",
                 totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000, lat: 30.27, lon: -97.74,
-                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42, ai: "A textbook negative split — the back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
+                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", "6.2 mi · 48:20", mapless: true, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
             CommunityAthlete(handle: theo.handle, name: theo.name, location: theo.location,
                 bio: "Strength coach. Big believer in boring consistency.",
                 totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000, lat: 40.78, lon: -73.97,
-                posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02:40", pr: "Squat e1RM PR", reactions: 67, ai: "Tonnage up with the same RPE — the new e1RM is earned, not a fluke. Hold this volume for a week before pushing load again.")]),
+                posts: [post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02:40", pr: "Squat e1RM PR", reactions: 67, ai: "Tonnage up with the same RPE. The new e1RM is earned, not a fluke. Hold this volume for a week before pushing load again.")]),
             CommunityAthlete(handle: lin.handle, name: lin.name, location: lin.location,
                 bio: "Cyclist. Hills are just downhills in waiting.",
                 totalWorkouts: 268, dayStreak: 5, totalDistanceM: 9_800_000, lat: 45.52, lon: -122.64,
-                posts: [post(3, lin, .ride, ago(7), "Hill repeats", nil, targetKm: 39, paceSecPerKm: 139, reactions: 18)]),
+                posts: [post(3, lin, .ride, ago(7), "Hill repeats", nil, "24.2 mi · 1:30:21", mapless: true, reactions: 18)]),
             CommunityAthlete(handle: priya.handle, name: priya.name, location: priya.location,
-                bio: "Hybrid athlete — lift heavy, move fast.",
+                bio: "Hybrid athlete. Lift heavy, move fast.",
                 totalWorkouts: 190, dayStreak: 12, totalDistanceM: 620_000, lat: 51.51, lon: -0.13,
                 posts: [post(4, priya, .hiit, ago(11), "Conditioning", "Quick and brutal.", "22:14", reactions: 9)]),
             CommunityAthlete(handle: marcus.handle, name: marcus.name, location: marcus.location,
@@ -91,7 +100,7 @@ enum CommunityDirectory {
             CommunityAthlete(handle: sofia.handle, name: sofia.name, location: sofia.location,
                 bio: "Trail runner. Higher is better.",
                 totalWorkouts: 156, dayStreak: 4, totalDistanceM: 1_900_000, lat: 40.01, lon: -105.27,
-                posts: [post(6, sofia, .trailRun, ago(28), "Mesa loop", "Big climb, bigger views.", targetKm: 13, paceSecPerKm: 345, pr: "Longest run", reactions: 51)]),
+                posts: [post(6, sofia, .trailRun, ago(28), "Mesa loop", "Big climb, bigger views.", "8.1 mi · 1:14:45 · 1,350 ft", mapless: true, pr: "Longest run", reactions: 51)]),
             CommunityAthlete(handle: devon.handle, name: devon.name, location: devon.location,
                 bio: "Erg every morning. Meters don't lie.",
                 totalWorkouts: 410, dayStreak: 15, totalDistanceM: 2_400_000, lat: 41.88, lon: -87.63,
@@ -119,7 +128,10 @@ enum CommunityDirectory {
         if let cached = gridCache[athlete.handle] { return cached }
         var seed = SeededRNG(athlete.handle.utf8.reduce(3) { ($0 &* 61 &+ Int($1)) & 0xFFFF })
         let history = CommunityGenerator.historyPosts(
-            handle: athlete.handle, name: athlete.name, city: athlete.location ?? "Austin",
+            // The fallback must be a real `CommunityRoutes` KEY ("Austin, TX", not "Austin") — a miss
+            // meant every GPS history post for a no-location athlete shipped WITHOUT its route map.
+            handle: athlete.handle, name: athlete.name, city: athlete.location ?? "Austin, TX",
+            primary: athlete.primaryType,   // the grid trains THEIR sport, not a blanket 62% running
             count: 11 + seed.int(0...7), now: now)
         let posts = (athlete.posts + history).sorted { $0.date > $1.date }
         gridCache[athlete.handle] = posts

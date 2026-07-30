@@ -1,14 +1,24 @@
 import SwiftUI
 
-/// The Pro paywall (PRD §10) — full-screen and unmistakably premium (user direction 2026-07-10):
-/// the brand's animated iridescence flows softly through the whole canvas, the wordmark sits
-/// centered up top, and the FULL feature list spells out everything free is missing. **Trust stays
-/// a feature:** two plans, the 7-day trial on annual only, renewal terms in plain language before
-/// purchase, one-tap restore. Reduce Motion freezes the flow; legibility always wins (the wash is
-/// masked down where text lives).
+/// The Pro paywall (PRD §10) — full-screen and unmistakably premium: a BRIGHT light canvas where
+/// the brand's animated iridescence drifts softly through the whole surface (user call 2026-07-29;
+/// the original dark-cinematic look went murky), the wordmark sits centered up top, and the FULL
+/// feature list spells out everything free is missing. **Trust stays a feature:** two plans, the
+/// 7-day trial on annual only, renewal terms in plain language before purchase, one-tap restore.
+/// Reduce Motion freezes the flow; legibility always wins (the wash is masked down where text lives).
 struct PaywallView: View {
     /// The locked feature that brought the user here — frames the subheadline.
     var feature: Feature = .aiCoach
+    /// Hard placement (end of onboarding): no close affordance, no swipe-away — the only ways
+    /// forward are starting the trial, subscribing, or restoring. Contextual gates elsewhere stay
+    /// dismissible; trust copy (plain renewal terms, one-tap restore) is identical in both modes.
+    var hard: Bool = false
+    /// Called INSTEAD of dismissing when the athlete becomes entitled. A host that needs to keep this
+    /// cover on screen and swap to another beat supplies it — the relaunch gate does, to hand off to
+    /// the account beat. The alternative (let the paywall dismiss, then re-present the same cover from
+    /// `onDismiss`) is timing-dependent: under load SwiftUI drops the re-presentation and the athlete
+    /// silently skips the beat. Everyone else leaves this nil and the paywall closes itself as before.
+    var onEntitled: (() -> Void)?
 
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
@@ -19,6 +29,19 @@ struct PaywallView: View {
     @State private var selected: PaywallProduct.Period = .annual
     @State private var working = false
     @State private var revealed = false
+    /// Set when a restore finds nothing to restore — the user gets a plain confirmation rather than
+    /// a button that silently does nothing.
+    @State private var nothingToRestore = false
+    /// Set when a purchase genuinely fails (not when the athlete cancels) — a tap that does nothing
+    /// and says nothing is how you lose someone who was trying to pay.
+    @State private var purchaseError: String?
+    /// Store-side failures this session: a pricing fetch that came back empty, or a purchase the
+    /// store rejected. A CANCELLED purchase is not a failure and never counts, so the escape below
+    /// can't be conjured up by opening the StoreKit sheet and backing out of it twice.
+    @State private var storeFailures = 0
+    /// Two store failures is enough to call it: on a HARD gate, offer a way past it. Not a bypass —
+    /// `onboardingGatePending` is untouched, so the wall returns on the next launch.
+    private var storeUnreachable: Bool { hard && storeFailures >= 2 }
 
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
@@ -26,34 +49,55 @@ struct PaywallView: View {
     /// Everything Pro unlocks, organized to eight one-liners (related capabilities share a row) so
     /// the whole paywall — list, both plans, CTA — fits one screen with no scroll. Copy is sized to
     /// a single row; no truncation, ever.
+    // Held to EIGHT rows so the size-adaptive layout keeps fitting an SE without truncating or
+    // scrolling (the scale math is tuned for this count). Fueling joins as a flagship line; the two
+    // former utility rows (voice/metronome + watch/share) merge into one to make room.
     private static let features: [(String, String)] = [
         ("figure.run", "Your full adaptive training plan"),
-        ("brain.head.profile", "AI coach chat & post-run reads"),
+        ("brain.head.profile", "Coach chat & post-run reads"),
+        ("fork.knife", "Fueling & calorie tracking"),
         ("gauge.with.needle", "Pace insights & session reviews"),
         ("waveform.path.ecg", "Recovery & injury-aware training"),
         ("flag.checkered", "Race predictions, 5K to marathon"),
         ("chart.xyaxis.line", "Analytics, history & records"),
-        ("speaker.wave.2", "Voice coach & metronome"),
-        ("applewatch", "Watch premium & every share style"),
+        ("applewatch", "Watch, voice coach & share styles"),
     ]
 
     var body: some View {
+        GeometryReader { geo in
+            // One scale drives the whole scrollable stack so the paywall reads *identically* on every
+            // iPhone — full-size on a 6.9" Pro Max, gently condensed on a 4.7" SE — instead of the
+            // plans getting shoved under the pinned CTA on short screens.
+            // Divisor 820: a 6.1" Dynamic-Island phone (iPhone 15/16, ~759pt usable — the Island eats
+            // MORE top inset than the 14's notch, so it's the tightest of the "tall" phones) condenses
+            // ~7% so the Monthly card clears the pinned CTA with margin; 6.7"+ stays clamped at 1.0
+            // (pristine). Paired with the trimmed section paddings below — together they lift Monthly
+            // clear without either lever having to over-shrink. Clamped so it never shrinks past legibility.
+            let s = min(1, max(0.8, geo.size.height / 820))
+            content(s)
+        }
+    }
+
+    private func content(_ s: CGFloat) -> some View {
         ScrollView {
             VStack(spacing: 0) {
-                lockup
-                    .padding(.top, Theme.Space.lg)
-                hero
-                    .padding(.top, Theme.Space.md + 2)
+                // Section gaps trimmed from the original airy spacing (lg/md+2) so the full stack —
+                // through the Monthly card — clears the pinned CTA on 6.1" phones. All scale with
+                // `s`, so tall phones (s=1) keep breathing room and short ones condense together.
+                lockup(s)
+                    .padding(.top, Theme.Space.md * s)
+                hero(s)
+                    .padding(.top, (Theme.Space.sm + 2) * s)
                     .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
-                featureList
-                    .padding(.top, Theme.Space.md + 2)
+                featureList(s)
+                    .padding(.top, (Theme.Space.md - 2) * s)
                     .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
-                plans
-                    .padding(.top, Theme.Space.md + 2)
+                plans(s)
+                    .padding(.top, (Theme.Space.md - 2) * s)
                     .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
             }
-            .padding(.horizontal, Theme.Space.xl)
-            .padding(.bottom, Theme.Space.sm)
+            .padding(.horizontal, max(Theme.Space.lg, Theme.Space.xl * s))
+            .padding(.bottom, Theme.Space.xs)
         }
         .scrollIndicators(.hidden)
         // Only the CTA is pinned — `safeAreaInset` insets the scroll content above it, so the plans
@@ -61,55 +105,106 @@ struct PaywallView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Theme.Space.sm) {
                 cta
+                if storeUnreachable { storeUnreachableEscape }
                 fineprint
             }
             .padding(.horizontal, Theme.Space.xl)
-            .padding(.top, Theme.Space.md)
-            // No bar, no chrome — the CTA sits directly on the flowing canvas (content fits one
-            // screen, so nothing ever scrolls beneath it).
+            .padding(.top, Theme.Space.lg)
+            // A soft scrim fades the canvas up under the CTA so that on a short screen — where the
+            // content can still scroll a hair behind the (chromeless) button — anything passing under
+            // it dissolves cleanly instead of peeking through. Invisible on tall phones (nothing
+            // scrolls there); ignores the home-indicator inset so the fade reaches the very bottom.
+            .background {
+                LinearGradient(colors: [.clear, Theme.background.opacity(0.9), Theme.background],
+                               startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
             .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
         }
         .background { flowingBackground }
-        .overlay(alignment: .topTrailing) { closeButton }
-        // The paywall is a dark, cinematic moment regardless of the athlete's appearance setting
-        // (user call 2026-07-10) — the wash reads best over true black.
-        .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(working)
+        .overlay(alignment: .topTrailing) { if !hard { closeButton } }
+        // The paywall is a BRIGHT, light moment regardless of the athlete's appearance setting
+        // (user call 2026-07-29, reversing the 2026-07-10 dark call) — the iridescence reads as
+        // luminous foil over white, where over near-black it went murky. Use `.environment(\.colorScheme)`,
+        // NOT `.preferredColorScheme`: the latter is a PREFERENCE that flows UP to the hosting window,
+        // so on dismiss it left the presenter (e.g. the coach chat) stuck in the forced scheme.
+        // Setting the environment styles only the paywall's own subtree — no leak to whoever
+        // presented it.
+        .environment(\.colorScheme, .light)
+        .alert("Nothing to restore", isPresented: $nothingToRestore) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("We couldn't find a past purchase on this Apple ID.")
+        }
+        // Cancellation stays silent — this only fires on a real failure, and always offers Restore,
+        // since "charged but not entitled" is the case where saying nothing is worst.
+        .alert("Purchase didn't go through",
+               isPresented: Binding(get: { purchaseError != nil },
+                                    set: { if !$0 { purchaseError = nil } })) {
+            Button("Try again") { purchaseError = nil }
+            Button("Restore") {
+                purchaseError = nil
+                Task {
+                    working = true; _ = await paywall.restore(); working = false
+                    if paywall.isPro { finishEntitled() } else { nothingToRestore = true }
+                }
+            }
+            Button("Not now", role: .cancel) { purchaseError = nil }
+        } message: {
+            Text(purchaseError ?? "")
+        }
+        .interactiveDismissDisabled(working || hard)
         .onAppear {
             services.analytics.log(.paywallView(placement: feature.placement))
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
         }
     }
 
-    // MARK: Background — the brand's holographic wash, alive but quiet
+    // MARK: Background — the brand's holographic wash, quiet and alive
 
-    /// The animated iridescent mesh flows through the whole canvas — alive enough to notice, masked
-    /// so it glows at the top (behind the lockup + headline), stays present behind the reading, and
-    /// warms up again under the plans. Static under Reduce Motion (IridescentView handles it).
+    /// A soft pastel wash that visibly — but slowly — travels. Two layers of motion: the mesh's own
+    /// ~8s interior shimmer (IridescentView), plus a slow wander of the WHOLE oversized field here
+    /// (offset only — transforms, never layout — on two incommensurate ~20s/27s periods so the path
+    /// never reads as a loop). The mask is applied OUTSIDE the moving layer, so the legibility
+    /// profile stays pinned to the layout — full glow behind the lockup + headline, quieter behind
+    /// the reading, warmer again under the plans — while the colors flow beneath it. Everything
+    /// freezes under Reduce Motion (the paused timeline here, IridescentView internally).
     private var flowingBackground: some View {
         ZStack {
             Theme.background
-            IridescentView(intensity: 0.72)
-                .mask(
-                    LinearGradient(stops: [
-                        .init(color: .white,                 location: 0.00),
-                        .init(color: .white.opacity(0.70),   location: 0.22),
-                        .init(color: .white.opacity(0.34),   location: 0.45),
-                        .init(color: .white.opacity(0.34),   location: 0.72),
-                        .init(color: .white.opacity(0.60),   location: 1.00),
-                    ], startPoint: .top, endPoint: .bottom)
-                )
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0 : ctx.date.timeIntervalSinceReferenceDate
+                // Amplitude 2.6 is what makes the motion PERCEPTIBLE: at the component's default
+                // shimmer a blurred full-bleed mesh translates almost uniformly and reads as still
+                // (owner report 2026-07-29). The 13s loop keeps the bigger travel unhurried — the
+                // color cells visibly swim past each other, never race. Oversized well past the
+                // wander radius so edges never reveal the canvas beneath.
+                IridescentView(intensity: 0.62, amplitude: 2.6, loop: 13)
+                    .scaleEffect(1.35)
+                    .offset(x: CGFloat(48 * sin(t / 17.0 * 2 * .pi) + 16 * sin(t / 6.1 * 2 * .pi + 0.9)),
+                            y: CGFloat(36 * sin(t / 23.0 * 2 * .pi + 1.7) + 12 * sin(t / 8.6 * 2 * .pi)))
+            }
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .white,                 location: 0.00),
+                    .init(color: .white.opacity(0.72),   location: 0.22),
+                    .init(color: .white.opacity(0.42),   location: 0.45),
+                    .init(color: .white.opacity(0.42),   location: 0.72),
+                    .init(color: .white.opacity(0.62),   location: 1.00),
+                ], startPoint: .top, endPoint: .bottom)
+            )
         }
         .ignoresSafeArea()
     }
 
     // MARK: Brand lockup — the wordmark, centered
 
-    private var lockup: some View {
-        VStack(spacing: Theme.Space.sm) {
-            // Always the white wordmark — this surface is permanently dark.
-            Image("WordmarkWhite")
-                .resizable().interpolation(.high).scaledToFit().frame(height: 22)
+    private func lockup(_ s: CGFloat) -> some View {
+        VStack(spacing: Theme.Space.sm * s) {
+            // Always the black wordmark — this surface is deliberately bright (light canvas).
+            Image("WordmarkBlack")
+                .resizable().interpolation(.high).scaledToFit().frame(height: 22 * s)
             Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(Color(hex: "0E0E12"))
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
                 .background(Capsule().fill(Theme.route))
@@ -122,16 +217,18 @@ struct PaywallView: View {
 
     // MARK: Hero
 
-    private var hero: some View {
-        VStack(spacing: Theme.Space.sm) {
+    private func hero(_ s: CGFloat) -> some View {
+        VStack(spacing: Theme.Space.sm * s) {
             // Serif to match the wordmark above it (user call 2026-07-10) — the hero reads as one
             // brand voice from lockup through subheader.
             Text("Run smarter.\nRace faster.")
-                .font(.serif(31, weight: .semibold)).foregroundStyle(Theme.ink)
+                .font(.serif(31 * s, weight: .semibold)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center).lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("The full adaptive engine, built around\nyour body, your goal, your life.")
-                .font(.serif(Theme.FontSize.caption + 2, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            // Two plain sentences, no dash — the owner's voice rule (2026-07-30): dashes here read
+            // as AI-written. Matches the coach-voice no-em-dash bar.
+            Text("Plans built by runners, for runners.\nAround your body, your goal, your life.")
+                .font(.serif((Theme.FontSize.caption + 2) * s, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -140,45 +237,53 @@ struct PaywallView: View {
 
     // MARK: The full feature list — everything free is missing
 
-    private var featureList: some View {
+    private func featureList(_ s: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(Self.features.enumerated()), id: \.offset) { i, item in
                 if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-                HStack(spacing: Theme.Space.md) {
+                // Tighter internal chrome than the design width so the full copy fits even on a
+                // 4.7" SE without truncating; `minimumScaleFactor` is the last-ditch safety net.
+                HStack(spacing: Theme.Space.sm + 2) {
                     Image(systemName: item.0)
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
                         .frame(width: 22)
                     Text(item.1)
                         .font(.rounded(14, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.82)
-                    Spacer(minLength: Theme.Space.sm)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Spacer(minLength: Theme.Space.xs)
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.route)
                 }
-                .padding(.vertical, Theme.Space.sm + 1)
+                .padding(.vertical, (Theme.Space.sm + 1) * s)
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(.horizontal, Theme.Space.lg)
+        .padding(.horizontal, Theme.Space.md)
         .background {
-            // A barely-there glass card lifts the list off the wash without deadening it.
+            // Glass with a white tint over it (owner ask 2026-07-30: the cards should stand out a
+            // bit more against the moving wash): the material keeps the wash breathing through,
+            // the tint makes the card read as a crisp panel rather than a smudge, and the soft
+            // shadow floats it. Same recipe as the plan cards below — one card language.
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .fill(.ultraThinMaterial)
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .stroke(Theme.hairline)
+                .fill(.white.opacity(0.5))
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .strokeBorder(.white.opacity(0.8))
         }
+        .shadow(color: .black.opacity(0.07), radius: 18, y: 8)
     }
 
     // MARK: Plans
 
-    private var plans: some View {
-        VStack(spacing: Theme.Space.sm) {
-            planCard(offering.annual, period: .annual)
-            planCard(offering.monthly, period: .monthly)
+    private func plans(_ s: CGFloat) -> some View {
+        VStack(spacing: Theme.Space.sm * s) {
+            planCard(offering.annual, period: .annual, s: s)
+            planCard(offering.monthly, period: .monthly, s: s)
         }
     }
 
-    private func planCard(_ p: PaywallProduct, period: PaywallProduct.Period) -> some View {
+    private func planCard(_ p: PaywallProduct, period: PaywallProduct.Period, s: CGFloat) -> some View {
         let isSelected = selected == period
         return Button {
             guard selected != period else { return }
@@ -190,7 +295,10 @@ struct PaywallView: View {
                     Text(p.isAnnual ? "Annual" : "Monthly")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).tracking(0.4)
                         .foregroundStyle(Theme.inkSecondary)
-                    if p.isAnnual, p.trialDays > 0 {
+                    // Suppressed with the price: the trial length is a placeholder until the store
+                    // answers, and "7-DAY FREE TRIAL" is as much a promise as the number beside it.
+                    // Data-driven, not annual-only — since 2026-07-29 both plans carry the trial.
+                    if p.trialDays > 0, paywall.pricingIsLive {
                         Text("\(p.trialDays)-DAY FREE TRIAL")
                             .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Color(hex: "0E0E12"))
                             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -200,25 +308,28 @@ struct PaywallView: View {
                     checkmark(on: isSelected)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(p.priceText)
+                    // Never present a placeholder as the price. Until the store's offering lands,
+                    // `p.priceText` is a US-dollar constant that would be wrong for any other
+                    // storefront and would survive a price change — so show a dash instead.
+                    Text(paywall.pricingIsLive ? p.priceText : "—")
                         .font(.display(23, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
                     Text(p.isAnnual ? "/ year" : "/ month")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     Spacer()
-                    Text(p.isAnnual
-                         ? "≈ \(p.perMonthText ?? "$10.00 / mo") · save \(offering.annualSavingsPercent)%"
-                         : "No trial · cancel anytime")
+                    Text(pricingAside(p))
                         .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
             }
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.vertical, Theme.Space.sm + 3)
+            .padding(.vertical, (Theme.Space.sm + 3) * s)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 shape.fill(.ultraThinMaterial)
-                shape.stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: isSelected ? 1.5 : 1)
+                shape.fill(.white.opacity(0.5))
+                shape.strokeBorder(isSelected ? Theme.ink : .white.opacity(0.8),
+                                   lineWidth: isSelected ? 1.5 : 1)
             }
-            .shadow(color: .black.opacity(isSelected ? 0.07 : 0), radius: 18, y: 8)
+            .shadow(color: .black.opacity(isSelected ? 0.10 : 0.06), radius: 18, y: 8)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -248,10 +359,30 @@ struct PaywallView: View {
             Haptics.light()
             Task {
                 working = true
-                let ok = await paywall.purchase(product)
+                // Pricing not live means `offering` is still placeholders — there is no real
+                // package to buy, so retry the fetch instead of firing a purchase that can only
+                // fail. Succeeds → the athlete taps again and buys at the store's real price.
+                guard paywall.pricingIsLive else {
+                    await paywall.reloadPricing()
+                    working = false
+                    if !paywall.pricingIsLive {
+                        storeFailures += 1
+                        purchaseError = "We couldn't load pricing from the App Store. Check your connection and try again."
+                    }
+                    return
+                }
+                let outcome = await paywall.purchase(product)
                 working = false
-                if ok { services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly")) }
-                if paywall.isPro { dismiss() }
+                switch outcome {
+                case .purchased:
+                    services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly"))
+                case .cancelled:
+                    break                                   // they changed their mind — say nothing
+                case .failed(let message):
+                    storeFailures += 1
+                    purchaseError = message
+                }
+                if paywall.isPro { finishEntitled() }
             }
         } label: {
             Text(ctaTitle)
@@ -265,9 +396,21 @@ struct PaywallView: View {
         .disabled(working)
     }
 
+    /// The right-hand note on a plan row. Suppressed with the price — a savings percentage computed
+    /// from placeholder numbers is just as wrong as the numbers themselves.
+    private func pricingAside(_ p: PaywallProduct) -> String {
+        guard paywall.pricingIsLive else { return "Pricing unavailable" }
+        return p.isAnnual
+            ? "≈ \(p.perMonthText ?? PaywallOffering.standard.annual.perMonthText ?? "") · save \(offering.annualSavingsPercent)%"
+            : "No trial · cancel anytime"
+    }
+
     private var ctaTitle: String {
         if working { return "One moment…" }
-        return product.trialDays > 0 ? "Start my \(product.trialDays)-day free trial" : "Continue — \(product.priceText)/month"
+        // Don't quote a price we haven't confirmed with the store, and don't promise a trial length
+        // that came from a placeholder either.
+        guard paywall.pricingIsLive else { return "Retry" }
+        return product.trialDays > 0 ? "Start my \(product.trialDays)-day free trial" : "Continue — \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
     }
 
     // MARK: Fine print
@@ -278,12 +421,15 @@ struct PaywallView: View {
             Text(renewalTerms)
             Text("·")
             Button("Restore") {
-                Task { working = true; _ = await paywall.restore(); working = false; if paywall.isPro { dismiss() } }
+                Task {
+                    working = true; _ = await paywall.restore(); working = false
+                    if paywall.isPro { finishEntitled() } else { nothingToRestore = true }
+                }
             }
             Text("·")
-            Button("Terms") { open("https://momentum.fit/terms") }
+            Button("Terms") { open("https://momentumco.app/terms") }
             Text("·")
-            Button("Privacy") { open("https://momentum.fit/privacy") }
+            Button("Privacy") { open("https://momentumco.app/privacy") }
         }
         .font(.rounded(10, weight: .medium))
         .foregroundStyle(Theme.inkTertiary)
@@ -293,10 +439,36 @@ struct PaywallView: View {
 
     /// Plain-language renewal terms (the §10 honesty bar), one short line per plan.
     private var renewalTerms: String {
-        if product.isAnnual, product.trialDays > 0 {
-            return "\(product.trialDays) days free, then \(product.priceText)/yr · cancel anytime"
+        // The fine print is the one place a wrong number is actually a claim about what we'll
+        // charge — never build it from placeholder pricing.
+        guard paywall.pricingIsLive else { return "Pricing unavailable · cancel anytime" }
+        let per = product.isAnnual ? "yr" : "mo"
+        if product.trialDays > 0 {
+            return "\(product.trialDays) days free, then \(product.priceText)/\(per) · cancel anytime"
         }
-        return "\(product.priceText)/mo · cancel anytime"
+        return "\(product.priceText)/\(per) · cancel anytime"
+    }
+
+    /// Entitlement landed. A host that keeps this cover on screen for a following beat handles it via
+    /// `onEntitled`; otherwise the paywall closes itself, which is what every contextual gate wants.
+    private func finishEntitled() {
+        if let onEntitled { onEntitled() } else { dismiss() }
+    }
+
+    /// The only way past a hard gate that isn't a purchase — and it appears only once the store has
+    /// actually failed twice. The wording is the whole point: this is a deferral, not a free pass,
+    /// and saying so is cheaper than an athlete discovering it themselves next launch.
+    private var storeUnreachableEscape: some View {
+        Button {
+            paywall.storeUnreachableDeferral = true
+            dismiss()
+        } label: {
+            Text("Continue — we'll ask again next time")
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 
     private var closeButton: some View {

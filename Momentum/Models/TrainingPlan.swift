@@ -14,9 +14,42 @@ final class TrainingPlan {
     var p5kSPerKm: Double = 360       // calibrated running pace (if running)
     var createdAt: Date = Date()
     var lastAdaptedAt: Date?          // last automatic load adaptation — gates auto-adapt to ≤1/week
-    /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from the first session) —
+    /// Set while the plan is paused (travel/illness — CoachActions): future sessions were shifted past
+    /// this date and `reconcileMissed` stands down until it passes. Cleared by resume.
+    var pausedUntil: Date?
+    /// Rolling-block counter for open-ended plans (no race): 0 for the first block, +1 on each
+    /// renewal (`PlanService.renewBlock`). Ignored for dated-race plans — they run one continuous
+    /// macrocycle to race day. Additive: a plan stored before this field decodes as block 0.
+    var blockIndex: Int = 0
+    /// The day this block was generated from — the anchor for `weekPhases` and "Week N of M".
+    /// Deliberately distinct from the earliest session, which can sit *earlier*: finished work
+    /// carries across a rebuild (`PlanService.persist`), and a completed goal race often lands in the
+    /// week before the block that follows it. Anchoring on the block keeps the macrocycle labels from
+    /// sliding a week when history rides along. Additive: a plan stored before this field decodes as
+    /// nil, and the Plan page falls back to the first session's week — what those plans were built on.
+    var blockStart: Date?
+    /// Macrocycle phase per plan week (PlanPhase raw values, index = weeks from `blockStart`) —
     /// the Plan page reads as a coached block: Base → Build → Recovery → Taper.
     var weekPhases: [String] = []
+    /// Self-coached mode (owner call 2026-07-30): the athlete writes their own weeks — the plan is
+    /// their container (Today deck, credits, add-a-session, the board all keep working), and the
+    /// coach NEVER prescribes or rewrites inside it: no generation, no tune proposals, no renewal
+    /// prompts, no auto-adapt/rebuild-week/pace-recalibration. Missed sessions still roll forward
+    /// (moving their own day is no-shame scheduling, not coaching). Cleared implicitly when a
+    /// coached plan is built — `PlanService.persist` mints a fresh TrainingPlan. Additive/defaulted.
+    var isSelfCoached: Bool = false
+    /// Pace-recalibration evidence ledger (the multi-run confirmation rule): one strong run banks a
+    /// candidate 5k-equivalent here; a second qualifying run within 14 days confirms and applies.
+    /// The standard is 2–3 confirming sessions before raising fitness — never off one great day.
+    /// Additive: plans stored before these fields decode as nil (no pending evidence).
+    var pendingP5kSPerKm: Double?
+    var pendingP5kAt: Date?
+    /// Last *applied* automatic pace sharpening — caps recalibration to ≤1/week, so back-to-back
+    /// strong runs can't compound the ≤3% per-update bound into a runaway ratchet.
+    var lastRecalibratedAt: Date?
+    /// Last consented pace easing (+2% per approval) — same weekly cap in the other direction; the
+    /// ease is honest once, a slow downward ratchet if tapped after every session.
+    var lastPaceEasedAt: Date?
     @Relationship(deleteRule: .cascade) var sessions: [PlannedSession] = []
 
     init() {}
@@ -62,4 +95,31 @@ final class PlannedExercise {
     var progression: String = "double" // "linear" | "double" | "rpe" | "percent"
 
     init() {}
+
+    /// The one place a prescription becomes words: "4 × 8–12". Every surface that shows a
+    /// planned exercise (Today's confirm sheet, the Plan detail sheet, the onboarding reveal)
+    /// formats through this — they each used to interpolate
+    /// `targetSets × targetRepLow–targetRepHigh` inline, which is how a plank came to ask for
+    /// 10–15 reps in three different places at once.
+    var prescriptionText: String {
+        targetRepLow == targetRepHigh
+            ? "\(targetSets) × \(targetRepLow)"
+            : "\(targetSets) × \(targetRepLow)–\(targetRepHigh)"
+    }
+}
+
+extension WorkoutType {
+    /// The sport Today's picker should show for a planned session — and therefore what its Start
+    /// button says it will do.
+    ///
+    /// The picker used to be hardcoded to `.run` and never moved off it. On a running day that was
+    /// invisible; on every other day the deck read "TODAY'S PLAN — Strength — 4 exercises" directly
+    /// above a large primary button saying "Start run". The precise sport wins (a planned
+    /// swim/yoga/row must not collapse into its discipline bucket); the bucket is the fallback.
+    ///
+    /// Lives here rather than beside `forDiscipline` in Enums.swift because that file is compiled
+    /// into the watch and widget targets, which don't build `PlannedSession`.
+    static func forPlanned(_ session: PlannedSession) -> WorkoutType {
+        session.workoutType ?? forDiscipline(session.discipline)
+    }
 }

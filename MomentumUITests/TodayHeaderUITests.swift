@@ -34,19 +34,38 @@ final class TodayHeaderUITests: XCTestCase {
                       "Notifications inbox did not open from the bell.")
     }
 
-    func testAvatarOpensProfile() {
+    /// The avatar SELECTS the Profile tab — it is a second door to the one real profile, not a
+    /// second profile screen (fix 2026-07-30). It used to push `ProfileScreen(showsBackButton:)`,
+    /// whose non-tab-root state suppressed the Profile ↔ Community slider; asserting the slider
+    /// here is what keeps that from coming back. ("Edit profile" is the landing marker — the old
+    /// assertion waited on "Edit", which stopped matching when the button was renamed.)
+    func testAvatarOpensProfileTab() {
         let app = launch()
         let avatar = app.buttons["Your profile"].firstMatch
         XCTAssertTrue(avatar.waitForExistence(timeout: 15), "Avatar missing from header.")
-        avatar.tap()
-        // The profile sheet hosts the full ProfileScreen (media grid) — give it room to appear.
-        let opened = app.buttons["Done"].waitForExistence(timeout: 30)
-        if !opened {
+        // Retried, not single-shot: glass chrome over a LIVE Mapbox map intermittently loses the
+        // touch to the map's own UIKit recognizers (the race `mapSafeTap` fights and does not
+        // always win — it reproduces here once the basemap tiles finish loading, and the recorded
+        // video shows the app never leaving Today, no transition even beginning). That is a
+        // tap-DELIVERY flake, independent of where the button goes; what this test guards is the
+        // destination, so don't let the flake read as a routing regression.
+        let edit = app.buttons["Edit profile"]
+        var opened = false
+        for _ in 0..<3 {
+            avatar.tap()
+            if edit.waitForExistence(timeout: 12) { opened = true; break }
+        }
+        // The full tab-root profile, slider included — not the lesser pushed copy.
+        let hasCommunitySlider = app.buttons["Community"].waitForExistence(timeout: 5)
+            && app.buttons["Profile"].exists
+        if !opened || !hasCommunitySlider {
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.lifetime = .keepAlways
             add(shot)
         }
-        XCTAssertTrue(opened, "Profile sheet did not open from the avatar.")
+        XCTAssertTrue(opened, "Profile did not open from the avatar.")
+        XCTAssertTrue(hasCommunitySlider,
+                      "Avatar landed on a profile without the Profile ↔ Community slider — it is not the tab root.")
     }
 
     func testRecenterButtonResponds() {

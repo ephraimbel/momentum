@@ -17,7 +17,6 @@ final class Services {
     let location: any LocationServing
     let motion: any MotionServing
     let health: any HealthServing
-    let plan: any PlanEngineServing
     let ai: any AIServing
     let sync: any SyncServing
     let paywall: any PaywallServing
@@ -26,14 +25,12 @@ final class Services {
     let analytics: any AnalyticsServing
     let voiceCoach: any VoiceCoachServing
     let presence: any PresenceServing
-    let spots: any SpotsProviding
     let social: any SocialBackending
 
     init(
         location: any LocationServing,
         motion: any MotionServing,
         health: any HealthServing,
-        plan: any PlanEngineServing,
         ai: any AIServing,
         sync: any SyncServing,
         paywall: any PaywallServing,
@@ -42,13 +39,11 @@ final class Services {
         analytics: any AnalyticsServing = StubAnalyticsService(),
         voiceCoach: any VoiceCoachServing = StubVoiceCoachService(),
         presence: any PresenceServing = StubPresenceService(),
-        spots: any SpotsProviding = StubSpotsProvider(),
         social: any SocialBackending = StubSocialBackend()
     ) {
         self.location = location
         self.motion = motion
         self.health = health
-        self.plan = plan
         self.ai = ai
         self.sync = sync
         self.paywall = paywall
@@ -57,7 +52,6 @@ final class Services {
         self.analytics = analytics
         self.voiceCoach = voiceCoach
         self.presence = presence
-        self.spots = spots
         self.social = social
     }
 
@@ -69,7 +63,6 @@ final class Services {
             location: LocationService(),
             motion: MotionService(),
             health: HealthService(),
-            plan: StubPlanEngine(),
             ai: AIService(),
             sync: SyncService(),
             paywall: paywall,
@@ -78,8 +71,7 @@ final class Services {
             analytics: AnalyticsService(),
             voiceCoach: VoiceCoachService(),
             presence: LivePresenceService(),
-            spots: CachingSpotsProvider(wrapping: MapboxSpotsProvider()),
-            social: SupabaseSocialBackend()
+            social: SupabaseSocialBackend(paywall: paywall)
         )
     }
 }
@@ -111,7 +103,12 @@ protocol HealthServing: AnyObject {
     /// Request Health read/write permission (opt-in). Returns whether workout-sharing is granted.
     func requestAuthorization() async -> Bool
     /// Save a completed workout to Apple Health (best-effort, de-duplicated, never blocks).
-    func save(_ workout: Workout) async
+    /// `includeEnergy: false` skips the active-energy sample — for a workout whose calorie number
+    /// was READ from Health in the first place (writing it back would double-count the Move ring).
+    func save(_ workout: Workout, includeEnergy: Bool) async
+    /// The wearable's own active-energy total (kcal) inside one window — what the Watch measured
+    /// during exactly the minutes the athlete was playing. nil = no samples (absent, never zero).
+    func measuredActiveEnergy(start: Date, end: Date) async -> Double?
     /// Read the athlete's latest body mass + resting HR (for personalizing estimates). nils if N/A.
     func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
     /// Read recovery signals wearables mirror into Health — HRV, resting HR, and last night's sleep,
@@ -123,13 +120,26 @@ protocol HealthServing: AnyObject {
     /// De-duplicated; skips our own writes. Returns the number newly imported.
     @discardableResult
     func importExternalWorkouts(into context: ModelContext, since: Date?) async -> Int
+    /// The automatic, throttled version of the above — called on the app's normal rhythm so
+    /// wearable workouts arrive on their own instead of waiting for a Settings button.
+    @discardableResult
+    func importRecentIfDue(into context: ModelContext, now: Date, defaults: UserDefaults) async -> Int
     /// Estimate the athlete's current running baseline (fitness + load) from their recent Health run
     /// history — the onboarding "it already understands me" import. nil when there isn't enough.
     func runningBaseline() async -> BaselineEstimator.RunningBaseline?
     /// The full heart-rate series for a workout window (Watch/Garmin runs carry one) — time-in-zones.
     func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)]
+    /// Daily step totals for the trailing window (oldest → newest, one point per day, zeros kept so
+    /// gaps read honestly). Empty when Health is unavailable/unauthorized — the Trends steps card
+    /// shows its quiet connect line instead of a fabricated flatline.
+    func dailySteps(daysBack: Int) async -> [(day: Date, steps: Double)]
 }
-protocol PlanEngineServing: AnyObject {}
+
+extension HealthServing {
+    /// The common save — every calorie the workout carries is ours to mirror.
+    func save(_ workout: Workout) async { await save(workout, includeEnergy: true) }
+}
+
 @MainActor
 protocol SyncServing: AnyObject {
     /// Push dirty (never-synced) workouts to the cloud and stamp them synced (PRD §8.9). No-op until
@@ -147,11 +157,18 @@ protocol AIServing: AnyObject {
 protocol PaywallServing: AnyObject {
     /// Single source of truth for Pro gating (PRD §10). Stubbed true-for-dev in Phase 0.
     func isEntitled(to feature: Feature) -> Bool
+    /// Open the paywall for a locked feature (no-op when already entitled) — presentation is the
+    /// other half of gating, so surfaces that hold only the protocol (service-layer callers like
+    /// the summary's plan-proposal card) can gate-and-present without reaching for the concrete
+    /// `PaywallController`. Added 2026-07-22 when the first such caller appeared.
+    func present(for feature: Feature)
 }
 @MainActor
 protocol NotificationServing: AnyObject {
-    /// Ask for local-notification permission (once; no-op if already determined).
-    func requestAuthorization()
+    /// Ask for local-notification permission (once; no-op if already determined). `completion` runs
+    /// on the main thread once the system prompt is RESOLVED (or immediately if already determined),
+    /// so a flow can advance only after the prompt is dismissed — never stacking another prompt on it.
+    func requestAuthorization(completion: (() -> Void)?)
     /// Resync next-workout reminders to the plan's upcoming sessions (each carries its prescription).
     func schedulePlannedReminders(_ plan: TrainingPlan?)
     /// An immediate, encouraging nudge when the coach adapts the plan.
@@ -160,6 +177,11 @@ protocol NotificationServing: AnyObject {
     func scheduleWeeklyCheckIn()
     /// A gentle, ≤1/day streak-protection nudge when a real streak is at risk on a planned day (§24).
     func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool)
+}
+
+extension NotificationServing {
+    /// Fire-and-forget convenience — request without waiting on the prompt.
+    func requestAuthorization() { requestAuthorization(completion: nil) }
 }
 
 @MainActor
@@ -200,6 +222,7 @@ protocol VoiceCoachServing: AnyObject {
 enum Feature: String, CaseIterable, Sendable, Identifiable {
     case aiCoach, fullPlan, programs, aiRead, advancedAnalytics, fullHistory
     case allTemplates, allShareTemplates, cadenceMetronome, voiceCoach, watchPremium
+    case mapStyles, fuel
 
     var id: String { rawValue }
 
@@ -214,6 +237,8 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .aiRead: "ai_read"
         case .advancedAnalytics: "analytics_locked"
         case .fullHistory: "history_locked"
+        case .mapStyles: "map_styles"
+        case .fuel: "fuel_locked"
         case .aiCoach, .fullPlan, .programs, .allTemplates,
              .allShareTemplates, .cadenceMetronome, .voiceCoach, .watchPremium: "full_plan"
         }
@@ -233,17 +258,57 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .cadenceMetronome: "the cadence metronome"
         case .voiceCoach: "the voice coach"
         case .watchPremium: "Watch premium"
+        case .mapStyles: "all map styles"
+        case .fuel: "the fuel journal"
+        }
+    }
+
+    /// A capitalized headline for the Pro lock card (the WHAT).
+    var lockTitle: String {
+        switch self {
+        case .aiCoach: "The AI coach"
+        case .fullPlan: "Your full plan"
+        case .programs: "Programs"
+        case .aiRead: "AI reads"
+        case .advancedAnalytics: "Advanced trends"
+        case .fullHistory: "Your full history"
+        case .allTemplates: "All templates"
+        case .allShareTemplates: "Every share style"
+        case .cadenceMetronome: "Cadence metronome"
+        case .voiceCoach: "Voice coach"
+        case .watchPremium: "Watch premium"
+        case .mapStyles: "All map styles"
+        case .fuel: "Fuel your training"
+        }
+    }
+
+    /// A one-line value prop for the Pro lock card (the WHY).
+    var lockBlurb: String {
+        switch self {
+        case .aiCoach: "A real coach, on demand"
+        case .fullPlan: "Every week, adapting as you train"
+        case .programs: "Structured programs for any goal"
+        case .aiRead: "AI reads every workout for you"
+        case .advancedAnalytics: "Fitness, fatigue and form over time"
+        case .fullHistory: "Your whole training history"
+        case .allTemplates: "Every workout template"
+        case .allShareTemplates: "Every way to share"
+        case .cadenceMetronome: "Lock your cadence, every run"
+        case .voiceCoach: "Live cues while you run"
+        case .watchPremium: "The full experience on your wrist"
+        case .mapStyles: "Every map style"
+        case .fuel: "AI meal logging, keyed to your plan"
         }
     }
 }
 
 // MARK: - Phase 0 stubs
 
-final class StubPlanEngine: PlanEngineServing {}
 @MainActor
 /// Dev stub: unlocks everything so feature work isn't blocked before Phase 3 wires RevenueCat.
 final class StubPaywallService: PaywallServing {
     func isEntitled(to feature: Feature) -> Bool { true }
+    func present(for feature: Feature) {}   // everything's entitled — there's never a wall to show
 }
 /// No-op voice coach for previews/tests.
 @MainActor

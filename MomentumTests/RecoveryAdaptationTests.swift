@@ -10,9 +10,11 @@ struct RecoveryAdaptationTests {
 
     private func signals(hrv: Double? = nil, hrvBase: Double? = nil,
                          rhr: Int? = nil, rhrBase: Double? = nil,
-                         sleep: Double? = nil) -> RecoverySignals {
+                         sleep: Double? = nil,
+                         resp: Double? = nil, temp: Double? = nil) -> RecoverySignals {
         RecoverySignals(hrvMs: hrv, hrvBaselineMs: hrvBase,
-                        restingHR: rhr, restingHRBaseline: rhrBase, sleepHours: sleep)
+                        restingHR: rhr, restingHRBaseline: rhrBase, sleepHours: sleep,
+                        respiratoryZ: resp, wristTempDeltaC: temp)
     }
 
     @Test func oneBadSignalNeverLurchesThePlan() {
@@ -64,6 +66,43 @@ struct RecoveryAdaptationTests {
         #expect(RecoveryAdaptation.decide(signals: hrvDown, intensity: .balanced, checkin: sore) != nil)
     }
 
+    @Test func illnessSignalsAreWarningSignsButNeverActAlone() throws {
+        // Breathing well above norm, everything else clean → one sign, hold (a fluky night, not a bug).
+        let breathing = signals(resp: 2.4)
+        #expect(RecoveryAdaptation.decide(signals: breathing, intensity: .balanced) == nil)
+
+        // Breathing above norm + a short night → two independent signs, ease; the reason names both.
+        let coming = try #require(RecoveryAdaptation.decide(signals: signals(sleep: 5.2, resp: 2.4),
+                                                            intensity: .balanced))
+        #expect(coming.reason.contains("breathing rate above your norm"))
+        #expect(coming.reason.contains("short night"))
+
+        // Running warm + resting HR well elevated → the classic incoming-bug picture, ease.
+        let warm = try #require(RecoveryAdaptation.decide(signals: signals(rhr: 55, rhrBase: 48, temp: 1.2),
+                                                          intensity: .balanced))
+        #expect(warm.reason.contains("running warm vs your normal"))
+        #expect(warm.reason.contains("resting HR elevated"))
+    }
+
+    @Test func mildIllnessDeviationsContributeNothing() {
+        // z 1.9 / +0.9 °C sit under the warning thresholds — with only a short night besides, hold.
+        // (The readiness score's soft tier may still shade the number; the plan doesn't move.)
+        let mild = signals(sleep: 5.2, resp: 1.9, temp: 0.9)
+        #expect(RecoveryAdaptation.decide(signals: mild, intensity: .balanced) == nil)
+    }
+
+    @Test func unbandedIllnessBaselinesLeavePriorBehaviorUntouched() throws {
+        // Regression pin: with respiratory/temp nil (baseline unbanded), decisions AND their exact
+        // wording match the pre-illness-watch engine on the existing fixtures.
+        let s = signals(hrv: 40, hrvBase: 55, rhr: 55, rhrBase: 48)
+        let d = try #require(RecoveryAdaptation.decide(signals: s, intensity: .balanced))
+        #expect(d.reason == "HRV below your norm and resting HR elevated")
+
+        let tired = signals(hrv: 55, hrvBase: 55, sleep: 5.0)
+        #expect(RecoveryAdaptation.decide(signals: tired, intensity: .balanced) == nil)
+        #expect(RecoveryAdaptation.decide(signals: .empty, intensity: .aggressive) == nil)
+    }
+
     @Test func tripwireNeedsLoadAndBodyToAgree() throws {
         let suppressed = signals(hrv: 40, hrvBase: 55)
         // Load spike alone: could be a planned peak week — hold.
@@ -104,6 +143,7 @@ struct RecoveryAdaptationTests {
         vm.hasRace = true; vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date())!
         vm.experience = .some; vm.weeklyRunVolumeM = 30_000
         let profile = vm.finish(in: ctx)
+        profile.distanceUnit = "metric"   // deterministic clean-km snapping, locale-independent
         let plan = try #require(profile.plan)
 
         // Force a quality session onto today so there's something to protect.
@@ -118,7 +158,7 @@ struct RecoveryAdaptationTests {
         #expect(note.headline == "Easy day instead")
 
         #expect(session.runType == .easy)                        // today softened…
-        #expect(session.targetDistanceM == 7_200)                // …volume trimmed 10%
+        #expect(session.targetDistanceM == 7_000)                // …volume trimmed 10% (8000→7200), snapped to 7.0 km
         #expect(session.rationale?.contains("HRV") == true)      // reason on the session itself
         let othersAfter = plan.sessions.filter { $0 !== session }.map(\.runType)
         #expect(othersBefore == othersAfter)                     // ONLY today — bounded, not a rewrite

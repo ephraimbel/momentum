@@ -15,6 +15,8 @@ protocol StrengthWorkoutSink: Sendable {
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async
     /// Un-log a set the user unchecked: remove its persisted row so it no longer counts.
     func persistSetIncomplete(setId: UUID) async
+    /// Re-write an exercise row's order + superset group (pairing/unlinking reorders the list).
+    func updateExerciseGrouping(rowId: UUID, order: Int, supersetGroup: Int?) async
     /// Schedule the rest-timer local notification so it fires when backgrounded.
     func scheduleRest(seconds: Double, exerciseName: String) async
     /// Finalize aggregates and clear the active-workout marker.
@@ -29,6 +31,7 @@ struct NoopStrengthWorkoutSink: StrengthWorkoutSink {
     func persistSetComplete(rowId: UUID, setId: UUID, setIndex: Int,
                             weightKg: Double?, reps: Int?, rpe: Double?, type: SetType) async {}
     func persistSetIncomplete(setId: UUID) async {}
+    func updateExerciseGrouping(rowId: UUID, order: Int, supersetGroup: Int?) async {}
     func scheduleRest(seconds: Double, exerciseName: String) async {}
     func finishWorkout(totalVolumeKg: Double, totalSets: Int, durationS: TimeInterval) async {}
     func discardWorkout() async {}
@@ -189,14 +192,59 @@ actor StrengthSessionEngine {
     }
 
     /// Append a set to an exercise; returns the new set's id (for the UI to track/edit/complete).
+    /// Warm-up ("prep") sets insert ABOVE the working sets — after any existing warm-ups — so the
+    /// checklist reads in the order the work happens; every index is recomputed after an insert.
     @discardableResult
-    func addSet(toExercise id: UUID, prefill: SetTarget = .init()) -> UUID? {
+    func addSet(toExercise id: UUID, prefill: SetTarget = .init(), type: SetType = .working) -> UUID? {
         guard let i = exercises.firstIndex(where: { $0.id == id }) else { return nil }
-        let set = LiveSet(index: exercises[i].sets.count,
+        var set = LiveSet(index: exercises[i].sets.count,
                           weightKg: prefill.weightKg, reps: prefill.reps,
                           restS: exercises[i].defaultRestS)
-        exercises[i].sets.append(set)
+        set.type = type
+        if type == .warmup {
+            let insertAt = exercises[i].sets.prefix(while: { $0.type == .warmup }).count
+            exercises[i].sets.insert(set, at: insertAt)
+        } else {
+            exercises[i].sets.append(set)
+        }
+        for j in exercises[i].sets.indices { exercises[i].sets[j].index = j }
         return set.id
+    }
+
+    /// Pair two exercises into a superset: both wear one group id and the partner moves adjacent
+    /// (right after the anchor), so the list reads in the order the work alternates. Every row's
+    /// order + group is re-persisted — the saved workout keeps the same story.
+    func pairSuperset(_ anchorId: UUID, _ partnerId: UUID) async {
+        guard anchorId != partnerId,
+              exercises.contains(where: { $0.id == anchorId }),
+              let si = exercises.firstIndex(where: { $0.id == partnerId }) else { return }
+        let group = (exercises.compactMap(\.supersetGroup).max() ?? 0) + 1
+        let partner = exercises.remove(at: si)
+        guard let ai = exercises.firstIndex(where: { $0.id == anchorId }) else {
+            exercises.insert(partner, at: si)   // anchor vanished mid-flight — restore, no-op
+            return
+        }
+        exercises[ai].supersetGroup = group
+        var moved = partner
+        moved.supersetGroup = group
+        exercises.insert(moved, at: ai + 1)
+        await persistGrouping()
+    }
+
+    /// Break a superset back into standalone exercises (order keeps as-is — no surprise moves).
+    func unlinkSuperset(_ rowId: UUID) async {
+        guard let i = exercises.firstIndex(where: { $0.id == rowId }),
+              let group = exercises[i].supersetGroup else { return }
+        for j in exercises.indices where exercises[j].supersetGroup == group {
+            exercises[j].supersetGroup = nil
+        }
+        await persistGrouping()
+    }
+
+    private func persistGrouping() async {
+        for (order, ex) in exercises.enumerated() {
+            await sink.updateExerciseGrouping(rowId: ex.id, order: order, supersetGroup: ex.supersetGroup)
+        }
     }
 
     /// Log a set: mark complete, persist immediately, and start the rest timer (§8.4).

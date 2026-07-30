@@ -74,23 +74,53 @@ struct OnboardingFlowTests {
         #expect(bare.finish(in: ctx).restingHR == nil)
     }
 
+    @Test func heightPersistsAndSharpensTheFuelBMR() throws {
+        // Height was added to the metrics step (2026-07-24) because the Fuel BMR needs it — the
+        // step promised sharper calorie targets but was skipping the input that matters most.
+        let pc = PersistenceController.inMemory()
+        let ctx = pc.container.mainContext
+        let vm = OnboardingViewModel()
+        vm.activities = [.run]
+        vm.goal = .endurance
+        vm.sex = .male
+        vm.birthYear = Calendar.current.component(.year, from: Date()) - 30
+        vm.bodyMassKg = 70
+        vm.heightCm = 185                         // a tall athlete, far from the 172 cm fallback
+
+        let profile = vm.finish(in: ctx)
+        #expect(profile.heightCm == 185)          // the calorie inputs are now complete
+
+        // Mifflin–St Jeor actually consumes it — the real height shifts BMR off the assumed one.
+        let real = FuelReadiness.bmr(kg: 70, heightCm: 185, age: 30, isMale: true)
+        let assumed = FuelReadiness.bmr(kg: 70, heightCm: FuelReadiness.fallbackHeightCm, age: 30, isMale: true)
+        #expect(abs(real - assumed) > 50)         // 13 cm × 6.25 ≈ 81 kcal — a meaningful target shift
+
+        // Skipping the (optional) step leaves it nil → fueling honestly falls back, never a fabricated height.
+        let bare = OnboardingViewModel(); bare.activities = [.run]
+        #expect(bare.finish(in: ctx).heightCm == nil)
+    }
+
     @Test func progressAdvancesAndSkipsEquipmentForNonLifters() {
         let vm = OnboardingViewModel()
         vm.activities = [.run]                        // no lifting
         #expect(!vm.steps.contains(.equipment))
+        // Session length only shapes strength days — a pure runner must never be asked it.
+        #expect(!vm.steps.contains(.session))
         vm.activities = [.strength]
         #expect(vm.steps.contains(.equipment))
+        #expect(vm.steps.contains(.session))          // lifters set it (it drives exercise count)
+        vm.activities = [.run, .strength]
+        #expect(vm.steps.contains(.session))          // hybrids lift too → keep it
 
         vm.step = .disciplines
         #expect(vm.canAdvance)                        // activities chosen
         vm.activities = []
         #expect(!vm.canAdvance)                        // must pick at least one
 
-        // The identity step gates on a usable handle (prefill makes it one tap in practice).
+        // The identity step is the (optional) profile photo since the @handle claim left with
+        // the community back-burner (2026-07-16) — always passable, photo or not.
         vm.step = .identity
         vm.handle = ""
-        #expect(!vm.canAdvance)
-        vm.handle = "Maya Runs!"                      // normalizes to "mayaruns" → valid
         #expect(vm.canAdvance)
     }
 
@@ -141,10 +171,11 @@ struct OnboardingFlowTests {
         #expect(try idx(.identity) < idx(.goal))             // identity settles before training questions
         #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
         #expect(try idx(.injuries) < idx(.race))             // before the race specifics
-        #expect(try idx(.calibration) < idx(.health))        // fitness baseline → recovery consent
+        #expect(try idx(.experience) < idx(.health))         // running level + pace → recovery consent
         #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
         #expect(try idx(.intensity) < idx(.building))        // last decision before the build
         #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
+        #expect(!steps.contains(.session))                   // …nor session length (strength-only)
 
         // Walk the whole flow front to back — advance() must traverse every step without a dead end.
         vm.step = steps.first!
@@ -178,5 +209,49 @@ struct OnboardingFlowTests {
                                           weeksAvailable: 16, experience: .some, injuryProne: true)
         #expect(easy.verdict == .onTrack)
         #expect(easy.recommended == .gentle)
+    }
+
+    /// The rating beat sits immediately before the paywall gate (owner call 2026-07-26). Two things
+    /// must hold or the flow breaks in ways a screenshot won't catch: it has to sit after `primers`
+    /// (so "Start training" reaches it), and it must not be counted as an answerable question (or
+    /// the progress bar grows a phantom notch and never reads 100%).
+    ///
+    /// ⚠️ This step is a deliberate App Review 5.6.3 risk — the app was previously rejected for a
+    /// rating beat in onboarding. If it has to come out, delete the `.rateUs` case and this test.
+    @Test func ratingBeatPrecedesThePaywallAndIsNotAQuestion() {
+        let all = OnboardingViewModel.Step.allCases
+        let primers = all.firstIndex(of: .primers)!
+        let rate = all.firstIndex(of: .rateUs)!
+        #expect(rate == primers + 1, "rateUs must come straight after primers")
+
+        // Not an answerable question: it must never appear in the progress denominator.
+        let vm = OnboardingViewModel()
+        vm.step = .rateUs
+        #expect(!vm.isQuestionStep)
+    }
+
+    /// The account beat is the LAST step, AFTER the paywall (owner call 2026-07-27 — the sign-in
+    /// screen used to gate the app on launch, which is the cheapest place in the funnel to lose
+    /// someone). Same two invariants as the rating beat, plus: onboarding must read as *finished*
+    /// by the time it shows, since every question was answered a while back.
+    @Test func accountBeatIsTheFinalStepAndIsNotAQuestion() {
+        let all = OnboardingViewModel.Step.allCases
+        #expect(all.last == .account, "account must be the last step — nothing follows it")
+        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .rateUs)! + 1,
+                "the paywall is raised between these two; account must be the step rateUs advances to")
+
+        let vm = OnboardingViewModel()
+        vm.step = .account
+        #expect(!vm.isQuestionStep, "no header, no Continue bar, no progress notch")
+        #expect(vm.progress == 1, "every question is long since answered")
+
+        // `advance()` from the rating beat lands here — that is how the paywall's onDismiss
+        // reaches it (`goToAccountBeat` → `goNext`).
+        vm.step = .rateUs
+        vm.advance()
+        #expect(vm.step == .account)
+        // And it is a genuine terminus: advancing off the end must not wrap or stall elsewhere.
+        vm.advance()
+        #expect(vm.step == .account)
     }
 }

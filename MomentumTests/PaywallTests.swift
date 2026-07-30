@@ -22,11 +22,36 @@ struct PaywallTests {
 
     @Test func purchaseGrantsEntitlement() async {
         let pw = PaywallController(isPro: false)
-        let ok = await pw.purchase(pw.offering.annual)
-        #expect(ok)
+        let outcome = await pw.purchase(pw.offering.annual)
+        #expect(outcome == .purchased)
         #expect(pw.isPro)
         #expect(pw.isEntitled(to: .fullPlan))
         pw.resetForTesting()
+    }
+
+    /// A purchase attempt reports WHY it ended. These three cases used to collapse into one `false`,
+    /// so the paywall couldn't tell a cancelled sheet from a store failure and stayed silent for
+    /// both — a dead Buy button for anyone actually trying to pay.
+    @Test func purchaseOutcomeDistinguishesCancelFromFailure() {
+        #expect(PurchaseOutcome.purchased != PurchaseOutcome.cancelled)
+        #expect(PurchaseOutcome.cancelled != PurchaseOutcome.failed("boom"))
+        #expect(PurchaseOutcome.failed("boom") == PurchaseOutcome.failed("boom"))
+        // A failure always carries something worth showing — an empty alert is the old bug again.
+        if case .failed(let message) = PurchaseOutcome.failed("Check your connection.") {
+            #expect(!message.isEmpty)
+        } else {
+            Issue.record("expected a failure message")
+        }
+    }
+
+    /// Placeholder prices are US dollars. Until the store's offering lands the paywall must not
+    /// present them as fact — `pricingIsLive` is what the view keys the price, the savings line,
+    /// the CTA, and the renewal fine print off.
+    @Test func pricingIsNotLiveUntilTheStoreAnswers() {
+        let pw = PaywallController(isPro: false)
+        #expect(pw.pricingIsLive == false)
+        // The placeholder offering still populates so the layout has something to size against.
+        #expect(!pw.offering.annual.priceText.isEmpty)
     }
 
     @Test func presentsOnlyWhenLocked() {
@@ -47,10 +72,19 @@ struct PaywallTests {
         #expect(Feature.programs.placement == "full_plan")
     }
 
-    @Test func annualOfferingCarriesTheTrial() {
+    @Test func annualAloneCarriesTheTrial() {
         let offering = PaywallOffering.standard
         #expect(offering.annual.trialDays == 7)
-        #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 50)   // $119.99/yr vs 12 × $19.99
+        #expect(offering.monthly.trialDays == 0)   // trial is the ANNUAL's nudge (owner call 2026-07-30)
+        #expect(offering.annualSavingsPercent == 50)   // 49.96% ($59.99 vs 12 × $9.99), rounded to nearest 5%
+    }
+
+    /// Mass-market pricing (2026-07-29): half Runna's annual, under Strava's — the hard paywall
+    /// makes the annual price the conversion funnel, so it must read as "I can actually do this."
+    @Test func pricingIsTheCompetitivePair() {
+        let offering = PaywallOffering.standard
+        #expect(offering.monthly.priceText == "$9.99")
+        #expect(offering.annual.priceText == "$59.99")
+        #expect(offering.monthly.period == .monthly)
     }
 }

@@ -10,6 +10,11 @@ struct ShareCardContent: View {
     var distanceUnit: DistanceUnit = .auto
     let size: CGSize
 
+    /// Caches the Kalman-filtered route so re-rendering the card (format/size passes, style swipes
+    /// that land back here) doesn't re-run the causal filter — it's deterministic per `GPSDetail`.
+    /// Computed synchronously on first read, so the off-screen export renders the route exactly.
+    @State private var routeCache = RouteCache()
+
     private var pad: CGFloat { size.width * 0.08 }
 
     var body: some View {
@@ -97,7 +102,7 @@ struct ShareCardContent: View {
 
     @ViewBuilder
     private func routeSilhouette(_ gps: GPSDetail) -> some View {
-        let coords = gps.routeCoordinates(type: workout.type)
+        let coords = routeCache.coordinates(for: gps, type: workout.type)
         if coords.count > 1 {
             RouteSilhouette(coords: coords)
                 .stroke(.white, style: StrokeStyle(lineWidth: size.width * 0.012, lineCap: .round, lineJoin: .round))
@@ -120,12 +125,29 @@ struct ShareCardContent: View {
 
     private func secondary(_ gps: GPSDetail) -> String {
         let time = Formatters.duration(s: workout.durationS)
-        if workout.type == .ride {
+        if workout.type.isCycling {
             let speed = workout.durationS > 0 ? gps.distanceM / workout.durationS : 0
             return "\(time) · \(Formatters.speed(ms: speed, unit: distanceUnit))"
         }
         let pace = gps.distanceM > 0 ? workout.durationS / (gps.distanceM / 1000) : 0
         return "\(time) · \(Formatters.pace(secPerKm: pace, unit: distanceUnit))"
+    }
+}
+
+/// Memoizes one `GPSDetail`'s Kalman-filtered route so repeated card renders reuse it instead of
+/// re-running the (deterministic, causal) filter on every body/size pass.
+@MainActor
+private final class RouteCache {
+    private var key: ObjectIdentifier?
+    private var coords: [CLLocationCoordinate2D] = []
+
+    func coordinates(for gps: GPSDetail, type: WorkoutType) -> [CLLocationCoordinate2D] {
+        let k = ObjectIdentifier(gps)
+        if key != k {
+            key = k
+            coords = gps.routeCoordinates(type: type)
+        }
+        return coords
     }
 }
 
@@ -136,20 +158,34 @@ struct RouteSilhouette: Shape {
     var maxPoints: Int = 120
 
     func path(in rect: CGRect) -> Path {
-        let coords = Self.downsample(self.coords, to: maxPoints)
-        guard coords.count > 1 else { return Path() }
+        let pts = Self.points(coords, in: rect, maxPoints: maxPoints)
+        guard pts.count > 1 else { return Path() }
+        var path = Path()
+        path.move(to: pts[0])
+        pts.dropFirst().forEach { path.addLine(to: $0) }
+        return path
+    }
+
+    /// The projected screen points — shared with `RouteEndpointMarks` so a start/finish mark lands
+    /// exactly on the drawn line rather than on a second, subtly different projection.
+    static func points(_ coords: [CLLocationCoordinate2D], in rect: CGRect,
+                       maxPoints: Int = 120) -> [CGPoint] {
+        let coords = downsample(coords, to: maxPoints)
+        guard coords.count > 1 else { return [] }
         let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
         let minLat = lats.min()!, maxLat = lats.max()!, minLon = lons.min()!, maxLon = lons.max()!
-        let spanLon = max(maxLon - minLon, 1e-6), spanLat = max(maxLat - minLat, 1e-6)
+        // A degree of longitude spans cos(latitude) of a degree of latitude on the ground —
+        // without the correction every silhouette renders stretched wide (~16% at Austin's
+        // latitude): a square loop drew as a rectangle. Same equirectangular projection
+        // RouteSmoothing uses.
+        let cosLat = max(cos((minLat + maxLat) / 2 * .pi / 180), 0.01)
+        let spanLon = max((maxLon - minLon) * cosLat, 1e-6), spanLat = max(maxLat - minLat, 1e-6)
         let scale = min(rect.width / spanLon, rect.height / spanLat) * 0.92
         let midLon = (minLon + maxLon) / 2, midLat = (minLat + maxLat) / 2
-        var path = Path()
-        for (i, c) in coords.enumerated() {
-            let p = CGPoint(x: rect.midX + (c.longitude - midLon) * scale,
-                            y: rect.midY - (c.latitude - midLat) * scale)
-            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+        return coords.map { c in
+            CGPoint(x: rect.midX + (c.longitude - midLon) * cosLat * scale,
+                    y: rect.midY - (c.latitude - midLat) * scale)
         }
-        return path
     }
 
     /// Keep endpoints; evenly sample the middle down to `max` points.

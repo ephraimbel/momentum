@@ -16,6 +16,11 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     /// switching the style anywhere switches it everywhere and it survives relaunch.
     static let storageKey = "com.momentum.mapStyle"
 
+    /// Free tier gets the two defaults — Realistic and Light — one from each family; every other
+    /// style is Pro (`Feature.mapStyles`). The picker gates selection and the map views normalize
+    /// a persisted Pro style back to Realistic if entitlement lapses.
+    var requiresPro: Bool { !(self == .realistic || self == .standard) }
+
     /// The stored choice for surfaces that read the style once at init (summary route cards). Live
     /// surfaces use `@AppStorage(MapStyleOption.storageKey)` instead so they update in place.
     static var persisted: MapStyleOption {
@@ -90,27 +95,34 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The style to actually RENDER for the app's current appearance (the Apple Maps behavior):
-    /// the adaptive looks follow dark mode — Realistic slides into its night lighting, the Light
-    /// basemap pairs with Dark — while deliberate looks (Dusk, Night, Streets, Outdoors, Dark,
-    /// the satellites) render exactly as chosen in either appearance.
+    /// The style to RENDER: the athlete's chosen style, EXACTLY as picked. The old code also paired
+    /// the Light basemap → Dark under dark mode, so choosing Light in dark mode silently stayed dark
+    /// (user report 2026-07-16). Now Light — and every other explicit pick — is literal in both
+    /// appearances. The ONE exception is **Realistic**: it's the app default and its whole identity is
+    /// dynamic real-world lighting, so it slides into night lighting under dark mode — which keeps the
+    /// DEFAULT dark-mode map dark. Anyone wanting a fixed day/dusk/night/dark look picks that style
+    /// (Dusk, Night, Dark are their own picker choices).
     func mapboxStyle(for scheme: ColorScheme) -> MapboxMaps.MapStyle {
-        guard scheme == .dark else { return mapboxStyle }
-        switch self {
-        case .realistic: return .standard(lightPreset: .night)
-        case .standard: return .dark
-        default: return mapboxStyle
-        }
+        if scheme == .dark, self == .realistic { return .standard(lightPreset: .night) }
+        return mapboxStyle
     }
 
-    /// URI variant of `mapboxStyle(for:)` for snapshot/UIKit surfaces: the adaptive pairs follow
-    /// dark mode (Light basemap → Dark; the Standard moods fall back to Standard day — a URI can't
-    /// carry the light preset); deliberate looks render as chosen.
-    func styleURI(for scheme: ColorScheme) -> StyleURI {
-        guard scheme == .dark else { return styleURI }
+    /// URI variant for snapshot/UIKit surfaces — literal in either appearance. (A URI can't carry
+    /// Realistic's night preset, so Realistic renders as Standard day here regardless, as before.)
+    func styleURI(for _: ColorScheme) -> StyleURI { styleURI }
+
+    /// True when a baked snapshot of this style comes back DARK or photographic. Overlay ink on a
+    /// route card keys off this: the pale basemaps take fixed dark ink, these take white-with-a-halo
+    /// (the treatment that survives any luminance). Satellite counts even though imagery varies —
+    /// snow and desert are bright, forest and water are near-black, so it is never safe to assume.
+    ///
+    /// Dusk/Night are NOT here: a `StyleURI` can't carry the Standard light preset (see `styleURI`),
+    /// so they bake as Standard *day*, a light canvas. If `RouteSnapshotter` ever sets
+    /// `lightPreset` on the basemap import, revisit this.
+    var bakesDarkCanvas: Bool {
         switch self {
-        case .standard: return .dark
-        default: return styleURI
+        case .dark, .satellite, .standardSatellite: true
+        case .standard, .realistic, .dusk, .night, .streets, .outdoors: false
         }
     }
 
@@ -129,6 +141,16 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     static let realisticSet: [MapStyleOption] = [.realistic, .dusk, .night, .standardSatellite]
     static let classicSet: [MapStyleOption] = [.standard, .streets, .outdoors, .dark, .satellite]
     static let pickable: [MapStyleOption] = realisticSet + classicSet
+
+    /// The style to RENDER on the LIVE-tracking map: **the athlete's choice, unchanged.**
+    ///
+    /// This used to silently downgrade the 3D looks (Realistic/Dusk/Night/3D Satellite) to their
+    /// flat 2D equivalents for follow-camera performance — but on a real device that reads as a
+    /// bug: you picked Realistic and the run showed Light (caught on the 2026-07-23 demo-video
+    /// recording). The original jank was since fixed at the source (the per-fix `PuckFeed` — the
+    /// camera moves once per GPS fix, not per frame), so the downgrade's reason is gone. The
+    /// property remains as the single seam if a specific style ever needs a live variant again.
+    var liveTrackingStyle: MapStyleOption { self }
 
     /// True over aerial imagery — route accents/labels need a heavier white halo + lighter ink there
     /// than over the non-imagery basemaps.
@@ -214,8 +236,6 @@ enum MapStylePreviews {
 /// by every map screen so the affordance is identical everywhere.
 struct MapLayersButton: View {
     @Binding var style: MapStyleOption
-    /// When set, the picker offers "World" — fly out to the globe of everyone on momentum (Today only).
-    var onWorld: (() -> Void)? = nil
     /// Center for the style preview thumbnails — pass the map's focus so previews show *your* area.
     var previewCenter: CLLocationCoordinate2D? = nil
 
@@ -227,13 +247,13 @@ struct MapLayersButton: View {
     #endif
 
     var body: some View {
-        Image(systemName: "square.3.layers.3d").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
+        // A map glyph, not the 3D-layers stack — this button picks the MAP's look (user call 2026-07-16).
+        Image(systemName: "map").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
             .frame(width: 44, height: 44)
             .momentumGlass(in: Circle())
             .mapSafeTap("Map style") { showPicker = true }
         .sheet(isPresented: $showPicker) {
-            MapStylePickerSheet(style: $style, previewCenter: previewCenter,
-                                onWorld: onWorld.map { world in { showPicker = false; world() } })
+            MapStylePickerSheet(style: $style, previewCenter: previewCenter)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -246,7 +266,7 @@ struct MapLayersButton: View {
 struct MapStylePickerSheet: View {
     @Binding var style: MapStyleOption
     var previewCenter: CLLocationCoordinate2D? = nil
-    var onWorld: (() -> Void)? = nil
+    @Environment(PaywallController.self) private var paywall
 
     /// Previews frame the athlete's area when the host map knows it; a scenic downtown otherwise.
     private var center: CLLocationCoordinate2D {
@@ -261,7 +281,8 @@ struct MapStylePickerSheet: View {
                     .padding(.top, Theme.Space.lg)
                 group("REALISTIC", MapStyleOption.realisticSet)
                 group("CLASSIC", MapStyleOption.classicSet)
-                if let onWorld { worldRow(onWorld) }
+                // The "World" globe row is gone with the social layer (2026-07-16) — the picker is
+                // purely map styles now.
             }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.bottom, Theme.Space.xl)
@@ -282,7 +303,10 @@ struct MapStylePickerSheet: View {
                 ForEach(Array(stride(from: 0, to: options.count, by: 3)), id: \.self) { start in
                     GridRow {
                         ForEach(options[start..<min(start + 3, options.count)]) { option in
-                            StylePreviewCell(option: option, center: center, selected: option == style) {
+                            let locked = option.requiresPro && !paywall.isEntitled(to: .mapStyles)
+                            StylePreviewCell(option: option, center: center,
+                                             selected: option == style, locked: locked) {
+                                if locked { paywall.present(for: .mapStyles); return }
                                 guard option != style else { return }
                                 Haptics.light()
                                 style = option
@@ -296,30 +320,6 @@ struct MapStylePickerSheet: View {
         }
     }
 
-    private func worldRow(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: "globe.americas.fill")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Theme.surface))
-                    .overlay(Circle().stroke(Theme.hairline))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("World").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text("Everyone on momentum, on the globe")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-            }
-            .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("World — see everyone on momentum")
-    }
 }
 
 /// One style card: the static snapshot preview with the name beneath; the selected card wears an
@@ -329,6 +329,7 @@ private struct StylePreviewCell: View {
     let option: MapStyleOption
     let center: CLLocationCoordinate2D
     let selected: Bool
+    var locked: Bool = false
     let onPick: () -> Void
 
     @State private var image: UIImage?
@@ -362,6 +363,11 @@ private struct StylePreviewCell: View {
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(Theme.background, Theme.ink)
                             .padding(5)
+                    } else if locked {
+                        Image(systemName: "lock.circle.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Theme.background, Theme.ink.opacity(0.75))
+                            .padding(5)
                     }
                 }
                 Text(option.label)
@@ -376,7 +382,8 @@ private struct StylePreviewCell: View {
         .task(id: option.id) {
             image = await MapStylePreviews.snapshot(option, center: center, size: Self.renderSize)
         }
-        .accessibilityLabel("\(option.label)\(selected ? ", selected" : "")")
+        .accessibilityLabel(locked ? "\(option.label) — locked, unlock with Pro"
+                                   : "\(option.label)\(selected ? ", selected" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

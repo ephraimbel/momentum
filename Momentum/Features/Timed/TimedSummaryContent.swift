@@ -6,6 +6,9 @@ struct TimedSummaryContent: View {
     let workout: Workout
     var showsHeader: Bool = true
     var canEditPhoto: Bool = false
+    /// The save screen owns an EDITABLE calorie row — it hides this read-only one so the number
+    /// doesn't appear twice. History keeps it.
+    var showsCalories: Bool = true
 
     var body: some View {
         VStack(spacing: Theme.Space.lg) {
@@ -29,7 +32,7 @@ struct TimedSummaryContent: View {
             if let effort = workout.perceivedEffort {
                 detailRow("Effort", "\(effort) / 10")
             }
-            if let kcal = workout.calories, kcal > 0 {
+            if showsCalories, let kcal = workout.calories, kcal > 0 {
                 detailRow("Calories", "\(Int(kcal))")
             }
             if !workout.note.isEmpty {

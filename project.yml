@@ -9,10 +9,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.5"
+    CURRENT_PROJECT_VERSION: "12"   # build 12 (v1.5): community launch + repricing ($9.99/mo · $59.99/yr, trial on both). ASC 1.5 version record still needs creating once 1.1 clears review.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
@@ -31,9 +31,9 @@ packages:
     url: https://github.com/supabase/supabase-swift.git
     from: "2.0.0"
 # Phase 3 billing SDKs — uncomment with the Momentum-target deps below to go live (PRD §10).
-#   RevenueCat:
-#     url: https://github.com/RevenueCat/purchases-ios
-#     from: "5.0.0"
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios
+    from: "5.0.0"
 #   Superwall:
 #     url: https://github.com/superwall/Superwall-iOS
 #     from: "4.0.0"
@@ -51,7 +51,8 @@ targets:
       Release: Secrets.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone only — NOT a universal/iPad app (App Store supported-devices reads this)
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         CODE_SIGN_ENTITLEMENTS: Momentum/Resources/Momentum.entitlements
@@ -63,11 +64,22 @@ targets:
       path: Momentum/Resources/Info.plist
       properties:
         CFBundleDisplayName: momentum
+        # Version keys derive from the single project-level MARKETING_VERSION/CURRENT_PROJECT_VERSION
+        # (settings.base) so the app, widget, and watch bundles ALWAYS match — App Store upload
+        # validation rejects a build whose extension versions differ from the app's.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Export compliance: the app uses only standard, exemption-eligible HTTPS/TLS. Declaring this
+        # here answers the question up front so every TestFlight/App Store upload skips the manual gate.
+        ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
           - location
         NSLocationWhenInUseUsageDescription: "momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed."
         NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
         NSBluetoothAlwaysUsageDescription: "momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run."
+        NSCameraUsageDescription: "momentum uses the camera to scan food barcodes, to attach photos to a workout right after you finish it, and to take a photo for a share card."
+        NSMicrophoneUsageDescription: "momentum uses the microphone so you can speak instead of typing — a meal, a workout, a question for your coach."
+        NSSpeechRecognitionUsageDescription: "momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions."
         NSHealthShareUsageDescription: "momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
@@ -83,12 +95,12 @@ targets:
         # OAuth deep-link callback (Google sign-in via ASWebAuthenticationSession) — the scheme
         # the Supabase web flow redirects back to (momentum://auth-callback).
         CFBundleURLTypes:
-          - CFBundleURLName: com.momentum.app.auth
+          - CFBundleURLName: com.ephraimbel.momentum.app.auth
             CFBundleURLSchemes:
               - momentum
         # Billing (PRD §10). Empty → local entitlement seam. Set these + link the SDKs to go live
         # (docs/MONETIZATION-SETUP.md). Read by `BillingKeys`.
-        RevenueCatAPIKey: ""
+        RevenueCatAPIKey: "appl_RCnCHIbAdYuSJAkzepPxxmnGVMJ"
         SuperwallAPIKey: ""
         UILaunchScreen:
           UIColorName: background
@@ -110,8 +122,8 @@ targets:
     # The integration code is already written behind `#if canImport(...)` (PaywallController);
     # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
     # `xcodegen generate`. Full runbook: docs/MONETIZATION-SETUP.md.
-    #   - package: RevenueCat
-    #   - package: Superwall
+      - package: RevenueCat        # billing live 2026-07-15 (RC project "Momentum", entitlement `pro`, offering `default`)
+    #   - package: Superwall       # not set up — RevenueCat-only per user; native PaywallView is the fallback
 
   # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
   # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity
@@ -124,13 +136,52 @@ targets:
       - path: MomentumWidgets
       - path: Momentum/Features/Strength/RestActivityAttributes.swift   # shared with the app target
       - path: Momentum/Features/Cardio/CardioActivityAttributes.swift   # shared with the app target
+      - path: Momentum/Features/Widgets/WidgetSnapshot.swift            # shared: app writes, widget reads
+      - path: Momentum/Features/Widgets/TodayWidgetContent.swift        # shared: widget face + in-app preview harness
+      # Brand faces on the lock screen — only the four cuts the Live Activities actually use.
+      - path: Momentum/Resources/Fonts/Inter-SemiBold.ttf
+      - path: Momentum/Resources/Fonts/Inter-Bold.ttf
+      - path: Momentum/Resources/Fonts/SpaceGrotesk-Medium.ttf
+      - path: Momentum/Resources/Fonts/SpaceGrotesk-Bold.ttf
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.widgets
+        TARGETED_DEVICE_FAMILY: "1"          # match the iPhone-only host app
+        CODE_SIGN_ENTITLEMENTS: MomentumWidgets/MomentumWidgets.entitlements
     info:
       path: MomentumWidgets/Info.plist
       properties:
         CFBundleDisplayName: momentum
+        # Same source as the app (MARKETING_VERSION) so the two never drift — a version mismatch
+        # between the extension and the app is an App Store upload-validation failure.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        UIAppFonts:
+          - Inter-SemiBold.ttf
+          - Inter-Bold.ttf
+          - SpaceGrotesk-Medium.ttf
+          - SpaceGrotesk-Bold.ttf
+
+  # watchOS complications + Smart Stack (readiness ring · today's plan). Reads ONLY the app-group
+  # defaults the watch app caches from WatchConnectivity pushes — no HealthKit, no sessions.
+  MomentumWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "11.0"
+    sources:
+      - path: MomentumWatchWidgets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.watchkitapp.widgets
+        CODE_SIGN_ENTITLEMENTS: MomentumWatchWidgets/MomentumWatchWidgets.entitlements
+    info:
+      path: MomentumWatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: momentum
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
@@ -145,10 +196,19 @@ targets:
       - path: MomentumWatch
       - path: Momentum/Models/Enums.swift          # shared: WorkoutType / Discipline
       - path: Momentum/Utilities/Formatters.swift   # shared: SI → display formatting
+      - path: Momentum/Engines/HRZones.swift        # shared: Karvonen zone model for the live zone gauge
+      - path: Momentum/Engines/RouteSmoothing.swift # shared: spline smoothing for the summary route trace
+      - path: Momentum/Engines/Geo.swift            # shared: haversine (RouteSmoothing dependency)
+      - path: Momentum/Engines/WorkoutLogParser.swift # shared: the voice-log grammar (pure Swift — receipts on the wrist)
+      - path: Momentum/Engines/StructuredWorkout.swift # shared: step model + tracker + pure builders (guided runs on the wrist; the PlannedSession-facing builder stays phone-side)
+      - path: Momentum/Features/Plan/StructuredWorkoutSummary.swift # shared: step → human row labels (pure display math over Formatters)
+    dependencies:
+      - target: MomentumWatchWidgets   # embeds the complications extension into the watch app
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.watchkitapp
         CODE_SIGN_ENTITLEMENTS: MomentumWatch/MomentumWatch.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
@@ -156,12 +216,17 @@ targets:
       path: MomentumWatch/Info.plist
       properties:
         CFBundleDisplayName: momentum
+        # Match the phone app (MARKETING_VERSION) — a paired watch app with a mismatched version
+        # fails App Store upload validation alongside the phone build.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         WKApplication: true
-        WKCompanionAppBundleIdentifier: com.momentum.app
+        WKCompanionAppBundleIdentifier: com.ephraimbel.momentum.app
         WKBackgroundModes:
           - workout-processing
         NSHealthShareUsageDescription: "momentum reads heart rate, distance, and energy during your workout to show live stats."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
+        NSLocationWhenInUseUsageDescription: "momentum uses your location to draw your live route on the map during a workout."
 
   MomentumTests:
     type: bundle.unit-test
@@ -173,7 +238,7 @@ targets:
       - target: Momentum
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.tests
         GENERATE_INFOPLIST_FILE: YES
 
   # XCUITest target — drives the real app through the live-run flow to confirm the Pause/Resume
@@ -188,7 +253,7 @@ targets:
       - target: Momentum
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.momentum.app.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.uitests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
@@ -198,6 +263,7 @@ schemes:
         Momentum: all
         MomentumWidgets: all
         MomentumWatch: all
+        MomentumWatchWidgets: all
         MomentumTests: [test]
         MomentumUITests: [test]
     test:

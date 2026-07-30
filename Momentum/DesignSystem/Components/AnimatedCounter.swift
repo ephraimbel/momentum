@@ -29,6 +29,9 @@ struct CountUpHero: View {
     let label: String
     var size: CGFloat = Theme.FontSize.heroNumber
     var duration: Double = 0.9
+    /// Hold the tally until this many seconds after appear — so a hero sitting under a celebration
+    /// beat doesn't count up behind it and be sitting finished by the time the beat lifts.
+    var delay: Double = 0
 
     @State private var shown = 0.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,7 +53,7 @@ struct CountUpHero: View {
         .accessibilityValue(format(target))
         .onAppear {
             guard !reduceMotion else { shown = target; return }
-            withAnimation(.easeOut(duration: duration)) { shown = target }
+            withAnimation(.easeOut(duration: duration).delay(delay)) { shown = target }
         }
     }
 }
@@ -59,7 +62,12 @@ struct CountUpHero: View {
 /// sections in sequence for a calm, professional cascade. Reduce Motion → appears instantly.
 private struct RevealOnAppear: ViewModifier {
     let delay: Double
+    /// When set, the cascade plays only the FIRST time this id appears in the app session — see
+    /// `RevealOnce`. Screens that remount on every tab/segment flip pass one so the welcome
+    /// doesn't replay on every visit.
+    let onceID: String?
     @State private var shown = false
+    @State private var decided = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
@@ -67,7 +75,10 @@ private struct RevealOnAppear: ViewModifier {
             .opacity(shown || reduceMotion ? 1 : 0)
             .offset(y: shown || reduceMotion ? 0 : 14)
             .onAppear {
-                guard !reduceMotion else { return }
+                guard !reduceMotion, !decided else { return }
+                decided = true
+                // Already welcomed this session → land finished, no fade, no lift.
+                guard onceID.map({ RevealOnce.claim($0) }) ?? true else { shown = true; return }
                 withAnimation(.easeOut(duration: 0.5).delay(delay)) { shown = true }
             }
     }
@@ -75,5 +86,11 @@ private struct RevealOnAppear: ViewModifier {
 
 extension View {
     /// Reveal this view with a fade + lift on appear; pass a `delay` to stagger a cascade.
-    func reveal(_ delay: Double = 0) -> some View { modifier(RevealOnAppear(delay: delay)) }
+    ///
+    /// `once` scopes the cascade to the first appearance in the app session. Pass it on anything
+    /// inside a view that gets torn down and rebuilt on navigation (Progress's segments do), so
+    /// re-entry shows finished content instead of replaying the entrance every time.
+    func reveal(_ delay: Double = 0, once: String? = nil) -> some View {
+        modifier(RevealOnAppear(delay: delay, onceID: once))
+    }
 }

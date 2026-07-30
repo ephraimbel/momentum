@@ -77,16 +77,39 @@ enum DanielsPaces {
         return tMin * 60.0 / (d / 1000.0)
     }
 
-    /// Marathon pace (s/km) — the M zone: what this athlete could actually race a marathon at.
+    // MARK: Endurance correction — the "factor of pain" beyond ~3 hours
+
+    /// The %max curve above floors at 80% VO₂max as duration grows — mathematically it will let an
+    /// athlete hold near-marathon effort *forever*, which is how a 50K prediction used to come out
+    /// barely slower than marathon pace. Real endurance keeps decaying past ~3 h (glycogen, impact
+    /// damage, thermoregulation — the long day): fatigue models and ultra field data run roughly 5%
+    /// slower per additional hour. Applied to race PREDICTIONS and race-pace prescriptions; the
+    /// training zones (E/M/T/I) never route through this, so zone ordering always holds.
+    static let enduranceHorizonS = 3.0 * 3600
+    static let enduranceDecayPerHour = 0.05
+
+    /// A predicted race time, taxed for everything the curves ignore past three hours.
+    static func enduranceCorrected(raceTimeS t: Double) -> Double {
+        guard t.isFinite, t > enduranceHorizonS else { return t }
+        return t * (1 + enduranceDecayPerHour * (t - enduranceHorizonS) / 3600)
+    }
+
+    /// Marathon pace (s/km) — the M **training zone** (progression thirds, M-zone anchoring).
+    /// Deliberately UNcorrected: a zone must sit between T and E for every athlete, and short reps
+    /// at M are a stimulus, not a race simulation.
     static func marathonPaceSPerKm(p5kSPerKm: Double) -> Double {
-        racePaceSPerKm(distanceM: 42_195, p5kSPerKm: p5kSPerKm)
+        let raw = racePaceSPerKm(distanceM: 42_195, vdot: vdot(p5kSPerKm: p5kSPerKm)) ?? clamped(p5kSPerKm)
+        return max(120, raw.rounded())
     }
 
     /// Predicted race pace (s/km, whole seconds) at any goal distance from the athlete's 5K —
-    /// powers goal-race-pace reps in peak/taper weeks.
+    /// powers goal-race-pace reps in peak/taper weeks, the race-day target, and every prediction
+    /// surface. Endurance-corrected: beyond ~3 h the honest number is slower than the raw curve.
     static func racePaceSPerKm(distanceM d: Double, p5kSPerKm: Double) -> Double {
+        guard d > 0 else { return clamped(p5kSPerKm) }
         let raw = racePaceSPerKm(distanceM: d, vdot: vdot(p5kSPerKm: p5kSPerKm)) ?? clamped(p5kSPerKm)
-        return max(120, raw.rounded())
+        let corrected = enduranceCorrected(raceTimeS: raw * d / 1000) / (d / 1000)
+        return max(120, corrected.rounded())
     }
 
     /// The training pace (s/km, whole seconds) for a run type at the athlete's calibrated 5K pace.

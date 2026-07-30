@@ -20,13 +20,14 @@ final class EmailAuthUITests: XCTestCase {
         app.launchArguments = ["--uitest-password"]
         app.launch()   // otherwise unmodified: the real gate, the real network
 
-        // Beat 1 → Beat 2
-        let getStarted = app.buttons["Get started"]
-        XCTAssertTrue(getStarted.waitForExistence(timeout: 10), "welcome beat should show on a fresh install")
-        getStarted.tap()
+        // Beat 1 → Beat 2. The welcome's primary CTA goes into setup with no account
+        // (2026-07-27); the account page is reached through the returning-athlete door.
+        let returning = app.buttons["I already have an account"]
+        XCTAssertTrue(returning.waitForExistence(timeout: 10), "welcome beat should show on a fresh install")
+        returning.tap()
 
         let emailField = app.textFields["Email"]
-        XCTAssertTrue(emailField.waitForExistence(timeout: 5), "email box should be on the sign-in page")
+        XCTAssertTrue(emailField.waitForExistence(timeout: 5), "email box should be on the account page")
         attach(app, "signin-page")
 
         // Flip to create-account mode
@@ -58,8 +59,17 @@ final class EmailAuthUITests: XCTestCase {
 
         // Now wait for the companion script to open the confirmation deep link on this sim —
         // momentum://auth-callback signs the athlete in, the gate falls, onboarding presents.
+        // Opening a custom-scheme URL raises iOS's system "Open in 'momentum'?" confirmation
+        // (exactly what a real user taps after clicking the email link) — tap Open when it shows.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let nameTitle = app.staticTexts["What should we call you?"]
-        XCTAssertTrue(nameTitle.waitForExistence(timeout: 120),
+        var landed = false
+        for _ in 0..<40 {   // ~120s
+            let openBtn = springboard.buttons["Open"]
+            if openBtn.exists && openBtn.isHittable { openBtn.tap() }
+            if nameTitle.waitForExistence(timeout: 3) { landed = true; break }
+        }
+        XCTAssertTrue(landed,
                       "confirmation link should sign in and land in onboarding (is scripts/e2e_email_confirm.sh running?)")
 
         // iOS's "Save Password?" panel floats over onboarding after signup, sometimes proxied
@@ -68,7 +78,6 @@ final class EmailAuthUITests: XCTestCase {
         // the name step advances empty (display name is editable later in Edit Profile) and the
         // identity step's @handle is auto-prefilled by the suggester, so the rest of the walk is
         // taps only.
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         for _ in 0..<10 {
             for notNow in [springboard.buttons["Not Now"], app.buttons["Not Now"]] where notNow.exists && notNow.isHittable {
                 notNow.tap()

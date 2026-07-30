@@ -52,6 +52,16 @@ final class UserProfile {
     var restingHR: Int?
     var birthYear: Int?
     var bodyMassKg: Double?
+
+    // FUEL goals (2026-07-16, docs/FUEL-FLOW.md) — the fueling adjuster's choice: how the daily
+    // energy target is set. "fuel" (floors, the default) | "leaner" | "build" | "custom".
+    // Custom numbers live here so the athlete's own targets survive re-computation.
+    var fuelGoalKind: String?
+    var fuelCustomKcal: Int?
+    var fuelCustomProteinG: Int?
+    var fuelCustomCarbsG: Int?
+    var fuelCustomFatG: Int?
+    var fuelCustomSodiumMg: Int?
     var createdAt: Date = Date()
 
     // MARK: Social profile + privacy (opt-in; conservative defaults — see docs/SOCIAL-LAYER.md)

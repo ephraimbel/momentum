@@ -20,6 +20,10 @@ enum AnalyticsEvent: Equatable {
     case shareCreated(style: String)
     case spotsViewed(count: Int)
     case spotSelected(kind: String)
+    /// A launch could not open the SwiftData store and moved it aside. Rare by construction and
+    /// invisible without this event — the only signal that a shipped migration broke somebody's
+    /// install. `recovered` is false when the store had to be removed to make the app launchable.
+    case storeQuarantined(recovered: Bool)
 
     /// The canonical event name (PRD §13.5).
     var name: String {
@@ -38,6 +42,7 @@ enum AnalyticsEvent: Equatable {
         case .shareCreated:      "share_created"
         case .spotsViewed:       "spots_viewed"
         case .spotSelected:      "spot_selected"
+        case .storeQuarantined:  "store_quarantined"
         }
     }
 
@@ -58,6 +63,7 @@ enum AnalyticsEvent: Equatable {
         case .shareCreated(let s):             ["style": s]
         case .spotsViewed(let n):              ["count": String(n)]
         case .spotSelected(let k):             ["kind": k]
+        case .storeQuarantined(let r):         ["recovered": String(r)]
         }
     }
 }
@@ -66,22 +72,30 @@ enum AnalyticsEvent: Equatable {
 protocol AnalyticsServing: AnyObject {
     /// Record an event. Implementations must be non-blocking and privacy-preserving.
     func log(_ event: AnalyticsEvent)
+    /// Push any buffered events now. Called when the app backgrounds — the last reliable moment to
+    /// get a session off the device.
+    func flush()
     /// The current north-star funnel status (PRD §13.5) for surfacing/debugging.
     func northStarStatus() -> NorthStarFunnel.Status
 }
 
-/// The default, privacy-preserving analytics sink. Events stream to the unified log (os.Logger) for
-/// local debugging and feed the on-device north-star funnel. There is **no** third-party SDK and no
-/// network egress here — a Supabase `analytics_events` forwarder (owner-scoped, non-PII) can layer on
-/// top later behind config, exactly like `SyncService` (see docs/SYNC-SETUP.md).
+/// The default, privacy-preserving analytics service. Every event goes three places: the unified
+/// log (local debugging), the on-device north-star funnel, and — since 2026-07-25 — `AnalyticsSink`,
+/// which batches them to Supabase so the onboarding funnel and paywall view→convert rate are
+/// actually measurable off-device. No third-party SDK; the sink is a no-op until Supabase is
+/// configured, so an unconfigured build behaves exactly as it did before (log-only).
 @MainActor
 final class AnalyticsService: AnalyticsServing {
-    private let logger = Logger(subsystem: "com.momentum.app", category: "analytics")
+    private let logger = Logger(subsystem: "com.ephraimbel.momentum.app", category: "analytics")
     private let northStar: NorthStarTracker
+    private let sink: AnalyticsSink?
 
-    init(northStar: NorthStarTracker = NorthStarTracker()) {
+    init(northStar: NorthStarTracker = NorthStarTracker(), sink: AnalyticsSink? = AnalyticsSink()) {
         self.northStar = northStar
+        self.sink = sink
         northStar.markLaunch()   // start the 24h north-star window on first launch (idempotent)
+        // Send anything the last run buffered but never got to flush.
+        if let sink { Task { await sink.flush() } }
     }
 
     func log(_ event: AnalyticsEvent) {
@@ -95,6 +109,18 @@ final class AnalyticsService: AnalyticsServing {
         case .aiReadViewed:     northStar.markFirstAIRead()
         default: break
         }
+
+        if let sink {
+            let name = event.name, parameters = event.parameters
+            Task { await sink.enqueue(name: name, params: parameters) }
+        }
+    }
+
+    /// Push whatever is buffered — call when the app backgrounds, which is the last reliable moment
+    /// to get a session's events off the device.
+    func flush() {
+        guard let sink else { return }
+        Task { await sink.flush() }
     }
 
     func northStarStatus() -> NorthStarFunnel.Status { northStar.status() }
@@ -104,5 +130,6 @@ final class AnalyticsService: AnalyticsServing {
 @MainActor
 final class StubAnalyticsService: AnalyticsServing {
     func log(_ event: AnalyticsEvent) {}
+    func flush() {}
     func northStarStatus() -> NorthStarFunnel.Status { .pending }
 }

@@ -9,7 +9,10 @@ import SwiftData
 final class AthleteModelService: AthleteModelServing {
 
     func ingest(profile: UserProfile, in context: ModelContext, now: Date) {
-        let facts = AthleteModelEngine(workouts: profile.workouts, plan: profile.plan, now: now).facts
+        // Single-profile app: workouts aren't scoped per profile, and `profile.workouts` has no
+        // inverse so it's never populated — fetch every workout from the store instead.
+        let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
+        let facts = AthleteModelEngine(workouts: workouts, plan: profile.plan, now: now).facts
 
         let model = profile.athlete ?? {
             let m = AthleteModel()
@@ -19,7 +22,7 @@ final class AthleteModelService: AthleteModelServing {
         }()
 
         apply(facts, to: model)
-        upsertSnapshot(for: profile, facts: facts, now: now, into: model)
+        upsertSnapshot(for: profile, workouts: workouts, facts: facts, now: now, into: model)
         model.updatedAt = now
         try? context.save()
     }
@@ -84,6 +87,19 @@ final class AthleteModelService: AthleteModelServing {
         motivation.confidence = Confidence.emerging.rawValue
         seeded.append(motivation)
 
+        // What to protect — so the coach is careful about a known-vulnerable area from message one,
+        // not after the athlete flares it. Only when they reported something to train around.
+        let areas = profile.injuryHistory.compactMap { InjuryArea(rawValue: $0)?.label }
+        if !areas.isEmpty {
+            let list = ListFormatter.localizedString(byJoining: areas).lowercased()
+            let risk = MemoryNote()
+            risk.category = MemoryCategory.risk.rawValue
+            risk.text = "Training around a history of \(list) trouble — ease impact and hard efforts there, and never push through pain in it."
+            risk.source = MemorySource.onboarding.rawValue
+            risk.confidence = Confidence.emerging.rawValue
+            seeded.append(risk)
+        }
+
         for note in seeded { context.insert(note) }
         model.notes.append(contentsOf: seeded)
         try? context.save()
@@ -115,12 +131,12 @@ final class AthleteModelService: AthleteModelServing {
 
     // MARK: - Weekly snapshot
 
-    private func upsertSnapshot(for profile: UserProfile, facts: AthleteFacts,
+    private func upsertSnapshot(for profile: UserProfile, workouts: [Workout], facts: AthleteFacts,
                                 now: Date, into model: AthleteModel) {
         let cal = Calendar.current
         let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? cal.startOfDay(for: now)
 
-        let insights = ProgressInsights(workouts: profile.workouts, now: now)
+        let insights = ProgressInsights(workouts: workouts, now: now)
         let thisWeek = insights.weeks.last
 
         let snapshot = model.snapshots.first { cal.isDate($0.weekStart, equalTo: weekStart, toGranularity: .day) }
@@ -135,7 +151,7 @@ final class AthleteModelService: AthleteModelServing {
         snapshot.weeklyDistanceM = thisWeek?.distanceM ?? 0
         snapshot.acwr = facts.currentACWR
         snapshot.p5kEquivSPerKm = profile.plan?.p5kSPerKm
-        snapshot.topE1RMByLift = Self.topE1RMByLift(profile.workouts, now: now, calendar: cal)
+        snapshot.topE1RMByLift = Self.topE1RMByLift(workouts, now: now, calendar: cal)
     }
 
     /// Best e1RM per lift over the trailing 56 days — the strength markers for the snapshot.
@@ -177,7 +193,33 @@ final class AthleteModelService: AthleteModelServing {
         case ExperienceLevel.experienced.rawValue: levelWord = "A seasoned"
         default: levelWord = "A"
         }
-        return "\(levelWord) \(noun) just getting started with Momentum."
+        var line = "\(levelWord) \(noun)"
+
+        // What they're training FOR — the single most useful thing for the coach to know from the
+        // first message, straight from onboarding instead of waiting to infer it over weeks.
+        if profile.goal == .raceDistance, let raceM = profile.raceDistanceM {
+            var race = "training for a \(RaceDistance.nearest(toMeters: raceM).label.lowercased())"
+            if let date = profile.raceDate { race += " on \(date.formatted(.dateTime.month().day()))" }
+            if let goalS = profile.goalFinishTimeS, goalS > 0 { race += ", aiming for \(PlanFeasibility.hms(goalS))" }
+            line += " \(race)"
+        } else {
+            switch profile.goal {
+            case .buildMuscle:    line += " focused on building muscle"
+            case .getStronger:    line += " working on strength"
+            case .loseFat:        line += " training to get lean"
+            case .endurance:      line += " building endurance"
+            case .stayConsistent: line += " keeping a steady rhythm"
+            case .generalFitness: line += " here for all-round fitness"
+            case .raceDistance:   break   // handled above
+            }
+        }
+
+        // How hard they've committed — frequency, and the podium tell when they chose to go all in.
+        line += ", \(profile.daysPerWeek) days a week"
+        if profile.planIntensity == PlanIntensity.podium.rawValue {
+            line += " — all in, chasing the front of the race"
+        }
+        return line + "."
     }
 
     static func motivationSeed(_ reason: String) -> String {
