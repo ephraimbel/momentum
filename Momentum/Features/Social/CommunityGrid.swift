@@ -335,12 +335,14 @@ struct CommunityScopeTabs: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: Theme.Space.xxl) {
+        // Halves, not a centered pair (owner call 2026-07-30): each tab owns its half of the bar —
+        // Friends centered in the left half, Global in the right — Instagram's exact geometry.
+        // The whole half is the tap target.
+        HStack(spacing: 0) {
             ForEach(CommunityScope.allCases, id: \.self) { s in
                 tab(s)
             }
         }
-        .frame(maxWidth: .infinity)
         .padding(.top, Theme.Space.md)
         .background(Theme.background)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
@@ -359,8 +361,6 @@ struct CommunityScopeTabs: View {
             VStack(spacing: Theme.Space.sm) {
                 Text(s.label)
                     .font(.rounded(15, weight: .semibold))
-                // Fixed-width slot: an unconstrained `Color.clear` makes every tab greedy and the
-                // pair splays to the screen edges instead of sitting together at center.
                 ZStack {
                     Color.clear.frame(width: 26, height: 2)
                     if on {
@@ -371,6 +371,7 @@ struct CommunityScopeTabs: View {
                 }
             }
             .foregroundStyle(on ? Theme.ink : Theme.inkTertiary)
+            .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
