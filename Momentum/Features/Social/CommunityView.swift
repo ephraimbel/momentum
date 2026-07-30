@@ -115,9 +115,6 @@ struct CommunityView: View {
     /// The feedKey the assembly task last ran for — lets `onAppear` tell a genuine revisit apart
     /// from the first pass of a fresh instance (where assembling again would double the work).
     @State private var lastAssembledKey = ""
-    /// "N moving now" — snapshotted per instance; the generator built a Calendar + 24-entry curve
-    /// + RNG on every render of the wall header.
-    @State private var movingNowCount = CommunityGenerator.movingNow()
     @MainActor private static var sessionFeed: [FeedItem] = []
 
     /// Cheap change signature over every feed input; a change re-runs the assembly task.
@@ -351,7 +348,6 @@ struct CommunityView: View {
                             .padding(.horizontal, Theme.Space.md)
                     }
                 } else {
-                    pulseStrip
                     CommunityFeedGrid(items: Array(items.prefix(visibleCount)),
                                       zoomNamespace: tileZoom,
                                       onTileAppear: { index in
@@ -407,6 +403,7 @@ struct CommunityView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             CommunityScopeTabs(scopeRaw: $scopeRaw)
+                .overlay(alignment: .trailing) { savedRoutesDoor.padding(.trailing, Theme.Space.sm) }
         }
         .refreshable {
             pulsed = CommunityPulse.refreshed(pulsed)
@@ -459,41 +456,23 @@ struct CommunityView: View {
         }
     }
 
-    /// The live line above the wall — ONE centered fact (owner call 2026-07-30: the old
-    /// "2,863 athletes · 217 moving now" pairing read as clutter, and only the moving count is a
-    /// live claim). The saved-route door keeps its trailing spot, overlaid so the pulse line stays
-    /// perfectly centered whether or not the bookmark is there.
-    private var pulseStrip: some View {
-        ZStack {
-            HStack(spacing: 6) {
-                LiveDot()
-                Text("\(movingNowCount.formatted()) moving now")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+    /// The saved-route library's door, tucked into the scope-tabs strip's trailing edge. This used
+    /// to live in a "pulse strip" between the tabs and the wall ("2,863 athletes · 217 moving
+    /// now") — the owner cut that line entirely (2026-07-30) so the grid runs full-bleed from the
+    /// tabs down; the bookmark is the only part that had a job, and it kept it.
+    @ViewBuilder
+    private var savedRoutesDoor: some View {
+        if !savedRoutes.isEmpty {
+            NavigationLink { SavedRoutesView() } label: {
+                Image(systemName: "bookmark.fill")
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Theme.inkSecondary)
-                    .monospacedDigit()
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity)
-            if !savedRoutes.isEmpty {
-                HStack {
-                    Spacer()
-                    NavigationLink { SavedRoutesView() } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "bookmark.fill").font(.system(size: 10, weight: .bold))
-                            Text("Saved \(savedRoutes.count)")
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
-                        }
-                        .foregroundStyle(Theme.inkSecondary)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(savedRoutes.count) saved routes")
-                }
-            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(savedRoutes.count) saved routes")
         }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.top, Theme.Space.sm)
-        .padding(.bottom, Theme.Space.xs)
     }
 
     /// The feed from the tapped post onward — from the FULL well, not the reveal window, so the
