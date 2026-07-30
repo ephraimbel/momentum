@@ -52,6 +52,24 @@ struct CoachInfoCardsTests {
         #expect(CoachRacePredictor.sections(profile: empty).isEmpty)
     }
 
+    /// The coach quotes the SAME predictions Progress shows — one model, one truth. This card once
+    /// ran its own Daniels-curve derivation and double-taxed the long day: the coach's 50K came
+    /// out ~13 min slower than the identical athlete's Progress card (owner caught it 2026-07-30).
+    @Test func predictorCardMatchesRacePredictorOnEveryDistance() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeProfile(in: ctx, p5k: 372)   // ~a 4:2x-marathon athlete — the reported case
+
+        let sections = CoachRacePredictor.sections(profile: profile)
+        for race in RaceDistance.allCases {
+            let expected = try #require(RacePredictor.finishTimeS(raceDistanceM: race.meters,
+                                                                  p5kSPerKm: 372))
+            let row = try #require(sections.first { $0.title == race.label })
+            #expect(row.detail.contains(PlanFeasibility.hms(expected)),
+                    "\(race.label) row (\(row.detail)) disagrees with RacePredictor (\(PlanFeasibility.hms(expected)))")
+        }
+    }
+
     // MARK: Today briefing
 
     @Test func briefingDescribesTheSessionAndItsStructure() throws {

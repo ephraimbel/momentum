@@ -13,9 +13,18 @@ enum CoachRacePredictor {
     static func sections(profile: UserProfile) -> [CoachSection] {
         guard let plan = profile.plan, plan.p5kSPerKm > 0 else { return [] }
         let unit = DistanceUnit(rawValue: profile.distanceUnit) ?? .auto
-        var out: [CoachSection] = RaceDistance.allCases.map { race in
-            let pace = DanielsPaces.racePaceSPerKm(distanceM: race.meters, p5kSPerKm: plan.p5kSPerKm)
-            let finish = pace * race.meters / 1000
+        // ONE prediction model everywhere: `RacePredictor` (Riegel + a single endurance tax) is
+        // what Progress and the plan's race cards show — the coach must quote the same numbers.
+        // This card used to derive finish times from the Daniels VDOT pace curve and then tax
+        // them: the curve already decays with duration, so the long day was penalized twice and
+        // the coach's 50K ran ~13 min slower than the identical athlete's Progress prediction
+        // (owner caught the mismatch 2026-07-30).
+        var out: [CoachSection] = RaceDistance.allCases.compactMap { race in
+            guard let finish = RacePredictor.finishTimeS(raceDistanceM: race.meters,
+                                                         p5kSPerKm: plan.p5kSPerKm),
+                  let pace = RacePredictor.projectedPaceSPerKm(raceDistanceM: race.meters,
+                                                               p5kSPerKm: plan.p5kSPerKm)
+            else { return nil }
             return CoachSection(icon: "flag.checkered", title: race.label,
                                 detail: "\(PlanFeasibility.hms(finish)) at \(Formatters.pace(secPerKm: pace, unit: unit))")
         }
