@@ -11,8 +11,8 @@ settings:
     SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "1.5"
-    CURRENT_PROJECT_VERSION: "13"   # build 13 (v1.5): build 12 + the coach race-prediction fix (one model, no double endurance tax).
+    MARKETING_VERSION: "1.1"
+    CURRENT_PROJECT_VERSION: "13"   # build 13 (v1.1): the July sweep folded into the un-reviewed 1.1 (owner call 2026-07-30) — community, repricing, typable onboarding, timed calories, coach prediction fix.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
