@@ -108,15 +108,11 @@ final class OnboardingViewModel {
     // Health at the `health` step — that imports REAL logged runs, which is accurate; it just no
     // longer drives pace calibration.
 
-    /// A balanced full-body activation for the anatomy animation, emphasized by the chosen focus.
+    /// The anatomy the muscle-focus step lights: EXACTLY the chosen areas, full-burn. Empty until
+    /// the athlete picks — the figure starts as a quiet chart and each tap ignites its region
+    /// (user call 2026-08-05: no pre-filled body; selection IS the light).
     func targetMuscles() -> [MuscleGroup: Double] {
-        let balanced: [MuscleGroup: Double] = [
-            .chest: 0.85, .back: 0.85, .shoulders: 0.6, .biceps: 0.5, .triceps: 0.5,
-            .quads: 0.9, .hamstrings: 0.7, .glutes: 0.75, .calves: 0.4, .core: 0.6]
-        guard !muscleFocus.isEmpty else { return balanced }
-        var m = balanced.mapValues { _ in 0.35 }
-        for f in muscleFocus { m[f] = 1.0 }
-        return m
+        Dictionary(uniqueKeysWithValues: muscleFocus.map { ($0, 1.0) })
     }
     /// Whether this athlete's plan includes lifting (drives the anatomy beats vs. the route beat).
     var includesStrength: Bool { disciplines.contains(.strength) }

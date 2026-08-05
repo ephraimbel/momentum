@@ -28,6 +28,9 @@ struct AthleteCallout: Identifiable {
 /// a safety net instead of a defeat device. The composition, the type sizes, and the 30/40/30
 /// split are the shipped design and stay as drawn.
 struct AthletePanel: View {
+    /// Weekly working-set-equivalents per muscle (the caller divides its window total by the
+    /// window's weeks) — the figure grades ABSOLUTELY via `.weeklyVolume`, so an empty window is a
+    /// blank chart, a light week a faint tint, and only consistent volume a full iridescent burn.
     let activation: [MuscleGroup: Double]
     var sex: BodySex = .neutral
     /// Eyebrow that names the window the figure + callouts summarize (re-windows with the range picker).
@@ -167,8 +170,10 @@ struct AthletePanel: View {
     private func figure(fig: CGRect) -> some View {
         // No `.shadow` here: blurring a 30fps-animating mesh re-renders the whole figure
         // offscreen every tick. The static aura in `backdrop` supplies the dark-mode glow.
-        MuscleMapView(activation: activation, sides: [.front], sex: sex,
+        MuscleMapView(activation: activation, sides: [.front], grading: .weeklyVolume, sex: sex,
                       forceStatic: reduceMotion || !onScreen)
+            // A range flip (or a new workout) re-lights the body smoothly, not with a hard swap.
+            .animation(.easeOut(duration: 0.45), value: activation)
             .frame(width: fig.width, height: fig.height)
             .position(x: fig.midX, y: fig.midY)
             .accessibilityHidden(true)   // the columns carry the data; the figure is scenery

@@ -339,7 +339,11 @@ struct ProgressScreen: View {
     private func refreshWindowed() {
         let cutoff = Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
         let inWindow = workouts.filter { $0.startedAt >= cutoff }
+        // Weekly set-equivalents, not the window total — the panel's figure grades ABSOLUTELY
+        // (`.weeklyVolume`), so a muscle's light reflects its sustained weekly rate: the same
+        // honest yardstick at 7D and 6M, brighter only where the athlete actually trains more.
         cachedActivation = MuscleActivation.combined(workouts: inWindow)
+            .mapValues { $0 / Double(trendRange.lookbackWeeks) }
         cachedRangeDistanceM = inWindow.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
         cachedRangeSessions = inWindow.count
     }
@@ -1716,13 +1720,13 @@ struct ProgressScreen: View {
 
     // MARK: Weekly muscle coverage
 
-    /// Trailing-7-day working-sets-by-muscle (PRD §22) across strength sessions.
-    /// Muscles worked over the selected range (relative emphasis — the map normalizes to the top
-    /// muscle, so a wide window reads as "what you've focused on," not a saturated silhouette).
+    /// Working-sets-by-muscle (PRD §22) over the selected range, as WEEKLY set-equivalents (window
+    /// total ÷ weeks). The panel grades these absolutely (`.weeklyVolume`): no training → blank
+    /// anatomy, light touches → faint tint, sustained volume → the full iridescent burn.
     private var rangeMuscleActivation: [MuscleGroup: Double] {
         cachedActivation ?? MuscleActivation.combined(workouts: workouts.filter {
             $0.startedAt >= Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
-        })
+        }).mapValues { $0 / Double(trendRange.lookbackWeeks) }
     }
     /// Total distance over the selected range — the panel's windowed distance callout.
     private var rangeDistanceM: Double {
