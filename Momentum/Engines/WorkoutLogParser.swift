@@ -498,7 +498,7 @@ enum WorkoutLogParser {
 
         func minutesPhrase() -> String { "\(minutes) minutes" }
 
-        if type.isGPS, distanceM > 0 {
+        if type.tracksDistance, distanceM > 0 {
             let perUnit = distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
             let value = ((distanceM / perUnit) * 2).rounded() / 2
             guard value > 0 else { return nil }
@@ -509,7 +509,7 @@ enum WorkoutLogParser {
             guard let verb = gpsVerb(type) else { return nil }
             return "\(verb) \(number) \(unitWord) in \(minutesPhrase())"
         }
-        if type.isGPS, let verb = gpsVerb(type) {
+        if type.tracksDistance, let verb = gpsVerb(type) {
             return "\(verb) for \(minutesPhrase())"
         }
         guard let noun = sessionNoun(type) else { return nil }
@@ -541,7 +541,6 @@ enum WorkoutLogParser {
         case .pilates: "pilates"
         case .swimming: "swim"
         case .rowing: "rowing"
-        case .eBikeRide: "e-bike"   // stationary (owner call 2026-08-05) — repeats by duration, like a swim
         case .tennis: "tennis"
         case .soccer: "soccer"
         case .basketball: "basketball"

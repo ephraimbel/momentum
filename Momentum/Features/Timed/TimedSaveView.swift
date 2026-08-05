@@ -26,6 +26,12 @@ struct TimedSaveView: View {
     @State private var kcalFromHealth = false
     /// The athlete typed this number themselves (this screen or a prior save) — the subtitle says so.
     @State private var kcalEdited = false
+    /// Stationary e-bike console readouts (owner ask 2026-08-05): distance and elevation typed
+    /// off the machine, avg speed computed from them. Meters/SI in state; converted at display.
+    @State private var rideDistanceM: Double = 0
+    @State private var rideElevationM: Double = 0
+    private var showsRideDetails: Bool { workout?.type.tracksDistance == true }
+    private var distanceUnit: DistanceUnit { DistanceUnit.auto.resolved() }
     /// Who sees this session on the community wall — see `CardioSaveView.privacy`.
     @State private var privacy: WorkoutPrivacy = .private
     /// Plays after SAVE — see `CardioSaveView.celebrating` (user call 2026-07-23).
@@ -90,6 +96,9 @@ struct TimedSaveView: View {
             desc = workout.note
             effort = workout.perceivedEffort
             prefillCalories(workout)
+            // Recovery re-save of an e-bike session keeps its earlier console readouts.
+            rideDistanceM = workout.gps?.distanceM ?? 0
+            rideElevationM = workout.gps?.elevationGainM ?? 0
             // The share moment starts from the athlete's chosen default (never silently
             // public); a workout that already carries a choice (recovery re-save) keeps it.
             if CommunityAccess.enabled {
@@ -122,6 +131,16 @@ struct TimedSaveView: View {
                 .focused($focus, equals: .desc)
             Divider().overlay(Theme.hairline)
             effortRow
+            if showsRideDetails {
+                Divider().overlay(Theme.hairline)
+                distanceRow
+                Divider().overlay(Theme.hairline)
+                elevationRow
+                if let speed = avgSpeedText {
+                    Divider().overlay(Theme.hairline)
+                    readonlyRow("Avg speed", speed, subtitle: "From distance and duration")
+                }
+            }
             Divider().overlay(Theme.hairline)
             calorieRow
             if CommunityAccess.enabled {
@@ -156,6 +175,88 @@ struct TimedSaveView: View {
             .accessibilityLabel("Perceived effort")
             .accessibilityValue(effort.map { "\($0) of 10" } ?? "not rated")
         }
+    }
+
+    // MARK: Ride details — the stationary e-bike's console readouts
+
+    /// Distance off the machine — tap to type. Half-unit precision is plenty for a console readout.
+    private var distanceRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Distance")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                Text("From the console — tap to enter")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer()
+            TypableNumber(display: rideDistanceM > 0
+                            ? Formatters.distanceNumeral(rideDistanceM / perUnit) : "—",
+                          minWidth: 58, axID: "ride-distance-value") { typed in
+                guard let v = Double(typed.replacingOccurrences(of: ",", with: ".")), v > 0 else { return }
+                rideDistanceM = min(v, 500) * perUnit
+            }
+            Text(distanceUnit == .imperial ? "MI" : "KM")
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    /// Elevation gain, for consoles that simulate climbs. Optional — most readouts won't have one.
+    private var elevationRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Elevation gain")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                Text("If your console shows one")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer()
+            TypableNumber(display: rideElevationM > 0
+                            ? "\(Int((rideElevationM * elevationPerUnit).rounded()))" : "—",
+                          minWidth: 58, axID: "ride-elevation-value") { typed in
+                guard let v = Double(typed.filter(\.isNumber)), v > 0 else { return }
+                rideElevationM = min(v, 20_000) / elevationPerUnit
+            }
+            Text(distanceUnit == .imperial ? "FT" : "M")
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
+    private func readonlyRow(_ label: String, _ value: String, subtitle: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                Text(subtitle)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer()
+            Text(value)
+                .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    /// Meters per display unit for distance entry.
+    private var perUnit: Double { distanceUnit == .imperial ? Formatters.metersPerMile : 1000 }
+    /// Display units per meter for elevation entry (ft when imperial).
+    private var elevationPerUnit: Double { distanceUnit == .imperial ? 3.28084 : 1 }
+
+    /// Avg speed the moment both numbers exist — computed, never typed, so it can't disagree.
+    private var avgSpeedText: String? {
+        guard rideDistanceM > 0, let w = workout, w.durationS > 0 else { return nil }
+        return Formatters.speed(ms: CardioMetrics.averageSpeedMS(distanceM: rideDistanceM,
+                                                                 durationS: w.durationS),
+                                unit: distanceUnit)
     }
 
     /// Calories over the session — tap the number to type your own. The subtitle is honest about
@@ -233,6 +334,19 @@ struct TimedSaveView: View {
         workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
         workout.perceivedEffort = effort
         workout.calories = kcal
+        // The e-bike's console readouts ride a sample-less GPSDetail — exactly how a manually
+        // logged indoor ride stores them — so distance, avg speed and elevation flow into Trends,
+        // records and Health like any ride. No samples, no snapshot → nothing ever renders a map.
+        if showsRideDetails, rideDistanceM > 0 {
+            let gps = workout.gps ?? GPSDetail()
+            gps.distanceM = rideDistanceM
+            gps.elevationGainM = rideElevationM
+            if workout.durationS > 0 {
+                gps.avgSpeedMS = CardioMetrics.averageSpeedMS(distanceM: rideDistanceM,
+                                                              durationS: workout.durationS)
+            }
+            workout.gps = gps
+        }
         // Community builds only — the solo app never touches privacy (see CardioSaveView). The
         // remembered-default write rides the same `context.save()` below.
         if CommunityAccess.enabled {

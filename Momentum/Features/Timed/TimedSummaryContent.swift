@@ -29,6 +29,20 @@ struct TimedSummaryContent: View {
             .padding(.vertical, Theme.Space.lg)
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
 
+            // The stationary e-bike's console readouts (2026-08-05) — present only when a
+            // distance was entered; other timed sports never carry a gps payload.
+            if let gps = workout.gps, gps.distanceM > 0 {
+                let unit = DistanceUnit.auto.resolved()
+                detailRow("Distance", Formatters.distance(meters: gps.distanceM, unit: unit))
+                if gps.avgSpeedMS > 0 {
+                    detailRow("Avg speed", Formatters.speed(ms: gps.avgSpeedMS, unit: unit))
+                }
+                if gps.elevationGainM > 0 {
+                    detailRow("Elevation gain", unit == .imperial
+                        ? "\(Int((gps.elevationGainM * 3.28084).rounded())) ft"
+                        : "\(Int(gps.elevationGainM.rounded())) m")
+                }
+            }
             if let effort = workout.perceivedEffort {
                 detailRow("Effort", "\(effort) / 10")
             }

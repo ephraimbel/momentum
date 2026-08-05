@@ -42,5 +42,30 @@ struct CyclingSportTests {
         }
         #expect(WorkoutType.eBikeRide.isTimed, "e-bike is stationary — stopwatch capture, no map")
         #expect(!WorkoutType.eBikeRide.isGPS, "e-bike must never take the map path")
+        // …but stationary is not metric-free: the console's miles/speed/elevation still enter
+        // and display everywhere distance does (owner ask 2026-08-05).
+        #expect(WorkoutType.eBikeRide.tracksDistance, "e-bike still records console distance")
+        for type in WorkoutType.allCases where type.isGPS {
+            #expect(type.tracksDistance, "\(type): every GPS sport tracks distance")
+        }
+    }
+
+    /// The stationary e-bike's manual log stores console readouts exactly like an indoor ride:
+    /// a sample-less GPSDetail carrying distance and AVG SPEED (never pace — it's a bike).
+    @Test func manualEbikeLogCarriesSpeedNotPace() {
+        let w = LogWorkoutBuilder.make(type: .eBikeRide, date: .now, durationS: 1800,
+                                       distanceM: 16_093.4, indoor: false, effort: nil, note: "",
+                                       exercises: [], resolveExercise: { _ in Exercise() })
+        let gps = try! #require(w.gps)
+        #expect(abs(gps.distanceM - 16_093.4) < 0.1)
+        #expect(gps.avgSpeedMS > 0, "bike logs report speed")
+        #expect(gps.avgPaceSPerKm == 0, "a bike never reports running pace")
+        #expect(gps.samples.isEmpty, "no samples — nothing can ever render a map")
+
+        // Duration-only e-bike stays a plain timed session — no phantom zero-distance payload.
+        let bare = LogWorkoutBuilder.make(type: .eBikeRide, date: .now, durationS: 1800,
+                                          distanceM: 0, indoor: false, effort: nil, note: "",
+                                          exercises: [], resolveExercise: { _ in Exercise() })
+        #expect(bare.gps == nil)
     }
 }

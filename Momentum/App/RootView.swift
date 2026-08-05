@@ -55,8 +55,11 @@ struct RootView: View {
     @State private var showSaveScreen = false
     // Straight to Settings (screenshot verification of the settings surface).
     @State private var showSettingsDeepLink = false
-    // The three-page onboarding paywall, presented directly for screenshot verification.
+    // The onboarding paywall flow, presented directly for screenshot verification.
     @State private var showOnboardingPaywallFlow = false
+    // --timed-save-ebike: the stationary e-bike save screen over a minted session.
+    @State private var showTimedSaveEbike = false
+    @State private var ebikeDebugWorkout: Workout?
     @State private var showWidgetPreview = ProcessInfo.processInfo.arguments.contains("--widget-preview")
     // Straight into the planned-lift checklist (screenshot verification of the live strength flow).
     @State private var showStrengthLivePlanned = false
@@ -332,6 +335,14 @@ struct RootView: View {
             OnboardingPaywallFlow(
                 startAtCheckout: ProcessInfo.processInfo.arguments.contains("--paywall-onboarding-2"))
         }
+        // --timed-save-ebike: mints a finished 25-minute stationary e-bike session and opens its
+        // save screen — verifies the console-readout rows (distance/elevation/avg speed) without
+        // driving a live session.
+        .fullScreenCover(isPresented: $showTimedSaveEbike) {
+            if let w = ebikeDebugWorkout {
+                TimedSaveView(workoutId: w.id) { showTimedSaveEbike = false }
+            }
+        }
         .fullScreenCover(isPresented: $showSettingsDeepLink) {
             NavigationStack {
                 SettingsView()
@@ -426,6 +437,16 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--paywall-onboarding") }) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showOnboardingPaywallFlow = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--timed-save-ebike") {
+                let w = Workout()
+                w.type = .eBikeRide
+                w.durationS = 25 * 60
+                w.elapsedS = 25 * 60
+                context.insert(w)
+                try? context.save()
+                ebikeDebugWorkout = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { showTimedSaveEbike = true }
             }
             // --siri-log: exercise the Siri logging path end-to-end (meal + receipt notification)
             // without Siri — the intent's perform() runs this exact code.

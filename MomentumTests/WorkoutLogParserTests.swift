@@ -497,7 +497,7 @@ struct WorkoutLogParserTests {
             (.ride, 60 * 60, 32_186.9),         // 20 miles
             (.mountainBikeRide, 45 * 60, 16_093.4),
             (.gravelRide, 120 * 60, 48_280.3),
-            (.eBikeRide, 30 * 60, 0),   // stationary (2026-08-05) — repeats by duration, no distance
+            (.eBikeRide, 30 * 60, 16_093.4),   // stationary, but console distance round-trips
 
             (.strength, 45 * 60, 0),
             (.crossfit, 30 * 60, 0),

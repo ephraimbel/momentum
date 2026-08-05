@@ -268,6 +268,11 @@ extension WorkoutType: Identifiable {
     /// are mutually exclusive: `isGPS`, `isStrengthStyle`, `isTimed`.
     var isGPS: Bool { !isStrengthStyle && !isTimed }
 
+    /// Sports that carry a real distance/speed even without a route: every GPS sport, plus the
+    /// stationary e-bike, whose console reports miles, speed and elevation like an outdoor ride —
+    /// it just never maps. Gates distance ENTRY and display, never map rendering (that's `isGPS`).
+    var tracksDistance: Bool { isGPS || self == .eBikeRide }
+
     /// Any bike. **Use this, never `== .ride`,** wherever a surface picks speed over pace or hides
     /// pace-shaped UI: cycling is FOUR cases, and an exact match against `.ride` silently left mountain,
     /// gravel and e-bike rides reporting a running pace in min/mi across the profile pager, the workout

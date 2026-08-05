@@ -593,7 +593,7 @@ struct LogActivityView: View {
 
             VStack(spacing: 10) {
                 metricRow("Duration", r.durationS.map { Formatters.duration(s: $0) })
-                if r.type?.isGPS ?? false {
+                if r.type?.tracksDistance ?? false {
                     metricRow("Distance", r.distanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) })
                     if let pace = paceLine(r) { metricRow(isBike(r) ? "Avg speed" : "Avg pace", pace) }
                 }
@@ -801,7 +801,7 @@ struct LogActivityView: View {
     private func missingHint(_ r: WorkoutLogParser.Result) -> String? {
         if r.type == nil { return "Which sport? Tap the card to set it." }
         if r.durationS == nil { return "How long was it? Say “45 minutes”, or tap to fill it in." }
-        if r.type?.isGPS ?? false, (r.distanceM ?? 0) <= 0 { return "Add the distance if you know it — say “5 miles”, or tap Edit." }
+        if r.type?.tracksDistance ?? false, (r.distanceM ?? 0) <= 0 { return "Add the distance if you know it — say “5 miles”, or tap Edit." }
         return nil
     }
 
