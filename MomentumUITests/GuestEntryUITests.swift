@@ -77,12 +77,16 @@ final class GuestEntryUITests: XCTestCase {
         attach("beat-1-rate")
         notNow.tap()
 
-        // The paywall — HARD since 2026-07-28, so the only way to the account beat is through a
-        // purchase. The DEBUG seam grants locally, which is exactly the entitlement flip under test.
-        let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
-        XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "the paywall should follow the rating beat")
+        // The paywall — HARD since 2026-07-28, and a two-page flow since 2026-08-05: the device
+        // tour, then the checkout. Only the checkout's purchase reaches the account beat. The
+        // DEBUG seam grants locally, which is exactly the entitlement flip under test.
+        let tryNow = app.buttons["Try now"]
+        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the paywall should follow the rating beat")
         XCTAssertFalse(app.buttons["Close"].exists, "the onboarding paywall is a hard gate — no close")
         attach("beat-2-paywall")
+        tryNow.tap()
+        let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "the checkout page should follow the reminder page")
         trialCTA.tap()
 
         // …and subscribing lands on the account, not in the app. This is the whole change.
@@ -129,8 +133,10 @@ final class GuestEntryUITests: XCTestCase {
         // beat and the account beat both label their skip "Not now", so past this point that query
         // is ambiguous and would skip the account beat mid-crossfade before it could be checked.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        // The hard paywall's CTA is the sentinel now that it renders no Close. It's also safe as a
-        // loop guard: none of the generic taps below match "Start my …", so the walker can't buy.
+        // The hard paywall's checkout CTA is the sentinel now that it renders no Close. It's also
+        // safe as a loop guard: none of the generic taps below match "Start my …", so the walker
+        // can't buy — pages one and two of the flow ("Try now", "Continue for free") sell without
+        // transacting, so walking through them is free.
         let paywallCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
         for _ in 0..<80 {
             if paywallCTA.exists { break }
@@ -145,10 +151,12 @@ final class GuestEntryUITests: XCTestCase {
             let looksGreat = app.buttons["This looks great"]
             let maybeLater = app.buttons["Maybe later"]
             let notNow = app.buttons["Not now"]
+            let tryNow = app.buttons["Try now"]                             // paywall flow, the tour page
             if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
             else if looksGreat.exists && looksGreat.isHittable { looksGreat.tap() }
             else if maybeLater.exists && maybeLater.isHittable { maybeLater.tap() }
             else if notNow.exists && notNow.isHittable { notNow.tap() }     // rating beat
+            else if tryNow.exists && tryNow.isHittable { tryNow.tap() }
             else { sleep(1) }                                               // building beat / animating in
         }
         XCTAssertTrue(paywallCTA.waitForExistence(timeout: 30), "the walk should reach the paywall")

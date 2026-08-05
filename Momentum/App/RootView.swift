@@ -55,6 +55,8 @@ struct RootView: View {
     @State private var showSaveScreen = false
     // Straight to Settings (screenshot verification of the settings surface).
     @State private var showSettingsDeepLink = false
+    // The three-page onboarding paywall, presented directly for screenshot verification.
+    @State private var showOnboardingPaywallFlow = false
     @State private var showWidgetPreview = ProcessInfo.processInfo.arguments.contains("--widget-preview")
     // Straight into the planned-lift checklist (screenshot verification of the live strength flow).
     @State private var showStrengthLivePlanned = false
@@ -135,7 +137,10 @@ struct RootView: View {
                             })
                         .environment(\.colorScheme, .dark)   // same dark sequence onboarding runs in
                     } else {
-                        PaywallView(feature: .fullPlan, hard: true, onEntitled: {
+                        // Re-enters the three-page flow AT the checkout page — the athlete saw
+                        // the try-free and reminder pages before force-quitting; re-telling the
+                        // story would read as a loop.
+                        OnboardingPaywallFlow(startAtCheckout: true, onEntitled: {
                             // A purchase landed HERE, so onboarding's own paywall → `.account`
                             // hand-off never ran. Swap this cover to the account beat instead of
                             // letting the paywall dismiss — flipping `gateAccountBeat` keeps `get`
@@ -320,6 +325,13 @@ struct RootView: View {
         .fullScreenCover(isPresented: $showWidgetPreview) {
             WidgetPreviewHarness()
         }
+        // --paywall-onboarding [--paywall-onboarding-2]: the two-page onboarding wall, for
+        // screenshot verification without driving the whole onboarding. -2 enters at checkout,
+        // the relaunch-gate framing.
+        .fullScreenCover(isPresented: $showOnboardingPaywallFlow) {
+            OnboardingPaywallFlow(
+                startAtCheckout: ProcessInfo.processInfo.arguments.contains("--paywall-onboarding-2"))
+        }
         .fullScreenCover(isPresented: $showSettingsDeepLink) {
             NavigationStack {
                 SettingsView()
@@ -411,6 +423,9 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettingsDeepLink = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--paywall-onboarding") }) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showOnboardingPaywallFlow = true }
             }
             // --siri-log: exercise the Siri logging path end-to-end (meal + receipt notification)
             // without Siri — the intent's perform() runs this exact code.

@@ -143,6 +143,29 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         center.removeDeliveredNotifications(withIdentifiers: [restID])
     }
 
+    // MARK: Trial-ending reminder (paywall redesign 2026-08-05) — the promise page two of the
+    // onboarding paywall makes. Scheduled by `PaywallCheckout` the moment a purchase WITH a trial
+    // lands, two days before billing starts. Honest by construction: it names the price and the
+    // renewal, and scheduling while unauthorized is harmless (iOS just won't deliver it). Static
+    // like the rest timer — one-shot, no delegate needed.
+
+    static let trialReminderID = "momentum.trialReminder"
+
+    static func scheduleTrialReminder(trialDays: Int, renewText: String) {
+        // A 1–2 day trial has no "two days before" to speak of; skip rather than fire instantly.
+        guard trialDays > 2 else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [trialReminderID])
+        let content = UNMutableNotificationContent()
+        content.title = "Your free trial ends in 2 days"
+        let endDate = Date().addingTimeInterval(Double(trialDays) * 86_400)
+        content.body = "momentum Pro renews at \(renewText) on \(endDate.formatted(date: .abbreviated, time: .omitted)). Cancel anytime before then."
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: Double(trialDays - 2) * 86_400, repeats: false)
+        center.add(UNNotificationRequest(identifier: trialReminderID, content: content, trigger: trigger))
+    }
+
     // MARK: Sunday check-in (PRD §24) — a weekly recap nudge; the Progress tab is the recap.
 
     func scheduleWeeklyCheckIn() {

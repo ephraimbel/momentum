@@ -184,8 +184,10 @@ struct OnboardingFlow: View {
         // dismiss once an entitlement lands, which makes `onDismiss` a post-purchase hand-off to the
         // `.account` beat rather than a "they skipped it" path. `finishOnboarding` arms
         // `onboardingGatePending` first so force-quitting the wall isn't a way around it.
+        // Since 2026-08-05 the wall is the two-page flow (the device tour, then the same
+        // PaywallView the rest of the app shows); the gate contract above is identical.
         .fullScreenCover(isPresented: $showPaywall, onDismiss: { goToAccountBeat() }) {
-            PaywallView(feature: .fullPlan, hard: true)
+            OnboardingPaywallFlow()
         }
     }
 
