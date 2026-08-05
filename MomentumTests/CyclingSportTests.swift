@@ -32,11 +32,15 @@ struct CyclingSportTests {
         }
     }
 
-    /// Every bike carries a GPS route, which is what makes the profile grid and its pager render a
-    /// map for one exactly as they do for a run.
-    @Test func everyBikeIsAMapWorkout() {
-        for type in [WorkoutType.ride, .mountainBikeRide, .gravelRide, .eBikeRide] {
+    /// Every OUTDOOR bike carries a GPS route, which is what makes the profile grid and its pager
+    /// render a map for one exactly as they do for a run. E-bike is the deliberate exception
+    /// (owner call 2026-08-05): picking it means a STATIONARY e-bike, so it captures like the
+    /// timed sports — glyph over glow, stopwatch, no map.
+    @Test func everyOutdoorBikeIsAMapWorkout() {
+        for type in [WorkoutType.ride, .mountainBikeRide, .gravelRide] {
             #expect(type.isGPS, "\(type) must take the GPS/map path in the profile grid")
         }
+        #expect(WorkoutType.eBikeRide.isTimed, "e-bike is stationary — stopwatch capture, no map")
+        #expect(!WorkoutType.eBikeRide.isGPS, "e-bike must never take the map path")
     }
 }

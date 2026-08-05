@@ -254,9 +254,13 @@ extension WorkoutType: Identifiable {
         }
     }
     /// Timed sports capture via a simple stopwatch — no GPS route, no logged sets.
+    /// E-bike is here deliberately (owner call 2026-08-05): picking "E-Bike Ride" means a
+    /// STATIONARY e-bike, so it captures like the other stationary sports — glyph over the
+    /// iridescent glow, never a map. Outdoor e-bikers pick Ride.
     var isTimed: Bool {
         switch self {
-        case .tennis, .soccer, .basketball, .golf, .yoga, .pilates, .swimming, .rowing, .other: true
+        case .tennis, .soccer, .basketball, .golf, .yoga, .pilates, .swimming, .rowing, .other,
+             .eBikeRide: true
         default: false
         }
     }

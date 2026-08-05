@@ -541,6 +541,7 @@ enum WorkoutLogParser {
         case .pilates: "pilates"
         case .swimming: "swim"
         case .rowing: "rowing"
+        case .eBikeRide: "e-bike"   // stationary (owner call 2026-08-05) — repeats by duration, like a swim
         case .tennis: "tennis"
         case .soccer: "soccer"
         case .basketball: "basketball"
