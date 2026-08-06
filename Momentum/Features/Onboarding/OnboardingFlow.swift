@@ -179,13 +179,13 @@ struct OnboardingFlow: View {
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
         // The onboarding_complete paywall (PRD §10) — shown from the rating beat's hand-off, after
-        // every opt-in. **HARD since 2026-07-28** (user call): no close affordance, no swipe-away.
-        // The only ways forward are the trial, a subscription, or Restore — so this cover can only
-        // dismiss once an entitlement lands, which makes `onDismiss` a post-purchase hand-off to the
-        // `.account` beat rather than a "they skipped it" path. `finishOnboarding` arms
-        // `onboardingGatePending` first so force-quitting the wall isn't a way around it.
-        // Since 2026-08-05 the wall is the two-page flow (the device tour, then the same
-        // PaywallView the rest of the app shows); the gate contract above is identical.
+        // every opt-in. **SOFT since 2026-08-06** (user call, reversing the 2026-07-28 hard flip):
+        // the flow's X closes it un-entitled. Purchase and close both resolve by dismissing this
+        // cover, so `onDismiss` → the account beat serves the subscriber and the skipper alike.
+        // `finishOnboarding` still arms `onboardingGatePending` first, so a force-quit AT the wall
+        // re-raises it once from RootView (where the X is equally available) and the account beat
+        // is never silently lost. Since 2026-08-05 the wall is the two-page flow (the device tour,
+        // then the same PaywallView the rest of the app shows).
         .fullScreenCover(isPresented: $showPaywall, onDismiss: { goToAccountBeat() }) {
             OnboardingPaywallFlow()
         }
@@ -1620,9 +1620,10 @@ struct OnboardingFlow: View {
     /// then the account beat. Was inline in `primersStep` before `.rateUs` was inserted between them.
     private func finishOnboarding() {
         if paywall.isPro { goToAccountBeat(); return }
-        // Arm the relaunch gate BEFORE presenting: a wall a force-quit walks around is a soft wall
-        // with extra steps. `RootView` re-raises it on every launch until an entitlement lands, and
-        // `setPro(true)` clears it the moment one does.
+        // Arm the relaunch gate BEFORE presenting — not to wall anyone in (the gate is soft now),
+        // but so a force-quit mid-wall re-offers it once from RootView instead of dropping the
+        // athlete into the app with the account beat silently skipped. `setPro(true)` or the
+        // flow's X clears it.
         paywall.onboardingGatePending = true
         showPaywall = true
     }

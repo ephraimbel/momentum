@@ -115,17 +115,15 @@ struct RootView: View {
                     set: { paywall.presentedFeature = $0 })) { feature in
                     PaywallView(feature: feature)
                 }
-                // The onboarding hard gate (2026-07-28). `finishOnboarding` sets the flag when setup
-                // reaches the paywall un-entitled, and only a purchase/restore clears it — so the wall
-                // is re-raised on every launch and force-quitting it is never a way into the app.
-                // Athletes who finished onboarding BEFORE the flip never set the flag and keep the
-                // free tier they already had; this walls new signups only.
-                // `set` deliberately does NOT clear `onboardingGatePending` — only an entitlement
-                // does (`setPro(true)`). It used to self-clear, from the freemium era when this cover
-                // was dismissible and the worst case was walling someone out of a free tier; with a
-                // hard gate that would make one dismissal a permanent bypass. The store-unreachable
-                // escape is the one non-purchase way out, and it defers via `storeUnreachableDeferral`
-                // — unpersisted, so the wall is back on the next launch.
+                // The onboarding gate — SOFT since 2026-08-06 (user call). `finishOnboarding` still
+                // sets the flag when setup reaches the paywall un-entitled, so a force-quit at the
+                // wall re-raises it here once; but the wall's X now clears the flag and moves on,
+                // so no one is ever locked out. Anyone left mid-gate by the hard era (the flag
+                // persisted) gets the same X on their next launch.
+                // `set` still does NOT clear `onboardingGatePending` — the clears are an entitlement
+                // (`setPro(true)`) and the flow's own close(), both of which run before this cover
+                // resolves, so a dismissal here never needs to. The store-unreachable deferral
+                // (`storeUnreachableDeferral`, unpersisted) remains as a belt-and-braces escape.
                 .fullScreenCover(isPresented: Binding(
                     get: { gateAccountBeat
                         || (paywall.onboardingGatePending && !paywall.isPro && !paywall.storeUnreachableDeferral
@@ -150,6 +148,13 @@ struct RootView: View {
                             // true, so the cover is never torn down and there is no re-presentation
                             // to lose under load. If they already have a real account there's nothing
                             // to offer: leave it alone and `get` goes false on its own.
+                            guard !(auth.isSignedIn && !auth.isGuest) else { return }
+                            gateAccountBeat = true
+                        }, onClose: {
+                            // The X (soft gate): they skipped paying, but they also never reached
+                            // onboarding's account beat — offer it the same cover-swapping way.
+                            // close() already cleared the gate flag, so for a signed-in athlete
+                            // `get` goes false on its own and the cover resolves.
                             guard !(auth.isSignedIn && !auth.isGuest) else { return }
                             gateAccountBeat = true
                         })

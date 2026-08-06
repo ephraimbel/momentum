@@ -1,10 +1,10 @@
 import XCTest
 
-/// The onboarding paywall (HARD, 2026-07-28): the last beat of setup is a wall with no way past it
-/// but the trial, a subscription, or Restore. Verifies both halves of that contract — no escape
-/// hatch is rendered, and the trial still grants-and-advances to the account beat.
-/// Uses the local purchase seam (no RevenueCat in DEBUG), so the trial tap genuinely exercises the
-/// grant → dismiss → advance path.
+/// The onboarding paywall (SOFT since 2026-08-06, reversing the 2026-07-28 hard flip): the last
+/// beat of setup offers the trial, a subscription, Restore — and an X that skips it for good.
+/// Verifies both halves of that contract: closing moves on (and stays closed across launches),
+/// and the trial still grants-and-advances. Uses the local purchase seam (no RevenueCat in
+/// DEBUG), so the trial tap genuinely exercises the grant → dismiss → advance path.
 final class OnboardingPaywallUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
@@ -42,39 +42,42 @@ final class OnboardingPaywallUITests: XCTestCase {
         tryNow.tap()
     }
 
-    /// HARD: no close affordance, no swipe-away, and nothing behind the wall is reachable. Pinning
-    /// the *absence* of the button is the whole point — `hard` is a default-valued parameter, so a
-    /// call site that silently reverts to `hard: false` would still compile and still pass every
-    /// other paywall test in the suite.
-    func testHardPaywallOffersNoEscape() {
+    /// SOFT: the X lives on the checkout page (and ONLY there — the tour keeps its own CTA as
+    /// the way forward), closing lands in the app un-entitled, and the skip is a decision — the
+    /// wall must NOT re-raise on the next launch (the X clears the persisted gate flag; a wall
+    /// that comes back after being closed is a hard gate with extra steps).
+    func testSoftPaywallCloseSkipsToTheAppForGood() {
         let app = XCUIApplication()
         launchToPaywall(app)
 
-        // The tour page: still a wall — no close, Restore reachable, swipe-proof.
+        // The tour page: no X here (user call 2026-08-06) — Restore is the only chrome.
         let tryNow = app.buttons["Try now"]
         XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Paywall didn't follow the rating beat.")
         XCTAssertFalse(app.buttons["Close"].exists,
-                       "The onboarding paywall must NOT offer a close button (hard gate).")
-        // Restore stays reachable — a hard wall with no way to reclaim a purchase you already made
-        // is both hostile and an App Review rejection (3.1.1).
-        XCTAssertTrue(app.buttons["Restore"].exists, "A hard paywall must still offer Restore.")
-        app.swipeDown(velocity: .fast)
-        XCTAssertTrue(tryNow.exists, "Swiping down dismissed the hard paywall's tour page.")
+                       "The tour page must NOT carry the close button — the X is checkout-only.")
+        XCTAssertTrue(app.buttons["Restore"].exists, "The paywall must still offer Restore.")
 
-        // Through to the checkout page: the same contract holds where the money is.
+        // Through to the checkout page: the X survives to where the money is.
         advanceToCheckout(app)
         let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(cta.waitForExistence(timeout: 10), "The flow didn't reach the checkout page.")
-        XCTAssertFalse(app.buttons["Close"].exists,
-                       "The checkout page must NOT offer a close button (hard gate).")
-        XCTAssertTrue(app.buttons["Restore"].exists, "Restore must survive to the checkout page.")
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.exists, "The checkout page must offer the close button too.")
 
-        // Swipe-down is the other escape: the cover disables interactive dismissal in hard mode.
-        app.swipeDown(velocity: .fast)
-        XCTAssertTrue(cta.exists, "Swiping down dismissed the hard paywall.")
-        XCTAssertFalse(app.staticTexts["Save your progress"].exists,
-                       "The wall handed off to the account beat without an entitlement.")
-        XCTAssertFalse(app.tabBars.firstMatch.exists, "The wall let an un-entitled athlete into the app.")
+        // Close it. `--seed-demo` is already signed in as demo-user, so `goToAccountBeat`
+        // correctly skips the account ask and the skipper lands in the app on the free tier.
+        close.tap()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20),
+                      "Closing the soft paywall didn't land in the app.")
+
+        // …and it stays closed: relaunch with no onboarding deep link — no wall.
+        app.terminate()
+        app.launchArguments = ["--seed-demo", "--debug-free"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20),
+                      "The app didn't come back up after the relaunch.")
+        XCTAssertFalse(app.buttons["Try now"].exists || app.buttons["Retry"].exists,
+                       "The wall re-raised after being closed — the X must clear the gate flag.")
     }
 
     /// Force-quitting the wall and subscribing from the RELAUNCH gate must still offer the account.
@@ -107,8 +110,8 @@ final class OnboardingPaywallUITests: XCTestCase {
         // The relaunch gate re-enters the flow AT the checkout page (the story was told last
         // launch), so the trial CTA is the first thing on screen.
         let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
-        XCTAssertTrue(cta.waitForExistence(timeout: 20), "The hard gate didn't survive a force-quit.")
-        XCTAssertFalse(app.buttons["Close"].exists, "The relaunch gate must be hard too — no close.")
+        XCTAssertTrue(cta.waitForExistence(timeout: 20), "The gate didn't survive a force-quit.")
+        XCTAssertTrue(app.buttons["Close"].exists, "The relaunch gate is soft too — the X must be there.")
         // Hittable, not exists: this gate covers the real tab shell (unlike onboarding's, which sits
         // over a blank canvas), so the tab bar is legitimately still in the hierarchy behind it.
         // What matters is that nothing back there can be reached.
@@ -153,7 +156,6 @@ final class OnboardingPaywallUITests: XCTestCase {
         XCTAssertTrue(retry.waitForExistence(timeout: 10), "Expected the pricing-unavailable paywall.")
         let escape = app.buttons.matching(NSPredicate(format: "label CONTAINS 'ask again'")).firstMatch
         XCTAssertFalse(escape.exists, "The escape must not exist before the store has actually failed.")
-        XCTAssertFalse(app.buttons["Close"].exists, "Still a hard gate until the store proves unreachable.")
 
         // Two genuine failures — the alert's "Not now" dismisses without counting as a purchase.
         for attempt in 1...2 {

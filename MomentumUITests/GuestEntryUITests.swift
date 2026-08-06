@@ -77,16 +77,18 @@ final class GuestEntryUITests: XCTestCase {
         attach("beat-1-rate")
         notNow.tap()
 
-        // The paywall — HARD since 2026-07-28, and a two-page flow since 2026-08-05: the device
-        // tour, then the checkout. Only the checkout's purchase reaches the account beat. The
-        // DEBUG seam grants locally, which is exactly the entitlement flip under test.
+        // The paywall — a two-page flow since 2026-08-05 (device tour, then checkout), SOFT since
+        // 2026-08-06: the checkout page's X skips it (the tour carries no X). This test takes the
+        // purchase path; the DEBUG seam grants locally, which is exactly the entitlement flip
+        // under test.
         let tryNow = app.buttons["Try now"]
         XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the paywall should follow the rating beat")
-        XCTAssertFalse(app.buttons["Close"].exists, "the onboarding paywall is a hard gate — no close")
+        XCTAssertFalse(app.buttons["Close"].exists, "the tour page carries no X — checkout-only")
         attach("beat-2-paywall")
         tryNow.tap()
         let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "the checkout page should follow the reminder page")
+        XCTAssertTrue(app.buttons["Close"].exists, "the checkout page must offer the soft gate's X")
         trialCTA.tap()
 
         // …and subscribing lands on the account, not in the app. This is the whole change.

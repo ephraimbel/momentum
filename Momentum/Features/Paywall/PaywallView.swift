@@ -5,7 +5,7 @@ import SwiftUI
 /// mocks and the iridescent wash both went — "tacky"; this supersedes the 2026-07-29 bright-light
 /// call), the wordmark centered up top, the full feature list in eight honest lines. **Trust
 /// stays a feature:** two plans side by side with the yearly staged to win, plain renewal terms
-/// before purchase, one-tap restore. Onboarding's hard gate uses the three-page
+/// before purchase, one-tap restore. Onboarding's (soft) gate uses the two-page
 /// `OnboardingPaywallFlow` instead; both are assembled from the same `PaywallComponents`.
 struct PaywallView: View {
     /// The locked feature that brought the user here — frames the subheadline.
