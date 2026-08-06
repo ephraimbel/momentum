@@ -80,6 +80,34 @@ final class OnboardingPaywallUITests: XCTestCase {
                        "The wall re-raised after being closed — the X must clear the gate flag.")
     }
 
+    /// A GUEST who closes the wall must still be offered the account beat — the X takes the same
+    /// hand-off as a purchase (`onDismiss: goToAccountBeat()`), and skipping that too enters the
+    /// app. This is the path `testSoftPaywallCloseSkipsToTheAppForGood` can't see: `--seed-demo`
+    /// is signed in, so its close lands straight in the app.
+    func testCloseHandsOffToTheAccountBeatForGuests() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--onboarding-guest", "--debug-free",
+                               "--onboarding", "--onboarding-rate"]
+        app.launch()
+        app.tap()
+
+        let notNow = app.buttons["Not now"]
+        XCTAssertTrue(notNow.waitForExistence(timeout: 30), "Didn't land on the rating beat.")
+        notNow.tap()
+
+        advanceToCheckout(app)
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "The checkout page must offer the X.")
+        close.tap()
+
+        // The skipper is offered the account, exactly like the subscriber.
+        XCTAssertTrue(app.staticTexts["Save your progress"].waitForExistence(timeout: 10),
+                      "Closing the wall as a guest must hand off to the account beat.")
+        app.buttons["Not now"].tap()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15),
+                      "Declining the account after a skip still enters the app.")
+    }
+
     /// Force-quitting the wall and subscribing from the RELAUNCH gate must still offer the account.
     ///
     /// The relaunch gate is hosted by `RootView`, not by `OnboardingFlow`, so it never ran
