@@ -34,6 +34,7 @@ struct OnboardingFlow: View {
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall — the last beat, before the app
+    @State private var paywallHandledExit = false    // exitPaywall ran — onDismiss must not advance again
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
     @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
     @State private var remindersAdvanced = false      // same for the reminders primer
@@ -180,14 +181,20 @@ struct OnboardingFlow: View {
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
         // The onboarding_complete paywall (PRD §10) — shown from the rating beat's hand-off, after
         // every opt-in. **SOFT since 2026-08-06** (user call, reversing the 2026-07-28 hard flip):
-        // the flow's X closes it un-entitled. Purchase and close both resolve by dismissing this
-        // cover, so `onDismiss` → the account beat serves the subscriber and the skipper alike.
+        // the flow's X closes it un-entitled. Purchase and close both exit through `exitPaywall`,
+        // which advances the flow UNDER the cover before dismissing it — so the dismissal reveals
+        // the account beat, not a half-second flash of the rating step the wall was presented over
+        // (that flash shipped through 1.2.0; fixed 2026-08-06). `onDismiss` remains only for the
+        // store-unreachable deferral, whose escape dismisses without an exit callback.
         // `finishOnboarding` still arms `onboardingGatePending` first, so a force-quit AT the wall
         // re-raises it once from RootView (where the X is equally available) and the account beat
         // is never silently lost. Since 2026-08-05 the wall is the two-page flow (the device tour,
         // then the same PaywallView the rest of the app shows).
-        .fullScreenCover(isPresented: $showPaywall, onDismiss: { goToAccountBeat() }) {
-            OnboardingPaywallFlow()
+        .fullScreenCover(isPresented: $showPaywall, onDismiss: {
+            if !paywallHandledExit { goToAccountBeat() }
+            paywallHandledExit = false
+        }) {
+            OnboardingPaywallFlow(onEntitled: { exitPaywall() }, onClose: { exitPaywall() })
         }
     }
 
@@ -1635,6 +1642,19 @@ struct OnboardingFlow: View {
     private func goToAccountBeat() {
         if auth.isSignedIn, !auth.isGuest { onComplete(); return }
         goNext()
+    }
+
+    /// The paywall's exit (purchase or the X), sequenced so nothing stale peeks through: advance
+    /// to the account beat FIRST, under the still-presented cover, then dismiss — the dismissal
+    /// reveals "Save your progress" directly instead of flashing the rating step for the length
+    /// of the animation. Signed-in athletes have no account beat to advance to, so the whole flow
+    /// completes in ONE dismissal (`onComplete` tears down the onboarding cover with the paywall
+    /// still nested inside it) rather than two stacked ones.
+    private func exitPaywall() {
+        paywallHandledExit = true
+        if auth.isSignedIn, !auth.isGuest { onComplete(); return }
+        goNext()
+        showPaywall = false
     }
 
     // MARK: Scaffolding

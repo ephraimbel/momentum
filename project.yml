@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.2.0"      # must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version.
-    CURRENT_PROJECT_VERSION: "15"   # build 15 (v1.2.0): the onboarding paywall goes SOFT — an X on both pages skips it for good (build 14: paywall redesign, stationary e-bike console metrics, muscle-map grading scales).
+    CURRENT_PROJECT_VERSION: "16"   # build 16 (v1.2.0): paywall exit reveals the account beat directly (no rating-step flash). Build 15: the onboarding paywall goes SOFT — X on the checkout page skips it for good.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
