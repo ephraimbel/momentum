@@ -137,25 +137,29 @@ struct StrengthSaveView: View {
             p.defaultWorkoutVisibility = privacy.rawValue
             try? context.save()
         }
-        // Persist the records this session set (fresh context — the logged sets are complete there).
-        if let workout = reader.workout {
-            let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: reader.context)
-            let persisted = hits.compactMap { hit in
-                hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
-            }
-            PersonalRecord.persist(persisted, workout: workout, in: reader.context)
-            for record in persisted { services.analytics.log(.prHit(type: record.type.rawValue)) }
-            // Session count, tonnage, and streak awards move with every kept session (deferred —
-            // the snapshot walk must never sit between the Save tap and dismissal).
-            AwardsBook.syncSoon()
-        }
-        if let saved = workout { Task { await services.health.save(saved) } }   // mirror to Apple Health
+        // The celebration starts NOW (same order as CardioSaveView, 2026-08-06): the beat gets an
+        // idle main thread; the bookkeeping below waits it out — none of it is on screen.
+        celebrating = true
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
         // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
         if let workout { services.analytics.log(.workoutCompleted(type: workout.type.rawValue)) }
-        // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
-        // `onDone` when the beat completes or is tapped through.
-        celebrating = true
+        let capturedReader = reader
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.4))
+            // Persist the records this session set (fresh context — the logged sets are complete
+            // there). Set math only, no GPS replay — fine on the main actor once the beat is done.
+            if let workout = capturedReader.workout {
+                let hits = StrengthPRs.detect(for: workout, weightUnit: weightUnit, in: capturedReader.context)
+                let persisted = hits.compactMap { hit in
+                    hit.prType.map { (type: $0, value: hit.value, exercise: hit.exercise) }
+                }
+                PersonalRecord.persist(persisted, workout: workout, in: capturedReader.context)
+                for record in persisted { services.analytics.log(.prHit(type: record.type.rawValue)) }
+                // Session count, tonnage, and streak awards move with every kept session.
+                AwardsBook.syncSoon()
+                await services.health.save(workout)   // mirror to Apple Health
+            }
+        }
     }
 
     /// Names the workout by its split ("Push Day", "Leg Day", …); falls back to time-of-day when

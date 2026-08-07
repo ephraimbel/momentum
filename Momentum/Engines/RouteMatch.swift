@@ -158,9 +158,11 @@ enum RouteMatch {
 
 // MARK: - Adapter
 
-/// The thin `@MainActor` layer that feeds the pure matcher from stored workouts, mirroring how
-/// `PaceInsights` splits its classifier from its gatherer.
-@MainActor
+/// The thin adapter layer that feeds the pure matcher from stored workouts, mirroring how
+/// `PaceInsights` splits its classifier from its gatherer. Not `@MainActor` (2026-08-06): the
+/// summary's record/verdict analysis moved to a background context so the post-run screen stops
+/// freezing after first paint, and this adapter walks the same models — the caller owns the
+/// isolation by owning the `ModelContext` its workouts came from.
 extension RouteMatch {
 
     /// The trace a footprint is built from: the athlete's own **accepted raw fixes**.

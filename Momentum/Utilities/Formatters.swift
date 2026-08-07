@@ -98,6 +98,16 @@ enum Formatters {
         return (Int(value.rounded()), u == .imperial ? "mi" : "km")
     }
 
+    // MARK: Elevation — whole feet or metres ("421 ft" / "128 m"). Exists so no surface hardcodes
+    // "m" for gain/loss numbers: the summary tile did, telling every imperial athlete their climb
+    // was metric in an app whose default resolves imperial for its largest market.
+    static let feetPerMeter = 3.280839895
+    static func elevation(meters: Double, unit: DistanceUnit) -> String {
+        let u = unit.resolved()
+        return u == .imperial ? "\(Int((meters * feetPerMeter).rounded())) ft"
+                              : "\(Int(meters.rounded())) m"
+    }
+
     // MARK: Weight — rounded to nearest 0.5 kg or 1 lb
     static func weight(kg: Double, unit: WeightUnit) -> String {
         switch unit {

@@ -23,25 +23,35 @@ struct WorkoutRunner: ViewModifier {
     /// while the workout is still in hand, so the celebration can draw something true on its very
     /// first frame (the summary's own reader hasn't loaded by then).
     @State private var weekRing: WeekRing.Reading?
+    /// The one-line "Logged" receipt, shown as a transient toast on the destination screen once
+    /// the cover resolves — the quiet confirmation that the activity is in the book.
+    @State private var receipt: String?
+    @State private var receiptDismiss: Task<Void, Never>?
 
     private var plan: TrainingPlan? { profiles.first?.plan }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto }
 
     func body(content: Content) -> some View {
         content
-            .fullScreenCover(item: $launch) { liveScreen($0) }
-            .fullScreenCover(item: $summary) { presented in
-                // Strava-style: name + describe the workout, Save → celebration → back.
-                if presented.type.isStrengthStyle {
-                    StrengthSaveView(workoutId: presented.id) { dismissSummary() }
-                } else if presented.type.isTimed {
-                    TimedSaveView(workoutId: presented.id) { dismissSummary() }
-                } else {
-                    // `distanceUnit` was never passed, so the whole cardio summary silently fell back
-                    // to `.auto` (locale) and ignored an explicit metric/imperial choice.
-                    CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
-                                   workoutType: presented.type, weekRing: weekRing) { dismissSummary() }
+            // ONE cover carries the whole journey: live recorder → (content crossfade) → save
+            // screen → celebration → dismiss. It used to be two covers — dismiss the live one,
+            // present the summary — which serialized two full-screen animations back to back:
+            // most of the reported ~1s "pause" at the finish line, and a presentation SwiftUI can
+            // drop under load (the same lesson as the onboarding relaunch gate: swap a cover's
+            // content, never dismiss-and-re-present to chain beats).
+            .fullScreenCover(item: $launch, onDismiss: {
+                let saved = summary
+                summary = nil
+                afterCoverResolved(saved)
+            }) { launch in
+                ZStack {
+                    if let presented = summary {
+                        saveScreen(presented).transition(.opacity)
+                    } else {
+                        liveScreen(launch)
+                    }
                 }
+                .animation(.easeOut(duration: 0.28), value: summary != nil)
             }
             // The one-time "Enjoying momentum?" soft-ask — a centered modal over a dimmed backdrop
             // (clear cover background; the card draws its own dim + centering). The positive branch
@@ -59,6 +69,11 @@ struct WorkoutRunner: ViewModifier {
                     onDismiss: { showRatingPrompt = false })
                 .presentationBackground(.clear)
             }
+            // The "Logged" receipt — a brief capsule at the top of the destination screen (Today
+            // or Plan), auto-dismissing; tap to dismiss early.
+            .overlay(alignment: .top) {
+                if let receipt { receiptToast(receipt) }
+            }
             #if DEBUG
             // `--rating-prompt`: raise the soft-ask straight away for sim verification (the real
             // trigger needs a saved workout first).
@@ -69,18 +84,105 @@ struct WorkoutRunner: ViewModifier {
             #endif
     }
 
-    /// Close the summary, and — at the finished-workout moment, the app's positive peak — raise the
-    /// "Enjoying momentum?" soft-ask if the athlete has now saved enough workouts to count as engaged.
-    /// The save views count only KEPT workouts, so a discard never reaches the threshold, and the gate
-    /// latches once, so this fires at most once ever. Delayed so the summary cover is fully gone before
-    /// the sheet presents (stacking a sheet on a dismissing cover misbehaves).
+    /// Strava-style: name + describe the workout, Save → celebration → back. Rendered INSIDE the
+    /// launch cover (content swap), so finishing never chains two full-screen presentations.
+    @ViewBuilder
+    private func saveScreen(_ presented: PresentedWorkout) -> some View {
+        if presented.type.isStrengthStyle {
+            StrengthSaveView(workoutId: presented.id) { dismissSummary() }
+        } else if presented.type.isTimed {
+            TimedSaveView(workoutId: presented.id) { dismissSummary() }
+        } else {
+            // `distanceUnit` was never passed, so the whole cardio summary silently fell back
+            // to `.auto` (locale) and ignored an explicit metric/imperial choice.
+            CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
+                           workoutType: presented.type, weekRing: weekRing) { dismissSummary() }
+        }
+    }
+
+    /// Close the whole cover. `summary` deliberately stays set until `onDismiss` — clearing it here
+    /// would swap the content back to the live recorder for the length of the dismissal animation.
     private func dismissSummary() {
-        summary = nil
+        launch = nil
+    }
+
+    /// The cover fully resolved. Show the "Logged" receipt for a KEPT workout (a discard deleted
+    /// the row, so its fetch quietly finds nothing), then — at the finished-workout moment, the
+    /// app's positive peak — raise the "Enjoying momentum?" soft-ask if the athlete has now saved
+    /// enough workouts to count as engaged. The save views count only KEPT workouts, so a discard
+    /// never reaches the threshold, and the gate latches once, so this fires at most once ever.
+    /// Delayed so the cover is fully gone before the sheet presents.
+    private func afterCoverResolved(_ saved: PresentedWorkout?) {
+        guard let saved else { return }   // live-screen discard: nothing reached the save flow
+        if let line = Self.receiptLine(for: saved.id, container: context.container, unit: distanceUnit) {
+            withAnimation(.easeOut(duration: 0.3)) { receipt = line }
+            receiptDismiss?.cancel()
+            receiptDismiss = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3.2))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeIn(duration: 0.3)) { receipt = nil }
+            }
+        }
         guard AppReview.shouldRequestReview() else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(0.6))
             showRatingPrompt = true
         }
+    }
+
+    /// One honest line about what was just logged. Cardio speaks distance + pace (speed for
+    /// rides), timed sports their minutes, strength just the day's name — never tonnage (user
+    /// call 2026-07-29: no prescribed or headline weights). Read through a FRESH context: the
+    /// title was written on the save screen's private context, and the main context can still
+    /// hold the un-named copy.
+    private static func receiptLine(for id: UUID, container: ModelContainer,
+                                    unit: DistanceUnit) -> String? {
+        let ctx = ModelContext(container)
+        var d = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == id })
+        d.fetchLimit = 1
+        guard let w = (try? ctx.fetch(d))?.first else { return nil }   // discarded → no receipt
+        let name = w.title.isEmpty ? w.type.title : w.title
+        if w.type.isGPS, let gps = w.gps, gps.distanceM > 50 {
+            let dist = Formatters.distance(meters: gps.distanceM, unit: unit)
+            if w.type.isCycling {
+                let speed = w.durationS > 0 ? gps.distanceM / w.durationS : 0
+                return "\(name) logged · \(dist) · \(Formatters.speed(ms: speed, unit: unit))"
+            }
+            let pace = gps.distanceM > 0 ? w.durationS / (gps.distanceM / 1000) : 0
+            return "\(name) logged · \(dist) · \(Formatters.pace(secPerKm: pace, unit: unit))"
+        }
+        if w.type.isStrengthStyle { return "\(name) logged" }
+        let minutes = max(1, Int((w.durationS / 60).rounded()))
+        return "\(name) logged · \(minutes) min"
+    }
+
+    /// The receipt capsule — the app's toast grammar (surface fill, hairline stroke), with the
+    /// checkmark carrying the "it's saved" claim.
+    private func receiptToast(_ line: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+            Text(line)
+                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.85)
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.sm)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .onTapGesture {
+            receiptDismiss?.cancel()
+            withAnimation(.easeIn(duration: 0.2)) { receipt = nil }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line)
+        .accessibilityAddTraits(.isStaticText)
     }
 
     @ViewBuilder
@@ -109,8 +211,7 @@ struct WorkoutRunner: ViewModifier {
     }
 
     private func finish(_ id: UUID?, type: WorkoutType, planned: PlannedSession?) {
-        launch = nil
-        guard let id else { return }
+        guard let id else { launch = nil; return }   // discarded from the live screen — just close
         // Cleared up front: it's only recomputed inside the branch below, so a workout that failed
         // to fetch would otherwise have shown the PREVIOUS session's ring.
         weekRing = nil
@@ -118,10 +219,11 @@ struct WorkoutRunner: ViewModifier {
             weekRing = WorkoutCompletion.credit(workout, launched: planned, plan: plan,
                                                 profile: profiles.first, in: context)
         }
-        // Present FIRST. Everything below faults the whole workout history and rewrites the plan;
-        // running it here used to stall the app at the exact moment the athlete crossed their finish
-        // line. None of it changes what the summary displays, so it waits out the present
-        // transition (the celebration itself plays later, when the athlete saves).
+        // Swap the cover's CONTENT to the save screen — the cover itself stays up, so the athlete
+        // crossfades from the live recorder straight to their summary instead of paying a full
+        // dismiss animation followed by a full present. Everything below faults the whole workout
+        // history and rewrites the plan; running it here used to stall the app at the exact moment
+        // the athlete crossed their finish line, so it waits out the transition.
         summary = PresentedWorkout(id: id, type: type)
         // Captured HERE, while we're still inside a view update. `plan`/`profiles` read through
         // `@Query`, and reaching for a property wrapper from a detached Task a second later is not

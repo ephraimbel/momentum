@@ -41,10 +41,22 @@ enum SocialPrivacy {
         workout.privacy == .public || workout.privacy == .friends
     }
 
-    /// A shared workout's route geometry is shown only when shared AND the athlete opted route maps in
-    /// (and the server still trims/fuzzes start & end).
+    /// A shared workout's route geometry is shown only when shared AND the athlete kept route maps on
+    /// (the default since 2026-08-06; the server still trims/fuzzes start & end).
     static func showsRoute(_ workout: Workout, profile: UserProfile) -> Bool {
         isShared(workout) && profile.publicRouteMaps
+    }
+
+    /// One-shot repair for profiles stored under the pre-2026-08-06 default. `publicRouteMaps`
+    /// shipped `false` with NO surface anywhere to change it, so the stored value encodes nothing
+    /// about the athlete's wishes — it just made every own GPS post render as a sport glyph
+    /// instead of its route. Flip once to the new default (routes on, like every fresh profile);
+    /// any future toggle the settings surface grows will stick, because this runs only once.
+    static func migrateRouteMapsDefault(_ profile: UserProfile) {
+        let key = "com.momentum.social.routeMapsOnByDefault"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        profile.publicRouteMaps = true
     }
 
     /// Whether exact numbers (pace, weights) appear on the athlete's public posts.

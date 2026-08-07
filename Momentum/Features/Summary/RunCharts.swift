@@ -23,14 +23,18 @@ struct RunAnalysisSection: View {
 
     private struct Pt { let t: TimeInterval; let distanceM: Double; let altitudeM: Double; let paceSPerKm: Double }
     private struct HRPt { let t: TimeInterval; let bpm: Int }
-    private struct SplitBar: Identifiable { let id: Int; let unitIndex: Int; let paceSPerUnit: Double; let isBest: Bool }
+    /// One Strava-style split row: "1 · 9:41 · bar". `label` is the unit ordinal for full splits
+    /// ("1", "2") and the fraction for the closing partial ("0.4").
+    private struct SplitRow: Identifiable {
+        let id: Int; let label: String; let paceSPerUnit: Double; let isBest: Bool; let isPartial: Bool
+    }
 
     /// The chart series, derived from the GPS samples ONCE. Reducing accepted fixes to cumulative
     /// distance runs a haversine per sample; the old computed-property form recomputed it 2–3× on
     /// every `body` pass (thinned points, splits, HR), and `body` re-evaluates through the reveal
     /// cascade and when Health HR backfills. For a long run that re-walk of thousands of samples on
     /// the main thread is exactly the post-run stutter this caches away.
-    private struct Derived { var pts: [Pt]; var hr: [HRPt]; var bars: [SplitBar] }
+    private struct Derived { var pts: [Pt]; var hr: [HRPt]; var rows: [SplitRow]; var avgPaceSPerKm: Double? }
     @State private var derived: Derived?
 
     /// Recompute only when an input that shapes the series actually changes.
@@ -61,16 +65,29 @@ struct RunAnalysisSection: View {
         if let firstHR = readings.first {
             hr = readings.map { HRPt(t: $0.date.timeIntervalSince(firstHR.date), bpm: Int($0.bpm.rounded())) }
         }
-        // Splits: only full units (a partial's short sample yields an unreliable pace).
+        // Splits, Strava-style: every full unit, plus the closing partial once it's long enough
+        // for its pace to mean something (a 60 m tail normalised to a per-mile pace is noise).
         let splits = CardioMetrics.splits(pts.map { .init(t: $0.t, cumulativeM: $0.distanceM) }, unitMeters: unitMeters)
         let full = splits.filter { !$0.isPartial }
         let bestPace = full.map { $0.durationS / ($0.distanceM / unitMeters) }.min()
-        let bars = full.map { s -> SplitBar in
+        var rows = full.map { s -> SplitRow in
             let pace = s.durationS / max(1, s.distanceM / unitMeters)
             let isBest = bestPace.map { abs(pace - $0) < 0.5 } == true
-            return SplitBar(id: s.index, unitIndex: s.index + 1, paceSPerUnit: pace, isBest: isBest)
+            return SplitRow(id: s.index, label: "\(s.index + 1)", paceSPerUnit: pace, isBest: isBest, isPartial: false)
         }
-        return Derived(pts: Self.thinned(pts), hr: Self.thinned(hr), bars: bars)
+        if let partial = splits.last, partial.isPartial, partial.distanceM >= unitMeters * 0.15 {
+            let fraction = partial.distanceM / unitMeters
+            rows.append(SplitRow(id: partial.index, label: String(format: "%.1f", fraction),
+                                 paceSPerUnit: partial.durationS / (partial.distanceM / unitMeters),
+                                 isBest: false, isPartial: true))
+        }
+        // The run's average pace over MOVING time, from the same replay the charts plot — so the
+        // headline number and the line it sits over can never disagree.
+        var avg: Double?
+        if let last = pts.last, last.distanceM > 50, last.t > 0 {
+            avg = last.t / (last.distanceM / 1000)
+        }
+        return Derived(pts: Self.thinned(pts), hr: Self.thinned(hr), rows: rows, avgPaceSPerKm: avg)
     }
 
     // MARK: Body
@@ -91,8 +108,8 @@ struct RunAnalysisSection: View {
                 if pts.count >= 4 || d.hr.count >= 4 {
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
                         if pts.count >= 4 {
-                            if hasPace, !type.isCycling { paceCard(pts) }
-                            if d.bars.count >= 2, !type.isCycling { splitsCard(d.bars) }
+                            if hasPace, !type.isCycling { paceCard(pts, avgSPerKm: d.avgPaceSPerKm) }
+                            if d.rows.contains(where: { !$0.isPartial }), !type.isCycling { splitsCard(d.rows) }
                         }
                         if d.hr.count >= 4 { hrCard(d.hr) }
                         if pts.count >= 4, elevRange > 4 { elevationCard(pts, minAlt: altitudes.min() ?? 0) }
@@ -142,9 +159,12 @@ struct RunAnalysisSection: View {
 
     // MARK: Pace over distance
 
-    private func paceCard(_ pts: [Pt]) -> some View {
+    private func paceCard(_ pts: [Pt], avgSPerKm: Double?) -> some View {
         let paced = pts.filter { $0.paceSPerKm > 0 }
-        return chartCard("Pace", subtitle: "Per \(unitLabel) over distance") {
+        // The average leads the card as a real number (the HR card already does this with "avg
+        // bpm") — the line shows the shape of the effort, the number is what the athlete quotes.
+        let subtitle = avgSPerKm.map { "avg \(pace(perUnit($0))) /\(unitLabel)" } ?? "Per \(unitLabel) over distance"
+        return chartCard("Pace", subtitle: subtitle) {
             Chart(Array(paced.enumerated()), id: \.offset) { _, p in
                 LineMark(x: .value("Distance", p.distanceM / unitMeters),
                          y: .value("Pace", perUnit(p.paceSPerKm)))
@@ -176,63 +196,55 @@ struct RunAnalysisSection: View {
 
     // MARK: Splits
 
-    private func splitsCard(_ bars: [SplitBar]) -> some View {
-        let maxPace = bars.map(\.paceSPerUnit).max() ?? 1
-        let minPace = bars.map(\.paceSPerUnit).min() ?? 0
-        // Plot "how much faster than your slowest split" + a base, so a FASTER split is a TALLER bar —
-        // matching the pace line's up-is-faster reading right above it. The m:ss annotation carries the
-        // exact value, so the inverted magnitude is never read directly.
-        let base = (maxPace - minPace) * 0.4 + 4
-        // Per-bar time labels only fit for shorter runs; past ~8 splits they collide into an
-        // unreadable stack, so we label just the fastest split (its exact time — and every
-        // other split's — lives in the SPLITS list right below). Long runs still read as the
-        // shape of the effort, with your best in colour.
-        let labelEvery = bars.count <= 8
-        let subtitle = labelEvery ? "Per \(unitLabel) · taller is faster"
-                                  : "Per \(unitLabel) · taller is faster · best in colour"
-        return chartCard("Splits", subtitle: subtitle) {
-            Chart(bars) { bar in
-                BarMark(x: .value("Split", "\(bar.unitIndex)"),
-                        y: .value("Speed", (maxPace - bar.paceSPerUnit) + base),
-                        width: .ratio(0.62))
-                    .foregroundStyle(bar.isBest ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.85)))
-                    .cornerRadius(4)
-                    .annotation(position: .top, alignment: .center) {
-                        if labelEvery || bar.isBest {
-                            Text(pace(bar.paceSPerUnit)).font(.rounded(9, weight: .bold)).monospacedDigit()
-                                .foregroundStyle(bar.isBest ? Theme.ink : Theme.inkSecondary)
-                                .fixedSize()
+    private func splitsCard(_ rows: [SplitRow]) -> some View {
+        // Strava's reading: one row per unit — ordinal, exact pace, and a bar whose LENGTH is
+        // speed (fastest split = full width), so the eye gets the shape and the number in the
+        // same glance. The closing partial rides along in tertiary with its fraction as the
+        // label. Replaces the old vertical bar chart, whose inverted "taller is faster" scale
+        // needed a caption to explain itself and only labeled every bar on short runs.
+        let fastest = rows.map(\.paceSPerUnit).min() ?? 1
+        return chartCard("Splits", subtitle: "Per \(unitLabel) · best in colour") {
+            VStack(spacing: 7) {
+                ForEach(rows) { row in
+                    HStack(spacing: Theme.Space.sm) {
+                        Text(row.label)
+                            .font(.rounded(11, weight: row.isPartial ? .semibold : .bold)).monospacedDigit()
+                            .foregroundStyle(row.isPartial ? Theme.inkTertiary : Theme.inkSecondary)
+                            .frame(width: 26, alignment: .trailing)
+                        Text(pace(row.paceSPerUnit))
+                            .font(.rounded(12, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(row.isPartial ? Theme.inkSecondary : Theme.ink)
+                            .frame(width: 44, alignment: .trailing)
+                        GeometryReader { geo in
+                            Capsule()
+                                .fill(row.isBest ? AnyShapeStyle(IridescentMaterial())
+                                                 : AnyShapeStyle(Theme.ink.opacity(row.isPartial ? 0.22 : 0.55)))
+                                .frame(width: max(10, geo.size.width * (fastest / max(row.paceSPerUnit, 1))))
                         }
+                        .frame(height: 10)
                     }
-            }
-            .chartYAxis(.hidden)
-            // Thin the axis labels so 20+ split numbers never crowd — every split for a short
-            // run, roughly every 5th once the run is long.
-            .chartXAxis {
-                AxisMarks { value in
-                    if labelEvery {
-                        AxisValueLabel()
-                    } else if let s = value.as(String.self), let n = Int(s),
-                              n == 1 || n % 5 == 0 || n == bars.count {
-                        AxisValueLabel()
-                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(row.isPartial ? "Final \(row.label)" : "\(unitLabel == "mi" ? "Mile" : "Kilometre") \(row.label)"), \(pace(row.paceSPerUnit)) per \(unitLabel)\(row.isBest ? ", fastest" : "")")
                 }
             }
-            .frame(height: 150)
+            .padding(.top, 2)
         }
     }
 
     // MARK: Elevation
 
     private func elevationCard(_ pts: [Pt], minAlt: Double) -> some View {
-        chartCard("Elevation", subtitle: "\(Int(gps.elevationGainM)) m gain") {
+        // Axis in the athlete's unit (feet for imperial) — raw metres on an unlabeled axis read
+        // as whatever the athlete assumes, which for the US market was wrong.
+        let yScale = distanceUnit.resolved() == .imperial ? Formatters.feetPerMeter : 1
+        return chartCard("Elevation", subtitle: "\(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit)) gain") {
             Chart(Array(pts.enumerated()), id: \.offset) { _, p in
                 AreaMark(x: .value("Distance", p.distanceM / unitMeters),
-                         y: .value("Elevation", p.altitudeM - minAlt))
+                         y: .value("Elevation", (p.altitudeM - minAlt) * yScale))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(Theme.inkTertiary.opacity(0.18))
                 LineMark(x: .value("Distance", p.distanceM / unitMeters),
-                         y: .value("Elevation", p.altitudeM - minAlt))
+                         y: .value("Elevation", (p.altitudeM - minAlt) * yScale))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(Theme.inkSecondary)
                     .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))

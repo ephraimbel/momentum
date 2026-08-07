@@ -43,10 +43,11 @@ struct FeedAssemblerTests {
         }
         g.distanceM = 1000; w.gps = g
 
-        let noRoute = UserProfile()                              // publicRouteMaps off
+        // Routes are the DEFAULT on shared posts since 2026-08-06; opting out still strips them.
+        let noRoute = UserProfile(); noRoute.publicRouteMaps = false
         #expect(FeedAssembler.item(from: w, profile: noRoute).routeLatLon == nil)
 
-        let withRoute = UserProfile(); withRoute.publicRouteMaps = true
+        let withRoute = UserProfile()                            // default: routes on
         let item = FeedAssembler.item(from: w, profile: withRoute)
         #expect(item.routeLatLon != nil && item.routeLatLon!.count == 5)
     }

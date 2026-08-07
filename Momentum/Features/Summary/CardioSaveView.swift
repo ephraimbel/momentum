@@ -152,7 +152,10 @@ struct CardioSaveView: View {
                 effort = workout.perceivedEffort
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
-                hasRoute = (workout.gps?.routeCoordinates(type: workout.type).count ?? 0) > 1
+                // Accepted-fix count, NOT `routeCoordinates` — that ran a full Kalman replay on
+                // the main thread just to decide whether the map-style row shows, right as the
+                // summary was presenting (the row's only consumer is a Bool).
+                hasRoute = (workout.gps?.samples.filter(\.accepted).count ?? 0) > 1
                 // The share moment starts from the athlete's chosen default (never silently
                 // public); a workout that already carries a choice (recovery re-save) keeps it.
                 if CommunityAccess.enabled {
@@ -344,54 +347,73 @@ struct CardioSaveView: View {
             try? context.save()
         }
 
-        // The saved snapshot must match the chosen basemap (grid tile + History thumb). Re-render
-        // off the save path when the style changed (or the finish-time render failed); the tile
-        // shows the previous image until the new one lands, and the healer covers a failure.
-        if mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil {
-            let style = mapStyle
-            let readerContext = reader.context
-            Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
-        }
-        // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
-        // only). Plan mutations go through the main context; only scalars are read off `workout`.
-        if let note = PlanCoaching.adaptToEffort(workout, plan: profiles.first?.plan, in: context) {
-            services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
-            services.notifications.schedulePlannedReminders(profiles.first?.plan)
-        }
-        // Persist any records this run set (detected against the fresh context, so the samples
-        // are complete) — the PR shelf is what the "PRs" stat counts.
-        let recordsContext = reader.context
-        var records: [(type: PRType, value: Double, exercise: Exercise?)] =
-            CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: recordsContext)
-                .compactMap { hit in hit.prType.map { (type: $0, value: hit.value, exercise: Exercise?.none) } }
-        // A first-of-discipline workout earns no "you got better" headline (detect guards on an
-        // empty prior), yet its own bests must still SEED the record book — mirror how StrengthPRs
-        // records the first lift off a 0 baseline. persist dedupes per (type, workout), so a run
-        // that also headlined can never double-log.
-        if CardioAchievements.isFirstOfType(workout, in: recordsContext) {
-            records += RecordsBook.cardioCandidates(workout)
-                .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
-        }
-        PersonalRecord.persist(records, workout: workout, in: recordsContext)
-        // Awards read the whole ledger (distance totals, streak, records) — deferred so the
-        // walk never delays this dismissal, and the unlock presents on the destination screen.
-        AwardsBook.syncSoon()
-        // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
-        // (a never-locked GPS run finished by accident has nothing worth exporting).
-        if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
-            let saved = workout
-            Task { await services.health.save(saved) }
-        }
+        // The celebration starts NOW — before any of the post-save bookkeeping below. It used to
+        // come last, after a synchronous record scan that Kalman-replays every prior run's
+        // samples, so the Done tap froze and the check-and-glow beat started late and dropped
+        // frames (2026-08-06 user report: "didn't show the full animation"). The beat needs an
+        // idle main thread more than the bookkeeping needs to be first; nothing below is visible.
+        celebrating = true
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
         // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a
         // completed workout. `workout_completed` is also what advances the north-star funnel — it
         // was declared in the taxonomy but never logged anywhere, so the funnel could never report
         // `.achieved` (fixed 2026-07-25).
         services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
-        for record in records { services.analytics.log(.prHit(type: record.type.rawValue)) }
-        // The celebration is the exit: it draws over this screen (its own haptic fires — no extra
-        // success buzz here) and calls `onDone` when the beat completes or is tapped through.
-        celebrating = true
+
+        // The heavy tail waits out the beat, then runs its detection OFF the main actor. The task
+        // holds the reader, so the screen dismissing underneath never cancels or orphans it.
+        let styleChanged = mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil
+        let style = mapStyle
+        let readerContext = reader.context
+        let container = context.container
+        let workoutId = workout.id
+        let unit = distanceUnit
+        let plan = profiles.first?.plan
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.4))
+            // The saved snapshot must match the chosen basemap (grid tile + History thumb) —
+            // re-rendered after the beat so the Mapbox snapshotter can't steal its frames; the
+            // tile shows the previous image until the new one lands, and the healer covers a
+            // failure.
+            if styleChanged {
+                Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
+            }
+            // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
+            // only). Plan mutations go through the main context; only scalars are read off `workout`.
+            if let note = PlanCoaching.adaptToEffort(workout, plan: plan, in: context) {
+                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
+                services.notifications.schedulePlannedReminders(plan)
+            }
+            // Records, detected on a background context (the scan replays the whole history);
+            // only the typed values hop back, and the shelf write stays on the reader's context.
+            let detected: [(type: PRType, value: Double)] = await Task.detached(priority: .utility) {
+                let ctx = ModelContext(container)
+                var d = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == workoutId })
+                d.fetchLimit = 1
+                guard let w = (try? ctx.fetch(d))?.first else { return [] }
+                var records = CardioAchievements.detect(for: w, distanceUnit: unit, in: ctx)
+                    .compactMap { hit in hit.prType.map { (type: $0, value: hit.value) } }
+                // A first-of-discipline workout earns no "you got better" headline (detect guards
+                // on an empty prior), yet its own bests must still SEED the record book — mirror
+                // how StrengthPRs records the first lift off a 0 baseline. persist dedupes per
+                // (type, workout), so a run that also headlined can never double-log.
+                if CardioAchievements.isFirstOfType(w, in: ctx) {
+                    records += RecordsBook.cardioCandidates(w).map { (type: $0.type, value: $0.value) }
+                }
+                return records
+            }.value
+            PersonalRecord.persist(detected.map { (type: $0.type, value: $0.value, exercise: Exercise?.none) },
+                                   workout: workout, in: readerContext)
+            for record in detected { services.analytics.log(.prHit(type: record.type.rawValue)) }
+            // Awards read the whole ledger (distance totals, streak, records) — after the records
+            // land, so a record set just now counts toward an unlock.
+            AwardsBook.syncSoon()
+            // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
+            // (a never-locked GPS run finished by accident has nothing worth exporting).
+            if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
+                await services.health.save(workout)
+            }
+        }
     }
 
     /// Throw the recording away (an explicit user action — distinct from the never-destroy-on-edit

@@ -41,9 +41,13 @@ struct CardioSummaryContent: View {
     /// nonsense on a run from six months ago.
     @State private var planLine: PlanConnection?
     private struct PlanConnection { let text: String; let credited: Bool }
-    // The splits' cumulative-distance walk (a haversine per accepted sample) cached once — the
-    // splits section re-ran it on every body pass through the reveal cascade.
-    @State private var samplePts: [CardioMetrics.SamplePoint] = []
+    // The route, replayed ONCE off the samples and cached — `routeCoordinates` runs the full
+    // Kalman pass, and calling it inside `routeMap` re-ran it on every body invalidation through
+    // the reveal cascade (the same trap the old splits section fixed for its own walk). The
+    // smoothed variant is what the map actually draws, so both are held.
+    @State private var routeCoords: [CLLocationCoordinate2D] = []
+    @State private var smoothedCoords: [CLLocationCoordinate2D] = []
+    @State private var routeResolved = false
     /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
     /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
     @State private var healthHR: [(date: Date, bpm: Double)] = []
@@ -89,27 +93,54 @@ struct CardioSummaryContent: View {
                                    healthHRSeries: healthHR).reveal(revealDelay + 0.38)
                 WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(revealDelay + 0.385)
                 TimeInZonesCard(workout: workout).reveal(revealDelay + 0.39)
-                splitsSection(gps).reveal(revealDelay + 0.40)
+                // The text splits list is gone (2026-08-06): RunAnalysisSection's splits card is now
+                // the Strava-style row list — ordinal + exact pace + speed bar — so a second textual
+                // rendering of the same numbers directly below it was noise.
             }
             .task {
-                samplePts = samplePoints(gps)
-                hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
-                // Only when no badge fired — a record run is already spoken for, and two readings of
-                // the same run stacked on each other is noise, not generosity. The extra fetch is
-                // skipped entirely in history, where the line isn't shown.
-                if hits.isEmpty { verdict = computeVerdict(gps) }
                 if showsVerdict { planLine = computePlanConnection(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
                 if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
                     weekWorkouts = (try? context.fetch(desc)) ?? []
                 }
+                // The record scan + verdict, OFF the main actor (2026-08-06): `detect` replays
+                // every prior run's samples through the Kalman filter, and running it here on the
+                // main context froze the summary right after first paint — the page appeared, then
+                // wouldn't scroll. A detached task with its own background context does the same
+                // work invisibly; only the value results hop back.
+                let container = context.container
+                let workoutId = workout.id
+                let unit = distanceUnit
+                let analysis: (hits: [CardioAchievements.Hit], verdict: RunVerdict.Verdict?) =
+                    await Task.detached(priority: .userInitiated) {
+                        let ctx = ModelContext(container)
+                        var d = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == workoutId })
+                        d.fetchLimit = 1
+                        guard let w = (try? ctx.fetch(d))?.first, let g = w.gps else { return ([], nil) }
+                        let hits = CardioAchievements.detect(for: w, distanceUnit: unit, in: ctx)
+                        // Verdict only when no badge fired — a record run is already spoken for, and
+                        // two readings of the same run stacked on each other is noise.
+                        let verdict = hits.isEmpty ? Self.verdict(for: w, gps: g, unit: unit, in: ctx) : nil
+                        return (hits, verdict)
+                    }.value
+                hits = analysis.hits
+                verdict = analysis.verdict
                 // Backfill the HR series from Health when we didn't record one live (Watch / imported
                 // runs). Same window + threshold as the time-in-zones card, so the two agree.
                 if (gps.hrSamples.filter { $0.bpm > 0 }).count < 4 {
                     let end = workout.startedAt.addingTimeInterval(max(workout.elapsedS, workout.durationS))
                     healthHR = await services.health.heartRateSeries(start: workout.startedAt, end: end)
                 }
+            }
+            // The route replay (Kalman over every sample) resolves ONCE here, not in `routeMap`'s
+            // body — re-keyed when the map-matched route lands post-finish so the snapped line
+            // still supersedes the raw one.
+            .task(id: gps.matchedRouteData != nil) {
+                let coords = gps.routeCoordinates(type: workout.type)
+                routeCoords = coords
+                smoothedCoords = coords.count > 1 ? RouteSmoothing.smooth(coords) : []
+                routeResolved = true
             }
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
@@ -174,7 +205,11 @@ struct CardioSummaryContent: View {
     /// The cost is nil in practice: `CardioAchievements.detect` already fetches the entire table
     /// unbounded in this same `.task`, a beat earlier. Type filtering stays in memory — a
     /// `#Predicate` on the enum isn't worth the risk of silently matching nothing.
-    private func computeVerdict(_ gps: GPSDetail) -> RunVerdict.Verdict? {
+    ///
+    /// Static + nonisolated: runs inside the same detached analysis task as `detect`, against the
+    /// same background context, so the whole history walk stays off the main actor.
+    nonisolated private static func verdict(for workout: Workout, gps: GPSDetail,
+                                            unit: DistanceUnit, in context: ModelContext) -> RunVerdict.Verdict? {
         let start = workout.startedAt
         var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt < start })
         descriptor.sortBy = [SortDescriptor(\.startedAt, order: .reverse)]
@@ -192,8 +227,8 @@ struct CardioSummaryContent: View {
         // matches costs a comparison per prior run and nothing else.
         let route = RouteMatch.context(for: workout, gps: gps, priors: earlier)
         let this = RunVerdict.Run(date: start, distanceM: gps.distanceM,
-                                  durationS: workout.durationS, avgHR: avgHR(gps))
-        return RunVerdict.verdict(for: this, priors: priors, route: route, unit: distanceUnit)
+                                  durationS: workout.durationS, avgHR: gps.avgHR)
+        return RunVerdict.verdict(for: this, priors: priors, route: route, unit: unit)
     }
 
     private var achievementsSection: some View {
@@ -267,10 +302,9 @@ struct CardioSummaryContent: View {
 
     @ViewBuilder
     private func routeMap(_ gps: GPSDetail) -> some View {
-        let coords = gps.routeCoordinates(type: workout.type)
         let style = mapStyleOverride ?? gps.mapStyle
-        if coords.count > 1 {
-            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style)
+        if smoothedCoords.count > 1 {
+            RouteMapView(coordinates: smoothedCoords, style: style)
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
                 // When the map-matched route lands post-finish (nil→present), the coordinates change
@@ -279,6 +313,12 @@ struct CardioSummaryContent: View {
                 // identity on match-presence (and the previewed style) forces one clean remount,
                 // re-running style-load with the snapped route.
                 .id("\(gps.matchedRouteData != nil)-\(style.rawValue)")
+        } else if !routeResolved, workout.type.isGPS {
+            // The replay hasn't landed yet (first frames only) — hold the map's footprint quietly.
+            // Falling through to "No route recorded" here flashed that claim over every real route
+            // for the beat before the cached coordinates resolved.
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                .frame(height: 220)
         } else if workout.type.isGPS {
             // A GPS-discipline run with no usable route (treadmill, or GPS never locked) — a quiet
             // card instead of a silent gap where the map belongs.
@@ -320,7 +360,7 @@ struct CardioSummaryContent: View {
                 stat(Formatters.duration(s: workout.durationS), "Time")
                 stat(paceOrSpeed(workout, gps), workout.type.isCycling ? "Avg speed" : "Avg pace")
                 if let hr = avgHR(gps), hr > 0 { stat("\(hr)", "Avg HR") }
-                stat("\(Int(gps.elevationGainM)) m", "Elevation")
+                stat(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit), "Elevation")
                 if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
             .reveal(revealDelay + 0.22)
@@ -335,27 +375,6 @@ struct CardioSummaryContent: View {
         }
         let pace = gps.distanceM > 0 ? workout.durationS / (gps.distanceM / 1000) : 0
         return Formatters.pace(secPerKm: pace, unit: distanceUnit)
-    }
-
-    private func splitsSection(_ gps: GPSDetail) -> some View {
-        let splits = CardioMetrics.splits(samplePts, unitMeters: unitMeters)
-        let unitLabel = distanceUnit.resolved() == .imperial ? "mi" : "km"
-        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            if !splits.isEmpty {
-                Text("SPLITS").font(.rounded(Theme.FontSize.label, weight: .bold))
-                    .tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                ForEach(splits, id: \.index) { split in
-                    HStack {
-                        Text("\(split.index + 1) \(unitLabel)\(split.isPartial ? " (partial)" : "")")
-                            .foregroundStyle(Theme.inkSecondary)
-                        Spacer()
-                        Text(Formatters.duration(s: split.durationS)).monospacedDigit().foregroundStyle(Theme.ink)
-                    }
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Per-rep adherence breakdown for a guided structured run — how each rep landed vs its target
@@ -480,9 +499,6 @@ struct CardioSummaryContent: View {
         return Int((healthHR.map(\.bpm).reduce(0, +) / Double(healthHR.count)).rounded())
     }
 
-    private func samplePoints(_ gps: GPSDetail) -> [CardioMetrics.SamplePoint] {
-        gps.samplePoints(type: workout.type)
-    }
 }
 
 // MARK: - Rep grouping (pure — unit-tested)

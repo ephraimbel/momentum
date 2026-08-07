@@ -47,6 +47,8 @@ struct RootView: View {
     /// fifth presentation modifier to this chain (see the ceiling note above).
     @State private var gateAccountBeat = false
     #if DEBUG
+    /// One-shot latch for the launch-arg deep links in `onAppear` — see the guard there.
+    @MainActor private static var didFireDebugArgs = false
     // Open the most recent run's detail (for verifying the guided-run Reps breakdown).
     @Query(sort: \Workout.startedAt, order: .reverse) private var recentWorkouts: [Workout]
     @State private var showRunDetail = ProcessInfo.processInfo.arguments.contains("--ui-test-run-detail")
@@ -381,19 +383,11 @@ struct RootView: View {
                     recoveredWorkout = pending
                     showRecoveryPrompt = true
                 }
-                #if DEBUG
-                // --save-screen: present the save editor on the newest seeded GPS workout — the
-                // only sim-reachable door to the share-visibility row (a real one needs a live run).
-                if ProcessInfo.processInfo.arguments.contains("--save-screen") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        var newest = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
-                        newest.fetchLimit = 20
-                        if let w = (try? context.fetch(newest))?.first(where: { $0.type.isGPS }) {
-                            recoverySave = PresentedWorkout(id: w.id, type: w.type)
-                        }
-                    }
-                }
-                #endif
+                // (The `--save-screen` deep link lives ONLY in the arg block below, presenting
+                // through `showSaveScreen`'s dedicated cover. A second copy here queued the SAME
+                // editor through `recoverySave` — it couldn't present while the dedicated cover
+                // was up, so it fired the moment Done dismissed it, re-opening the save screen
+                // right after the celebration. Removed 2026-08-07.)
                 // Heal recent workouts whose route snapshot failed to render at finish — History
                 // thumbnails recover on launch instead of showing bare silhouettes forever.
                 Task { await WorkoutSnapshotHealer.sweep(in: context) }
@@ -401,6 +395,10 @@ struct RootView: View {
                 // avatar, Pro checkmark) — the community-era hook restored with the launch wiring
                 // (2026-07-29). No-op for guests and dark builds (`isAvailable` gate inside).
                 if CommunityAccess.enabled, let profile = profiles.first {
+                    // One-shot: pre-2026-08-06 profiles stored routes-off under a default no UI
+                    // could change — their shared runs rendered glyphs on the wall forever.
+                    SocialPrivacy.migrateRouteMapsDefault(profile)
+                    try? context.save()
                     Task { await services.social.claimProfile(profile, in: context) }
                 }
                 // Mint the record book on LAUNCH, not on a tab visit. This is one-shot (versioned
@@ -415,6 +413,13 @@ struct RootView: View {
                 }
             }
             #if DEBUG
+            // ONE-SHOT per process: `onAppear` re-fires every time a cover dismisses (see the
+            // recovery note above), so an unguarded deep-link arg here re-triggered itself forever
+            // — `--save-screen` re-presented the save editor 0.8s after the celebration closed it
+            // (caught 2026-08-07: CardioSaveMapStyleUITests could only pass by racing the re-present),
+            // and `--timed-save-ebike` minted a duplicate workout per dismissal.
+            guard !Self.didFireDebugArgs else { return }
+            Self.didFireDebugArgs = true
             if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
             if ProcessInfo.processInfo.arguments.contains("--paywall") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { paywall.present(for: .aiCoach) }

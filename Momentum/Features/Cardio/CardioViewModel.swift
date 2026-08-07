@@ -427,12 +427,17 @@ final class CardioViewModel {
             tracker = t
         }
         await engine.finish(durationOverrideS: elapsed(), elapsedOverrideS: totalElapsed())
-        // Persist the run's average cadence + heart rate when the sensors produced readings.
-        if let avgCadence = RunSignals.mean(cadenceReadings) { await store.attachCadence(avgCadence) }
-        if let avgHR = RunSignals.mean(hrReadings) { await store.attachHR(avgHR) }
-        // Persist the per-rep breakdown from a guided run for the summary + history.
-        if let reps = tracker?.completedReps, !reps.isEmpty, let data = try? JSONEncoder().encode(reps) {
-            await store.attachStructuredReps(data)
+        // Persist the finish-time extras — average cadence/HR and a guided run's per-rep
+        // breakdown — in ONE store hop with one save. Three separate awaited round-trips here
+        // were three serialized SQLite transactions sitting between the finish tap and the save
+        // screen (2026-08-06 finish-lag pass).
+        let repsData = (tracker?.completedReps).flatMap { reps -> Data? in
+            reps.isEmpty ? nil : try? JSONEncoder().encode(reps)
+        }
+        let cadence = RunSignals.mean(cadenceReadings)
+        let hr = RunSignals.mean(hrReadings)
+        if cadence != nil || hr != nil || repsData != nil {
+            await store.attachFinishExtras(cadence: cadence, hr: hr, structuredReps: repsData)
         }
         // Render the Strava-style route snapshot from the Kalman-filtered coordinates (PRD §8.5),
         // with the athlete's chosen map style (the map they actually ran on), not a hardcoded

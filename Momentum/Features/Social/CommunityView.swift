@@ -118,10 +118,14 @@ struct CommunityView: View {
     @MainActor private static var sessionFeed: [FeedItem] = []
 
     /// Cheap change signature over every feed input; a change re-runs the assembly task.
+    /// `publicRouteMaps` is a term because own-post route visibility is decided AT assembly
+    /// (`FeedAssembler` bakes `routeCoordinates` into the item): a feed assembled before the
+    /// profile materialized — or before the routes-on migration ran — cached glyph posts that no
+    /// count change would ever refresh.
     private var feedKey: String {
         "\(scopeRaw)|\(workouts.count)|\(pulsed.count)|\(remoteFeed.items.count)|" +
         "\(follows.following.count)|\(moderation.blockedHandles.count)|\(moderation.reportedPosts.count)|" +
-        "\(profile?.handle ?? "")|\(wellCap)"
+        "\(profile?.handle ?? "")|\(wellCap)|\(profile?.publicRouteMaps == true)"
     }
 
     /// Assembled once per relevant change (the community seed is ~950 athletes' posts — never filter

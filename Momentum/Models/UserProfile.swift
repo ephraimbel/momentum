@@ -75,7 +75,12 @@ final class UserProfile {
     /// Default visibility applied to newly-finished workouts.
     var defaultWorkoutVisibility: String = WorkoutPrivacy.private.rawValue
     var appearOnMap: Bool = false                            // ephemeral fuzzed presence on the globe
-    var publicRouteMaps: Bool = false                        // include (trimmed/fuzzed) routes on public posts
+    /// Include (trimmed/fuzzed) routes on public posts. Defaults ON since 2026-08-06 (Strava's
+    /// default; the server still trims start/end): it shipped defaulting false with NO surface
+    /// anywhere to turn it on, so every own GPS post rendered the sport glyph instead of its
+    /// route, forever. `SocialPrivacy.migrateRouteMapsDefault` flips profiles stored under the
+    /// old default once.
+    var publicRouteMaps: Bool = true
     var showExactNumbers: Bool = true                        // pace/weights on public posts
     var discoverable: Bool = false                           // appear in search / suggestions
 

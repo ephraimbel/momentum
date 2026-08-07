@@ -135,6 +135,18 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
+    /// The finish-time extras in ONE hop and ONE save. `finish()` used to make three separate
+    /// awaited round-trips (cadence → HR → structured reps), each its own SQLite transaction,
+    /// all serialized in front of the save screen's presentation (2026-08-06 finish-lag pass).
+    /// nil/invalid fields are simply not stored — same per-field contract as the singles above.
+    func attachFinishExtras(cadence: Int?, hr: Int?, structuredReps: Data?) {
+        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
+        if let cadence, cadence > 0 { detail.avgCadence = cadence }
+        if let hr, hr > 0 { detail.avgHR = hr }
+        if let structuredReps { detail.structuredRepsData = structuredReps }
+        try? modelContext.save()
+    }
+
     func attachStructuredReps(_ data: Data) {
         guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
         detail.structuredRepsData = data
