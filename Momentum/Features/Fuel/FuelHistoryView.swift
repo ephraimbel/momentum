@@ -18,7 +18,10 @@ struct FuelHistoryView: View {
     private static let windowDays = 365
 
     var body: some View {
-        ScrollView {
+        // One grouping pass per render — as a computed var this ran 3× per search keystroke
+        // (isEmpty + ForEach + the animation value), each walking the whole year of meals.
+        let months = self.months
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                 if months.isEmpty {
                     emptyState

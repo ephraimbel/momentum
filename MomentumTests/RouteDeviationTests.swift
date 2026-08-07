@@ -13,20 +13,26 @@ struct RouteDeviationTests {
     /// A 100m segment running due east from `base`.
     private var eastLeg: [GeoPoint] { [base, offset(base, north: 0, east: 100)] }
 
+    /// The tests exercise `nearest` (the live route-guidance math) directly — the old
+    /// `distanceToPolyline` convenience wrapper was deleted on the 2026-08-06 dead-code pass.
+    private func distance(_ p: GeoPoint, _ poly: [GeoPoint]) -> Double {
+        RouteDeviation.nearest(on: poly, to: p)?.distanceM ?? .infinity
+    }
+
     @Test func pointOnTheLineIsZero() {
         let onLine = offset(base, north: 0, east: 50)
-        #expect(RouteDeviation.distanceToPolyline(onLine, eastLeg) < 1)
+        #expect(distance(onLine, eastLeg) < 1)
     }
 
     @Test func perpendicularOffsetMeasuresTheGap() {
         let off = offset(base, north: 50, east: 50)               // 50m north of the mid-segment
-        let d = RouteDeviation.distanceToPolyline(off, eastLeg)
+        let d = distance(off, eastLeg)
         #expect(abs(d - 50) < 1.5, "expected ~50m, got \(d)")
     }
 
     @Test func beyondTheEndpointClampsToIt() {
         let past = offset(base, north: 0, east: 200)              // 100m past the segment's end
-        let d = RouteDeviation.distanceToPolyline(past, eastLeg)
+        let d = distance(past, eastLeg)
         #expect(abs(d - 100) < 1.5, "expected ~100m to the endpoint, got \(d)")
     }
 
@@ -35,13 +41,13 @@ struct RouteDeviationTests {
         let elbow = offset(base, north: 0, east: 100)
         let poly = [base, elbow, offset(elbow, north: 100, east: 0)]
         let p = offset(elbow, north: 50, east: 20)               // 20m east of the north leg
-        #expect(abs(RouteDeviation.distanceToPolyline(p, poly) - 20) < 1.5)
+        #expect(abs(distance(p, poly) - 20) < 1.5)
     }
 
     @Test func emptyAndSinglePointDegenerate() {
-        #expect(RouteDeviation.distanceToPolyline(base, []) == .infinity)
+        #expect(distance(base, []) == .infinity)
         let single = offset(base, north: 30, east: 0)
-        #expect(abs(RouteDeviation.distanceToPolyline(single, [base]) - 30) < 1)
+        #expect(abs(distance(single, [base]) - 30) < 1)
         #expect(RouteDeviation.nearest(on: [], to: base) == nil)
     }
 

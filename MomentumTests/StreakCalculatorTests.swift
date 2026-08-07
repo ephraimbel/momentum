@@ -39,11 +39,6 @@ struct StreakCalculatorTests {
         #expect(StreakCalculator.longestStreak(countingDays: [1, 2, 5, 6]) == 2)
     }
 
-    @Test func weeksActiveThreshold() {
-        // week 0 = days 0..6 (three days), week 1 = days 7..13 (two days)
-        #expect(StreakCalculator.weeksActive(countingDays: [0, 1, 2, 7, 8], daysPerWeek: 3) == 1)
-    }
-
     // MARK: Planned rest days (the other half of "a day counts")
 
     @Test func plannedRestDaysAreTheGapsInThePlan() {

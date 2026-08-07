@@ -25,16 +25,6 @@ struct SyncEngineTests {
         return w
     }
 
-    @Test func onlyNeverSyncedRowsArePending() throws {
-        let container = try makeContainer()
-        let ctx = container.mainContext
-        _ = gpsRun(ctx, privacy: .public, synced: false)   // dirty
-        _ = gpsRun(ctx, privacy: .public, synced: true)     // already synced
-        try ctx.save()
-        let pending = SyncEngine.pendingUploads(try ctx.fetch(FetchDescriptor<Workout>()))
-        #expect(pending.count == 1)
-    }
-
     @Test func publicRouteUploadsButPrivateStaysOnDevice() throws {
         let container = try makeContainer()
         let ctx = container.mainContext

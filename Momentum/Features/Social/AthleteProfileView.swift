@@ -292,6 +292,37 @@ struct AthleteProfileView: View {
 
     // MARK: Highlights — the athlete's body of work (sample-gated, same face as own profile)
 
+    /// The seeded derived bundle, computed ONCE per athlete per day (pure value types, so caching
+    /// is safe). Every Highlights section read these generator-backed computed properties per
+    /// render — worst, the consistency count re-ran the whole `consistencyDays` generator (a
+    /// ≤2000-iteration seeded loop) inside its 112-day filter closure, and `consistencyMinutes`
+    /// recomputes `consistencyDays` again internally. Non-observed memo box (the FallbackMemo
+    /// pattern): filled during body without dirtying SwiftUI state.
+    private struct DerivedStats {
+        let disciplineCounts: [WorkoutType: Int]
+        let consistencyDays: Set<Int>
+        let consistencyMinutes: [Int: Double]
+        let lifetimeDurationS: Double
+        let awardCells: [AwardsShelf.Cell]
+        let awardsEarned: Int
+    }
+    private final class DerivedMemo { var key = ""; var value: DerivedStats? }
+    @State private var derivedMemo = DerivedMemo()
+    private var derived: DerivedStats {
+        let key = "\(athlete.handle)-\(StreakCalculator.localDay(Date()))"
+        if derivedMemo.key == key, let cached = derivedMemo.value { return cached }
+        let awards = athlete.communityAwards
+        let value = DerivedStats(disciplineCounts: athlete.disciplineCounts,
+                                 consistencyDays: athlete.consistencyDays,
+                                 consistencyMinutes: athlete.consistencyMinutes,
+                                 lifetimeDurationS: athlete.lifetimeDurationS,
+                                 awardCells: awards.cells,
+                                 awardsEarned: awards.earnedCount)
+        derivedMemo.key = key
+        derivedMemo.value = value
+        return value
+    }
+
     @ViewBuilder
     private var highlightsContent: some View {
         // The own-profile Highlights grammar, verbatim (owner call 2026-07-30: EVERY profile wears
@@ -351,7 +382,7 @@ struct AthleteProfileView: View {
                 HStack(spacing: 0) {
                     // Lifetime, like every other number in this block — derived from distance +
                     // session mix so it can never contradict them (see `lifetimeDurationS`).
-                    lifetimeCell(Formatters.duration(s: athlete.lifetimeDurationS), "Time moving")
+                    lifetimeCell(Formatters.duration(s: derived.lifetimeDurationS), "Time moving")
                     lifetimeDivider
                     lifetimeCell("\(athlete.totalWorkouts)", "Sessions")
                     if athlete.dayStreak > 0 {
@@ -365,7 +396,7 @@ struct AthleteProfileView: View {
 
     private var trainSection: some View {
         section("How they train") {
-            DisciplineBreakdown(counts: athlete.disciplineCounts)
+            DisciplineBreakdown(counts: derived.disciplineCounts)
                 .padding(Theme.Space.lg).background(card)
         }
     }
@@ -374,7 +405,8 @@ struct AthleteProfileView: View {
     /// grid, then the full heatmap with month/weekday axes.
     private var consistencySection: some View {
         let today = StreakCalculator.localDay(Date())
-        let active = (0..<(16 * 7)).filter { athlete.consistencyDays.contains(today - $0) }.count
+        let days = derived.consistencyDays   // once — the old closure regenerated the Set 112×
+        let active = (0..<(16 * 7)).filter { days.contains(today - $0) }.count
         return section("Consistency") {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -385,8 +417,8 @@ struct AthleteProfileView: View {
                     Text("active days · last 16 weeks")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                ConsistencyHeatmap(countingDays: athlete.consistencyDays,
-                                   dayMinutes: athlete.consistencyMinutes, showsAxes: true)
+                ConsistencyHeatmap(countingDays: days,
+                                   dayMinutes: derived.consistencyMinutes, showsAxes: true)
             }
             .padding(Theme.Space.lg).background(card)
         }
@@ -413,7 +445,7 @@ struct AthleteProfileView: View {
     /// No "All awards" row: that navigates the viewer's OWN awards book.
     @ViewBuilder
     private var awardsSection: some View {
-        let shelf = athlete.communityAwards
+        let shelf = (cells: derived.awardCells, earnedCount: derived.awardsEarned)
         // A section rule over an empty shelf reads as a broken page. Every athlete has at least a
         // chase cell today (the endurance ladder always has a value), but the shelf is derived —
         // one future ladder change shouldn't be able to ship an empty header.

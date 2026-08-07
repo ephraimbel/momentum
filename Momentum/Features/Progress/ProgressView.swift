@@ -17,13 +17,14 @@ struct ProgressScreen: View {
     @Environment(AppRouter.self) private var router   // consumes pendingProgressSegment (one-shot)
     @State private var animateCharts = false
     @State private var adjustedPlan = false
-    // Tap-to-inspect cursors, one per Trends chart (shared mechanic in ChartScrub.swift).
-    @State private var scrubDistance = ChartScrubState()
-    @State private var scrubPace = ChartScrubState()
+    // Tap-to-inspect lives INSIDE each chart's ScrubChartHost (ChartScrub.swift) — screen-level
+    // scrub @State made every drag tick rebuild this whole tree. These two only feed the
+    // --scrub-demo harness a deterministic pin.
+    @State private var demoScrubDistance: Date?
+    @State private var demoScrubPace: Date?
     /// The Oura tap-through (2026-07-23): whichever card was tapped, presented as the one shared
     /// `TrendDetailSheet` — bigger chart, year-long ranges, window stats, the ⓘ's prose beneath.
     @State private var trendDetail: TrendDetail?
-    @State private var scrubSeason = ChartScrubState()
     @State private var segment: Segment = {
         #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
         let a = ProcessInfo.processInfo.arguments
@@ -301,7 +302,14 @@ struct ProgressScreen: View {
 
     private var paceDetail: TrendDetail {
         let du = distanceUnit
-        let workouts = self.workouts
+        // Value snapshot at tap time (one pass, three scalars per run) — the series closure used
+        // to construct the FULL ProgressInsights per range flip (52 whole-table filter passes,
+        // ACWR, a day series the sheet never reads) on the main actor. The weekly buckets below
+        // reproduce ProgressInsights.weeks' pace math exactly: rolling 7-day windows ending now,
+        // distance-weighted running pace, 0 for run-less weeks.
+        let runs: [(t: Date, distM: Double, durS: Double)] = workouts
+            .filter { $0.type.discipline == .running }
+            .map { ($0.startedAt, $0.gps?.distanceM ?? 0, $0.durationS) }
         return TrendDetail(
             id: "pace", title: "Average pace", unit: du.resolved() == .imperial ? "/mi" : "/km",
             form: .line, lowerIsBetter: true, stats: [.best, .latest],
@@ -312,8 +320,18 @@ struct ProgressScreen: View {
                 return "\(t / 60):\(String(format: "%02d", t % 60))"
             },
             series: { weeks in
-                ProgressInsights(workouts: workouts, weeksBack: weeks).weeks
-                    .map { .init(date: $0.weekStart, value: $0.avgPaceSPerKm) }
+                let cal = Calendar.current
+                let now = Date()
+                var pts: [TrendDetail.Point] = []
+                for i in stride(from: max(1, weeks) - 1, through: 0, by: -1) {
+                    guard let end = cal.date(byAdding: .day, value: -7 * i, to: now),
+                          let start = cal.date(byAdding: .day, value: -7, to: end) else { continue }
+                    let inWeek = runs.filter { $0.t > start && $0.t <= end }
+                    let dist = inWeek.reduce(0.0) { $0 + $1.distM }
+                    let dur = inWeek.reduce(0.0) { $0 + $1.durS }
+                    pts.append(.init(date: start, value: dist > 0 ? dur / (dist / 1000) : 0))
+                }
+                return pts
             })
     }
 
@@ -401,8 +419,7 @@ struct ProgressScreen: View {
                 cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
                 refreshWindowed()
             }
-            // A pinned day/week from the old window means nothing in the new one.
-            scrubDistance = .init(); scrubPace = .init()
+            // Pinned scrub cursors clear themselves — each ScrubChartHost resets when its dates change.
         }
         .task(id: aggregateKey) {
             if aggregatedForKey != aggregateKey {
@@ -593,9 +610,9 @@ struct ProgressScreen: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         guard let insights = cachedInsights else { return }
                         let pts = trendPoints(insights)
-                        if pts.count > 2 { scrubDistance.pinned = pts[pts.count / 2].date }
+                        if pts.count > 2 { demoScrubDistance = pts[pts.count / 2].date }
                         let paced = pts.filter { $0.avgPaceSPerKm > 0 }
-                        if paced.count > 1 { scrubPace.pinned = paced[paced.count / 2].date }
+                        if paced.count > 1 { demoScrubPace = paced[paced.count / 2].date }
                     }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-zones") {
@@ -1174,21 +1191,38 @@ struct ProgressScreen: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    /// This-month summary strip: sessions, distance, PRs.
+    /// This-month summary strip: sessions, distance, PRs. Memoized (same non-observed-box pattern
+    /// as `monthGroups` — the month filter + GPS-distance faults ran on every History body pass);
+    /// the cache holds only display strings, never model refs.
+    private final class HistorySummaryMemo {
+        var token = 0
+        var sessions = ""; var distance = ""; var distanceLabel = ""; var prs = ""
+    }
+    @State private var summaryMemo = HistorySummaryMemo()
     private func historySummary() -> some View {
-        let cal = Calendar.current
-        let month = cal.dateInterval(of: .month, for: Date())
-        let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
-        let far = Formatters.wholeDistance(meters: mine.compactMap { $0.gps?.distanceM }.reduce(0, +),
-                                           unit: distanceUnit)
-        return HStack(spacing: 0) {
-            summaryCell("\(mine.count)", "Sessions")
-            Divider().frame(height: 34).overlay(Theme.hairline)
-            summaryCell("\(far.value)", "\(far.unit) this month")
-            Divider().frame(height: 34).overlay(Theme.hairline)
+        var h = Hasher()
+        h.combine(aggregateKey); h.combine(distanceUnit)
+        let token = h.finalize()
+        let memo = summaryMemo
+        if memo.token != token {
+            let month = Calendar.current.dateInterval(of: .month, for: Date())
+            let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
+            let far = Formatters.wholeDistance(meters: mine.compactMap { $0.gps?.distanceM }.reduce(0, +),
+                                               unit: distanceUnit)
+            memo.sessions = "\(mine.count)"
+            memo.distance = "\(far.value)"
+            memo.distanceLabel = "\(far.unit) this month"
             // Month-scoped like its siblings — the lifetime improvement-event count here read
             // as "47 PRs this month" to a two-year athlete.
-            summaryCell("\((profiles.first?.prs ?? []).filter { month?.contains($0.achievedAt) ?? false }.count)", "PRs")
+            memo.prs = "\((profiles.first?.prs ?? []).filter { month?.contains($0.achievedAt) ?? false }.count)"
+            memo.token = token
+        }
+        return HStack(spacing: 0) {
+            summaryCell(memo.sessions, "Sessions")
+            Divider().frame(height: 34).overlay(Theme.hairline)
+            summaryCell(memo.distance, memo.distanceLabel)
+            Divider().frame(height: 34).overlay(Theme.hairline)
+            summaryCell(memo.prs, "PRs")
         }
         .padding(.vertical, Theme.Space.sm)
         .frame(maxWidth: .infinity)
@@ -1387,29 +1421,30 @@ struct ProgressScreen: View {
                             delta: delta, explainer: MetricExplainers.weeklyPace,
                             onOpen: { trendDetail = paceDetail }) {
             if paced.count < 2 { notEnoughData } else {
-                Chart {
-                    ForEach(paced) { p in
-                        LineMark(x: .value("Date", p.date, unit: trendUnit),
-                                 y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                            .foregroundStyle(MetricColor.pace).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                            .interpolationMethod(.monotone)
-                        PointMark(x: .value("Date", p.date, unit: trendUnit),
-                                  y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.pace))
-                            .symbolSize(p.date == last ? 90 : 22)
+                ScrubChartHost(dates: paced.map(\.date), seed: demoScrubPace) { pinned in
+                    Chart {
+                        ForEach(paced) { p in
+                            LineMark(x: .value("Date", p.date, unit: trendUnit),
+                                     y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                                .foregroundStyle(MetricColor.pace).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                                .interpolationMethod(.monotone)
+                            PointMark(x: .value("Date", p.date, unit: trendUnit),
+                                      y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.pace))
+                                .symbolSize(p.date == last ? 90 : 22)
+                        }
+                        if let sel = pinned, let p = paced.first(where: { $0.date == sel }) {
+                            TrendScrub.mark(at: sel, unit: trendUnit,
+                                            value: "\(paceMMSS(p.avgPaceSPerKm)) /\(unit)", label: scrubDateLabel(sel))
+                        }
                     }
-                    if let sel = scrubPace.pinned, let p = paced.first(where: { $0.date == sel }) {
-                        TrendScrub.mark(at: sel, unit: trendUnit,
-                                        value: "\(paceMMSS(p.avgPaceSPerKm)) /\(unit)", label: scrubDateLabel(sel))
-                    }
+                    .chartXScale(domain: paddedDomain(paced.map(\.date)))
+                    // Array domain, slowest first → the y-axis runs slow-at-bottom to fast-at-top.
+                    .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
+                    .chartXAxis { trendAxis(insights.weeks.count) }
+                    .chartYAxis { paceAxis }
+                    .frame(height: 172)
                 }
-                .chartXSelection(value: $scrubPace.selection(dates: paced.map(\.date)))
-                .chartXScale(domain: paddedDomain(paced.map(\.date)))
-                // Array domain, slowest first → the y-axis runs slow-at-bottom to fast-at-top.
-                .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
-                .chartXAxis { trendAxis(insights.weeks.count) }
-                .chartYAxis { paceAxis }
-                .frame(height: 172)
             }
         }
     }
@@ -1445,29 +1480,30 @@ struct ProgressScreen: View {
                             delta: delta, explainer: MetricExplainers.weeklyDistance,
                             onOpen: { trendDetail = distanceDetail }) {
             if maxDist <= 0 { notEnoughData } else {
-                Chart {
-                    ForEach(pts) { p in
-                        // Bars read cleanly across rest weeks and rest days alike; widths slim
-                        // as the window widens so 26 weeks never collide.
-                        BarMark(x: .value("Date", p.date, unit: trendUnit),
-                                y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
-                                width: .fixed(trendIsDaily ? 24 : loadBarWidth(pts.count)))
-                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
-                                                            : AnyShapeStyle(Theme.ink.opacity(0.82)))
-                            .cornerRadius(3)
+                ScrubChartHost(dates: pts.map(\.date), seed: demoScrubDistance) { pinned in
+                    Chart {
+                        ForEach(pts) { p in
+                            // Bars read cleanly across rest weeks and rest days alike; widths slim
+                            // as the window widens so 26 weeks never collide.
+                            BarMark(x: .value("Date", p.date, unit: trendUnit),
+                                    y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
+                                    width: .fixed(trendIsDaily ? 24 : loadBarWidth(pts.count)))
+                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
+                                                                : AnyShapeStyle(Theme.ink.opacity(0.82)))
+                                .cornerRadius(3)
+                        }
+                        if let sel = pinned, let p = pts.first(where: { $0.date == sel }) {
+                            TrendScrub.mark(at: sel, unit: trendUnit,
+                                            value: "\(short(disp(p.distanceM))) \(unit)",
+                                            label: scrubDateLabel(sel))
+                        }
                     }
-                    if let sel = scrubDistance.pinned, let p = pts.first(where: { $0.date == sel }) {
-                        TrendScrub.mark(at: sel, unit: trendUnit,
-                                        value: "\(short(disp(p.distanceM))) \(unit)",
-                                        label: scrubDateLabel(sel))
-                    }
+                    .chartXScale(domain: paddedDomain(pts.map(\.date)))
+                    .chartYScale(domain: 0...max(1, maxDist * 1.18))
+                    .chartXAxis { trendAxis(pts.count) }
+                    .chartYAxis { valueAxis }
+                    .frame(height: 172)
                 }
-                .chartXSelection(value: $scrubDistance.selection(dates: pts.map(\.date)))
-                .chartXScale(domain: paddedDomain(pts.map(\.date)))
-                .chartYScale(domain: 0...max(1, maxDist * 1.18))
-                .chartXAxis { trendAxis(pts.count) }
-                .chartYAxis { valueAxis }
-                .frame(height: 172)
             }
         }
     }
@@ -1915,29 +1951,30 @@ struct ProgressScreen: View {
             chartSection("Your season",
                          subtitle: "All time · weekly \(unit == .imperial ? "miles" : "kilometers") · ● a record week",
                          explainer: MetricExplainers.weeklyDistance) {
-                Chart {
-                    ForEach(weeks, id: \.week) { entry in
-                        BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
-                                y: .value("Distance", entry.meters / divisor))
-                            .foregroundStyle(Theme.ink.opacity(0.8))
-                            .cornerRadius(2)
+                ScrubChartHost(dates: weeks.map(\.week)) { pinned in
+                    Chart {
+                        ForEach(weeks, id: \.week) { entry in
+                            BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                                    y: .value("Distance", entry.meters / divisor))
+                                .foregroundStyle(Theme.ink.opacity(0.8))
+                                .cornerRadius(2)
+                        }
+                        ForEach(recordWeeks, id: \.week) { entry in
+                            PointMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                                      y: .value("Distance", entry.meters / divisor))
+                                .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
+                                .symbolSize(70)
+                        }
+                        if let sel = pinned, let entry = weeks.first(where: { $0.week == sel }) {
+                            TrendScrub.mark(at: sel, unit: .weekOfYear,
+                                            value: Formatters.distance(meters: entry.meters, unit: distanceUnit),
+                                            label: TrendScrub.weekLabel(sel))
+                        }
                     }
-                    ForEach(recordWeeks, id: \.week) { entry in
-                        PointMark(x: .value("Week", entry.week, unit: .weekOfYear),
-                                  y: .value("Distance", entry.meters / divisor))
-                            .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
-                            .symbolSize(70)
-                    }
-                    if let sel = scrubSeason.pinned, let entry = weeks.first(where: { $0.week == sel }) {
-                        TrendScrub.mark(at: sel, unit: .weekOfYear,
-                                        value: Formatters.distance(meters: entry.meters, unit: distanceUnit),
-                                        label: TrendScrub.weekLabel(sel))
-                    }
+                    .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
+                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+                    .frame(height: 150)
                 }
-                .chartXSelection(value: $scrubSeason.selection(dates: weeks.map(\.week)))
-                .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
-                .frame(height: 150)
             }
         }
     }

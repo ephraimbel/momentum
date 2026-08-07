@@ -5,12 +5,8 @@ import Foundation
 /// app can show a fitness ceiling even before a race is run. Pure + deterministic. Not a clinical
 /// measurement; an estimate to track trend against.
 enum VO2maxEstimator {
-
-    /// Uth–Sørensen: VO₂max ≈ 15.3 · (maxHR / restingHR). Needs both heart rates.
-    static func fromHeartRate(maxHR: Int, restingHR: Int) -> Double? {
-        guard maxHR > 0, restingHR > 0, maxHR > restingHR else { return nil }
-        return 15.3 * Double(maxHR) / Double(restingHR)
-    }
+    // (The Uth–Sørensen `fromHeartRate` alternative was never wired — deleted 2026-08-06;
+    // `.fromRace` is the one estimator the app ships.)
 
     /// Daniels' VDOT from a recent (near-)maximal race effort: model the effort's VO₂ demand and the
     /// fraction of VO₂max sustainable for its duration, then divide. `distanceM` over `timeS`.

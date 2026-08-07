@@ -84,6 +84,10 @@ targets:
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
+        # Portrait-locked (2026-08-06 user call): no landscape anywhere — the app is a phone-in-hand
+        # tracker, not a media app. Upside-down excluded too (Face ID iPhones ignore it anyway).
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
         # Mapbox runtime token — injected from Secrets.xcconfig (MBX_ACCESS_TOKEN) at build, so no
         # token is committed. The Maps SDK reads MBXAccessToken automatically at init.
         MBXAccessToken: "$(MBX_ACCESS_TOKEN)"

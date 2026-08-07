@@ -13,15 +13,7 @@ struct StrengthMathTests {
     @Test func volume() {
         let sets = [WS(weightKg: 100, reps: 5), WS(weightKg: 100, reps: 5)]
         #expect(StrengthMath.sessionVolume(sets) == 1000)
-        #expect(StrengthMath.bestSetVolume(sets) == 500)
         #expect(StrengthMath.heaviestWeight(sets) == 100)
-    }
-
-    @Test func repMaxTable() {
-        let sets = [WS(weightKg: 100, reps: 5), WS(weightKg: 105, reps: 5), WS(weightKg: 60, reps: 10)]
-        let table = StrengthMath.repMaxes(sets)
-        #expect(table[5] == 105)
-        #expect(table[10] == 60)
     }
 
     @Test func weeklySetsByMuscleCredits() {

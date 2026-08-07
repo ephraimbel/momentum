@@ -34,20 +34,6 @@ enum StrengthMath {
         sets.map { e1RM(weightKg: $0.weightKg, reps: $0.reps) }.max() ?? 0
     }
 
-    /// Best single-set volume.
-    static func bestSetVolume(_ sets: [WorkingSet]) -> Double {
-        sets.map { setVolume(weightKg: $0.weightKg, reps: $0.reps) }.max() ?? 0
-    }
-
-    /// Best weight achieved at each exact rep count (the rep-max table).
-    static func repMaxes(_ sets: [WorkingSet]) -> [Int: Double] {
-        var table: [Int: Double] = [:]
-        for s in sets where s.reps > 0 {
-            table[s.reps] = max(table[s.reps] ?? 0, s.weightKg)
-        }
-        return table
-    }
-
     /// Weekly working sets per muscle (PRD §22): primary credits 1.0, secondary 0.5.
     /// `entries` = (primaryMuscles, secondaryMuscles, workingSetCount) over the trailing 7 days.
     static func weeklySetsByMuscle(

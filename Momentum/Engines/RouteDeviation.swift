@@ -30,11 +30,6 @@ enum RouteDeviation {
         return Nearest(point: GeoPoint(lat: point.lat + bestY / mLat, lon: point.lon + bestX / mLon), distanceM: best)
     }
 
-    /// Shortest distance from `point` to `polyline`, in metres (`.infinity` if empty).
-    static func distanceToPolyline(_ point: GeoPoint, _ polyline: [GeoPoint]) -> Double {
-        nearest(on: polyline, to: point)?.distanceM ?? .infinity
-    }
-
     /// Initial great-circle bearing from `a` to `b` — degrees clockwise from true north, 0…360.
     /// On a north-up map this is also the on-screen rotation for a "head this way" arrow.
     static func bearing(from a: GeoPoint, to b: GeoPoint) -> Double {

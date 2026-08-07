@@ -75,16 +75,6 @@ enum StreakCalculator {
         return rest
     }
 
-    /// Weeks meeting `daysPerWeek`, bucketed by 7-day blocks from the reference epoch.
-    static func weeksActive(countingDays: Set<Int>, daysPerWeek: Int) -> Int {
-        guard daysPerWeek > 0 else { return 0 }
-        var perWeek: [Int: Int] = [:]
-        for day in countingDays {
-            perWeek[Int(floor(Double(day) / 7)), default: 0] += 1
-        }
-        return perWeek.values.filter { $0 >= daysPerWeek }.count
-    }
-
     /// Map a date to an integer local-day key (a gap-free day ordinal, in `calendar`'s zone).
     /// Uses the calendar's day-in-era ordinal so every local day gets one unique, monotonic key
     /// in every timezone — flooring a UTC-anchored interval by a *local* start-of-day collides or

@@ -80,6 +80,10 @@
 		<key>UIColorName</key>
 		<string>background</string>
 	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 	<key>UIUserInterfaceStyle</key>
 	<string>Automatic</string>
 </dict>

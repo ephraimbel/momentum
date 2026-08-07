@@ -1164,18 +1164,23 @@ struct TodayView: View {
     /// (injury state ▸ morning check-in ▸ small actions — whichever matters right now). The week
     /// lives on the Plan tab; the free-run goal picker appears only when there's no plan to follow.
     private var deck: some View {
-        VStack(spacing: 0) {
-            if let session = pendingToday {
+        // One signature check per deck render — the getters each re-hash the pending-today token
+        // (plan fault + sessions count), and the deck read them 3× per body pass while the map
+        // pans re-evaluate continuously.
+        let session = pendingToday
+        let state = session == nil ? planState : nil
+        return VStack(spacing: 0) {
+            if let session {
                 planRow(session)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
                     .padding(.horizontal, Theme.Space.md)
-            } else if let state = planState {
+            } else if let state {
                 planStateRow(state)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
                     .padding(.horizontal, Theme.Space.md)
             }
             VStack(spacing: Theme.Space.md) {
-                if isCardio && pendingToday == nil { goalControl }
+                if isCardio && session == nil { goalControl }
                 HStack(spacing: Theme.Space.sm) {
                     logButton
                     OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
