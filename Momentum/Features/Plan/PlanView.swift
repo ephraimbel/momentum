@@ -150,6 +150,10 @@ struct PlanView: View {
                         .reveal(0.06)
                         .proLocked(.fullPlan, active: isFutureWeek)
                     coachsRead
+                    // App Review 1.4.1: the citations door where the training prescriptions live —
+                    // paces, zones, and load caps all trace to the sources behind this link.
+                    SourcesFooterLink()
+                        .padding(.top, Theme.Space.sm)
                 }
                 .padding(Theme.Space.md)
                 .padding(.bottom, Theme.Space.xxl)

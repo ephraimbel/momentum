@@ -57,6 +57,11 @@ struct RootView: View {
     @State private var showSaveScreen = false
     // Straight to Settings (screenshot verification of the settings surface).
     @State private var showSettingsDeepLink = false
+    #if DEBUG
+    /// --explainer-demo: presents the hrZones MetricDetailSheet directly — deterministic screenshot
+    /// of the citation card (App Review 1.4.1) without fighting chart-ⓘ tap coordinates.
+    @State private var showExplainerDemo = false
+    #endif
     // The onboarding paywall flow, presented directly for screenshot verification.
     @State private var showOnboardingPaywallFlow = false
     // --timed-save-ebike: the stationary e-bike save screen over a minted session.
@@ -350,6 +355,12 @@ struct RootView: View {
                 TimedSaveView(workoutId: w.id) { showTimedSaveEbike = false }
             }
         }
+        #if DEBUG
+        .sheet(isPresented: $showExplainerDemo) {
+            MetricDetailSheet(explainer: MetricExplainers.hrZones)
+                .presentationDetents([.large])
+        }
+        #endif
         .fullScreenCover(isPresented: $showSettingsDeepLink) {
             NavigationStack {
                 SettingsView()
@@ -444,6 +455,9 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettingsDeepLink = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--explainer-demo") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showExplainerDemo = true }
             }
             if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--paywall-onboarding") }) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showOnboardingPaywallFlow = true }

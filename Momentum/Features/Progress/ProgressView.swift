@@ -597,6 +597,10 @@ struct ProgressScreen: View {
                     .reveal(0.06, once: "trends.pro")
                     .id("charts")
                     .proLocked(.advancedAnalytics)
+                    // App Review 1.4.1: the citations door, at the foot of the page that shows
+                    // the calculations (every chart's ⓘ sheet also carries its own source link).
+                    SourcesFooterLink()
+                        .padding(.top, Theme.Space.sm)
                 }
                 .padding(Theme.Space.md)
                 .padding(.bottom, Theme.Space.xxl)

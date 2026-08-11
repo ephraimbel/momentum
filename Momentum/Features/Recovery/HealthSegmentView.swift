@@ -203,6 +203,11 @@ struct HealthSegmentView: View {
         WearableFootnote(receivingData: model.sleepReport != nil
                          || model.vitals.contains { $0.hasAnyData })
             .reveal(model.healthAuthorized ? 0.42 : 0.49)
+
+        // App Review 1.4.1: the citations door at the foot of the health page (every card's ⓘ
+        // sheet also carries its own source link).
+        SourcesFooterLink()
+            .reveal(model.healthAuthorized ? 0.42 : 0.49)
     }
 
     /// The depth layer (§8): one VStack, one lock — the trends and the synthesis only.

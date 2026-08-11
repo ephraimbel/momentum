@@ -121,6 +121,9 @@ struct FuelView: View {
                             .reveal(0.22)
                     }
                     todaysMeals.reveal(0.24)
+                    // App Review 1.4.1: the citations door where the nutrition targets live
+                    // (the Today's-fueling sheet carries its own link too).
+                    SourcesFooterLink().reveal(0.26)
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)

@@ -19,7 +19,8 @@ enum MetricExplainers {
             S(heading: "Fatigue (ATL)", body: "The same idea over just 7 days, so it reacts fast to recent hard efforts. It spikes after a big week and settles within days of easing off."),
             S(heading: "Form", body: "Fitness minus Fatigue. Positive means you're fresh and race-ready; deeply negative means you're carrying a hard training block. Neither is 'good' or 'bad' — it depends on where you are in your plan."),
             S(heading: "How to read it", body: "Watch the shape over weeks. Fitness trending up while form dips is exactly what a build phase looks like; form climbing into the positive as a race nears is a healthy taper."),
-        ])
+        ],
+        source: MetricExplainer.Source("Banister EW. Modeling elite athletic performance. In: Physiological Testing of the High-Performance Athlete. Human Kinetics, 1991.", "https://www.trainingpeaks.com/learn/articles/the-science-of-the-performance-manager/"))
 
     static let trainingLoad = E(
         id: "load",
@@ -30,7 +31,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "We use session-RPE (the Foster method): your workout's duration in minutes times its effort on a 1–10 scale. A 60-minute run at effort 7 is a load of 420. When you don't rate a session, we use a sensible default effort for that sport."),
             S(heading: "Why minutes × effort", body: "It captures the two things that actually drive fatigue — how hard and how long — and it works the same for a run, a ride, or a lift, so your weekly total is comparable across everything you do."),
             S(heading: "How to read it", body: "Weekly load is the engine behind your fitness and freshness. Steady week-to-week growth builds fitness; big jumps are where injury risk lives."),
-        ])
+        ],
+        source: MetricExplainer.Source("Foster C, et al. A new approach to monitoring exercise training. J Strength Cond Res. 2001;15(1):109–115.", "https://pubmed.ncbi.nlm.nih.gov/11708692/"))
 
     static let cadence = E(
         id: "cadence",
@@ -41,7 +43,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "Each run records your average steps per minute; we average those across the runs in each week. The dashed line marks 180 spm, a commonly-cited efficient turnover."),
             S(heading: "Why it matters", body: "At a given pace, a quicker, lighter turnover usually means less time on the ground and gentler impact than long, bounding strides. It's a habit that tends to improve with easy volume."),
             S(heading: "How to read it", body: "There's no universal 'right' number — taller runners often run lower. Look for your own cadence drifting up over months, especially on easy runs."),
-        ])
+        ],
+        source: MetricExplainer.Source("Heiderscheit BC, et al. Effects of step rate manipulation on joint mechanics during running. Med Sci Sports Exerc. 2011;43(2):296–302.", "https://pubmed.ncbi.nlm.nih.gov/20581720/"))
 
     static let climb = E(
         id: "climb",
@@ -63,7 +66,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "On a steady run of 20 minutes or more, we compare the ratio of heart rate to pace in the first half versus the second. If your heart climbs while your pace holds, that 'cardiac drift' shows up as a positive percentage. Needs a heart-rate source (Watch or strap)."),
             S(heading: "Why it matters", body: "A well-developed aerobic engine holds a pace without the heart creeping up. Low drift (under ~5%) is a hallmark of good aerobic fitness; high drift often means the effort was above your easy zone, or it was hot."),
             S(heading: "How to read it", body: "Lower is fitter. Compare similar easy runs over time — the same pace costing you less heart-rate drift is real aerobic progress."),
-        ])
+        ],
+        source: MetricExplainer.Source("Coyle EF, González-Alonso J. Cardiovascular drift during prolonged exercise. Exerc Sport Sci Rev. 2001;29(2):88–92.", "https://pubmed.ncbi.nlm.nih.gov/11337828/"))
 
     static let vo2max = E(
         id: "vo2max",
@@ -73,7 +77,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "If your Apple Watch or Garmin has recorded a VO₂max, we show that measured value. Otherwise we estimate it from your recent 5K-equivalent pace using Daniels' VDOT model — the same science behind most GPS-watch estimates."),
             S(heading: "How to read it", body: "Higher is fitter, and the estimate sharpens as you log faster, harder efforts. It's an estimate, not a lab test — read the trend over weeks, not any single number. Your rating compares you to population norms for your age and sex."),
         ],
-        footnote: "Not medical advice.")
+        footnote: "Not medical advice.",
+        source: MetricExplainer.Source("Daniels J. Daniels' Running Formula, 4th ed. Human Kinetics, 2021.", "https://us.humankinetics.com/products/daniels-running-formula-4th-edition"))
 
     static let intensityMix = E(
         id: "intensityMix",
@@ -84,7 +89,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "We sort your recent runs into easy vs hard — by the session's prescription when there was one, otherwise by pace relative to your 5K fitness — and show the split as one bar against the 80/20 mark."),
             S(heading: "Why 80/20", body: "The most durable endurance athletes do the large majority of their running easy and save hard efforts for a focused minority. It's how you build volume without digging a hole."),
             S(heading: "How to read it", body: "If your easy share sits near or above 80%, you're polarised the right way. Creeping into too much 'medium-hard' is the classic way to plateau."),
-        ])
+        ],
+        source: MetricExplainer.Source("Seiler S. What is best practice for training intensity and duration distribution in endurance athletes? Int J Sports Physiol Perform. 2010;5(3):276–291.", "https://pubmed.ncbi.nlm.nih.gov/20861519/"))
 
     static let hrZones = E(
         id: "hrZones",
@@ -94,7 +100,8 @@ enum MetricExplainers {
         sections: [
             S(heading: "How we work it out", body: "We build five zones from your max and resting heart rate using the Karvonen (heart-rate reserve) method, which is far more individual than a flat percentage of max. Then we total the time your heart spent in each."),
             S(heading: "How to read it", body: "Most of an easy run should live in the lower zones; quality sessions push the top ones. Seeing a supposedly easy run stacked in Zone 3+ is a sign it wasn't as easy as it felt."),
-        ])
+        ],
+        source: MetricExplainer.Source("Karvonen MJ, Kentala E, Mustala O. The effects of training on heart rate. Ann Med Exp Biol Fenn. 1957;35(3):307–315.", "https://pubmed.ncbi.nlm.nih.gov/13470504/"))
 
     // MARK: Strength
 
@@ -107,7 +114,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "For each session we take your best working set of the lift and estimate the most you could do for a single rep, using the Epley formula. Charting that per session turns 'I lifted 100 kg for 5' into a clean strength curve."),
             S(heading: "Why an estimate", body: "You rarely test a true one-rep max — it's risky and you'd have to do it constantly. An estimate from your everyday working sets lets every session count as a data point, safely."),
             S(heading: "How to read it", body: "The trend is the point. A rising e1RM means real strength gains even when the weight on the bar looks similar; a plateau is your cue to change something."),
-        ])
+        ],
+        source: MetricExplainer.Source("Epley B. Poundage Chart. Boyd Epley Workout, 1985. Accuracy: Reynolds JM, et al. J Strength Cond Res. 2006;20(3):584–592.", "https://pubmed.ncbi.nlm.nih.gov/16937961/"))
 
     static let trainingVolume = E(
         id: "trainingVolume",
@@ -118,7 +126,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "For every completed working set we multiply weight by reps and add it all up across the week. Warm-ups don't count — this is the meaningful work."),
             S(heading: "Why it matters", body: "Volume is the main driver of muscle growth and work capacity. Progressive overload — gradually moving more total weight over time — is what makes lifts go up."),
             S(heading: "How to read it", body: "Look for a gentle upward trend with the occasional lighter week to recover. Flat volume for months usually means flat progress."),
-        ])
+        ],
+        source: MetricExplainer.Source("Schoenfeld BJ, Ogborn D, Krieger JW. Dose-response relationship between weekly resistance training volume and increases in muscle mass. J Sports Sci. 2017;35(11):1073–1082.", "https://pubmed.ncbi.nlm.nih.gov/27433992/"))
 
     static let muscleBalance = E(
         id: "muscleBalance",
@@ -129,7 +138,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "Across the last four weeks we tally your working sets by muscle. A muscle a lift trains directly gets full credit; one it assists gets half. That's the standard way to count effective volume per muscle."),
             S(heading: "Why it matters", body: "Balanced training keeps you resilient and proportional. Chronically under-working a muscle group is how imbalances — and the niggles that follow — creep in."),
             S(heading: "How to read it", body: "The bars rank most- to least-worked. If something important sits at the bottom for weeks, it's a nudge to add a set or two there."),
-        ])
+        ],
+        source: MetricExplainer.Source("Schoenfeld BJ, Ogborn D, Krieger JW. Dose-response relationship between weekly resistance training volume and increases in muscle mass. J Sports Sci. 2017;35(11):1073–1082.", "https://pubmed.ncbi.nlm.nih.gov/27433992/"))
 
     // MARK: Shared endurance charts (weekly distance / pace / recovery form)
 
@@ -160,7 +170,8 @@ enum MetricExplainers {
             S(heading: "How we work it out", body: "We compare your acute load (this week) to your chronic load (your recent month, averaged). A ratio near 1 means this week looks like what your body is used to; well above it means a spike."),
             S(heading: "How to read it", body: "The sweet spot is roughly 0.8–1.3 — enough to build without overreaching. Persistently high means back off; very low for a while means there's room to add. When wearables provide HRV, resting HR, or sleep, we fold those in too."),
         ],
-        footnote: "Not medical advice.")
+        footnote: "Not medical advice.",
+        source: MetricExplainer.Source("Gabbett TJ. The training–injury prevention paradox. Br J Sports Med. 2016;50:273–280.", "https://pubmed.ncbi.nlm.nih.gov/26758673/"))
 
     // MARK: Recovery hub (the §7 copy deck — RECOVERY-HUB-PLAN.md)
 
@@ -178,7 +189,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Fitness is built in recovery, not in the workout — the session applies the stress, and your body adapts while you rest. Training hard on a body that hasn't finished adapting mostly adds fatigue, not fitness. Readiness times the hard days for when they'll actually count."),
             S(heading: "What moves it", body: "Sleep, alcohol, illness, stress, and how hard the last few days were. One low morning means little; a low week is your body asking for ease."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Plews DJ, et al. Training adaptation and heart rate variability in elite endurance athletes. Sports Med. 2013;43(9):773–781.", "https://pubmed.ncbi.nlm.nih.gov/23852425/"))
 
     static let hrv = E(
         id: "hrv",
@@ -189,7 +201,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "When you're recovered, the rest-and-digest side of your nervous system runs the show and the gaps between beats vary more. Under fatigue, stress, or oncoming illness, the fight-or-flight side takes over and the rhythm turns metronome-steady. Your trend against your own normal is the signal — comparing your number to anyone else's is meaningless."),
             S(heading: "What moves it", body: "Hard training, poor sleep, alcohol, and stress push it down; easy days, good sleep, and consistency bring it back."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Plews DJ, et al. Training adaptation and heart rate variability in elite endurance athletes. Sports Med. 2013;43(9):773–781.", "https://pubmed.ncbi.nlm.nih.gov/23852425/"))
 
     static let restingHR = E(
         id: "restingHR",
@@ -200,7 +213,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "A fitter heart moves more blood per beat, so it idles slower — watching it drift down across months is watching fitness arrive. A sudden jump of 5+ beats above your normal usually means your body is working on something: fatigue, dehydration, or fighting a bug."),
             S(heading: "What moves it", body: "Aerobic training lowers it over months. Alcohol, heat, late meals, and illness raise it overnight."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Buchheit M. Monitoring training status with HR measures: do all roads lead to Rome? Front Physiol. 2014;5:73.", "https://pubmed.ncbi.nlm.nih.gov/24578692/"))
 
     static let respiratoryRate = E(
         id: "respiratoryRate",
@@ -211,7 +225,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "This is your steadiest vital — it barely moves night to night, which is exactly what makes it useful. A clear rise above your normal often shows up a day or two before you feel run down, making it a quiet early-warning line worth glancing at."),
             S(heading: "What moves it", body: "Very little, normally — which is the point. Illness, poor air, and heavy fatigue nudge it up."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Mishra T, et al. Pre-symptomatic detection of COVID-19 from smartwatch data. Nat Biomed Eng. 2020;4:1208–1220.", "https://pubmed.ncbi.nlm.nih.gov/33208925/"))
 
     static let wristTemperature = E(
         id: "wristTemperature",
@@ -222,7 +237,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Your body runs a tight thermostat, so a real deviation means something's up — often the immune system getting to work before symptoms show, sometimes just a hot room or a late workout. It reads best alongside your other signals, not alone."),
             S(heading: "What moves it", body: "Illness, alcohol, late exercise, room temperature, and — for some — the menstrual cycle's natural rhythm, which the trend line makes visible."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Mishra T, et al. Pre-symptomatic detection of COVID-19 from smartwatch data. Nat Biomed Eng. 2020;4:1208–1220.", "https://pubmed.ncbi.nlm.nih.gov/33208925/"))
 
     static let walkingHR = E(
         id: "walkingHR",
@@ -233,7 +249,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Drifting up while training is flat is fatigue whispering before it shouts. Trending down across months is quiet, everyday proof your engine is growing."),
             S(heading: "What moves it", body: "Aerobic fitness lowers it slowly. Fatigue, heat, dehydration, and oncoming illness nudge it up — read it against your own normal, never anyone else's."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Buchheit M. Monitoring training status with HR measures: do all roads lead to Rome? Front Physiol. 2014;5:73.", "https://pubmed.ncbi.nlm.nih.gov/24578692/"))
 
     static let sleepStages = E(
         id: "sleepStages",
@@ -244,7 +261,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Deep sleep is the body shift: growth hormone is released and muscle repair happens mostly there — it's where hard training gets banked. REM is the brain shift: skill, coordination, and mood consolidate. Core knits the cycles together. Runners shortchanging deep sleep are doing workouts they never fully cash in."),
             S(heading: "What moves it", body: "Deep sleep concentrates early in the night, so a consistent bedtime protects it. Alcohol is the biggest REM thief; caffeine after mid-afternoon cuts deep sleep."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Walsh NP, et al. Sleep and the athlete: narrative review and 2021 expert consensus recommendations. Br J Sports Med. 2021;55:356–368.", "https://pubmed.ncbi.nlm.nih.gov/33144349/"))
 
     static let sleepDuration = E(
         id: "sleepDuration",
@@ -255,7 +273,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Sleep is where training converts to fitness: muscle repair, glycogen restocking, and skill consolidation all happen there. Across weeks, the trend matters more than any single night — a run of short nights quietly raises injury risk and flattens hard sessions before you feel tired."),
             S(heading: "How to read it", body: "Look for your steady level and how it holds through hard training blocks. One short night is noise; a drifting average is a signal worth acting on. Longer windows average by week, so the value keeps its per-night meaning."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Walsh NP, et al. Sleep and the athlete: narrative review and 2021 expert consensus recommendations. Br J Sports Med. 2021;55:356–368.", "https://pubmed.ncbi.nlm.nih.gov/33144349/"))
 
     static let sleepDebt = E(
         id: "sleepDebt",
@@ -266,7 +285,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Debt compounds quietly — reaction time, pace at a given heart rate, and injury resilience all slide as it builds, usually before you feel obviously tired. The good news: it pays down fast, and the chart shows it shrinking within a couple of honest nights."),
             S(heading: "What moves it", body: "Nightly duration versus your need. An earlier night beats a weekend lie-in — big catch-up sleeps shift your rhythm and cost you later."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Walsh NP, et al. Sleep and the athlete: narrative review and 2021 expert consensus recommendations. Br J Sports Med. 2021;55:356–368.", "https://pubmed.ncbi.nlm.nih.gov/33144349/"))
 
     static let sleepConsistency = E(
         id: "sleepConsistency",
@@ -277,7 +297,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Your body rehearses sleep before you're in bed — hormones and temperature start shifting on schedule. A steady schedule means deeper, more efficient sleep from the same hours; the same 7½ hours at random times genuinely restores less. It's the highest-leverage sleep habit, and it's free."),
             S(heading: "What moves it", body: "A regular lights-out and alarm — weekends included, within an hour or so."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Walsh NP, et al. Sleep and the athlete: narrative review and 2021 expert consensus recommendations. Br J Sports Med. 2021;55:356–368.", "https://pubmed.ncbi.nlm.nih.gov/33144349/"))
 
     static let strain = E(
         id: "strain",
@@ -288,7 +309,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Strain isn't the enemy; it's the ingredient. Adaptation needs enough stress to signal “get stronger” — but stress only converts to fitness when recovery keeps pace. The number exists so hard days can be deliberately hard and easy days honestly easy, instead of everything blurring to medium."),
             S(heading: "What moves it", body: "Duration times intensity. Long easy work accumulates it slowly; intervals and racing spike it fast — and heat or hills raise the true cost of the same route."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Foster C, et al. A new approach to monitoring exercise training. J Strength Cond Res. 2001;15(1):109–115.", "https://pubmed.ncbi.nlm.nih.gov/11708692/"))
 
     static let strainRecoveryBalance = E(
         id: "strainRecoveryBalance",
@@ -299,7 +321,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "Neither line means much alone — big strain on big recovery is a training block working; the same strain on a low-recovery week is where overreaching and injury quietly start. Weeks of peach-over-mint is the pattern worth acting on, and acting on it early is cheap."),
             S(heading: "What moves it", body: "You steer strain with your plan; recovery follows sleep and stress. When they drift apart, the fix is almost always an easier day or an earlier night — not more discipline."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Gabbett TJ. The training–injury prevention paradox. Br J Sports Med. 2016;50:273–280.", "https://pubmed.ncbi.nlm.nih.gov/26758673/"))
 
     static let restDays = E(
         id: "restDays",
@@ -310,7 +333,8 @@ enum MetricExplainers {
             S(heading: "Why it matters", body: "This is when the adaptation you trained for actually gets built — muscle repairs, energy stores refill, the nervous system resets. Skipping rest to “stay on track” trades next week's fitness for today's mileage; it's the most common way strong training blocks unravel."),
             S(heading: "What moves it", body: "Nothing to optimize — take them as planned. A kept rest day counts toward your streak, and your rhythm chart wears it proudly."),
         ],
-        footnote: healthFootnote)
+        footnote: healthFootnote,
+        source: MetricExplainer.Source("Kellmann M, et al. Recovery and performance in sport: consensus statement. Int J Sports Physiol Perform. 2018;13(2):240–245.", "https://pubmed.ncbi.nlm.nih.gov/29345524/"))
 
     static let whereDataComesFrom = E(
         id: "whereDataComesFrom",

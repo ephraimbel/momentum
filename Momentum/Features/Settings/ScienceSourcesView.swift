@@ -34,6 +34,12 @@ struct ScienceSourcesView: View {
             Source(title: "Fitness · Fatigue · Form (CTL / ATL / TSB)",
                    citation: "Banister EW. Modeling elite athletic performance. In: Physiological Testing of the High-Performance Athlete. Human Kinetics, 1991.",
                    url: "https://www.trainingpeaks.com/learn/articles/the-science-of-the-performance-manager/"),
+            Source(title: "Easy/hard intensity distribution (the 80/20 mix)",
+                   citation: "Seiler S. What is best practice for training intensity and duration distribution in endurance athletes? Int J Sports Physiol Perform. 2010;5(3):276–291.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/20861519/"),
+            Source(title: "Rest & recovery in training plans",
+                   citation: "Kellmann M, et al. Recovery and performance in sport: consensus statement. Int J Sports Physiol Perform. 2018;13(2):240–245.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/29345524/"),
         ]),
         Group(heading: "HEART RATE & RECOVERY", sources: [
             Source(title: "Heart-rate zones from heart-rate reserve",
@@ -45,6 +51,12 @@ struct ScienceSourcesView: View {
             Source(title: "Sleep & athletic performance",
                    citation: "Walsh NP, et al. Sleep and the athlete: narrative review and 2021 expert consensus recommendations. Br J Sports Med. 2021;55:356–368.",
                    url: "https://pubmed.ncbi.nlm.nih.gov/33144349/"),
+            Source(title: "Resting & walking heart rate as training monitors",
+                   citation: "Buchheit M. Monitoring training status with HR measures: do all roads lead to Rome? Front Physiol. 2014;5:73.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/24578692/"),
+            Source(title: "Overnight vitals as early-warning signals",
+                   citation: "Mishra T, et al. Pre-symptomatic detection of COVID-19 from smartwatch data. Nat Biomed Eng. 2020;4:1208–1220.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/33208925/"),
         ]),
         Group(heading: "RUNNING METRICS", sources: [
             Source(title: "Grade-adjusted pace",
@@ -56,6 +68,12 @@ struct ScienceSourcesView: View {
             Source(title: "Calorie estimate — MET values for other sports",
                    citation: "Ainsworth BE, et al. 2011 Compendium of Physical Activities. Med Sci Sports Exerc. 2011;43(8):1575–1581.",
                    url: "https://pubmed.ncbi.nlm.nih.gov/21681120/"),
+            Source(title: "Aerobic efficiency (cardiac drift)",
+                   citation: "Coyle EF, González-Alonso J. Cardiovascular drift during prolonged exercise. Exerc Sport Sci Rev. 2001;29(2):88–92.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/11337828/"),
+            Source(title: "Running cadence & joint load",
+                   citation: "Heiderscheit BC, et al. Effects of step rate manipulation on joint mechanics during running. Med Sci Sports Exerc. 2011;43(2):296–302.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/20581720/"),
         ]),
         Group(heading: "FUELING", sources: [
             Source(title: "Carbohydrate during long sessions (30–90 g/h)",
@@ -72,6 +90,9 @@ struct ScienceSourcesView: View {
             Source(title: "Estimated one-rep max (Epley)",
                    citation: "Epley B. Poundage Chart. Boyd Epley Workout. Lincoln, NE, 1985. Accuracy reviewed in Reynolds JM, et al. J Strength Cond Res. 2006;20(3):584–592.",
                    url: "https://pubmed.ncbi.nlm.nih.gov/16937961/"),
+            Source(title: "Weekly training volume & muscle growth",
+                   citation: "Schoenfeld BJ, Ogborn D, Krieger JW. Dose-response relationship between weekly resistance training volume and increases in muscle mass. J Sports Sci. 2017;35(11):1073–1082.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/27433992/"),
         ]),
     ]
 
@@ -147,6 +168,28 @@ struct ScienceSourcesView: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Opens the source in your browser")
+    }
+}
+
+/// The quiet "where the numbers come from" door for the foot of every health surface
+/// (App Review 1.4.1: citations must be easy to find, at the point of the information).
+/// Drop at the end of any scroll content that lives inside a NavigationStack.
+struct SourcesFooterLink: View {
+    var body: some View {
+        NavigationLink { ScienceSourcesView() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "text.book.closed")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Science & sources")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                    .underline()
+            }
+            .foregroundStyle(Theme.inkSecondary)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Science and sources — citations for every calculation")
     }
 }
 
