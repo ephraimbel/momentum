@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.2.0"      # must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version.
-    CURRENT_PROJECT_VERSION: "18"   # build 18 (v1.2.0): App Review fixes — HealthKit priming (5.1.1(iv): Continue button, no skip) + Science & sources citations screen (1.4.1). Build 17: post-activity overhaul, Progress scale pass, portrait lock.
+    CURRENT_PROJECT_VERSION: "19"   # build 19 (v1.2.0): TikTok (live) + Meta (dark until creds) ads attribution SDKs, 4 SKAN IDs. Build 18: App Review fixes — HealthKit priming (5.1.1(iv)) + Science & sources citations (1.4.1).
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
