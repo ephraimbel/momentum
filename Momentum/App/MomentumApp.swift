@@ -32,6 +32,7 @@ struct MomentumApp: App {
         let controller = PaywallController()
         controller.configure()   // RevenueCat/Superwall when linked; no-op local seam otherwise
         TikTokAdsService.configure()   // TikTok ads attribution — dark until Secrets.xcconfig keys are set
+        MetaAdsService.configure()     // Meta ads attribution — same dark-seam contract
         _paywall = State(initialValue: controller)
         let services = Services.live(paywall: controller)
         _services = State(initialValue: services)
@@ -47,8 +48,9 @@ struct MomentumApp: App {
                 workout.postPublishedAt = nil
             }
             try? context.save()
-            // The account moment is the registration event TikTok campaigns optimize on.
+            // The account moment is the registration event ad campaigns optimize on.
             TikTokAdsService.trackRegistration()
+            MetaAdsService.trackRegistration()
         }
         // A DIFFERENT real account signing in on this device (shared/hand-me-down) must never see the
         // prior owner's data: wipe local SwiftData so they start clean. RootView re-onboards the

@@ -39,6 +39,11 @@ packages:
   TikTokBusinessSDK:
     url: https://github.com/tiktok/tiktok-business-ios-sdk
     from: "1.7.1"
+  # Meta ads attribution (owner ask 2026-08-11). Same dark-seam contract: never initialized
+  # until META_APP_ID/META_CLIENT_TOKEN are set in Secrets.xcconfig (MetaAdsService).
+  FacebookSDK:
+    url: https://github.com/facebook/facebook-ios-sdk
+    from: "18.1.0"
 #   Superwall:
 #     url: https://github.com/superwall/Superwall-iOS
 #     from: "4.0.0"
@@ -115,11 +120,20 @@ targets:
         # TikTokAdsService never initializes the SDK (dark seam, same pattern as Supabase).
         TikTokAppID: "$(TIKTOK_APP_ID)"
         TikTokAccessToken: "$(TIKTOK_ACCESS_TOKEN)"
-        # SKAdNetwork attribution for TikTok ads — install attribution works via SKAN even with
-        # no ATT prompt (we deliberately never ask; IDFA is off the table).
+        # Meta ads attribution — same seam (MetaAdsService). The SDK only ever starts when
+        # MetaAdsService.configure() decides to; these keys are its config, not an auto-start.
+        FacebookAppID: "$(META_APP_ID)"
+        FacebookClientToken: "$(META_CLIENT_TOKEN)"
+        FacebookDisplayName: momentum
+        # No IDFA collection — we never show the ATT prompt (SKAN-only posture, both networks).
+        FacebookAdvertiserIDCollectionEnabled: false
+        # SKAdNetwork attribution for TikTok + Meta ads — install attribution works via SKAN even
+        # with no ATT prompt (we deliberately never ask; IDFA is off the table).
         SKAdNetworkItems:
           - SKAdNetworkIdentifier: 238da6jt44.skadnetwork
           - SKAdNetworkIdentifier: 22mmun2rn5.skadnetwork
+          - SKAdNetworkIdentifier: v9wttpbfk9.skadnetwork
+          - SKAdNetworkIdentifier: n38lu8286q.skadnetwork
         UILaunchScreen:
           UIColorName: background
         UIAppFonts:
@@ -143,6 +157,8 @@ targets:
       - package: RevenueCat        # billing live 2026-07-15 (RC project "Momentum", entitlement `pro`, offering `default`)
     #   - package: Superwall       # not set up — RevenueCat-only per user; native PaywallView is the fallback
       - package: TikTokBusinessSDK # TikTok ads attribution (SKAN-only, no ATT) — TikTokAdsService
+      - package: FacebookSDK       # Meta ads attribution (SKAN-only, no ATT) — MetaAdsService
+        product: FacebookCore
 
   # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
   # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity
