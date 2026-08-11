@@ -266,6 +266,14 @@ final class PaywallController: PaywallServing {
             let result = try await Purchases.shared.purchase(package: package)
             if result.userCancelled { return .cancelled }
             apply(result.customerInfo)
+            // The money moment TikTok campaigns bid on — only when the entitlement actually
+            // landed, so a deferred/pending payment never reports revenue that didn't happen.
+            if isPro {
+                TikTokAdsService.trackSubscription(productId: product.id,
+                                                   isTrial: product.trialDays > 0,
+                                                   price: package.storeProduct.price,
+                                                   currency: package.storeProduct.currencyCode)
+            }
             // Purchase reported success but the entitlement didn't land (deferred/pending payment,
             // Ask to Buy). Point at Restore rather than leaving them staring at a locked app.
             return isPro ? .purchased

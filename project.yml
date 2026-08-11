@@ -34,6 +34,11 @@ packages:
   RevenueCat:
     url: https://github.com/RevenueCat/purchases-ios
     from: "5.0.0"
+  # TikTok ads attribution (owner ask 2026-08-11). Config-gated: the app ships dark until
+  # TIKTOK_APP_ID/TIKTOK_ACCESS_TOKEN are set in Secrets.xcconfig (TikTokAdsService).
+  TikTokBusinessSDK:
+    url: https://github.com/tiktok/tiktok-business-ios-sdk
+    from: "1.7.1"
 #   Superwall:
 #     url: https://github.com/superwall/Superwall-iOS
 #     from: "4.0.0"
@@ -106,6 +111,15 @@ targets:
         # (docs/MONETIZATION-SETUP.md). Read by `BillingKeys`.
         RevenueCatAPIKey: "appl_RCnCHIbAdYuSJAkzepPxxmnGVMJ"
         SuperwallAPIKey: ""
+        # TikTok ads attribution — injected from the untracked Secrets.xcconfig; both empty →
+        # TikTokAdsService never initializes the SDK (dark seam, same pattern as Supabase).
+        TikTokAppID: "$(TIKTOK_APP_ID)"
+        TikTokAccessToken: "$(TIKTOK_ACCESS_TOKEN)"
+        # SKAdNetwork attribution for TikTok ads — install attribution works via SKAN even with
+        # no ATT prompt (we deliberately never ask; IDFA is off the table).
+        SKAdNetworkItems:
+          - SKAdNetworkIdentifier: 238da6jt44.skadnetwork
+          - SKAdNetworkIdentifier: 22mmun2rn5.skadnetwork
         UILaunchScreen:
           UIColorName: background
         UIAppFonts:
@@ -128,6 +142,7 @@ targets:
     # `xcodegen generate`. Full runbook: docs/MONETIZATION-SETUP.md.
       - package: RevenueCat        # billing live 2026-07-15 (RC project "Momentum", entitlement `pro`, offering `default`)
     #   - package: Superwall       # not set up — RevenueCat-only per user; native PaywallView is the fallback
+      - package: TikTokBusinessSDK # TikTok ads attribution (SKAN-only, no ATT) — TikTokAdsService
 
   # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
   # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity

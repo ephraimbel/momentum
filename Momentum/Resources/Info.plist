@@ -55,12 +55,27 @@
 	<true/>
 	<key>RevenueCatAPIKey</key>
 	<string>appl_RCnCHIbAdYuSJAkzepPxxmnGVMJ</string>
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>238da6jt44.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>22mmun2rn5.skadnetwork</string>
+		</dict>
+	</array>
 	<key>SupabaseAnonKey</key>
 	<string>$(SUPABASE_ANON_KEY)</string>
 	<key>SupabaseURL</key>
 	<string>$(SUPABASE_URL)</string>
 	<key>SuperwallAPIKey</key>
 	<string></string>
+	<key>TikTokAccessToken</key>
+	<string>$(TIKTOK_ACCESS_TOKEN)</string>
+	<key>TikTokAppID</key>
+	<string>$(TIKTOK_APP_ID)</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Inter-Regular.ttf</string>
