@@ -580,6 +580,24 @@ struct SettingsView: View {
                 guard !deletingData else { return }
                 confirmDelete = true
             }
+            inset
+            // App Review 1.4.1: the sports-science citations behind every computed number,
+            // one obvious tap from Settings.
+            NavigationLink { ScienceSourcesView() } label: {
+                HStack(spacing: Theme.Space.md) {
+                    iconChip("text.book.closed")
+                    Text("Science & sources")
+                        .font(.rounded(Theme.FontSize.body, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -660,6 +678,13 @@ struct SettingsView: View {
                 .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
                 .foregroundStyle(Theme.inkTertiary)
             HStack(spacing: Theme.Space.xs) {
+                NavigationLink { ScienceSourcesView() } label: {
+                    Text("Sources").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .underline()
+                        .contentShape(VerticalHitPad(dy: 16))
+                }
+                .buttonStyle(.plain)
+                dot
                 colophonLink("Terms", url: "https://momentumco.app/terms")
                 dot
                 colophonLink("Privacy", url: "https://momentumco.app/privacy")

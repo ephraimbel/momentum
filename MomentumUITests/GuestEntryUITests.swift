@@ -140,11 +140,22 @@ final class GuestEntryUITests: XCTestCase {
         // can't buy — pages one and two of the flow ("Try now", "Continue for free") sell without
         // transacting, so walking through them is free.
         let paywallCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
+        // anymore) — it presents from com.apple.Health, so drive that process directly.
+        let healthApp = XCUIApplication(bundleIdentifier: "com.apple.Health")
         for _ in 0..<80 {
             if paywallCTA.exists { break }
             // System permission alerts (notifications, location) block everything behind them.
             for allow in [springboard.buttons["Don't Allow"], springboard.buttons["Allow"]]
             where allow.exists && allow.isHittable { allow.tap() }
+            for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
+                let sw = healthApp.switches[label]
+                if sw.exists && sw.isHittable { sw.tap() }
+                let btn = healthApp.buttons[label]
+                if btn.exists && btn.isHittable { btn.tap() }
+            }
+            let allowHealth = healthApp.buttons["Allow"]
+            if allowHealth.exists && allowHealth.isHittable { allowHealth.tap() }
 
             if app.staticTexts["What do you want to do?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Run"].firstMatch.tap()

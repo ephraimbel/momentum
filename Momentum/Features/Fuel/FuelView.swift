@@ -1212,6 +1212,15 @@ private struct FuelReadoutSheet: View {
                     Text("Floors, never ceilings — enough to fund the work. Every number is an estimate.")
                         .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         .reveal(0.24)
+                    // App Review 1.4.1: the published science behind these targets, one tap away
+                    // right where the numbers appear.
+                    NavigationLink { ScienceSourcesView() } label: {
+                        Text("Science & sources")
+                            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                            .underline()
+                    }
+                    .buttonStyle(.plain)
+                    .reveal(0.26)
                 }
                 .padding(Theme.Space.lg)
             }

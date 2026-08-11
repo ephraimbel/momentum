@@ -111,8 +111,12 @@ final class EmailAuthUITests: XCTestCase {
         // Walk the remaining steps generically: answer the two steps that demand input,
         // dismiss opt-in beats, Continue through the rest.
         let week1 = app.staticTexts["Week 1"]   // the plan reveal
+        // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
+        // anymore) — it presents from com.apple.Health, so drive that process directly.
+        let health = XCUIApplication(bundleIdentifier: "com.apple.Health")
         for _ in 0..<25 {
             if week1.exists { break }
+            grantHealthSheet(health)
             if app.staticTexts["What do you want to do?"].exists,
                !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Lift weights"].firstMatch.tap()
@@ -139,6 +143,18 @@ final class EmailAuthUITests: XCTestCase {
         XCTAssertTrue(cont.waitForExistence(timeout: 5))
         XCTAssertTrue(cont.isEnabled)
         cont.tap()
+    }
+
+    /// Grant the HealthKit authorization sheet if it's up (same pattern as HealthImportUITests).
+    private func grantHealthSheet(_ health: XCUIApplication) {
+        for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
+            let sw = health.switches[label]
+            if sw.exists && sw.isHittable { sw.tap() }
+            let btn = health.buttons[label]
+            if btn.exists && btn.isHittable { btn.tap() }
+        }
+        let allow = health.buttons["Allow"]
+        if allow.exists && allow.isHittable { allow.tap() }
     }
 
     private func attach(_ app: XCUIApplication, _ name: String) {

@@ -678,6 +678,11 @@ struct OnboardingFlow: View {
 
     /// The recovery consent beat (ENDURANCE-FOCUS §7) — connect Apple Health so the plan adapts to how
     /// the athlete is *actually* recovering. Benefit-first, names their devices, read-only reassurance.
+    ///
+    /// ⚠️ App Review guideline 5.1.1(iv) (rejected build 17, 2026-08-11): a priming screen before the
+    /// HealthKit request must use a neutral button word ("Continue"/"Next", never "Connect") and must
+    /// NOT offer a way to bypass the system prompt (no "Maybe later"). The athlete's real choice is
+    /// the system sheet itself — declining there advances the flow exactly like accepting.
     private var healthStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer(minLength: 0)
@@ -685,7 +690,7 @@ struct OnboardingFlow: View {
                 Text("Train with your whole picture")
                     .font(.serif(30, weight: .semibold)).foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                Text("Connect Apple Health and momentum learns how you're actually recovering — so each week adapts to you, not a template.")
+                Text("Next, iOS will ask about Apple Health access. With it, momentum learns how you're actually recovering — so each week adapts to you, not a template. You choose what to share.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
@@ -693,14 +698,14 @@ struct OnboardingFlow: View {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 healthBenefitRow("bed.double.fill", "Sleep & heart rate", "Rough night? Your week eases off before you overdo it.")
                 healthBenefitRow("applewatch", "Your devices, one tap", "Oura, Garmin, Whoop & Apple Watch already sync to Apple Health — no separate logins.")
-                healthBenefitRow("lock.fill", "Read-only, always", "It stays on your device, in your control. Disconnect anytime.")
+                healthBenefitRow("lock.fill", "Private, always", "Reads your recovery signals, saves your workouts. You pick exactly what — and can turn it off anytime.")
             }
             .padding(Theme.Space.md)
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
             .reveal(0.15)
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.sm) {
-                OversizedButton(title: "Connect Apple Health") {
+                OversizedButton(title: "Continue") {
                     // One-shot: when permission is already determined the awaits return instantly
                     // with no system sheet to swallow taps, and a double-tap advanced two steps.
                     guard !healthRequestInFlight else { return }
@@ -724,10 +729,6 @@ struct OnboardingFlow: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { healthRequestInFlight = false }
                     }
                 }
-                Button { Haptics.light(); goNext() } label: {
-                    Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                .buttonStyle(.plain)
             }
             .reveal(0.28)
         }
