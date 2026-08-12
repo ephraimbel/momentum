@@ -122,9 +122,12 @@ struct FuelView: View {
                     }
                     todaysMeals.reveal(0.24)
                     // No page-footer sources link here (owner call 2026-08-11: it lives in
-                    // Settings → Science & sources). App Review 1.4.1 stays satisfied on this
-                    // page by the ⓘ explainer sheets' SOURCE cards and the Today's-fueling
-                    // sheet's own citations link — the point-of-information doors.
+                    // Settings → Science & sources).
+                    // ⚠️ 1.4.1 NOTE: unlike Trends/Health, this page has NO ⓘ explainer sheets,
+                    // so the ONLY citation door for Fuel's targets is the "Science & sources"
+                    // link inside the Today's-fueling sheet (tap the summary strip above). If
+                    // App Review ever questions findability on Fuel again, restore
+                    // `SourcesFooterLink()` here first — it is the cheapest fix.
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
