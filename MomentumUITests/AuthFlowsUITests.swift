@@ -49,7 +49,7 @@ final class AuthFlowsUITests: XCTestCase {
 
         // Sign-in with the right password while unconfirmed → the specific nudge.
         signIn(app, email: email, password: pass)
-        XCTAssertTrue(app.staticTexts["Confirm your email first — check your inbox for the link we sent."]
+        XCTAssertTrue(app.staticTexts["Confirm your email first. Check your inbox for the link we sent."]
             .waitForExistence(timeout: 20), "unconfirmed sign-in should say so, not 'wrong password'")
         attach(app, "error-unconfirmed")
 
