@@ -11,6 +11,16 @@ import TikTokBusinessSDK
 ///  - **SKAN-only, never ATT.** We never call the tracking-authorization dialog and never touch
 ///    IDFA — install attribution rides SKAdNetwork (the two TikTok IDs live in Info.plist).
 ///    Adding an ATT prompt is a deliberate future decision, not a default.
+///    ⚠️ 2026-08-12: that doctrine and this file's *behaviour* are not the same thing. SKAdNetwork
+///    attribution needs nothing from this SDK — it runs off `SKAdNetworkItems` in Info.plist.
+///    Every `trackTTEvent` below ships an app event to TikTok, who match it against their own
+///    user data to measure ad performance, and Apple's App Privacy definition calls exactly that
+///    **tracking** ("a third-party SDK that combines user data from your app with user data from
+///    other developers' apps to … measure advertising efficiency, even if you don't use the SDK
+///    for these purposes"). Declaring tracking obligates an ATT prompt. So the credentials are
+///    blanked in `Secrets.xcconfig` and this whole service ships DARK from build 22 on. Turning
+///    it back on is a three-part decision: ATT prompt + tracking:YES on the privacy label +
+///    restore the keys. Do not just re-add the keys.
 ///  - **Config-gated, dark by default** (the Supabase/Mapbox pattern): both Info.plist keys are
 ///    injected from the untracked `Secrets.xcconfig`; either one empty → `configure()` returns
 ///    without ever initializing the SDK, and every track call no-ops.
