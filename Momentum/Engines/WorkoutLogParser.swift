@@ -95,8 +95,7 @@ enum WorkoutLogParser {
         let scanEntries: [(phrase: String, type: WorkoutType)] =
             sports.map { ($0.phrase, $0.type) } + strengthHints.map { ($0, .strength) }
         for s in scanEntries {
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: s.phrase) + "\\b"
-            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            guard let re = regex(wordPattern(s.phrase)) else { continue }
             for m in re.matches(in: text, range: nsRange) {
                 guard let r = Range(m.range, in: text) else { continue }
                 hits.append((text.distance(from: text.startIndex, to: r.lowerBound), s.phrase.count, s.type))
@@ -415,7 +414,7 @@ enum WorkoutLogParser {
     /// the match (the bar-context window); returning nil leaves that match as written.
     private static func rewrite(_ pattern: String, in text: String,
                                 _ replacement: ([String?], String) -> String?) -> String {
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
+        guard let re = regex(pattern) else { return text }
         var out = text
         for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
             guard let full = Range(m.range, in: text) else { continue }
@@ -734,8 +733,7 @@ enum WorkoutLogParser {
         var hits: [(pos: Int, len: Int, rpe: Int)] = []
         let nsRange = NSRange(text.startIndex..., in: text)
         for e in efforts {
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: e.phrase) + "\\b"
-            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            guard let re = regex(wordPattern(e.phrase)) else { continue }
             for m in re.matches(in: text, range: nsRange) {
                 guard let range = Range(m.range, in: text) else { continue }
                 hits.append((text.distance(from: text.startIndex, to: range.lowerBound),
@@ -870,10 +868,47 @@ enum WorkoutLogParser {
 
     // MARK: Matching helpers
 
+    /// Compiled-pattern cache.
+    ///
+    /// An `NSRegularExpression` is immutable and safe to match from any thread once built, but
+    /// BUILDING one parses the pattern through ICU — and this parser used to build ~105 of them
+    /// on every single call (one per sport phrase, per strength hint, per effort phrase, plus a
+    /// fresh one behind every `boundedRange`/`captures`/`rewrite`). The composer parses on each
+    /// keystroke on the main actor, so that compile cost landed directly on typing latency.
+    ///
+    /// Every pattern here comes from a static table or a string literal, so the set is closed and
+    /// small: each one compiles once for the life of the process and is reused forever after.
+    /// Failures aren't cached, but a pattern that fails to compile is a malformed literal — a
+    /// programmer error that never varies at runtime.
+    private final class RegexCache: @unchecked Sendable {
+        static let shared = RegexCache()
+        private let lock = NSLock()
+        private var store: [String: NSRegularExpression] = [:]
+
+        func regex(_ pattern: String) -> NSRegularExpression? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let hit = store[pattern] { return hit }
+            guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+            store[pattern] = re
+            return re
+        }
+    }
+
+    /// The one door to a compiled pattern — never construct `NSRegularExpression` directly here.
+    static func regex(_ pattern: String) -> NSRegularExpression? { RegexCache.shared.regex(pattern) }
+
+    /// Word-bounded pattern for a literal phrase, e.g. `ran` -> `\bran\b`.
+    private static func wordPattern(_ phrase: String) -> String {
+        "\\b" + NSRegularExpression.escapedPattern(for: phrase) + "\\b"
+    }
+
     /// Word-bounded search — the reason "ran" can't fire inside "grand".
     private static func boundedRange(of phrase: String, in text: String) -> Range<String.Index>? {
-        text.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b",
-                   options: .regularExpression)
+        guard let re = regex(wordPattern(phrase)),
+              let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+        else { return nil }
+        return Range(m.range, in: text)
     }
 
     private static func contains(_ text: String, _ phrase: String) -> Bool {
@@ -882,7 +917,7 @@ enum WorkoutLogParser {
 
     /// First match's capture groups (nil where a group didn't participate), or nil for no match.
     private static func captures(_ pattern: String, in text: String) -> [String?]? {
-        guard let re = try? NSRegularExpression(pattern: pattern),
+        guard let re = regex(pattern),
               let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
         else { return nil }
         return (1..<m.numberOfRanges).map { Range(m.range(at: $0), in: text).map { String(text[$0]) } }

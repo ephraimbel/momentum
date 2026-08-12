@@ -92,6 +92,21 @@ struct FuelView: View {
     @State private var cachedTitles: [UUID: String] = [:]
     /// The signature the caches were built from. nil = never built (first frame).
     @State private var cacheToken: Int?
+    /// Within-pass memo for the frames the @State cache CANNOT cover: the very first paint (which
+    /// runs before `.onAppear` fills it) and the frame a signature moves before its eager
+    /// `refreshDerived` lands. On those frames every one of the ~7 `readout`/`tip` reads used to run
+    /// the full engine pass, so opening Fuel paid for it about six times over.
+    ///
+    /// A reference type on purpose — writing through a class held in @State is not a SwiftUI state
+    /// mutation, so it is legal from a body evaluation where touching @State would not be. Same
+    /// `PreviewMemo` pattern as `FuelGoalsSheet`. It is a memo, never a cache: it is keyed on the
+    /// same signature plus the minute, so it can only ever collapse duplicate reads WITHIN one
+    /// frame's inputs — it can never serve a number the real cache would have refused.
+    private final class PassMemo {
+        var key: Int?
+        var pass: (readout: FuelReadiness.DayReadout, today: [Meal], tip: String?)?
+    }
+    @State private var passMemo = PassMemo()
     /// The clock is a real input, not incidental: the engine paces `status` across the waking day
     /// (06:00→22:00), opens and closes the 90-minute refuel window, and `FuelTips` switches on hour
     /// bands. Today that tracks live only because the readout recomputes constantly — memoizing it
@@ -318,14 +333,30 @@ struct FuelView: View {
     /// an estimate lands.
     private var readout: FuelReadiness.DayReadout {
         if isCacheValid, let r = cachedReadout { return r }
-        return computeReadout(now: Date()).readout
+        return uncachedPass().readout
     }
 
     /// The one tip line, judged with the SAME `now` as the readout it reads (as two independent
-    /// computed properties they could disagree across an hour boundary mid-frame).
+    /// computed properties they could disagree across an hour boundary mid-frame). Sharing
+    /// `uncachedPass` now makes that guarantee structural rather than incidental.
     private var tip: String? {
         if isCacheValid { return cachedTip }
-        return computeReadout(now: Date()).tip
+        return uncachedPass().tip
+    }
+
+    /// The engine pass for a frame the @State cache can't serve, run at most ONCE for that frame's
+    /// inputs however many readers ask. Keyed on the cache signature plus the minute, the same two
+    /// things that drive `refreshDerived`, so it expires exactly when the real cache would.
+    private func uncachedPass() -> (readout: FuelReadiness.DayReadout, today: [Meal], tip: String?) {
+        var h = Hasher()
+        h.combine(cacheSignature)
+        h.combine(minuteTick)
+        let key = h.finalize()
+        if passMemo.key == key, let hit = passMemo.pass { return hit }
+        let pass = computeReadout(now: Date())
+        passMemo.key = key
+        passMemo.pass = pass
+        return pass
     }
 
     /// Today's meals as a leading slice — the query sorts `eatenAt` descending and a meal can't be

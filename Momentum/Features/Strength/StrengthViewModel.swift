@@ -94,6 +94,16 @@ final class StrengthViewModel {
     // MARK: Mutations
 
     func addExercise(_ exercise: Exercise, prescription: PlannedPrescription? = nil) async {
+        _ = await addExerciseInternal(exercise, prescription: prescription)
+        await refresh()
+    }
+
+    /// The add itself, WITHOUT the republish — and returning the new row's id rather than making the
+    /// caller read it back off `exercises`, which only a refresh would have populated. `loadPlanned`
+    /// builds a whole planned day out of this and refreshes once at the end.
+    @discardableResult
+    private func addExerciseInternal(_ exercise: Exercise,
+                                     prescription: PlannedPrescription? = nil) async -> UUID {
         let rowId = await engine.addExercise(exerciseId: exercise.id, name: exercise.name,
                                              category: exercise.category, defaultRestS: exercise.defaultRestS)
         musclesByExercise[exercise.id] = (exercise.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
@@ -102,7 +112,7 @@ final class StrengthViewModel {
         previousByRow[rowId] = PreviousPerformance.lastSession(forExerciseId: exercise.id, in: context)
         if let prescription { plannedPrescription[rowId] = prescription }   // planned ⇒ scheme-aware progression
         await addSetInternal(rowId: rowId)
-        await refresh()
+        return rowId
     }
 
     func addSet(rowId: UUID) async {
@@ -207,18 +217,29 @@ final class StrengthViewModel {
     /// Pre-load a planned strength day: each target exercise with its prescribed set count and
     /// rep target (PRD §4.4 "from today's plan day").
     func loadPlanned(_ session: PlannedSession) async {
+        // Built with the non-republishing adds and refreshed ONCE at the end. Per-exercise and
+        // per-set `refresh()` meant a six-lift day paid ~24 actor round-trips, each reassigning the
+        // whole `exercises` array, before the screen had anything to draw — the planned-lift open
+        // visibly hitched on its first frame. The work is identical; only the republishing is
+        // collapsed. Prefill runs after the refresh for the same reason: it needs the finished set
+        // list, which is exactly what the single refresh hands back.
+        var repLowByRow: [UUID: Int] = [:]
         for pe in session.strengthTargets.sorted(by: { $0.order < $1.order }) {
             guard let exercise = pe.exercise else { continue }
-            await addExercise(exercise, prescription: PlannedPrescription(
+            let rowId = await addExerciseInternal(exercise, prescription: PlannedPrescription(
                 repLow: pe.targetRepLow, repHigh: pe.targetRepHigh,
                 scheme: pe.progression, pctRM: pe.targetPctRM,
                 targetSets: pe.targetSets, rpe: pe.targetRPE))
-            guard let rowId = exercises.last?.id else { continue }
-            for _ in 1..<max(1, pe.targetSets) { await addSet(rowId: rowId) }
-            if let row = exercises.first(where: { $0.id == rowId }) {
-                for set in row.sets where (drafts[set.id]?.reps ?? "").isEmpty {
-                    drafts[set.id, default: .init()].reps = String(pe.targetRepLow)
-                }
+            for _ in 1..<max(1, pe.targetSets) { await addSetInternal(rowId: rowId) }
+            repLowByRow[rowId] = pe.targetRepLow
+        }
+        await refresh()
+        // Only sets the previous-session progression left blank — a real prefilled rep count is the
+        // athlete's own history and outranks the prescription's floor.
+        for row in exercises {
+            guard let repLow = repLowByRow[row.id] else { continue }
+            for set in row.sets where (drafts[set.id]?.reps ?? "").isEmpty {
+                drafts[set.id, default: .init()].reps = String(repLow)
             }
         }
     }
