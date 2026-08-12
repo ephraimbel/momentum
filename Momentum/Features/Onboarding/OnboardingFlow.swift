@@ -1789,6 +1789,7 @@ struct OnboardingFlow: View {
             profile = vm.finish(in: context)
             OnboardingDraftStore.clear()   // onboarding succeeded — nothing left to resume
             services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
+            SKANConversion.record(.planBuilt)   // activation, for ad-campaign optimisation
         }
 
         // Reduce Motion: no ticking theatre — build, show the finished state, hold briefly, reveal.

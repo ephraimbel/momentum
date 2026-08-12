@@ -101,6 +101,7 @@ struct PaywallView: View {
         .environment(\.colorScheme, .dark)
         .onAppear {
             services.analytics.log(.paywallView(placement: feature.placement))
+            SKANConversion.record(.paywallSeen)
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
         }
     }

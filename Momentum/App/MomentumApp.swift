@@ -33,6 +33,10 @@ struct MomentumApp: App {
         controller.configure()   // RevenueCat/Superwall when linked; no-op local seam otherwise
         TikTokAdsService.configure()   // TikTok ads attribution — dark until Secrets.xcconfig keys are set
         MetaAdsService.configure()     // Meta ads attribution — same dark-seam contract
+        // Apple's own attribution framework. Unlike the two SDKs above it needs no credentials,
+        // no ATT prompt and no privacy disclosure, so it is always on — it is what lets a
+        // campaign optimise toward trials instead of the cheapest install.
+        SKANConversion.registerInstall()
         _paywall = State(initialValue: controller)
         let services = Services.live(paywall: controller)
         _services = State(initialValue: services)
@@ -51,6 +55,7 @@ struct MomentumApp: App {
             // The account moment is the registration event ad campaigns optimize on.
             TikTokAdsService.trackRegistration()
             MetaAdsService.trackRegistration()
+            SKANConversion.record(.accountCreated)
         }
         // A DIFFERENT real account signing in on this device (shared/hand-me-down) must never see the
         // prior owner's data: wipe local SwiftData so they start clean. RootView re-onboards the

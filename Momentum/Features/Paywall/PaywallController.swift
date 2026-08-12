@@ -273,6 +273,9 @@ final class PaywallController: PaywallServing {
                                                    isTrial: product.trialDays > 0,
                                                    price: package.storeProduct.price,
                                                    currency: package.storeProduct.currencyCode)
+                // The same moment through Apple's framework, which reaches the ad network even
+                // with every SDK dark (see SKANConversion).
+                SKANConversion.record(product.trialDays > 0 ? .trialStarted : .subscribed)
             }
             // Purchase reported success but the entitlement didn't land (deferred/pending payment,
             // Ask to Buy). Point at Restore rather than leaving them staring at a locked app.
