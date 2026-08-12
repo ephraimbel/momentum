@@ -238,6 +238,7 @@ struct AccountOptionsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var googleInFlight = false
+    @State private var resetInFlight = false
     // Email + password (the classic boxes; the @handle stays the social username — email only signs in)
     @State private var email = ""
     @State private var password = ""
@@ -391,11 +392,19 @@ struct AccountOptionsView: View {
                                     Haptics.light()
                                     sendReset()
                                 } label: {
-                                    Text("Forgot password?")
-                                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                        .foregroundStyle(Theme.inkSecondary)
+                                    // In-flight feedback: without the latch, impatient re-taps on
+                                    // a slow network sent duplicate reset emails against the
+                                    // mailer's tight hourly budget (audit 2026-08-11).
+                                    if resetInFlight {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Text("Forgot password?")
+                                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                                            .foregroundStyle(Theme.inkSecondary)
+                                    }
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(resetInFlight)
                             }
                         }
                         .padding(.top, 2)
@@ -435,9 +444,13 @@ struct AccountOptionsView: View {
                         .signInWithAppleButtonStyle(.black)
                         .frame(height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                        // One sign-in at a time: launching Apple while an email submit is in
+                        // flight let the slower winner silently flip the identity afterwards
+                        // (audit 2026-08-11).
+                        .disabled(emailInFlight || googleInFlight)
 
                         Button {
-                            guard !googleInFlight else { return }
+                            guard !googleInFlight, !emailInFlight else { return }
                             Haptics.light()
                             googleInFlight = true
                             oauthMessage = nil
@@ -524,6 +537,10 @@ struct AccountOptionsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Not while a sign-in is resolving: entering as a guest mid-flight let the slow
+            // success flip the identity to the email account moments later, silently overriding
+            // the guest choice (audit 2026-08-11).
+            .disabled(emailInFlight || googleInFlight)
             .padding(.top, Theme.Space.sm)
             .padding(.bottom, Theme.Space.xl)
         case .sheet:
@@ -621,13 +638,16 @@ struct AccountOptionsView: View {
     }
 
     private func sendReset() {
+        guard !resetInFlight else { return }
         let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard address.contains("@") else {
             authMessage = "Enter your email above first, then tap Forgot password."
             return
         }
+        resetInFlight = true
         Task {
             let sent = await auth.sendPasswordReset(to: address)
+            resetInFlight = false
             withAnimation(.easeOut(duration: 0.15)) {
                 authMessage = sent
                     ? "Check \(address) for a reset link."

@@ -379,7 +379,15 @@ struct RootView: View {
             if url.host == "today" { selection = .today; return }
             auth.handleAuthCallback(url)
         }
-        .sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
+        // Own background host (the 4th-chained-presentation gotcha documented above): this sheet
+        // sat 4th on the outer chain in Release, exactly where covers silently stop presenting —
+        // the recovery email's whole payoff could fail to appear, leaving the athlete signed in
+        // but never asked for a new password. A separate host also stops it fighting the
+        // onboarding cover for one slot when a recovery link lands on a profile-less install
+        // (both raise in the same update). (Audit 2026-08-11.)
+        .background {
+            Color.clear.sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
+        }
         .onAppear {
             // A Siri receipt posted under quiet provisional delivery → ask properly (once) so
             // the next "Logged to Fuel" actually banners.

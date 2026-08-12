@@ -45,6 +45,7 @@ struct CardioTrackingView: View {
     @State private var startCoordinate: CLLocationCoordinate2D?
     @State private var viewport: Viewport = .idle
     @State private var confirmStop = false
+    @State private var finishing = false   // one finish per run (see the Finish dialog)
     @State private var vm: CardioViewModel?
     @State private var goalReached = false
     @State private var acquirePulse = false
@@ -106,10 +107,13 @@ struct CardioTrackingView: View {
     private var routeCoords: [CLLocationCoordinate2D] { vm?.coordinates ?? [] }
 
     /// Most recent prior route's location, used to frame the map until a live fix arrives — so we
-    /// never show the whole country while waiting for GPS.
-    private var lastKnownCoordinate: CLLocationCoordinate2D? {
-        // Never the recording in progress: its `samples` array is the one growing under us, and
-        // faulting it per body pass is exactly the work this lookup must not do.
+    /// never show the whole country while waiting for GPS. Cached: reading it faults the prior
+    /// workout's whole `samples` relationship, and doing that per body pass froze the start
+    /// screen after a long previous run (audit 2026-08-11) — computed ONCE in onAppear.
+    @State private var lastKnownCoordinate: CLLocationCoordinate2D?
+
+    private func computeLastKnownCoordinate() -> CLLocationCoordinate2D? {
+        // Never the recording in progress: its `samples` array is the one growing under us.
         let live = ActiveWorkoutMarker.pendingID
         return workouts
             .lazy
@@ -192,6 +196,7 @@ struct CardioTrackingView: View {
 
             // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
             // begins we follow the location puck (see `recenterOnUser`).
+            if lastKnownCoordinate == nil { lastKnownCoordinate = computeLastKnownCoordinate() }
             if case .idle = viewport {
                 viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 15) } ?? followViewport
             }
@@ -596,7 +601,14 @@ struct CardioTrackingView: View {
         // frames crossing your own finish line as damage — the last thing the athlete should read
         // before the reveal. The confirmation stays (a mis-tap mid-run is real); the alarm goes.
         .confirmationDialog("Finish this \(type.title.lowercased())?", isPresented: $confirmStop, titleVisibility: .visible) {
-            Button("Finish") { Task { onFinish(await vm.finish()) } }
+            Button("Finish") {
+                // One finish per run: re-opening the dialog during the finish await used to
+                // re-run the whole finish path — second store save, second snapshot render,
+                // second `onFinish` into the presenter (audit 2026-08-11).
+                guard !finishing else { return }
+                finishing = true
+                Task { onFinish(await vm.finish()) }
+            }
             Button("Keep going", role: .cancel) {}
         }
     }

@@ -47,6 +47,7 @@ final class VoiceTranscriber {
     /// two permission awaits, so a double-tap through the first-run mic dialog used to run
     /// `start()` twice (the second tore down the first's engine → dictation silently dead).
     private var starting = false
+    private var abandonedStart = false   // a stop() landed while start() awaited permissions
 
     /// The mic must NEVER outlive the screen: backgrounding mid-dictation kept the session
     /// active (other apps stayed ducked, mic hot), and a phone call left `isRecording` true over
@@ -73,7 +74,9 @@ final class VoiceTranscriber {
         for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
-    private func stopIfRecording() {
+    /// Stop if the mic is live OR mid-start — hosts should call this on dismissal rather than
+    /// checking `isRecording` themselves, which misses the permission-await window.
+    func stopIfRecording() {
         guard isRecording || starting else { return }
         stop()
     }
@@ -85,6 +88,7 @@ final class VoiceTranscriber {
     func start() async {
         guard !isRecording, !starting, let recognizer, recognizer.isAvailable else { return }
         starting = true
+        abandonedStart = false
         defer { starting = false }
         // Both gates up front (speech, then mic) — the composer keyboard stays usable throughout.
         let speech = await withCheckedContinuation { cont in
@@ -98,6 +102,11 @@ final class VoiceTranscriber {
             showPermissionAlert = true
             return
         }
+
+        // The host may have dismissed while the permission awaits ran — a stop() from that
+        // window would otherwise be outrun by the engine start below, leaving a hot mic and an
+        // active audio session with no UI attached (audit 2026-08-11).
+        guard !abandonedStart else { abandonedStart = false; return }
 
         transcript = ""
         banked = ""
@@ -195,6 +204,7 @@ final class VoiceTranscriber {
     /// Stop capturing. The transcript keeps everything banked plus the last partial — review,
     /// then send.
     func stop() {
+        if starting { abandonedStart = true }   // start() checks this after its awaits
         segmentToken += 1   // orphan any in-flight callback before tearing down
         task?.cancel()
         task = nil

@@ -60,6 +60,7 @@ struct LogWorkoutView: View {
     }
 
     @State private var date = Date()
+    @State private var saving = false   // one save per tap (see save())
     @State private var hours = 0
     @State private var minutes = 45
     @State private var distanceText = ""
@@ -304,6 +305,12 @@ struct LogWorkoutView: View {
     // MARK: Save
 
     private func save() {
+        // One save per tap: the toolbar Save stays hittable through the dismissal animation,
+        // and a double-tap used to run this whole pipeline twice — duplicate workout, double
+        // plan credit, double records entry (audit 2026-08-11). Re-armed only on a rolled-back
+        // save so a genuine retry still works.
+        guard !saving else { return }
+        saving = true
         // Card-editor mode: the values go back to the composer's receipt, not to storage.
         if let onDraftReturn {
             onDraftReturn(currentDraft())
@@ -345,6 +352,7 @@ struct LogWorkoutView: View {
         do { try context.save() } catch {
             context.delete(w)   // roll back the orphaned insert so a retry can't double-log
             saveFailed = true
+            saving = false      // the write never landed — let them tap Save again
             return
         }
         PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)

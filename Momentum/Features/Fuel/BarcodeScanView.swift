@@ -23,6 +23,8 @@ struct BarcodeScanView: View {
     /// the ask is still undetermined attaches a dead input and the first-ever open stays black.
     @State private var cameraReady = false
     @State private var lookupService = OpenFoodFactsService()
+    @State private var lookupTask: Task<Void, Never>?
+    @State private var logged = false   // one log per scan (see "Log it")
 
     enum Phase: Equatable {
         case scanning
@@ -56,6 +58,7 @@ struct BarcodeScanView: View {
             }
         }
         .preferredColorScheme(.dark)   // chrome sits on live camera — always night
+        .onDisappear { lookupTask?.cancel() }   // don't let an abandoned lookup run to timeout
         .task {
             #if DEBUG
             if demoMode {   // the canned card exists only in DEBUG; release compiles it out
@@ -255,6 +258,11 @@ struct BarcodeScanView: View {
             }
 
             primaryButton("Log it") {
+                // One log per scan: the button stays hittable through the cover's dismissal
+                // animation, and a double-tap inserted the meal twice — double-counted macros
+                // (audit 2026-08-11).
+                guard !logged else { return }
+                logged = true
                 onLog(product, servings)
                 dismiss()
             }
@@ -331,7 +339,9 @@ struct BarcodeScanView: View {
     private func lookup(_ code: String) {
         phase = .looking
         servings = 1
-        Task {
+        // Held so dismissal can cancel it — an abandoned lookup used to run to its network
+        // timeout after the sheet closed (audit 2026-08-11).
+        lookupTask = Task {
             switch await lookupService.lookup(barcode: code) {
             case .found(let product): phase = .found(product)
             case .notFound:           phase = .miss

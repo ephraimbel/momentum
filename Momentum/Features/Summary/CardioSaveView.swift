@@ -152,10 +152,11 @@ struct CardioSaveView: View {
                 effort = workout.perceivedEffort
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
-                // Accepted-fix count, NOT `routeCoordinates` — that ran a full Kalman replay on
-                // the main thread just to decide whether the map-style row shows, right as the
-                // summary was presenting (the row's only consumer is a Bool).
-                hasRoute = (workout.gps?.samples.filter(\.accepted).count ?? 0) > 1
+                // Stored distance, NOT the samples relationship — filtering `samples` faulted
+                // every LocationSample of a long run on the main actor right as the summary
+                // presented (audit 2026-08-11; the earlier fix here had already banished the
+                // Kalman replay for the same reason). A route worth a map moved somewhere.
+                hasRoute = (workout.gps?.distanceM ?? 0) > 0
                 // The share moment starts from the athlete's chosen default (never silently
                 // public); a workout that already carries a choice (recovery re-save) keeps it.
                 if CommunityAccess.enabled {

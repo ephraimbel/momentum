@@ -17,6 +17,10 @@ struct StrengthLiveView: View {
     @State private var showingPlates = false
     @State private var confirmExit = false
     @State private var confirmFinishWithDrafts = false
+    /// One finish per workout: the buttons stayed live during the finish await, so a double-tap
+    /// (or re-opening the exit dialog mid-save) ran the whole finish path — and `onFinish` —
+    /// twice (audit 2026-08-11). Every finish/discard route funnels through `finishOnce`.
+    @State private var finishing = false
     /// The exercise waiting for its superset partner — presents the library in pick-one mode.
     @State private var supersetAnchor: SupersetAnchor?
     private struct SupersetAnchor: Identifiable { let id: UUID }
@@ -163,15 +167,23 @@ struct StrengthLiveView: View {
         }
         .confirmationDialog("End this workout?", isPresented: $confirmExit, titleVisibility: .visible) {
             if vm.completedSetCount > 0 {
-                Button("Finish & save") { Task { onFinish(await vm.finish()) } }
+                Button("Finish & save") { finishOnce { onFinish(await vm.finish()) } }
             }
-            Button("Discard workout", role: .destructive) { Task { await vm.discard(); onFinish(nil) } }
+            Button("Discard workout", role: .destructive) { finishOnce { await vm.discard(); onFinish(nil) } }
             Button("Keep going", role: .cancel) {}
         } message: {
             Text(vm.completedSetCount > 0
                  ? "Save your \(vm.completedSetCount) logged set\(vm.completedSetCount == 1 ? "" : "s"), or discard the workout."
                  : "Nothing's logged yet. Discard this workout?")
         }
+    }
+
+    /// Runs a finish/discard route exactly once — later taps no-op while the first is in
+    /// flight (and the view never un-latches: `onFinish` tears it down).
+    private func finishOnce(_ work: @escaping () async -> Void) {
+        guard !finishing else { return }
+        finishing = true
+        Task { await work() }
     }
 
     private func header(_ vm: StrengthViewModel) -> some View {
@@ -233,11 +245,11 @@ struct StrengthLiveView: View {
     }
 
     private func bottomBar(_ vm: StrengthViewModel) -> some View {
-        OversizedButton(title: "Finish", isEnabled: vm.completedSetCount > 0) {
+        OversizedButton(title: "Finish", isEnabled: vm.completedSetCount > 0 && !finishing) {
             // A filled-in set that was never ✓-logged would silently vanish from the summary —
             // the most natural end-of-workout gesture (type last set → Finish) must not lose it.
             if pendingDraftSets(vm).isEmpty {
-                Task { onFinish(await vm.finish()) }
+                finishOnce { onFinish(await vm.finish()) }
             } else {
                 confirmFinishWithDrafts = true
             }
@@ -245,13 +257,13 @@ struct StrengthLiveView: View {
         .confirmationDialog("Some filled-in sets aren't logged yet",
                             isPresented: $confirmFinishWithDrafts, titleVisibility: .visible) {
             Button("Log them and finish") {
-                Task {
+                finishOnce {
                     for p in pendingDraftSets(vm) { await vm.completeSet(rowId: p.rowId, setId: p.setId) }
                     onFinish(await vm.finish())
                 }
             }
             Button("Finish without them") {
-                Task { onFinish(await vm.finish()) }
+                finishOnce { onFinish(await vm.finish()) }
             }
             Button("Cancel", role: .cancel) {}
         }
