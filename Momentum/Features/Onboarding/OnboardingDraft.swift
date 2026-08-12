@@ -118,6 +118,14 @@ extension OnboardingViewModel {
     @discardableResult
     func restore(from d: OnboardingDraft) -> Bool {
         guard let placedStep = Step.allCases.first(where: { String(describing: $0) == d.savedStep }) else { return false }
+        // Never resume AT or PAST the building beat: those drafts describe an onboarding whose
+        // plan generation already ran (or should have), and restoring onto the post-plan beats
+        // with no profile strands the athlete on screens that can't create one — the infinite
+        // "Save your progress" loop after Delete-all-data (audit 2026-08-11). Discarding sends
+        // them through the questions again, which is always recoverable.
+        if let buildIdx = Step.allCases.firstIndex(of: .building),
+           let placedIdx = Step.allCases.firstIndex(of: placedStep),
+           placedIdx >= buildIdx { return false }
         name = d.name
         handle = d.handle
         activities = Set(d.activities.compactMap(ActivityChoice.init(rawValue:)))
@@ -151,6 +159,16 @@ extension OnboardingViewModel {
         importedRestingHR = d.importedRestingHR
         plannedRaceName = d.plannedRaceName
         step = placedStep
+        // Cross-version skew guard: single fields fall back to defaults on unknown rawValues
+        // (that's the draft's resilience design), which can leave `placedStep` gated OFF under
+        // the restored answers — e.g. resumed onto `.race` with the goal defaulted away from
+        // racing. `advance()`/`back()` both no-op silently when the current step isn't in
+        // `steps`, a permanent dead Continue. Refuse the draft instead; the restored answers
+        // stay as harmless prefills for the fresh run-through.
+        guard steps.contains(placedStep) else {
+            step = Step.allCases.first ?? step
+            return false
+        }
         return true
     }
 

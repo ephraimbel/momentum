@@ -308,7 +308,7 @@ final class OnboardingViewModel {
         if goal == .raceDistance, let r = raceDistance {
             let subject = goalTimeLabel.map { "\($0) \(r.label.lowercased())" } ?? "\(r.label)-ready"
             if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
-            return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label) — whenever you toe the line"
+            return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label), whenever you toe the line"
         }
         // Every other goal is named for exactly what the athlete CHOSE — the plan is aimed at their
         // goal, and the reveal says so, rather than a generic "faster, stronger runner" for a
@@ -316,18 +316,18 @@ final class OnboardingViewModel {
         let phrase: String
         switch goal {
         case .endurance:
-            phrase = running && lifting ? "Going farther — stronger everywhere" : "Going farther, running stronger"
+            phrase = running && lifting ? "Farther and stronger everywhere" : "Going farther, running stronger"
         case .loseFat:        phrase = "Leaner and fitter"
         case .buildMuscle:    phrase = "Building real muscle"
         case .getStronger:    phrase = "Getting stronger"
-        case .stayConsistent: phrase = "Consistent — moving for good"
+        case .stayConsistent: phrase = "Consistent for good"
         case .generalFitness:
             phrase = running && lifting ? "Fitter and stronger, all over"
                 : running ? "A fitter, stronger runner" : lifting ? "Leaner and stronger" : "Fitter, across the board"
         case .raceDistance:   phrase = "Race-ready"   // handled above; kept for exhaustiveness
         }
         if hasRace { return "\(phrase) by \(raceDate.formatted(.dateTime.month().day()))" }
-        return "\(phrase) — one week at a time"
+        return "\(phrase), one week at a time"
     }
 
     /// Whole weeks until race day (for the reveal countdown), if a dated race was set. Delegates to
@@ -471,7 +471,7 @@ enum PaceFeel: String, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .newRunner: "Walk/jog — just building up"
+        case .newRunner: "Walk/jog, just building up"
         case .easyJogger: "I can hold a conversation"
         case .regular: "Comfortable steady miles"
         case .fast: "I train and race hard"

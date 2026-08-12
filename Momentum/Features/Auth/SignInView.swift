@@ -1,5 +1,6 @@
 import SwiftUI
 import AuthenticationServices
+import AVFoundation
 
 /// The entry, two beats:
 /// 1. **Welcome** — the full-bleed athletic hero with the wordmark and a single "Get started" that
@@ -68,15 +69,23 @@ struct SignInView: View {
 
     private var welcome: some View {
         ZStack {
-            // Full-bleed black-and-white hero of the runners. Clipped to a screen-sized layer so
-            // `scaledToFill`'s overflow can't inflate the ZStack (which would push the CTA off-screen).
+            // The brand film, full-bleed (owner call 2026-08-11, replacing the static photo AND
+            // the centered lockup): it plays ONCE, muted, and settles on its closing
+            // "momentum keep moving" card — so the screen ends in stillness with the brand on it,
+            // instead of looping restlessly under the CTAs. The poster underlay is the film's own
+            // first frame, so the player readying never flashes black. Clipped to a screen-sized
+            // layer so `scaledToFill`'s overflow can't inflate the ZStack (which would push the
+            // CTA off-screen).
             Color.clear
                 .overlay {
-                    Image("WelcomeBackground")
+                    Image("WelcomePoster")
                         .resizable()
                         .scaledToFill()
                 }
                 .clipped()
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+            WelcomeFilmView()
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
 
@@ -93,23 +102,8 @@ struct SignInView: View {
             )
             .ignoresSafeArea()
 
-            // Centered brand lockup: the wordmark with the motto right under it. A soft shadow keeps
-            // it legible over the photo.
-            VStack(spacing: Theme.Space.sm) {
-                Image("WordmarkWhite")
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(height: 40)   // fixed height; width follows the wordmark's aspect ratio
-                    .accessibilityLabel("momentum")
-                Text("keep moving")
-                    .font(.serif(24, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .multilineTextAlignment(.center)
-            }
-            .shadow(color: .black.opacity(0.4), radius: 14, y: 2)
-            .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
-            .offset(y: welcomeAppeared || reduceMotion ? 0 : 12)
+            // No centered lockup anymore (owner call 2026-08-11): the film's own closing card
+            // carries the wordmark and motto, and a static overlay would double-brand the ending.
 
             // The positioning line sits right above the CTA pair, all anchored to the bottom.
             VStack(spacing: Theme.Space.md) {
@@ -171,6 +165,45 @@ struct SignInView: View {
             withAnimation(.easeOut(duration: 0.65).delay(0.12)) { welcomeAppeared = true }
         }
     }
+}
+
+// MARK: - The welcome film
+
+/// The brand film behind the welcome: plays ONCE, muted, then holds its final frame — the
+/// "momentum keep moving" closing card — so the welcome settles into the same stillness the old
+/// static hero had, with the brand carried by the film itself (owner call 2026-08-11; loop was
+/// considered and rejected — endless motion under the CTAs reads restless and burns battery).
+/// Reduce Motion: no playback at all, the view opens directly on the closing card. The audio
+/// track is stripped from the bundled asset, so playback can never duck the athlete's music.
+private struct WelcomeFilmView: UIViewRepresentable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    final class PlayerView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+
+    func makeUIView(context: Context) -> PlayerView {
+        let view = PlayerView()
+        // Missing asset → the poster underlay simply stays; the welcome still works.
+        guard let url = Bundle.main.url(forResource: "WelcomeVideo", withExtension: "mov") else { return view }
+        let player = AVPlayer(url: url)
+        player.isMuted = true
+        player.actionAtItemEnd = .pause                       // hold the closing card; never loop
+        player.preventsDisplaySleepDuringVideoPlayback = false
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = .resizeAspectFill
+        if reduceMotion {
+            // Straight to the closing card — same destination, no motion. The absurd target time
+            // clamps to the end of the item.
+            player.seek(to: CMTime(seconds: 9_999, preferredTimescale: 600))
+        } else {
+            player.play()
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerView, context: Context) {}
 }
 
 // MARK: - The account page
@@ -425,9 +458,11 @@ struct AccountOptionsView: View {
                                 if googleInFlight {
                                     ProgressView().tint(Theme.ink)
                                 } else {
-                                    Text("G")
-                                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                                        .foregroundStyle(Theme.ink)
+                                    // The official multicolor G (Google's sign-in branding rules
+                                    // want the real mark and "Continue with Google" wording).
+                                    Image("GoogleG")
+                                        .resizable().interpolation(.high).scaledToFit()
+                                        .frame(width: 20, height: 20)
                                 }
                                 Text("Continue with Google")
                                     .font(.system(size: 19, weight: .medium))
@@ -596,7 +631,7 @@ struct AccountOptionsView: View {
             withAnimation(.easeOut(duration: 0.15)) {
                 authMessage = sent
                     ? "Check \(address) for a reset link."
-                    : "Couldn't send a reset link — try again in a moment."
+                    : "Couldn't send a reset link. Try again in a moment."
             }
         }
     }

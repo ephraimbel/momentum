@@ -161,21 +161,24 @@ struct OnboardingPaywallFlow: View {
     /// checklist lives on the in-app paywall). One serif line, then the device carries the page;
     /// the footer already whispers the price and the trial.
     private func pageShowcase(_ s: CGFloat) -> some View {
+        // The deck bleeds edge to edge (its fanned neighbors peek at the screen sides), so the
+        // horizontal padding lives on the copy and the footer, not the whole page.
         VStack(spacing: 0) {
             Spacer(minLength: Theme.Space.lg)
             Text("This is momentum.")
                 .font(.serif(29 * s, weight: .semibold)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
             Spacer(minLength: Theme.Space.md)
             PaywallShowcase(height: 500 * s)
                 .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
             Spacer(minLength: Theme.Space.md)
             footer(cta: "Try now", s: s) { advance() }
+                .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
         }
-        .padding(.horizontal, Theme.Space.xl)
     }
 
     // MARK: Page two — the close
@@ -215,7 +218,9 @@ struct OnboardingPaywallFlow: View {
             Group {
                 if paywall.pricingIsLive {
                     let perMonth = offering.annual.perMonthText ?? ""
-                    Text("Just \(offering.annual.priceText) per year (\(perMonth))")
+                    // Middot, not parentheses — every other price line in the paywall separates
+                    // clauses with "·", and this footer shouldn't be the odd one out.
+                    Text("Just \(offering.annual.priceText) per year · \(perMonth)")
                 } else {
                     Text("Pricing unavailable · cancel anytime")
                 }

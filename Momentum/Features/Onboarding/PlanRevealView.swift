@@ -189,8 +189,20 @@ struct PlanRevealView: View {
                             .overlay(Capsule().stroke(Theme.hairline))
                     }
                 }
+                // Parks the last chip clear of the trailing fade below when scrolled to the end.
+                .padding(.trailing, Theme.Space.lg)
             }
             .scrollIndicators(.hidden)
+            // Soft trailing fade at the clip edge: when the row overflows, the cut chip dissolves
+            // instead of slicing mid-capsule (the same scrim idea the paywall CTA uses). The
+            // leading edge stays crisp so the row reads left-aligned with the label above.
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.92),
+                    .init(color: .clear, location: 1.0),
+                ], startPoint: .leading, endPoint: .trailing)
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -334,7 +346,7 @@ struct PlanRevealView: View {
                         outlookCell("\(s.hardDays)", "HARD DAYS / WK")
                     }
                 }
-                Text("Projected from your logged fitness — the work still has to happen.")
+                Text("Projected from your logged fitness. The work still has to happen.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
             }
@@ -376,7 +388,7 @@ struct PlanRevealView: View {
                 if proj.builtS <= goalS + 1 {
                     return "Today's fitness runs a \(now) \(race). This block is built to get you to your \(PlanFeasibility.hms(goalS)) goal."
                 }
-                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)) — real ground toward your \(PlanFeasibility.hms(goalS)) goal."
+                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)), real ground toward your \(PlanFeasibility.hms(goalS)) goal."
             }
             return "Today's fitness runs a \(now) \(race). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
         }
@@ -447,9 +459,14 @@ struct PlanRevealView: View {
     private var fullPlanList: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             sectionLabel("YOUR PLAN, WEEK BY WEEK").reveal(0.34)
+            // Week 1 carries the full browsable detail; the later weeks are HEADER-ONLY (week +
+            // shape, no session content, not expandable) — owner call 2026-08-11: rendering every
+            // week's disclosure tree made the reveal load glitchy, and the block's shape is
+            // already told by the volume chart above. Week 1 is the sell; the rest is the promise.
             ForEach(Array(weeksGrouped.enumerated()), id: \.element.week) { i, group in
                 WeekSection(week: group.week, sessions: group.sessions, profile: profile,
-                            distanceUnit: distanceUnit, running: vm.running, startExpanded: group.week == 1)
+                            distanceUnit: distanceUnit, running: vm.running,
+                            startExpanded: group.week == 1, browsable: group.week == 1)
                     .reveal(min(0.6, 0.38 + Double(i) * 0.05))
             }
         }
@@ -477,9 +494,10 @@ struct PlanRevealView: View {
 
 // MARK: - Collapsible week
 
-/// One week of the plan, collapsible so the athlete can browse the whole block without an endless wall.
-/// The header shows the week's shape (session count + mileage); expanding reveals every session, each of
-/// which expands again to the concrete work and — for long runs — fueling guidance. Week 1 opens by default.
+/// One week of the plan. Week 1 is browsable — its header expands to every session, each of which
+/// expands again to the concrete work and — for long runs — fueling guidance. Later weeks render as
+/// header-only rows (`browsable: false`): the week's shape without its content, so the reveal never
+/// builds the whole block's disclosure tree (perf, owner call 2026-08-11).
 private struct WeekSection: View {
     let week: Int
     let sessions: [PlannedSession]
@@ -487,6 +505,7 @@ private struct WeekSection: View {
     let distanceUnit: DistanceUnit
     let running: Bool
     let startExpanded: Bool
+    var browsable = true
 
     @State private var expanded = false
 
@@ -501,28 +520,19 @@ private struct WeekSection: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
-            Button {
-                Haptics.selection()
-                withAnimation(.snappy(duration: 0.26)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Text("WEEK \(week)")
-                        .font(.rounded(Theme.FontSize.caption, weight: .black)).tracking(1.2)
-                        .foregroundStyle(Theme.ink)
-                    Spacer(minLength: Theme.Space.sm)
-                    Text(summary)
-                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(Theme.inkTertiary)
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
+            if browsable {
+                Button {
+                    Haptics.selection()
+                    withAnimation(.snappy(duration: 0.26)) { expanded.toggle() }
+                } label: {
+                    header(chevron: true)
                 }
-                .padding(.horizontal, Theme.Space.xs)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+            } else {
+                header(chevron: false)
             }
-            .buttonStyle(.plain)
 
-            if expanded {
+            if browsable, expanded {
                 VStack(spacing: Theme.Space.sm) {
                     ForEach(Array(sessions.enumerated()), id: \.element.persistentModelID) { i, session in
                         SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
@@ -533,6 +543,25 @@ private struct WeekSection: View {
             }
         }
         .onAppear { if startExpanded { expanded = true } }
+    }
+
+    private func header(chevron: Bool) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text("WEEK \(week)")
+                .font(.rounded(Theme.FontSize.caption, weight: .black)).tracking(1.2)
+                .foregroundStyle(Theme.ink)
+            Spacer(minLength: Theme.Space.sm)
+            Text(summary)
+                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.inkTertiary)
+            if chevron {
+                Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+            }
+        }
+        .padding(.horizontal, Theme.Space.xs)
+        .contentShape(Rectangle())
     }
 }
 

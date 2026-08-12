@@ -85,6 +85,10 @@ enum DataManager {
     /// relationships): deleting each top-level object cascades its children; standalone types are
     /// wiped directly. `Exercise` (the catalog) is intentionally left intact.
     static func deleteAllUserData(in context: ModelContext) {
+        // The onboarding resume draft survives outside SwiftData — leaving it meant the wipe's
+        // return to onboarding resumed a FINISHED draft onto the post-plan beats with no way to
+        // build a profile (the infinite account-beat loop, audit 2026-08-11).
+        OnboardingDraftStore.clear()
         func wipe<T: PersistentModel>(_ type: T.Type) {
             for item in (try? context.fetch(FetchDescriptor<T>())) ?? [] { context.delete(item) }
         }
@@ -121,6 +125,9 @@ enum DataManager {
     /// its disappearance is what flips RootView back to onboarding, so the UI only transitions
     /// when everything else is already gone.
     static func deleteAllUserData(container: ModelContainer) async {
+        // Same reason as the synchronous overload: a leftover resume draft re-raises the tail of
+        // a finished onboarding once the profile is gone.
+        OnboardingDraftStore.clear()
         await Task.detached(priority: .userInitiated) {
             let context = ModelContext(container)
             context.autosaveEnabled = false

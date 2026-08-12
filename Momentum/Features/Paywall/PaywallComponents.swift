@@ -123,20 +123,30 @@ struct PaywallFeatureList: View {
     }
 }
 
-// MARK: - Showcase — a real iPhone, most of the screen, paging through the app
+// MARK: - Showcase — a fanned deck of iPhones, swiped through by hand
 
-/// The app shown, not described: a large device mock — the onboarding notification mock's
-/// titanium-rail hardware at near-full presence — paging through real DARK screenshots (owner-
-/// captured, real status chrome and Dynamic Island in every frame, so the device reads as
-/// genuinely on). No captions; the screens speak. Auto-advances; a swipe restarts the beat.
-/// Reduce Motion: no auto-play, swiping still works.
+/// The app shown, not described: a DECK of device mocks — the onboarding notification mock's
+/// titanium-rail hardware — fanned like a hand of cards, each glass carrying one real DARK
+/// screenshot (owner-captured, real status chrome and Dynamic Island in every frame). The
+/// centered device rides full-size; its neighbors tilt outward, sink, and fade at the screen
+/// edges. Every transform is driven CONTINUOUSLY by scroll position (`visualEffect`), so the
+/// deck answers the thumb mid-swipe rather than snapping after it (owner ask 2026-08-11,
+/// replacing the single still-device crossfade of 2026-08-05). Auto-advance ping-pongs the deck
+/// slowly; a manual swipe restarts the dwell. Reduce Motion: no auto-play, swiping still works.
+///
+/// The 2026-08-05 "never page the whole phone" lesson was about TabView clipping the drop
+/// shadow to a seam — this deck pages in a ScrollView with `scrollClipDisabled()`, so shadows
+/// and fanned corners render unclipped into the charcoal.
 // Assets live in Assets.xcassets/PaywallShots — 1080px-wide dark captures supplied by the owner
 // (2026-08-05): Today's 3D map, the plan board, readiness, coach zones, fuel, the globe.
 struct PaywallShowcase: View {
     /// Device height in points; everything else scales off it.
     var height: CGFloat = 440
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var slide = 0
+    /// The centered card, fed by `scrollPosition` — nil only before first layout.
+    @State private var slide: Int? = 0
+    /// Auto-advance direction; flips at the deck's ends so the show never does a 9-card flyback.
+    @State private var forward = true
 
     private static let slides = [
         "PaywallShotToday", "PaywallShotPlan", "PaywallShotProgress",
@@ -146,76 +156,111 @@ struct PaywallShowcase: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.md) {
-            device
-                .frame(maxWidth: .infinity)   // generous swipe target either side of the phone
-                .contentShape(Rectangle())
-                // Swipe to browse — the beat restarts via `.task(id:)`, so a manual swipe earns
-                // the same full dwell before the show moves on.
-                .gesture(DragGesture(minimumDistance: 20).onEnded { v in
-                    guard abs(v.translation.width) > 30 else { return }
-                    let n = Self.slides.count
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.5)) {
-                        slide = v.translation.width < 0 ? (slide + 1) % n : (slide + n - 1) % n
-                    }
-                })
-            // Auto-play. `.task` dies with the view (nothing to clean up); the id restarts the
-            // clock on every advance.
-            .task(id: slide) {
-                guard !reduceMotion else { return }
-                try? await Task.sleep(for: .seconds(3.0))
-                withAnimation(.easeInOut(duration: 0.5)) { slide = (slide + 1) % Self.slides.count }
-            }
+            deck
+                // Auto-play. `.task` dies with the view (nothing to clean up); the id restarts
+                // the dwell on every advance — including the athlete's own swipes.
+                .task(id: slide) {
+                    guard !reduceMotion else { return }
+                    try? await Task.sleep(for: .seconds(3.0))
+                    let i = slide ?? 0
+                    var direction = forward
+                    if i >= Self.slides.count - 1 { direction = false }
+                    if i <= 0 { direction = true }
+                    forward = direction
+                    withAnimation(.easeInOut(duration: 0.55)) { slide = i + (direction ? 1 : -1) }
+                }
             pageDots
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("A tour of the app's screens")
         .accessibilityAdjustableAction { direction in
             let n = Self.slides.count
-            slide = direction == .increment ? (slide + 1) % n : (slide + n - 1) % n
+            let i = slide ?? 0
+            slide = direction == .increment ? min(i + 1, n - 1) : max(i - 1, 0)
         }
     }
 
-    /// ONE device, always still — only the glass changes. The screens crossfade inside the bezel
-    /// with a whisper of scale (the incoming frame settles from 1.5% over, like a lens pulling
-    /// focus) — transform-only, never layout, and no paging container anywhere, so the deep drop
-    /// shadow renders unclipped into the charcoal (a TabView clipped it to a visible seam — owner
-    /// report 2026-08-05). That stillness is what makes it read as a real phone, not a slideshow.
-    /// Radii scale from the onboarding mock (300×640, 60/52) so all our hardware reads the same.
-    private var device: some View {
+    /// The deck itself: view-aligned paging with the neighbors peeking either side. Each card's
+    /// tilt/scale/fade is a pure function of its distance from the viewport's center, evaluated
+    /// per frame by `visualEffect` — no state, no animation curves to fall out of sync with the
+    /// finger. `contentMargins` centers the first and last cards so the deck never parks a card
+    /// half-off the edge.
+    private var deck: some View {
         let h = height
         let w = h * (300.0 / 640.0)
-        return RoundedRectangle(cornerRadius: h * (60.0 / 640.0), style: .continuous)
+        // One card-to-card distance. The fan math normalizes by THIS, not the screen width, so a
+        // card one slot out lands at exactly t = ±1 on every phone — the deck reads identically
+        // on an SE and a Pro Max instead of the small screen getting a softer fan.
+        let slot = w + Theme.Space.md
+        // The sink rides the deck's own scale (≈18pt at the 6.1" reference height) so condensed
+        // decks on short phones don't drop their neighbors disproportionately far.
+        let sink = h * 0.036
+        return GeometryReader { geo in
+            ScrollView(.horizontal) {
+                HStack(spacing: Theme.Space.md) {
+                    ForEach(Array(Self.slides.enumerated()), id: \.offset) { i, name in
+                        deviceCard(name, w: w, h: h)
+                            .visualEffect { content, proxy in
+                                let container = proxy.bounds(of: .scrollView(axis: .horizontal))?.width
+                                    ?? proxy.size.width
+                                let mid = proxy.frame(in: .scrollView(axis: .horizontal)).midX
+                                // 0 at dead center, ±1 by the time a card sits one slot out.
+                                let t = max(-1, min(1, (mid - container / 2) / slot))
+                                return content
+                                    // The fan: neighbors pivot around a point just below the
+                                    // deck (like cards held in a hand), sink a touch, shrink,
+                                    // and fade — the centered card alone stands full and bright.
+                                    .rotationEffect(.degrees(8 * t), anchor: .init(x: 0.5, y: 1.3))
+                                    .offset(y: sink * abs(t))
+                                    .scaleEffect(1 - 0.13 * abs(t), anchor: .bottom)
+                                    .opacity(1 - 0.45 * abs(t))
+                            }
+                            .id(i)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $slide)
+            .scrollIndicators(.hidden)
+            // Shadows, tilted corners, and the sunk neighbors all draw outside the row's bounds —
+            // clipping any of them re-creates the TabView seam this design exists to avoid.
+            .scrollClipDisabled()
+            .contentMargins(.horizontal, max(0, (geo.size.width - w) / 2), for: .scrollContent)
+        }
+        .frame(height: h)
+    }
+
+    /// One device of the deck — the shared titanium-rail hardware with a single capture in the
+    /// glass. Radii scale from the onboarding mock (300×640, 60/52) so all our hardware reads
+    /// the same.
+    private func deviceCard(_ name: String, w: CGFloat, h: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: h * (60.0 / 640.0), style: .continuous)
             .fill(LinearGradient(colors: [Color(white: 0.38), Color(white: 0.16)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))   // titanium rail
             .overlay {
-                ZStack {
-                    ForEach(Array(Self.slides.enumerated()), id: \.offset) { i, name in
-                        Image(name)
-                            .resizable().interpolation(.high).scaledToFill()
-                            // Top-aligned: the tiny aspect difference between capture and glass
-                            // crops off the BOTTOM edge (under the home indicator), never the
-                            // status bar — the island always reads complete.
-                            .frame(width: w - 7, height: h - 7, alignment: .top)
-                            .opacity(i == slide ? 1 : 0)
-                            .scaleEffect(i == slide ? 1.0 : 1.015)
-                    }
-                }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.5), value: slide)
-                .clipShape(RoundedRectangle(cornerRadius: h * (52.0 / 640.0), style: .continuous))
-                .padding(3.5)   // bezel thickness
+                Image(name)
+                    .resizable().interpolation(.high).scaledToFill()
+                    // Top-aligned: the tiny aspect difference between capture and glass crops off
+                    // the BOTTOM edge (under the home indicator), never the status bar — the
+                    // island always reads complete.
+                    .frame(width: w - 7, height: h - 7, alignment: .top)
+                    .clipShape(RoundedRectangle(cornerRadius: h * (52.0 / 640.0), style: .continuous))
+                    .padding(3.5)   // bezel thickness
             }
             .frame(width: w, height: h)
-            // A deep, soft drop into the charcoal so the device sits IN the page, not on it.
-            .shadow(color: .black.opacity(0.55), radius: 30, y: 16)
+            // A soft drop into the charcoal so each device sits IN the page; a card's fade dims
+            // its shadow with it, so the fanned edges never puddle darkness on their neighbors.
+            .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
     }
 
-    /// Six dots, the current one stretched — quiet, monochrome.
+    /// Nine dots, the current one stretched — quiet, monochrome.
     private var pageDots: some View {
         HStack(spacing: 5) {
             ForEach(0..<Self.slides.count, id: \.self) { i in
                 Capsule()
-                    .fill(i == slide ? Theme.ink : Theme.ink.opacity(0.22))
-                    .frame(width: i == slide ? 16 : 5, height: 5)
+                    .fill(i == (slide ?? 0) ? Theme.ink : Theme.ink.opacity(0.22))
+                    .frame(width: i == (slide ?? 0) ? 16 : 5, height: 5)
             }
         }
         .animation(reduceMotion ? nil : Motion.lively, value: slide)
@@ -316,7 +361,9 @@ struct PlanPairPicker: View {
 
     private func selector(on: Bool) -> some View {
         ZStack {
-            Circle().stroke(on ? Theme.ink : Theme.hairline, lineWidth: 1.5)
+            // Unselected ring at inkTertiary, not hairline: on the charcoal card a hairline ring
+            // all but vanished, so Monthly read as a dead panel instead of a choice (2026-08-11).
+            Circle().stroke(on ? Theme.ink : Theme.inkTertiary, lineWidth: 1.5)
             if on {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .black)).foregroundStyle(Theme.background)
@@ -454,7 +501,7 @@ struct PaywallCheckout: View {
         guard paywall.pricingIsLive else { return "Retry" }
         return product.trialDays > 0
             ? "Start my \(product.trialDays)-day free trial"
-            : "Continue — \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
+            : "Continue · \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
     }
 
     /// One tiny line: honest renewal terms + the required links, nothing taller.
@@ -508,7 +555,7 @@ struct PaywallCheckout: View {
             paywall.storeUnreachableDeferral = true
             dismiss()
         } label: {
-            Text("Continue — we'll ask again next time")
+            Text("Continue. We'll ask again next time")
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                 .foregroundStyle(Theme.inkSecondary)
                 .frame(maxWidth: .infinity)

@@ -298,7 +298,7 @@ final class AuthController {
         } catch {
             let text = (error as? AuthError)?.message ?? ""
             if text.localizedCaseInsensitiveContains("not confirmed") {
-                return .failure("Confirm your email first — check your inbox for the link we sent.")
+                return .failure("Confirm your email first. Check your inbox for the link we sent.")
             }
             return .failure("That email and password don't match an account.")
         }
@@ -317,23 +317,23 @@ final class AuthController {
                 redirectTo: URL(string: "momentum://auth-callback"))
             guard case .session(let session) = response else {
                 // Confirmations are on: the session arrives via the emailed link instead.
-                return .failure("Almost there — tap the link we just emailed you and you're in.")
+                return .failure("Almost there. Tap the link we just emailed you and you're in.")
             }
             adoptEmailSession(session)
             return .success
         } catch {
             let text = (error as? AuthError)?.message ?? ""
             if text.localizedCaseInsensitiveContains("already registered") {
-                return .failure("That email already has an account — sign in instead.")
+                return .failure("That email already has an account. Sign in instead.")
             }
             if text.localizedCaseInsensitiveContains("rate limit") {
                 // The mailer's hourly cap (tight until custom SMTP lands) — be honest about it.
-                return .failure("Too many sign-ups right now — give it a while and try again.")
+                return .failure("Too many sign-ups right now. Give it a while and try again.")
             }
             if text.localizedCaseInsensitiveContains("password") {
                 return .failure("Passwords need at least 8 characters.")
             }
-            return .failure("Couldn't create the account — check the email and try again.")
+            return .failure("Couldn't create the account. Check the email and try again.")
         }
     }
 
