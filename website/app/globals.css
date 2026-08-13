@@ -784,6 +784,12 @@ a {
   padding: 112px 0;
 }
 
+/* Anchor jumps must clear the sticky nav — without this every #section title lands
+   half-hidden under the bar (worst from the mobile burger menu). */
+[id] {
+  scroll-margin-top: 92px;
+}
+
 .section-head {
   max-width: 640px;
   margin-bottom: 64px;
@@ -1671,6 +1677,11 @@ a {
   .quotes,
   .plans {
     grid-template-columns: 1fr;
+  }
+  /* Stacked pricing leads with the Pro card — the trial badge and the conversion job
+     shouldn't sit below the fold behind the Free card on phones. */
+  .plans > .reveal:nth-child(2) {
+    order: -1;
   }
   .goals {
     grid-template-columns: 1fr 1fr;
