@@ -126,34 +126,68 @@ struct RunAnalysisSection: View {
 
     private func hrCard(_ hr: [HRPt]) -> some View {
         let avg = gps.avgHR ?? RunSignals.mean(hr.map(\.bpm))
+        let floorBPM = Double(hr.map(\.bpm).min() ?? 0)
+        let xs = hr.map { $0.t / 60 }
         return chartCard("Heart rate", subtitle: avg.map { "avg \($0) bpm" } ?? "bpm over time") {
-            Chart(Array(hr.enumerated()), id: \.offset) { _, p in
-                LineMark(x: .value("Time", p.t / 60),
-                         y: .value("BPM", p.bpm))
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(Theme.ink)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+            RunScrubHost(xs: xs) { pinned in
+                hrChart(hr, avg: avg, floorBPM: floorBPM, pinned: pinned)
             }
-            .chartYScale(domain: .automatic(includesZero: false))
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline)
-                    AxisValueLabel {
-                        if let d = value.as(Double.self) { tick("\(Int(d))") }
-                    }
-                }
-            }
-            .chartXAxis {
-                AxisMarks { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline)
-                    AxisValueLabel {
-                        // Minute marks in runner's notation (12′), never "m" (reads as meters).
-                        if let d = value.as(Double.self) { tick("\(Int(d))′") }
-                    }
-                }
-            }
-            .frame(height: 150)
             .accessibilityLabel("Heart rate over time" + (avg.map { ", average \($0) beats per minute" } ?? ""))
+        }
+    }
+
+    private func hrChart(_ hr: [HRPt], avg: Int?, floorBPM: Double, pinned: Double?) -> some View {
+        // Resolved OUTSIDE the ChartContentBuilder — a min(by:) search inside the builder is
+        // exactly the expression shape that times out the type-checker.
+        let avgY: Double? = avg.map(Double.init)
+        let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
+            hr.min(by: { abs($0.t / 60 - pinX) < abs($1.t / 60 - pinX) })
+                .map { (pinX, "\($0.bpm) bpm", minuteLabel($0.t)) }
+        }
+        let xy = hr.enumerated().map { XY(id: $0.offset, x: $0.element.t / 60, y: Double($0.element.bpm)) }
+        return Chart {
+            floorAreaMarks(xy, floor: floorBPM)
+            traceMarks(xy, color: Theme.ink, width: 2)
+            if let avgY { avgRule(avgY) }
+            if let pin { scrubMark(x: pin.x, value: pin.value, label: pin.label) }
+        }
+        .chartYScale(domain: .automatic(includesZero: false))
+        .chartYAxis { intAxis }
+        .chartXAxis { minuteAxis }
+        .frame(height: 150)
+    }
+
+    /// A plot-ready point: all unit/axis arithmetic done BEFORE the chart, because inline math in
+    /// a ChartContentBuilder ForEach is what times out the type-checker (three build failures'
+    /// worth of lesson, 2026-08-13).
+    private struct XY: Identifiable { let id: Int; let x: Double; let y: Double }
+
+    /// The filled body under a line (Strava's reading): area from the chart floor to the trace,
+    /// so effort reads as mass, not just an outline.
+    private func floorAreaMarks(_ pts: [XY], floor: Double) -> some ChartContent {
+        ForEach(pts) { p in
+            AreaMark(x: .value("X", p.x),
+                     yStart: .value("Floor", floor),
+                     yEnd: .value("Y", p.y))
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(Self.areaFill)
+        }
+    }
+
+    private func groundAreaMarks(_ pts: [XY]) -> some ChartContent {
+        ForEach(pts) { p in
+            AreaMark(x: .value("X", p.x), y: .value("Y", p.y))
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(Self.areaFill)
+        }
+    }
+
+    private func traceMarks(_ pts: [XY], color: Color, width: CGFloat) -> some ChartContent {
+        ForEach(pts) { p in
+            LineMark(x: .value("X", p.x), y: .value("Y", p.y))
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(color)
+                .lineStyle(StrokeStyle(lineWidth: width, lineCap: .round))
         }
     }
 
@@ -164,34 +198,39 @@ struct RunAnalysisSection: View {
         // The average leads the card as a real number (the HR card already does this with "avg
         // bpm") — the line shows the shape of the effort, the number is what the athlete quotes.
         let subtitle = avgSPerKm.map { "avg \(pace(perUnit($0))) /\(unitLabel)" } ?? "Per \(unitLabel) over distance"
+        // The y-axis is reversed (faster reads higher), so the chart's visual floor is the
+        // SLOWEST pace — the area fills from there up to the line.
+        let slowest = paced.map { perUnit($0.paceSPerKm) }.max() ?? 0
+        let xs = paced.map { $0.distanceM / unitMeters }
         return chartCard("Pace", subtitle: subtitle) {
-            Chart(Array(paced.enumerated()), id: \.offset) { _, p in
-                LineMark(x: .value("Distance", p.distanceM / unitMeters),
-                         y: .value("Pace", perUnit(p.paceSPerKm)))
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(Theme.ink)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+            RunScrubHost(xs: xs) { pinned in
+                paceChart(paced, avgSPerKm: avgSPerKm, slowest: slowest, pinned: pinned)
             }
-            // Faster (lower s/unit) reads higher — the intuitive "up = better".
-            .chartYScale(domain: .automatic(includesZero: false, reversed: true))
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline)
-                    AxisValueLabel {
-                        if let d = value.as(Double.self) { tick(pace(d)) }
-                    }
-                }
-            }
-            .chartXAxis {
-                AxisMarks { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline)
-                    AxisValueLabel {
-                        if let d = value.as(Double.self) { tick(d.formatted(.number.precision(.fractionLength(0)))) }
-                    }
-                }
-            }
-            .frame(height: 150)
         }
+    }
+
+    private func paceChart(_ paced: [Pt], avgSPerKm: Double?, slowest: Double, pinned: Double?) -> some View {
+        // Resolved outside the builder — see hrChart.
+        let avgY: Double? = avgSPerKm.map(perUnit)
+        let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
+            paced.min(by: { abs($0.distanceM / unitMeters - pinX) < abs($1.distanceM / unitMeters - pinX) })
+                .map { (pinX, "\(pace(perUnit($0.paceSPerKm))) /\(unitLabel)", distanceLabel(pinX)) }
+        }
+        let xy = paced.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
+                                             y: perUnit($0.element.paceSPerKm)) }
+        return Chart {
+            // The reversed y-axis puts the SLOWEST pace at the visual floor — the area fills
+            // from there up to the line, i.e. visually beneath it.
+            floorAreaMarks(xy, floor: slowest)
+            traceMarks(xy, color: Theme.ink, width: 2)
+            if let avgY { avgRule(avgY) }
+            if let pin { scrubMark(x: pin.x, value: pin.value, label: pin.label) }
+        }
+        // Faster (lower s/unit) reads higher — the intuitive "up = better".
+        .chartYScale(domain: .automatic(includesZero: false, reversed: true))
+        .chartYAxis { paceAxis }
+        .chartXAxis { distanceAxis }
+        .frame(height: 150)
     }
 
     // MARK: Splits
@@ -237,36 +276,35 @@ struct RunAnalysisSection: View {
         // Axis in the athlete's unit (feet for imperial) — raw metres on an unlabeled axis read
         // as whatever the athlete assumes, which for the US market was wrong.
         let yScale = distanceUnit.resolved() == .imperial ? Formatters.feetPerMeter : 1
+        let unitName = distanceUnit.resolved() == .imperial ? "ft" : "m"
+        let xs = pts.map { $0.distanceM / unitMeters }
         return chartCard("Elevation", subtitle: "\(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit)) gain") {
-            Chart(Array(pts.enumerated()), id: \.offset) { _, p in
-                AreaMark(x: .value("Distance", p.distanceM / unitMeters),
-                         y: .value("Elevation", (p.altitudeM - minAlt) * yScale))
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(Theme.inkTertiary.opacity(0.18))
-                LineMark(x: .value("Distance", p.distanceM / unitMeters),
-                         y: .value("Elevation", (p.altitudeM - minAlt) * yScale))
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            RunScrubHost(xs: xs) { pinned in
+                elevationChart(pts, minAlt: minAlt, yScale: yScale, unitName: unitName, pinned: pinned)
             }
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline)
-                    AxisValueLabel {
-                        if let d = value.as(Double.self) { tick("\(Int(d))") }
-                    }
-                }
-            }
-            .chartXAxis {
-                AxisMarks { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline)
-                    AxisValueLabel {
-                        if let d = value.as(Double.self) { tick(d.formatted(.number.precision(.fractionLength(0)))) }
-                    }
-                }
-            }
-            .frame(height: 130)
         }
+    }
+
+    private func elevationChart(_ pts: [Pt], minAlt: Double, yScale: Double,
+                                unitName: String, pinned: Double?) -> some View {
+        // Resolved outside the builder — see hrChart.
+        let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
+            pts.min(by: { abs($0.distanceM / unitMeters - pinX) < abs($1.distanceM / unitMeters - pinX) })
+                .map { p in
+                    let height = Int(((p.altitudeM - minAlt) * yScale).rounded())
+                    return (pinX, "\(height) \(unitName)", distanceLabel(pinX))
+                }
+        }
+        let xy = pts.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
+                                           y: ($0.element.altitudeM - minAlt) * yScale) }
+        return Chart {
+            groundAreaMarks(xy)
+            traceMarks(xy, color: Theme.inkSecondary, width: 1.5)
+            if let pin { scrubMark(x: pin.x, value: pin.value, label: pin.label) }
+        }
+        .chartYAxis { intAxis }
+        .chartXAxis { distanceAxis }
+        .frame(height: 150)
     }
 
     // MARK: Chrome
@@ -290,6 +328,86 @@ struct RunAnalysisSection: View {
     /// A small monospaced axis tick label in the app's type.
     private func tick(_ text: String) -> some View {
         Text(text).font(.rounded(9, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
+    }
+
+    /// The one fill every run chart's area wears — ink fading down, so the mass reads without
+    /// competing with the line.
+    private static let areaFill = LinearGradient(
+        colors: [Theme.ink.opacity(0.10), Theme.ink.opacity(0.02)],
+        startPoint: .top, endPoint: .bottom)
+
+    /// The dashed average reference every run chart draws — the number the athlete quotes,
+    /// visible against the shape of the effort.
+    private func avgRule(_ y: Double) -> some ChartContent {
+        RuleMark(y: .value("Average", y))
+            .foregroundStyle(Theme.inkSecondary.opacity(0.35))
+            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+    }
+
+    // MARK: Shared axes — one grammar for every run chart.
+
+    private var intAxis: some AxisContent {
+        AxisMarks { value in
+            AxisGridLine().foregroundStyle(Theme.hairline)
+            AxisValueLabel {
+                if let d = value.as(Double.self) { tick("\(Int(d))") }
+            }
+        }
+    }
+    private var paceAxis: some AxisContent {
+        AxisMarks { value in
+            AxisGridLine().foregroundStyle(Theme.hairline)
+            AxisValueLabel {
+                if let d = value.as(Double.self) { tick(pace(d)) }
+            }
+        }
+    }
+    private var distanceAxis: some AxisContent {
+        AxisMarks { value in
+            AxisGridLine().foregroundStyle(Theme.hairline)
+            AxisValueLabel {
+                if let d = value.as(Double.self) { tick(d.formatted(.number.precision(.fractionLength(0)))) }
+            }
+        }
+    }
+    private var minuteAxis: some AxisContent {
+        AxisMarks { value in
+            AxisGridLine().foregroundStyle(Theme.hairline)
+            AxisValueLabel {
+                // Minute marks in runner's notation (12′), never "m" (reads as meters).
+                if let d = value.as(Double.self) { tick("\(Int(d))′") }
+            }
+        }
+    }
+
+    /// The scrub cursor + callout — same grammar as the Trends charts' `TrendScrub.mark`, on the
+    /// run charts' numeric axes (distance / minutes) instead of dates.
+    private func scrubMark(x: Double, value: String, label: String) -> some ChartContent {
+        RuleMark(x: .value("Selected", x))
+            .foregroundStyle(Theme.inkSecondary.opacity(0.45))
+            .lineStyle(StrokeStyle(lineWidth: 1))
+            .annotation(position: .top, spacing: 4,
+                        overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                VStack(spacing: 1) {
+                    Text(value).font(.system(size: 12, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(Theme.ink)
+                    Text(label).font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.background))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.hairline))
+                .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
+            }
+    }
+
+    /// "mi 2.3" / "km 4.1" — the scrub caption on distance-axis charts.
+    private func distanceLabel(_ x: Double) -> String {
+        "\(unitLabel) \(x.formatted(.number.precision(.fractionLength(1))))"
+    }
+    /// "at 12:34" — the scrub caption on the time-axis HR chart.
+    private func minuteLabel(_ t: TimeInterval) -> String {
+        "at \(Formatters.duration(s: t))"
     }
 
     // MARK: Formatting
@@ -426,5 +544,44 @@ struct WeekContextCard: View {
             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
             RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
         }
+    }
+}
+
+// MARK: - Scrub host for numeric-axis charts
+
+/// The Trends charts scrub with `ScrubChartHost` (Date-keyed); the run charts plot distance and
+/// minutes, so this is its Double-keyed twin — the identical tap/drag state machine, isolated per
+/// card for the same reason (a drag must re-render one chart, not the whole summary cascade).
+private struct RunScrubState {
+    var pinned: Double?
+    private var dragging = false
+    private var pendingClear = false
+
+    mutating func handle(_ raw: Double?, xs: [Double]) {
+        if let raw, let snapped = xs.min(by: { abs($0 - raw) < abs($1 - raw) }) {
+            if !dragging, snapped == pinned {
+                pendingClear = true            // tap began on the pinned point — clear on release…
+            } else {
+                pinned = snapped               // …unless it turns into a drag to a new point
+                pendingClear = false
+            }
+            dragging = true
+        } else {
+            dragging = false
+            if pendingClear { pinned = nil; pendingClear = false }
+        }
+    }
+}
+
+private struct RunScrubHost<ChartView: View>: View {
+    let xs: [Double]
+    @ViewBuilder let chart: (Double?) -> ChartView
+    @State private var scrub = RunScrubState()
+
+    var body: some View {
+        chart(scrub.pinned)
+            .chartXSelection(value: Binding(get: { scrub.pinned },
+                                            set: { scrub.handle($0, xs: xs) }))
+            .onChange(of: xs) { scrub = .init() }
     }
 }

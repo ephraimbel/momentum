@@ -54,6 +54,9 @@ struct CardioSummaryContent: View {
     /// The run's seven-day window, fetched here (on this always-present task) and handed to the
     /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
     @State private var weekWorkouts: [Workout] = []
+    /// The hero map's full-screen expansion (tap → zoom transition → explorable map).
+    @State private var showFullMap = false
+    @Namespace private var mapZoom
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -75,15 +78,18 @@ struct CardioSummaryContent: View {
                                earned: line.credited)
                         .reveal(revealDelay + 0.08)
                 }
-                if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.10) }
+                // Strava/Runna information order (2026-08-13): the map is the run's identity and
+                // reads directly under the hero numbers — it used to sit below the share button
+                // and photo, mid-page. Tap zooms it to a full-screen explorable map.
+                routeMap(gps).reveal(revealDelay + 0.12)
+                if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.16) }
                 // Sharing is not gated on a record. It used to sit inside the achievements branch, so
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
                 // is the growth loop for a solo app. The badge above is what's *earned*; the run
                 // itself is always worth showing.
                 EarnedShareButton(workout: workout, distanceUnit: distanceUnit,
-                                  title: "Share your run").reveal(revealDelay + 0.16)
-                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.20)
-                routeMap(gps).reveal(revealDelay + 0.22)
+                                  title: "Share your run").reveal(revealDelay + 0.20)
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.24)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.30)
                 if workout.durationS >= FuelingGuide.carbsFromS { refuelNote.reveal(revealDelay + 0.32) }
                 PlanProposalCard().reveal(revealDelay + 0.34)
@@ -91,11 +97,18 @@ struct CardioSummaryContent: View {
                 SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.36)
                 RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
                                    healthHRSeries: healthHR).reveal(revealDelay + 0.38)
-                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(revealDelay + 0.385)
-                TimeInZonesCard(workout: workout).reveal(revealDelay + 0.39)
+                // Zones sit WITH the analysis charts (they are one) — the week card closes the page.
+                TimeInZonesCard(workout: workout).reveal(revealDelay + 0.385)
+                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(revealDelay + 0.39)
                 // The text splits list is gone (2026-08-06): RunAnalysisSection's splits card is now
                 // the Strava-style row list — ordinal + exact pace + speed bar — so a second textual
                 // rendering of the same numbers directly below it was noise.
+            }
+            .fullScreenCover(isPresented: $showFullMap) {
+                RunMapFullScreen(coordinates: smoothedCoords,
+                                 style: mapStyleOverride ?? gps.mapStyle,
+                                 onClose: { showFullMap = false })
+                    .navigationTransition(.zoom(sourceID: "runMap", in: mapZoom))
             }
             .task {
                 if showsVerdict { planLine = computePlanConnection(gps) }
@@ -313,6 +326,22 @@ struct CardioSummaryContent: View {
                 // identity on match-presence (and the previewed style) forces one clean remount,
                 // re-running style-load with the snapped route.
                 .id("\(gps.matchedRouteData != nil)-\(style.rawValue)")
+                // Tap → the full-screen explorable map. The card map is non-interactive
+                // (allowsHitTesting false), so the tap lands on this wrapper; the corner chip is
+                // the affordance that says so.
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "arrow.down.left.and.arrow.up.right")
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Theme.background.opacity(0.92)))
+                        .overlay(Circle().stroke(Theme.hairline))
+                        .padding(Theme.Space.sm)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                .matchedTransitionSource(id: "runMap", in: mapZoom)
+                .onTapGesture { showFullMap = true }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Route map. Opens full screen.")
         } else if !routeResolved, workout.type.isGPS {
             // The replay hasn't landed yet (first frames only) — hold the map's footprint quietly.
             // Falling through to "No route recorded" here flashed that claim over every real route
@@ -565,5 +594,51 @@ enum RepGrouping {
         guard !values.isEmpty else { return 0 }
         let sorted = values.sorted()
         return sorted[sorted.count / 2]
+    }
+}
+
+// MARK: - Full-screen route map
+
+/// The hero map, expanded: the whole route on an explorable full-bleed canvas (pinch, pan,
+/// rotate — `RouteMapView`'s explore gestures). Presented from the summary's map with a zoom
+/// transition, so the card literally becomes the page. Chrome follows the immersive pager's
+/// grammar: surface circles, hairline strokes, and the re-center control that appears only
+/// once the athlete has explored away from the fitted overview.
+private struct RunMapFullScreen: View {
+    let coordinates: [CLLocationCoordinate2D]
+    let style: MapStyleOption
+    /// Host-owned close (the ImmersiveWorkoutPager pattern): the summary flips its own
+    /// presentation flag — `@Environment(\.dismiss)` silently did nothing from inside this
+    /// zoom-transition cover nested in the post-run presentation stack (verified on-sim).
+    let onClose: () -> Void
+    @State private var camera = RouteMapCameraHandle()
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            RouteMapView(coordinates: coordinates, style: style,
+                         interactive: true, padding: 56, cameraHandle: camera)
+                .ignoresSafeArea()
+            HStack(alignment: .top) {
+                Button { onClose() } label: {
+                    Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                }
+                .accessibilityLabel("Close map")
+                Spacer()
+                if camera.isExplored {
+                    Button { camera.recenter() } label: {
+                        Image(systemName: "viewfinder").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                    }
+                    .accessibilityLabel("Re-center route")
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                }
+            }
+            .animation(.easeOut(duration: 0.25), value: camera.isExplored)
+            .padding(.horizontal, Theme.Space.lg)
+        }
+        .background(Theme.background)
     }
 }
