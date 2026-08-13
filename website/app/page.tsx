@@ -470,37 +470,6 @@ function DeepDives() {
 
         <div className="duo">
           <div>
-            <p className="eyebrow">Your map</p>
-            <h3>Every street you&apos;ve ever run, burned into your map.</h3>
-            <p>
-              A personal heatmap that traces your actual routes — the streets you repeat glow
-              hotter. Suggested loops start and finish at your door, sized to today&apos;s session.
-            </p>
-            <ul>
-              <li>
-                <span className="tick" aria-hidden />
-                Route suggestions drawn on the map before you commit
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Six base maps, satellite included — your choice everywhere
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Private by default. Your map is yours.
-              </li>
-            </ul>
-          </div>
-          <div className="duo-media">
-            <PhoneFrame small src="/shots/heatmap-dark.png" alt="Personal heatmap tracing running routes across a dark city map" />
-          </div>
-        </div>
-
-        <div className="duo flip">
-          <div className="duo-media">
-            <PhoneFrame small src="/shots/fuel.png" alt="Fuel dashboard: daily calories with carbs, protein, fat, and sodium rings and a plain-language meal log" />
-          </div>
-          <div>
             <p className="eyebrow">Fuel, not a diet</p>
             <h3>Eat to train — floors to hit, never numbers to fear.</h3>
             <p>
@@ -522,6 +491,9 @@ function DeepDives() {
                 Floors to hit, never ceilings to fear — with a RED-S-aware guard
               </li>
             </ul>
+          </div>
+          <div className="duo-media">
+            <PhoneFrame small src="/shots/fuel.png" alt="Fuel dashboard: daily calories with carbs, protein, fat, and sodium rings and a plain-language meal log" />
           </div>
         </div>
       </div>
