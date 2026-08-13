@@ -536,8 +536,8 @@ function Pricing() {
             <p className="eyebrow">Pricing</p>
             <h2 className="display">A coach for less than a race entry.</h2>
             <p className="lede">
-              Personal run coaching costs $150+ a month. momentum&apos;s adaptive engine trains you
-              for a fraction of one session.
+              A personal run coach is $150+ a month. momentum trains you all year for less than
+              half the price of one session.
             </p>
           </div>
         </Reveal>
@@ -561,13 +561,14 @@ function Pricing() {
             <div className="plan plan-pro">
               <span className="plan-badge">7-day free trial</span>
               <h3>momentum Pro</h3>
-              {/* Must match PaywallController.swift (monthlyPrice 14.99 / annualPrice 109.99) —
-                  this page quoted Runna's $19.99/$119.99 for months while the app charged less. */}
+              {/* Must match PaywallOffering (monthlyPrice 9.99 / annualPrice 59.99, ASC effective
+                  2026-07-31). The trial is ANNUAL ONLY — never promise one on monthly. */}
               <div className="plan-price">
-                $109.99 <small>/ year</small>
+                $59.99 <small>/ year</small>
               </div>
               <p className="plan-cycle">
-                7 days free, then $109.99/year (about $9/month) · or $14.99/month, cancel anytime
+                7 days free, then $59.99/year (under $5 a month) · or $9.99/month without the
+                trial, cancel anytime
               </p>
               <ul>
                 <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
@@ -685,7 +686,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $109.99/year with a 7-day free trial, or $14.99/month.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $59.99/year with a 7-day free trial, which works out to under $5 a month. Prefer month to month? $9.99, no trial.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",

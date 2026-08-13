@@ -78,6 +78,9 @@ a {
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.02;
+  /* pretty (not balance): avoid one-word orphan lines without re-breaking phrases —
+     balance split "No guilt loops." mid-phrase on the method panel. */
+  text-wrap: pretty;
 }
 
 .eyebrow {
