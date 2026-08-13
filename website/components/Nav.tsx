@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { APP_STORE_URL } from "./appStore";
 
 const LINKS: [string, string][] = [
   ["#product", "Product"],
@@ -48,7 +49,7 @@ export default function Nav() {
                 {label}
               </a>
             ))}
-            <a className="btn btn-ink btn-sm" href="#download">
+            <a className="btn btn-ink btn-sm" href={APP_STORE_URL} target="_blank" rel="noopener">
               Get the app
             </a>
           </nav>

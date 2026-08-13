@@ -250,6 +250,31 @@ a {
   background: var(--surface);
 }
 
+/* ——— App Store badge (inline SVG, official geometry) ——— */
+.appstore-badge {
+  display: inline-flex;
+  border-radius: 8px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.appstore-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(14, 14, 18, 0.16);
+}
+.appstore-badge svg {
+  display: block;
+  height: 50px;
+  width: auto;
+}
+.appstore-badge.sm svg {
+  height: 40px;
+}
+.appstore-badge.sm {
+  margin-top: 16px;
+}
+.appstore-badge.on-dark:hover {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
 .btn-sm {
   padding: 9px 18px;
   font-size: 13px;
@@ -773,6 +798,48 @@ a {
   margin-left: auto;
   margin-right: auto;
   text-align: center;
+}
+
+/* ——— how it works: three numbered editorial columns ——— */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+}
+.step {
+  border-top: 1px solid var(--hairline);
+  padding-top: 22px;
+}
+.step-num {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.step h3 {
+  font-family: var(--font-d);
+  font-size: 21px;
+  letter-spacing: -0.01em;
+  margin: 10px 0 8px;
+}
+.step p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+@media (max-width: 960px) {
+  .steps {
+    grid-template-columns: 1fr;
+    gap: 26px;
+  }
+}
+
+/* the reassurance line under the pricing cards */
+.plans-note {
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-top: 26px;
 }
 
 /* feature trio cards */

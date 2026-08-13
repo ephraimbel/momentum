@@ -5,15 +5,33 @@ import RaceCalc from "@/components/RaceCalc";
 import Nav from "@/components/Nav";
 import Cinema from "@/components/Cinema";
 import { athleteBlur } from "@/components/athleteBlur";
+import { APP_STORE_URL, AppStoreBadge } from "@/components/appStore";
+
+const appSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Momentum: Run Training Plans",
+  operatingSystem: "iOS",
+  applicationCategory: "HealthApplication",
+  url: "https://momentumco.app",
+  installUrl: APP_STORE_URL,
+  offers: [
+    { "@type": "Offer", price: "0", priceCurrency: "USD", description: "Free — track every run" },
+    { "@type": "Offer", price: "9.99", priceCurrency: "USD", description: "momentum Pro, monthly" },
+    { "@type": "Offer", price: "59.99", priceCurrency: "USD", description: "momentum Pro, annual — 7-day free trial" },
+  ],
+};
 
 export default function Home() {
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(appSchema) }} />
       <Nav />
       <main>
         <Hero />
         <Proof />
         <Pillars />
+        <HowItWorks />
         <CinemaStandard />
         <Gallery />
         <DeepDives />
@@ -34,6 +52,51 @@ export default function Home() {
 
 /** The first cinematic statement — the fog pack. Photography stays monochrome (the brand is ink
  *  and paper); the single iridescent word is the earned accent. */
+/** The Runna-pattern clarity band: the three-step answer to "so how does this actually work?",
+ *  kept to one compact editorial strip — numbered columns, no phones, no new imagery. */
+function HowItWorks() {
+  const steps = [
+    {
+      n: "01",
+      t: "Tell it your goal",
+      d: "A race, a date, or just “get faster.” momentum reads your recent runs from Apple Health and starts from where you actually are.",
+    },
+    {
+      n: "02",
+      t: "Get your plan",
+      d: "Real training blocks — base, build, peak, taper — with every pace set from your fitness, and an honest verdict if the date is too tight.",
+    },
+    {
+      n: "03",
+      t: "Run. It adapts.",
+      d: "Every run recalibrates your paces and load. Miss a day and the week reshapes itself — no red, no guilt, no starting over.",
+    },
+  ];
+  return (
+    <section className="section" id="how" style={{ paddingTop: 0 }}>
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head">
+            <p className="eyebrow">How it works</p>
+            <h2 className="display">A coach in three steps.</h2>
+          </div>
+        </Reveal>
+        <div className="steps">
+          {steps.map((s, i) => (
+            <Reveal key={s.n} delay={i * 90}>
+              <div className="step">
+                <span className="step-num num">{s.n}</span>
+                <h3>{s.t}</h3>
+                <p>{s.d}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CinemaStandard() {
   return (
     <Cinema
@@ -170,8 +233,8 @@ function Hero() {
             adapts it after every run. From your first 5K to your first ultra.
           </p>
           <div className="hero-ctas rise rise-4">
-            <a className="btn btn-ink" href="#download">
-               Download for iPhone
+            <a className="appstore-badge" href={APP_STORE_URL} target="_blank" rel="noopener">
+              <AppStoreBadge />
             </a>
             <a className="btn btn-ghost" href="#product">
               See how it works
@@ -554,7 +617,7 @@ function Pricing() {
                 <li><span className="tick" aria-hidden />Your first adaptive training week</li>
                 <li><span className="tick" aria-hidden />Recent history &amp; personal heatmap</li>
               </ul>
-              <a className="btn btn-ghost" href="#download">Start free</a>
+              <a className="btn btn-ghost" href={APP_STORE_URL} target="_blank" rel="noopener">Start free</a>
             </div>
           </Reveal>
           <Reveal delay={90}>
@@ -577,10 +640,15 @@ function Pricing() {
                 <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
                 <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
               </ul>
-              <a className="btn btn-ink" href="#download">Start your 7-day free trial</a>
+              <a className="btn btn-ink" href={APP_STORE_URL} target="_blank" rel="noopener">Start your 7-day free trial</a>
             </div>
           </Reveal>
         </div>
+        <Reveal>
+          <p className="plans-note">
+            Billed by Apple &middot; Cancel anytime in Settings &middot; Private by default &mdash; no ads, no data sold, ever
+          </p>
+        </Reveal>
       </div>
     </section>
   );
@@ -709,8 +777,18 @@ function FAQ() {
       a: "It moves. momentum reschedules it with a one-line explanation, and your streak survives — rest days count and one slipped day is forgiven. There is no red 'failed' state anywhere in the product.",
     },
   ];
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map((it) => ({
+      "@type": "Question",
+      name: it.q,
+      acceptedAnswer: { "@type": "Answer", text: it.a },
+    })),
+  };
   return (
     <section className="section" id="faq" style={{ paddingTop: 0 }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
       <div className="wrap">
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
@@ -751,8 +829,8 @@ function FinalCTA() {
             <p className="lede cinema-lede">
               Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
             </p>
-            <a className="btn btn-paper" href="#">
-               Download on the App Store
+            <a className="appstore-badge on-dark" href={APP_STORE_URL} target="_blank" rel="noopener">
+              <AppStoreBadge />
             </a>
           </div>
         </Reveal>
@@ -769,6 +847,9 @@ function Footer() {
           <div className="footer-brand">
             <Image className="wordmark-footer" src="/wordmark-black.png" alt="momentum" width={640} height={128} />
             <p>The adaptive running coach. From your first 5K to your first ultra — keep moving.</p>
+            <a className="appstore-badge sm" href={APP_STORE_URL} target="_blank" rel="noopener">
+              <AppStoreBadge />
+            </a>
           </div>
           <div>
             <h5>Product</h5>
@@ -776,7 +857,7 @@ function Footer() {
               <a href="#product">Why momentum</a>
               <a href="#intelligence">Intelligence</a>
               <a href="#method">The method</a>
-              <a href="#download">Download</a>
+              <a href={APP_STORE_URL} target="_blank" rel="noopener">Download</a>
             </div>
           </div>
           <div>
