@@ -2,18 +2,17 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 
-// The app's two faces, byte-identical to the iOS bundle (both OFL):
-// Space Grotesk = display (hero numbers, titles, wordmark), Inter = UI/body.
-const spaceGrotesk = localFont({
-  src: [
-    { path: "../public/fonts/SpaceGrotesk-Regular.ttf", weight: "400" },
-    { path: "../public/fonts/SpaceGrotesk-Medium.ttf", weight: "500" },
-    { path: "../public/fonts/SpaceGrotesk-Bold.ttf", weight: "700" },
-  ],
+// The brief's voice (2026-08-14 rebuild): one excellent neutral grotesk, set tight.
+// Inter Tight is Inter's display sibling — narrower forms that hold together at the −0.06em to
+// −0.095em tracking the display sizes call for, where standard Inter starts to collide. Variable,
+// so the 500/540 headline weights come from one file (headlines are NEVER 800 — brand rule).
+const interTight = localFont({
+  src: [{ path: "../public/fonts/InterTight-Variable.ttf", weight: "100 900", style: "normal" }],
   variable: "--font-display",
   display: "swap",
 });
 
+// Body/UI stays Inter — quiet, neutral, and already the iOS app's own UI face.
 const inter = localFont({
   src: [
     { path: "../public/fonts/Inter-Regular.ttf", weight: "400" },
@@ -22,19 +21,6 @@ const inter = localFont({
     { path: "../public/fonts/Inter-Bold.ttf", weight: "700" },
   ],
   variable: "--font-ui",
-  display: "swap",
-});
-
-// The editorial voice (2026-08-14 aesthetic pass): Instrument Serif — condensed, high-contrast,
-// sharp-serifed display face with lively true italics (OFL). One optical weight, made for exactly
-// the print-poster scale headlines this direction calls for. Headlines speak in this; Space
-// Grotesk keeps the numbers (the app's data voice) and Inter keeps the UI.
-const instrumentSerif = localFont({
-  src: [
-    { path: "../public/fonts/InstrumentSerif-Regular.ttf", weight: "400", style: "normal" },
-    { path: "../public/fonts/InstrumentSerif-Italic.ttf", weight: "400", style: "italic" },
-  ],
-  variable: "--font-serif",
   display: "swap",
 });
 
@@ -73,14 +59,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#faf7f2",
+  themeColor: "#f5f3ee",
   width: "device-width",
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${spaceGrotesk.variable} ${inter.variable} ${instrumentSerif.variable}`}>
+    <html lang="en" className={`${interTight.variable} ${inter.variable}`}>
       <body>{children}</body>
     </html>
   );
