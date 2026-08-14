@@ -74,8 +74,16 @@ function Hero() {
           </Reveal>
           <Reveal>
             <div className="hero-actions">
-              <a className="btn btn-ink" href={APP_STORE_URL} target="_blank" rel="noopener">
-                Download Momentum <span className="arrow" aria-hidden>↗</span>
+              {/* iOS is the only place to get momentum today, so the primary CTA is Apple's own
+                  badge rather than a generic button — it says WHERE as well as what. */}
+              <a
+                className="appstore-badge"
+                href={APP_STORE_URL}
+                target="_blank"
+                rel="noopener"
+                aria-label="Download momentum on the App Store"
+              >
+                <AppStoreBadge />
               </a>
               <a className="btn btn-ghost" href="#product">
                 See how it works

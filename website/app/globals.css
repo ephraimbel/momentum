@@ -315,6 +315,12 @@ a {
   height: 40px;
 }
 
+/* In the hero the badge IS the primary CTA, so it has to sit level with the ghost button beside
+   it (14px padding + 13px/1.55 text + 1px borders ≈ 50px). */
+.hero-actions .appstore-badge svg {
+  height: 50px;
+}
+
 /* ——— hero ——— */
 
 .hero {
@@ -1326,7 +1332,7 @@ a {
     justify-content: center;
   }
   .hero-actions .appstore-badge svg {
-    height: 44px;
+    height: 52px;
   }
   /* Decorative pills would crowd the device at this width. */
   .stat-pill {
