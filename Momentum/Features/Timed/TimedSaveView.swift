@@ -48,7 +48,7 @@ struct TimedSaveView: View {
                 if let workout {
                     VStack(spacing: Theme.Space.lg) {
                         TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true,
-                                            showsCalories: false)
+                                            showsCalories: false, showsPlanLine: true)
                         editor
                     }
                     .padding(Theme.Space.md)

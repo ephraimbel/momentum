@@ -35,16 +35,29 @@ struct StrengthSaveView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 if let workout {
                     // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
                     VStack(spacing: Theme.Space.lg) {
                         // Reveals on arrival — the celebration moved to Save, nothing covers this.
                         StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
-                                               celebratePRs: true, showsHeader: false)
-                        editor
+                                               celebratePRs: true, showsHeader: false,
+                                               showsPlanLine: true)
+                        editor.id("strengthEditor")
                     }
                     .padding(Theme.Space.md)
+                    #if DEBUG
+                    // Deterministic sim verification of the lower page (exercise bars, week
+                    // tonnage card) — simctl can't scroll a headless sim.
+                    .onAppear {
+                        if ProcessInfo.processInfo.arguments.contains("--strength-save-scroll") {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                withAnimation { proxy.scrollTo("strengthEditor", anchor: .bottom) }
+                            }
+                        }
+                    }
+                    #endif
                 } else if reader != nil {
                     // The finished workout couldn't be read — never trap the athlete on an endless
                     // spinner; give a plain message and a way out.
@@ -56,6 +69,7 @@ struct StrengthSaveView: View {
                 } else {
                     ProgressView().padding(.top, Theme.Space.xxl)
                 }
+            }
             }
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)

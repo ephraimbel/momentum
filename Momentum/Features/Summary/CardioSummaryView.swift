@@ -87,8 +87,10 @@ struct CardioSummaryContent: View {
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
                 // is the growth loop for a solo app. The badge above is what's *earned*; the run
                 // itself is always worth showing.
+                // The CTA names the sport it's sharing — "Share your run" on a ride reads as a
+                // template leak (caught on the seeded ride, 2026-08-13).
                 EarnedShareButton(workout: workout, distanceUnit: distanceUnit,
-                                  title: "Share your run").reveal(revealDelay + 0.20)
+                                  title: "Share your \(workout.type.title.lowercased())").reveal(revealDelay + 0.20)
                 WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.24)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.30)
                 if workout.durationS >= FuelingGuide.carbsFromS { refuelNote.reveal(revealDelay + 0.32) }

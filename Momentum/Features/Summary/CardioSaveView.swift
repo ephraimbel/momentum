@@ -85,8 +85,10 @@ struct CardioSaveView: View {
             }
             #if DEBUG
             // --save-bottom: open pre-scrolled to the editor (route-avatar offer verification —
-            // simctl can't scroll). Same trick as Settings' --settings-bottom.
-            .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--save-bottom") ? .bottom : .top)
+            // simctl can't scroll). Same trick as Settings' --settings-bottom. --save-center lands
+            // mid-page — the analysis charts (pace/speed, splits, HR, elevation) live there.
+            .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--save-bottom") ? .bottom
+                                 : ProcessInfo.processInfo.arguments.contains("--save-center") ? .center : .top)
             #endif
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)

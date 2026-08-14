@@ -70,6 +70,7 @@ struct RootView: View {
     @State private var showWidgetPreview = ProcessInfo.processInfo.arguments.contains("--widget-preview")
     // Straight into the planned-lift checklist (screenshot verification of the live strength flow).
     @State private var showStrengthLivePlanned = false
+    @State private var showStrengthSave = false
     #endif
 
     var body: some View {
@@ -210,7 +211,11 @@ struct RootView: View {
                 // presenting (--ui-test-run-detail is affected too).
                 .background {
                     Color.clear.fullScreenCover(isPresented: $showSaveScreen) {
-                        if let run = recentWorkouts.first(where: { $0.type.isGPS && $0.gps != nil }) {
+                        // --save-screen-ride narrows to the seeded ride — the summary reads a ride
+                        // in speed (chart + splits), and that branch is unreachable from a run.
+                        let wantRide = ProcessInfo.processInfo.arguments.contains("--save-screen-ride")
+                        if let run = recentWorkouts.first(where: {
+                            $0.type.isGPS && $0.gps != nil && (!wantRide || $0.type.isCycling) }) {
                             // Reads the real week through the shared reader, so this harness verifies
                             // the ring the finish flow actually draws — not a lookalike. `--ring-demo`
                             // substitutes a mid-week reading, because the seed's run is the only one
@@ -224,6 +229,17 @@ struct RootView: View {
                                                                         profile: profiles.first, in: context)) {
                                 showSaveScreen = false
                             }
+                        }
+                    }
+                }
+                // --strength-save: the post-lift save editor for the newest seeded strength
+                // session — deterministic verification of the summary's Strava-shaped order
+                // (muscle-map identity card, exercise volume bars, week tonnage card). Own
+                // background view (same 4th-modifier gotcha as above).
+                .background {
+                    Color.clear.fullScreenCover(isPresented: $showStrengthSave) {
+                        if let lift = recentWorkouts.first(where: { $0.strength != nil }) {
+                            StrengthSaveView(workoutId: lift.id) { showStrengthSave = false }
                         }
                     }
                 }
@@ -446,11 +462,14 @@ struct RootView: View {
             if ProcessInfo.processInfo.arguments.contains("--coach") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { coach.open() }
             }
-            if ProcessInfo.processInfo.arguments.contains("--save-screen") {
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--save-screen") }) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showSaveScreen = true }
             }
             if ProcessInfo.processInfo.arguments.contains("--strength-live-planned") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showStrengthLivePlanned = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--strength-save") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showStrengthSave = true }
             }
             if ProcessInfo.processInfo.arguments.contains("--coach-card") {
                 // Deterministic proposal in the thread (no network) — screenshot the card + Apply flow.

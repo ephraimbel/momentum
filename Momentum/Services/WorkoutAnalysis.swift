@@ -69,10 +69,16 @@ struct WorkoutDigest: Codable, Sendable {
                                 .filter { !$0.isPartial }.map(\.durationS),
                             displayUnit: imperial ? "mi" : "km",
                             distanceLabel: Formatters.distance(meters: g.distanceM, unit: distanceUnit),
-                            avgPaceLabel: g.avgPaceSPerKm > 0
-                                ? Formatters.pace(secPerKm: g.avgPaceSPerKm, unit: distanceUnit) : nil,
+                            // A ride's figures are SPEED strings (2026-08-13) — handing the model a
+                            // pace label for a ride is how the coach said "4.8 mi ride at 3:33 /mi"
+                            // out loud. Same wire fields, the discipline's own currency in them.
+                            avgPaceLabel: w.type.isCycling
+                                ? (g.avgSpeedMS > 0 ? Formatters.speed(ms: g.avgSpeedMS, unit: distanceUnit) : nil)
+                                : (g.avgPaceSPerKm > 0 ? Formatters.pace(secPerKm: g.avgPaceSPerKm, unit: distanceUnit) : nil),
                             splitLabels: displaySplits.map {
-                                Formatters.pace(secPerKm: $0.durationS / ($0.distanceM / 1000), unit: distanceUnit)
+                                w.type.isCycling
+                                    ? Formatters.speed(ms: $0.durationS > 0 ? $0.distanceM / $0.durationS : 0, unit: distanceUnit)
+                                    : Formatters.pace(secPerKm: $0.durationS / ($0.distanceM / 1000), unit: distanceUnit)
                             })
         } else { gps = nil }
         if w.type.isStrengthStyle, let s = w.strength {

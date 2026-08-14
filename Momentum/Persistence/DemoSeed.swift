@@ -282,6 +282,33 @@ enum DemoSeed {
             }
         }
 
+        // One outdoor ride threaded in, so the ride summary's discipline-specific reading (speed
+        // chart + speed-valued splits, 2026-08-13) always has a seeded specimen to verify against.
+        // Distance and duration derive from the samples' own geometry, so the hero number and the
+        // charts (which replay the samples) can never disagree.
+        // 2.5 days back — BEHIND the freshest run, so plain `--save-screen` (and every UI test on
+        // it) still resolves the run; `--save-screen-ride` is the door to this one.
+        do {
+            let start = Date().addingTimeInterval(-2.5 * 86_400 - 2 * 3600)
+            let samples = loopSamples(start: start, variant: 2, speedScale: 2.5)
+            var distanceM = 0.0
+            for i in 1..<samples.count {
+                distanceM += Geo.distance(lat1: samples[i - 1].lat, lon1: samples[i - 1].lon,
+                                          lat2: samples[i].lat, lon2: samples[i].lon)
+            }
+            let durationS = samples.last.map { $0.t.timeIntervalSince(start) } ?? 0
+            let ride = Workout(); ride.type = .ride; ride.startedAt = start; ride.durationS = durationS
+            let gps = GPSDetail()
+            gps.distanceM = distanceM
+            gps.elevationGainM = 120
+            gps.samples = samples
+            gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: 4)
+            gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
+            gps.avgPaceSPerKm = distanceM > 0 ? durationS / (distanceM / 1000) : 0
+            ride.gps = gps
+            context.insert(ride)
+        }
+
         // --seed-dense-history: pack the trailing 16 weeks (the consistency graph's exact window)
         // with light training days so the profile's Consistency card reads like a daily athlete
         // (~4 of 5 days lit) instead of the 5-week starter history above. Composes with the other
@@ -824,7 +851,7 @@ enum DemoSeed {
         return (out, distanceM)
     }
 
-    private static func loopSamples(start: Date, variant: Int) -> [LocationSample] {
+    private static func loopSamples(start: Date, variant: Int, speedScale: Double = 1.0) -> [LocationSample] {
         // Scatter each run around a different Austin neighbourhood so the maps look different.
         let centers = [(30.2672, -97.7431), (30.2849, -97.7341), (30.2530, -97.7594),
                        (30.2711, -97.7539), (30.2456, -97.7688)]
@@ -840,8 +867,9 @@ enum DemoSeed {
             let a = Double(i) / Double(perLap) * 2 * .pi
             let lat = centerLat + r * sin(a) + wobble * sin(a * 3 + Double(variant))
             let lon = centerLon + r * cos(a) * squash + wobble * cos(a * 2)
-            // Cruise ~3.1 m/s (≈5:22/km) with rolling variation + a surge each lap.
-            let speed = 3.1 + 0.5 * sin(a * 2 + Double(variant)) + 0.25 * sin(a * 5)
+            // Cruise ~3.1 m/s (≈5:22/km) with rolling variation + a surge each lap. `speedScale`
+            // turns the same loop into a ride (~2.5 → ≈28 km/h) for the cycling summary's charts.
+            let speed = (3.1 + 0.5 * sin(a * 2 + Double(variant)) + 0.25 * sin(a * 5)) * speedScale
             if i > 0 { elapsed += Geo.distance(lat1: prevLat, lon1: prevLon, lat2: lat, lon2: lon) / max(1.5, speed) }
             let s = LocationSample()
             s.t = start.addingTimeInterval(elapsed)
