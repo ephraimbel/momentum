@@ -69,7 +69,11 @@ enum ReadinessToday {
     /// The wrist counts as a sibling surface: every publish also schedules a WatchConnectivity
     /// push, so the watch's ring and complications carry this same number.
     static func publish(_ r: MorningReadiness) {
-        ReadinessTodayCache.store(score: r.score, band: r.band.rawValue, driver: r.displayDriverLine)
+        // The confidence qualifier travels WITH the driver line. A score built from a check-in and
+        // load alone must not read like a full HRV + sleep + resting-HR morning on any surface that
+        // shows it — and the wrist is one of those surfaces (owner ask 2026-08-14).
+        ReadinessTodayCache.store(score: r.score, band: r.band.rawValue,
+                                  driver: r.displayDriverWithConfidence)
         PhoneWatchSync.shared.scheduleRefresh()
     }
 }

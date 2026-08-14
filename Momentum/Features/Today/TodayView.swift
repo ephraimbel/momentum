@@ -1201,6 +1201,14 @@ struct TodayView: View {
         (deckCollapsed ? peekHeight : deckHeight) + Theme.Space.sm
     }
 
+    /// Both heights start at 0 and only arrive after the first layout pass, which would park the
+    /// controls down on the tab bar for a frame and then jump them up. They fade in once they know
+    /// where they belong — imperceptible when measurement lands on the first pass, and no jump when
+    /// it doesn't.
+    private var mapControlsPositioned: Bool {
+        (deckCollapsed ? peekHeight : deckHeight) > 0
+    }
+
     private func setDeck(collapsed: Bool) {
         guard collapsed != deckCollapsed else { return }
         Haptics.light()
@@ -1243,11 +1251,10 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, Theme.Space.md)
                 .offset(y: -mapControlsLift)
+                .opacity(mapControlsPositioned ? 1 : 0)
             }
 
-            VStack(spacing: Theme.Space.sm) {
-                deck
-            }
+            deck
             .padding(.horizontal, Theme.Space.md)
             .padding(.bottom, Theme.Space.sm)     // sit closer to the tab bar so more map shows
             // Measure once per size change; `deckTravel` needs the real height because the deck grows
@@ -1958,7 +1965,10 @@ struct MorningReadinessLine: View {
                         Text(driver)
                             .font(.rounded(Theme.FontSize.caption, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary)
-                            .lineLimit(1)
+                            // Two lines, because the confidence qualifier rides on the end of this
+                            // string: at one line "Recent load still settling · partial signal"
+                            // truncates away the exact clause that makes the score honest.
+                            .lineLimit(2)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
@@ -2010,7 +2020,10 @@ struct MorningReadinessLine: View {
     /// ONE phrasing for every surface — `displayDriverLine` is what the strip and the hub speak;
     /// a second hand-maintained copy here drifted into different words (and a different
     /// threshold) for the same pillar, visibly contradicting the "one number" story.
-    private var driver: String { readiness.displayDriverLine }
+    /// Carries the confidence qualifier: on a phone-only morning this line is the ONLY place the
+    /// athlete is told the score was built on thin signal, since Today has no room for the hub's
+    /// fuller footnote.
+    private var driver: String { readiness.displayDriverWithConfidence }
 
     private var a11yLabel: String {
         var label = "Readiness \(readiness.score), \(readiness.band.rawValue). \(driver)."

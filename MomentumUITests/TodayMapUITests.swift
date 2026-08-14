@@ -39,6 +39,15 @@ final class TodayMapUITests: XCTestCase {
         let collapse = app.buttons["todayDeckCollapse"]
         XCTAssertTrue(collapse.waitForExistence(timeout: 5), "Deck collapse arrow missing.")
 
+        // The collapsed state PERSISTS (@AppStorage), so a previous run — or a hand-driven session
+        // on this simulator — can leave the deck already down, which turns the collapse tap below
+        // into a no-op and fails the test for the wrong reason. Normalize to expanded first.
+        let expand = app.buttons["Show today's deck"]
+        if expand.exists && expand.isHittable {
+            expand.tap()
+            XCTAssertTrue(start.isHittable, "Could not restore the deck to its expanded state.")
+        }
+
         collapse.tap()
         XCTAssertTrue(app.buttons["todayPeekStart"].waitForExistence(timeout: 5),
                       "Tapping the arrow did not collapse the deck to its peek.")

@@ -327,4 +327,24 @@ struct MorningReadinessTests {
         #expect(try #require(morning(load: strongLoad, hrv: nil, rhr: nil, sleep: nil)).confidence == .minimal)
         #expect(try #require(MorningReadiness(signals: RecoverySignals(sleepHours: 8))).confidence == .minimal)
     }
+
+    /// A thin-signal score must SAY it's thin on every surface that shows it, not just the hub's
+    /// hero footnote. Today and Trends speak `displayDriverWithConfidence`; before this, a
+    /// watch-less athlete's check-in-and-load number read exactly like a full-signal morning.
+    @Test func thinSignalCarriesItsQualifierIntoTheDriverLine() throws {
+        let full = try #require(morning(load: strongLoad))
+        #expect(full.confidenceNote == nil, "A full-signal morning should not apologise for itself.")
+        #expect(full.displayDriverWithConfidence == full.displayDriverLine)
+
+        let partial = try #require(morning(load: strongLoad, rhr: nil, checkin: nil))
+        #expect(partial.confidenceNote == "partial signal")
+        #expect(partial.displayDriverWithConfidence == "\(partial.displayDriverLine) · partial signal")
+
+        // The watch-less case this exists for: no HRV, no resting HR, no sleep.
+        let phoneOnly = try #require(morning(load: strongLoad, hrv: nil, rhr: nil, sleep: nil))
+        #expect(phoneOnly.confidenceNote == "light signal")
+        #expect(phoneOnly.displayDriverWithConfidence.hasSuffix(" · light signal"))
+        // Still a real number with real guidance — the qualifier never replaces the score.
+        #expect(phoneOnly.score > 0)
+    }
 }
