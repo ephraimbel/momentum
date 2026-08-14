@@ -78,7 +78,7 @@ function HowItWorks() {
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">How it works</p>
-            <h2 className="display">A coach in three steps.</h2>
+            <h2 className="display">A coach in <em>three steps.</em></h2>
           </div>
         </Reveal>
         <div className="steps">
@@ -107,7 +107,7 @@ function CinemaStandard() {
       <Reveal>
         <p className="eyebrow eyebrow-light">The long game</p>
         <h2 className="display cinema-title">
-          The work compounds.
+          The work <em>compounds.</em>
         </h2>
         <p className="lede cinema-lede">
           Every run measured. Every signal read. Every week adapted. momentum turns consistency
@@ -171,7 +171,7 @@ function Seasons() {
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">The season, periodized</p>
-            <h2 className="display">Base. Build. Peak.</h2>
+            <h2 className="display">Base. Build. <em>Peak.</em></h2>
             <p className="lede">
               momentum plans in real training blocks — and labels every week with why it exists.
             </p>
@@ -226,7 +226,7 @@ function Hero() {
             <br />
             learns how
             <br />
-            <span className="iri-text">you</span> run.
+            <em><span className="iri-text">you</span> run.</em>
           </h1>
           <p className="lede rise rise-3">
             momentum builds your training around your fitness, your recovery, and your life — then
@@ -295,7 +295,7 @@ function Pillars() {
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">Why momentum</p>
-            <h2 className="display">Training science first. AI where it helps.</h2>
+            <h2 className="display">Training science first. AI where it <em>helps.</em></h2>
             <p className="lede">
               Your paces, loads, and progressions come from a deterministic training engine — testable,
               bounded, honest. The AI explains the plan; it never invents your numbers.
@@ -386,7 +386,7 @@ function Gallery() {
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
             <p className="eyebrow">The whole journey</p>
-            <h2 className="display">Plan it. Run it. Understand it.</h2>
+            <h2 className="display">Plan it. Run it. <em>Understand it.</em></h2>
           </div>
         </Reveal>
         <div className="gallery">
@@ -414,7 +414,7 @@ function DeepDives() {
         <div className="duo">
           <div>
             <p className="eyebrow">Pace intelligence</p>
-            <h3>A coach that reviews your run — not just records it.</h3>
+            <h3>A coach that <em>reviews</em> your run — not just records it.</h3>
             <p>
               After every guided session, momentum compares what was prescribed with what you ran,
               rep by rep, and gives you a verdict in plain language.
@@ -445,7 +445,7 @@ function DeepDives() {
           </div>
           <div>
             <p className="eyebrow">Your body, measured</p>
-            <h3>Heart rate, zones, and recovery — from the gear you already own.</h3>
+            <h3>Heart rate, zones, and recovery — from the gear you <em>already own.</em></h3>
             <p>
               Apple Watch, Garmin, or a chest strap: live BPM and your current zone on the run
               screen, time-in-zones afterwards, and readiness signals that shape tomorrow&apos;s
@@ -471,7 +471,7 @@ function DeepDives() {
         <div className="duo">
           <div>
             <p className="eyebrow">Fuel, not a diet</p>
-            <h3>Eat to train — floors to hit, never numbers to fear.</h3>
+            <h3>Eat to train — floors to hit, <em>never numbers to fear.</em></h3>
             <p>
               Tell momentum what you ate in a sentence and it reads the carbs, protein, fat, and
               sodium — then shows what today&apos;s training actually asks for. More carbs on a
@@ -508,7 +508,7 @@ function Predictor() {
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
             <p className="eyebrow">Try the engine</p>
-            <h2 className="display">What could you run?</h2>
+            <h2 className="display">What <em>could</em> you run?</h2>
             <p className="lede">
               Enter a recent result and the same deterministic model that calibrates momentum&apos;s
               training paces projects your other distances.
@@ -540,7 +540,7 @@ function Goals() {
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">Every starting line</p>
-            <h2 className="display">A plan for the runner you are today.</h2>
+            <h2 className="display">A plan for the runner you are <em>today.</em></h2>
             <p className="lede">
               Pick the goal; momentum builds the road — and tells you honestly if the date is too
               tight.
@@ -569,7 +569,7 @@ function Pricing() {
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
             <p className="eyebrow">Pricing</p>
-            <h2 className="display">A coach for less than a race entry.</h2>
+            <h2 className="display">A coach for less than a <em>race entry.</em></h2>
             <p className="lede">
               A personal run coach is $150+ a month. momentum trains you all year for less than
               half the price of one session.
@@ -647,7 +647,7 @@ function Manifesto() {
           <div className="manifesto-shade" aria-hidden />
           <p className="eyebrow eyebrow-light">The method</p>
           <h2 className="display">
-            No red days. No guilt loops. Only momentum.
+            No red days. No guilt loops. <em>Only momentum.</em>
           </h2>
           <div className="manifesto-grid">
             <div>
@@ -702,7 +702,7 @@ function Principles() {
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
             <p className="eyebrow">Why it’s built this way</p>
-            <h2 className="display">No shame. Real math. Your data.</h2>
+            <h2 className="display">No shame. Real math. <em>Your data.</em></h2>
           </div>
         </Reveal>
         <div className="quotes">
@@ -765,7 +765,7 @@ function FAQ() {
         <Reveal>
           <div className="section-head center" style={{ textAlign: "center" }}>
             <p className="eyebrow">Questions</p>
-            <h2 className="display">Everything runners ask us.</h2>
+            <h2 className="display">Everything runners <em>ask us.</em></h2>
           </div>
         </Reveal>
         <Reveal>
@@ -796,7 +796,7 @@ function FinalCTA() {
         <Reveal>
           <div className="cta-cinema">
             <h2 className="display cinema-title">
-              keep moving.
+              keep <em>moving.</em>
             </h2>
             <p className="lede cinema-lede">
               Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
