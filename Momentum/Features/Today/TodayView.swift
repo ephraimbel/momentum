@@ -1218,18 +1218,6 @@ struct TodayView: View {
 
     // MARK: Bottom panel
 
-    /// How far the panel travels to clear the screen: its own height plus the bottom padding, so
-    /// nothing of the deck is left hanging over the map.
-    private var deckTravel: CGFloat { max(deckHeight, 1) + Theme.Space.lg }
-
-    /// Where the deck rests. Two states only — `withAnimation` interpolates the offset, so there is
-    /// no intermediate value to track and nothing to fight the map for touches.
-    private var deckOffset: CGFloat { deckCollapsed ? deckTravel : 0 }
-
-    /// The peek owns the bottom exactly when the deck doesn't. Cross-faded rather than slid, so the
-    /// two never read as competing cards.
-    private var peekOpacity: CGFloat { deckCollapsed ? 1 : 0 }
-
     /// Where the map controls rest, measured up from the screen's bottom edge: just above the peek
     /// when collapsed, just above the deck when expanded. Both measured heights already include their
     /// own bottom padding, so this is the whole distance (double-counting it made them collide with
@@ -1260,20 +1248,33 @@ struct TodayView: View {
         ZStack(alignment: .bottom) {
             // Collapsed state: one glass pill carrying the only two things worth the space when the
             // map owns the screen — what's on today, and Start.
-            collapsedPeek
-                .padding(.horizontal, Theme.Space.md)
-                .padding(.bottom, Theme.Space.sm)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { peekHeight = $0 }
-                .opacity(peekOpacity)
-                // Never let the invisible pill eat taps meant for the map (or for the deck mid-drag).
-                .allowsHitTesting(peekOpacity > 0.9)
-                // ...and never let it be READ either: both states carry a "Start run" control, so
-                // leaving the hidden one in the tree gave VoiceOver two identical buttons.
-                .accessibilityHidden(peekOpacity < 0.9)
+            // Exactly ONE of the peek and the deck is mounted at a time. They both carry a Start
+            // control with the same spoken label, and keeping the hidden one alive at opacity 0 put
+            // TWO "Start run" buttons in the tree: VoiceOver read both, and every XCUITest that taps
+            // `buttons["Start run"]` broke with "Multiple matching elements found" (6 suites).
+            // `.accessibilityHidden()` did NOT collapse the query — only not rendering it does.
+            if deckCollapsed {
+                collapsedPeek
+                    .padding(.horizontal, Theme.Space.md)
+                    .padding(.bottom, Theme.Space.sm)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { peekHeight = $0 }
+                    .transition(.opacity)
+            } else {
+                deck
+                    .padding(.horizontal, Theme.Space.md)
+                    .padding(.bottom, Theme.Space.sm)   // sit closer to the tab bar, more map shows
+                    // Measure once per size change; the map controls anchor to this, and the deck
+                    // grows on mornings the coach added a rationale or a fueling line.
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deckHeight = $0 }
+                    // Slides down as it leaves, so collapsing still reads as the deck getting out of
+                    // the map's way rather than a bare cross-fade.
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
 
-            // The map's own controls live OUTSIDE the sliding deck: collapsing is the moment the
-            // athlete most wants layers and recenter, and riding the deck down took them off-screen
-            // exactly then. They ride a shorter path instead, coming to rest just above the peek.
+            // The map's own controls sit OUTSIDE that branch — they belong to the map, not to either
+            // deck state. Collapsing is the moment the athlete most wants layers and recenter, and
+            // riding the deck down took them off-screen exactly then. They anchor to whichever
+            // surface is showing instead.
             if isCardio {
                 HStack {
                     Spacer()
@@ -1290,19 +1291,6 @@ struct TodayView: View {
                 .offset(y: -mapControlsLift)
                 .opacity(mapControlsPositioned ? 1 : 0)
             }
-
-            deck
-            .padding(.horizontal, Theme.Space.md)
-            .padding(.bottom, Theme.Space.sm)     // sit closer to the tab bar so more map shows
-            // Measure once per size change; `deckTravel` needs the real height because the deck grows
-            // on mornings the coach added a rationale or a fueling line.
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deckHeight = $0 }
-            // Transform only — the deck slides, it never re-lays-out. The map underneath is already
-            // edge-to-edge, so travelling down reveals it rather than resizing anything.
-            .offset(y: deckOffset)
-            .opacity(1 - peekOpacity)
-            .allowsHitTesting(peekOpacity < 0.5)
-            .accessibilityHidden(peekOpacity > 0.5)
         }
     }
 
