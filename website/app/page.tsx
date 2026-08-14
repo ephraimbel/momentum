@@ -1,12 +1,11 @@
 import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
 import Reveal from "@/components/Reveal";
-import RaceCalc from "@/components/RaceCalc";
 import Nav from "@/components/Nav";
-import Cinema from "@/components/Cinema";
 import { athleteBlur } from "@/components/athleteBlur";
 import { APP_STORE_URL, AppStoreBadge } from "@/components/appStore";
 
+/** Structured data for the product itself — the prices here mirror the live App Store offering. */
 const appSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -18,7 +17,12 @@ const appSchema = {
   offers: [
     { "@type": "Offer", price: "0", priceCurrency: "USD", description: "Free — track every run" },
     { "@type": "Offer", price: "9.99", priceCurrency: "USD", description: "momentum Pro, monthly" },
-    { "@type": "Offer", price: "59.99", priceCurrency: "USD", description: "momentum Pro, annual — 7-day free trial" },
+    {
+      "@type": "Offer",
+      price: "59.99",
+      priceCurrency: "USD",
+      description: "momentum Pro, annual — 7-day free trial",
+    },
   ],
 };
 
@@ -27,20 +31,13 @@ export default function Home() {
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(appSchema) }} />
       <Nav />
-      <main>
+      <main id="top">
         <Hero />
-        <Proof />
-        <Pillars />
-        <HowItWorks />
-        <CinemaStandard />
-        <Gallery />
-        <DeepDives />
-        <DistanceMarquee />
-        <Predictor />
-        <Goals />
-        <Seasons />
-        <Manifesto />
-        <Principles />
+        <Marquee />
+        <BrandMoment />
+        <Training />
+        <Intelligence />
+        <Method />
         <Pricing />
         <FAQ />
         <FinalCTA />
@@ -50,670 +47,309 @@ export default function Home() {
   );
 }
 
-/** The first cinematic statement — the fog pack. Photography stays monochrome (the brand is ink
- *  and paper); the single iridescent word is the earned accent. */
-/** The Runna-pattern clarity band: the three-step answer to "so how does this actually work?",
- *  kept to one compact editorial strip — numbered columns, no phones, no new imagery. */
-function HowItWorks() {
-  const steps = [
-    {
-      n: "01",
-      t: "Tell it your goal",
-      d: "A race, a date, or just “get faster.” momentum reads your recent runs from Apple Health and starts from where you actually are.",
-    },
-    {
-      n: "02",
-      t: "Get your plan",
-      d: "Real training blocks — base, build, peak, taper — with every pace set from your fitness, and an honest verdict if the date is too tight.",
-    },
-    {
-      n: "03",
-      t: "Run. It adapts.",
-      d: "Every run recalibrates your paces and load. Miss a day and the week reshapes itself — no red, no guilt, no starting over.",
-    },
-  ];
+/* ————————————————————————————————————————————————————————————
+   1 · Hero — the brand moment. One dominant device, one idea.
+   ———————————————————————————————————————————————————————————— */
+
+function Hero() {
   return (
-    <section className="section" id="how" style={{ paddingTop: 0 }}>
-      <div className="wrap">
-        <Reveal>
-          <div className="section-head">
-            <p className="eyebrow">How it works</p>
-            <h2 className="display">A coach in <em>three steps.</em></h2>
+    <section className="hero">
+      <div className="wrap hero-grid">
+        <div>
+          <Reveal>
+            <p className="eyebrow">The running app</p>
+          </Reveal>
+          <Reveal>
+            <h1>
+              keep
+              <br />
+              moving.
+            </h1>
+          </Reveal>
+          <Reveal>
+            <p className="hero-copy">
+              Training built around the runner you are today. Adaptive plans, guided runs, and
+              coaching that changes as you do.
+            </p>
+          </Reveal>
+          <Reveal>
+            <div className="hero-actions">
+              {/* iOS is the only place to get momentum today, so the primary CTA is Apple's own
+                  badge rather than a generic button — it says WHERE as well as what. */}
+              <a
+                className="appstore-badge"
+                href={APP_STORE_URL}
+                target="_blank"
+                rel="noopener"
+                aria-label="Download momentum on the App Store"
+              >
+                <AppStoreBadge />
+              </a>
+              <a className="btn btn-ghost" href="#product">
+                See how it works
+              </a>
+            </div>
+            <p className="hero-micro">iPhone · Apple Watch · Garmin · Apple Health</p>
+          </Reveal>
+        </div>
+
+        <div className="hero-stage">
+          {/* The page's signature accent — iridescence haloing the product, and nowhere else. */}
+          <div className="hero-orbit" aria-hidden />
+          {/* Both chips read straight off the capture beside them — no invented numbers. */}
+          <div className="stat-pill pill-1" aria-hidden>
+            <b>26.22 mi</b>
+            <small>Austin · 2:58:41</small>
           </div>
-        </Reveal>
-        <div className="steps">
-          {steps.map((s, i) => (
-            <Reveal key={s.n} delay={i * 90}>
-              <div className="step">
-                <span className="step-num num">{s.n}</span>
-                <h3>{s.t}</h3>
-                <p>{s.d}</p>
-              </div>
-            </Reveal>
-          ))}
+          <div className="stat-pill pill-2" aria-hidden>
+            <b>6:49 /mi</b>
+            <small>avg pace · 153 bpm</small>
+          </div>
+          <PhoneFrame
+            src="/shots/hero-route.png"
+            alt="A finished marathon in Momentum: 26.22 miles, the Austin route traced on the map, and the coach's read of the run."
+            large
+            priority
+          />
         </div>
       </div>
     </section>
   );
 }
 
-function CinemaStandard() {
-  return (
-    <Cinema
-      src="/athletes/cinema-pack.jpg"
-      blur={athleteBlur["cinema-pack.jpg"]}
-      alt="A pack of marathoners emerging from morning fog"
-    >
-      <Reveal>
-        <p className="eyebrow eyebrow-light">The long game</p>
-        <h2 className="display cinema-title">
-          The work <em>compounds.</em>
-        </h2>
-        <p className="lede cinema-lede">
-          Every run measured. Every signal read. Every week adapted. momentum turns consistency
-          into fitness — and tells you the truth the whole way there.
-        </p>
-      </Reveal>
-    </Cinema>
-  );
-}
+/* ————————————————————————————————————————————————————————————
+   2 · The distances — a thin editorial band, continuously moving.
+   ———————————————————————————————————————————————————————————— */
 
-/** Distance ticker — outline display type drifting past, Cadence-style. Decorative; hidden from
- *  assistive tech, paused under reduce-motion. */
-function DistanceMarquee() {
-  const row = ["5K", "10K", "HALF", "MARATHON", "50K ULTRA"];
-  const items = [...row, ...row, ...row, ...row];
+function Marquee() {
+  const line = (
+    <span>
+      <b>5K</b> · 10K · HALF · MARATHON · ULTRA · RUN/WALK · GET FASTER · GO FURTHER ·{" "}
+    </span>
+  );
   return (
     <div className="marquee" aria-hidden>
       <div className="marquee-track">
-        {items.map((t, i) => (
-          <span key={i}>
-            {t}
-            <em>·</em>
-          </span>
-        ))}
+        {line}
+        {line}
       </div>
     </div>
   );
 }
 
-/** Editorial season trio — the macrocycle as photography: base, build, peak. */
-function Seasons() {
-  const cards = [
-    {
-      src: "/athletes/season-base.jpg",
-      blur: athleteBlur["season-base.jpg"],
-      alt: "A lone runner on a misty forest road",
-      n: "01",
-      h: "Base",
-      p: "Where the engine is built. Easy volume, laid down patiently.",
-    },
-    {
-      src: "/athletes/season-build.jpg",
-      blur: athleteBlur["season-build.jpg"],
-      alt: "An athlete driving hard up a tree-lined road",
-      n: "02",
-      h: "Build",
-      p: "Where the work sharpens. Threshold, intervals, race-pace rehearsal.",
-    },
-    {
-      src: "/athletes/season-peak.jpg",
-      blur: athleteBlur["season-peak.jpg"],
-      alt: "Sprinters at full flight on an indoor track",
-      n: "03",
-      h: "Peak",
-      p: "Where it all shows up. Fresh legs, honest paces, race day.",
-    },
-  ];
+/* ————————————————————————————————————————————————————————————
+   3 · Dark cinematic transition — the emotional centre.
+   ———————————————————————————————————————————————————————————— */
+
+function BrandMoment() {
   return (
-    <section className="section" id="seasons" style={{ paddingTop: 0 }}>
-      <div className="wrap">
-        <Reveal>
-          <div className="section-head">
-            <p className="eyebrow">The season, periodized</p>
-            <h2 className="display">Base. Build. <em>Peak.</em></h2>
-            <p className="lede">
-              momentum plans in real training blocks — and labels every week with why it exists.
-            </p>
-          </div>
-        </Reveal>
-        <div className="seasons">
-          {cards.map((c, i) => (
-            <Reveal key={c.h} delay={i * 110}>
-              <figure className="season">
-                <div className="season-media">
-                  <Image
-                    src={c.src}
-                    alt={c.alt}
-                    fill
-                    sizes="(max-width: 760px) 92vw, 30vw"
-                    quality={88}
-                    placeholder="blur"
-                    blurDataURL={c.blur}
-                    style={{ objectFit: "cover" }}
-                  />
-                </div>
-                <figcaption>
-                  <span className="season-n">{c.n}</span>
-                  <h4>{c.h}</h4>
-                  <p>{c.p}</p>
-                </figcaption>
-              </figure>
-            </Reveal>
-          ))}
-        </div>
+    <section className="brand-moment">
+      <div className="brand-media">
+        <Image
+          src="/athletes/cinema-pack.jpg"
+          alt="A pack of marathoners running through early-morning fog"
+          fill
+          sizes="100vw"
+          placeholder="blur"
+          blurDataURL={athleteBlur["cinema-pack.jpg"]}
+        />
       </div>
-    </section>
-  );
-}
-
-
-function Hero() {
-  return (
-    <section className="hero" id="top">
-      {/* No background wash here by design — see the `.hero-aura` note in globals.css. The surface
-          is flat white; the route below is the only motif. */}
-      {/* The self-drawing route — the app's welcome motif. Kept clear of the text column: it runs
-          under the trust strip, then climbs behind the phone. It used to cut across the lede. */}
-      <svg className="hero-route" viewBox="0 0 1440 760" preserveAspectRatio="none" aria-hidden>
-        <path d="M -60 706 C 200 692 520 730 860 664 S 1180 448 1520 388" />
+      <div className="brand-shade" aria-hidden />
+      {/* The app's own route motif, drawn over the photograph. */}
+      <svg className="route-line" viewBox="0 0 900 700" fill="none" aria-hidden>
+        <path
+          d="M80 580C149 489 204 563 261 461C330 338 232 264 344 174C450 90 514 254 619 203C703 162 700 75 814 87"
+          stroke="white"
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray="2 12"
+        />
+        <circle cx="80" cy="580" r="7" fill="white" />
+        <circle cx="814" cy="87" r="7" fill="white" />
       </svg>
-      <div className="wrap hero-grid">
-        <div>
-          <p className="eyebrow rise rise-1">The adaptive running coach</p>
-          <h1 className="display rise rise-2">
-            A coach that
+      <div className="wrap brand-content">
+        <Reveal>
+          <h2>
+            built for
             <br />
-            learns how
+            the miles
             <br />
-            <em><span className="iri-text">you</span> run.</em>
-          </h1>
-          <p className="lede rise rise-3">
-            momentum builds your training around your fitness, your recovery, and your life — then
-            adapts it after every run. From your first 5K to your first ultra.
+            ahead.
+          </h2>
+        </Reveal>
+        <Reveal>
+          <p className="brand-meta">
+            <strong>06:14 AM · Austin, TX</strong>
+            No feeds. No guilt loops. Just the next run, the next week, the next starting line.
           </p>
-          <div className="hero-ctas rise rise-4">
-            <a className="appstore-badge" href={APP_STORE_URL} target="_blank" rel="noopener">
-              <AppStoreBadge />
-            </a>
-            <a className="btn btn-ghost" href="#product">
-              See how it works
-            </a>
-          </div>
-          <p className="hero-note rise rise-4">Track free forever · Pro comes with a 7-day free trial</p>
-          <div className="devices rise rise-4" aria-label="Works with">
-            <span>iPhone</span>
-            <span>Apple Watch</span>
-            <span>Garmin</span>
-            <span>Heart-rate straps</span>
-            <span>Apple Health</span>
-          </div>
-        </div>
-        <div className="hero-device rise rise-5">
-          <PhoneFrame src="/shots/hero-route.png" alt="momentum Today screen: the Austin Marathon course traced on the map" priority />
-          {/* Floating brand accents — the finished-marathon moment: an achievement chip + the finish stat. */}
-          <div className="float-chip float-plan" aria-hidden>
-            <span className="fc-eyebrow">AUSTIN MARATHON</span>
-            <span className="fc-title">Marathon complete</span>
-            <span className="fc-sub">26.2 mi · 2:58:41</span>
-          </div>
-          <div className="float-chip float-pace" aria-hidden>
-            <span className="fc-metric">6:49<span className="fc-unit">/mi</span></span>
-            <span className="fc-sub">avg pace · sub-3 PR</span>
-          </div>
-        </div>
+        </Reveal>
       </div>
     </section>
   );
 }
 
-function Proof() {
-  const items = [
-    { n: "±2%", l: "GPS distance accuracy" },
-    { n: "0", l: "lost workouts — every fix saved as it lands" },
-    { n: "5", l: "heart-rate zones, personalized to you" },
-    { n: "60fps", l: "live map, even on long runs" },
-  ];
-  return (
-    <section className="proof" aria-label="Engineering standards">
-      <div className="wrap proof-grid">
-        {items.map((it) => (
-          <div className="proof-cell" key={it.l}>
-            <div className="num">{it.n}</div>
-            <p>{it.l}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
+/* ————————————————————————————————————————————————————————————
+   4 · 01 · Training — two editorial product moments.
+   ———————————————————————————————————————————————————————————— */
 
-function Pillars() {
+function Training() {
   return (
     <section className="section" id="product">
       <div className="wrap">
         <Reveal>
           <div className="section-head">
-            <p className="eyebrow">Why momentum</p>
-            <h2 className="display">Training science first. AI where it <em>helps.</em></h2>
+            <div>
+              <p className="kicker">01 · Training</p>
+              <h2 className="display">A plan that moves when you do.</h2>
+            </div>
             <p className="lede">
-              Your paces, loads, and progressions come from a deterministic training engine — testable,
-              bounded, honest. The AI explains the plan; it never invents your numbers.
+              Momentum starts from your actual running history, then reshapes the week as your
+              fitness, recovery, and life change.
             </p>
           </div>
         </Reveal>
-        <div className="trio">
-          <div className="card">
-            <div className="glyph" aria-hidden>
-              {/* route/plan */}
-              <svg viewBox="0 0 24 24">
-                <path d="M5 19c-1.7 0-2.5-2-1.2-3l8.4-6c1.3-1 .5-3-1.2-3H8" />
-                <circle cx="18.5" cy="19" r="2.5" />
-                <circle cx="5.5" cy="5" r="2.5" />
-              </svg>
-            </div>
-            <h3>A plan, not a template</h3>
-            <p>
-              Built from your real history — momentum reads your recent runs from Apple Health and
-              starts where you actually are, not where a quiz guesses you are.
-            </p>
-          </div>
-          <div className="card">
-            <div className="glyph" aria-hidden>
-              {/* pace band / target */}
-              <svg viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="9" />
-                <circle cx="12" cy="12" r="4.5" />
-                <circle cx="12" cy="12" r="0.5" />
-              </svg>
-            </div>
-            <h3>Coached while you run</h3>
-            <p>
-              Guided intervals with live pace bands, 3-2-1 haptic countdowns, and a voice coach that
-              tells you when to push and when to ease off.
-            </p>
-          </div>
-          <div className="card">
-            <div className="glyph" aria-hidden>
-              {/* shield */}
-              <svg viewBox="0 0 24 24">
-                <path d="M12 3l7 3v5c0 4.4-3 8.4-7 10-4-1.6-7-5.6-7-10V6l7-3z" />
-                <path d="M9 12l2 2 4-4" />
-              </svg>
-            </div>
-            <h3>Protective by design</h3>
-            <p>
-              Recovery signals, workload guardrails, and an injury-aware loop that trains around a
-              twinge instead of pretending it isn&apos;t there.
-            </p>
-          </div>
+
+        <div className="story-grid">
+          <Reveal>
+            <article className="story-card">
+              <h3>Know what to run.</h3>
+              <p>
+                Base. Build. Peak. Taper. Every session has a reason, every pace has a purpose, and
+                missed days simply move.
+              </p>
+              <div className="story-media">
+                <PhoneFrame
+                  src="/shots/plan.png"
+                  alt="Momentum's weekly plan: a build week with strength days, a progression run, and an easy run, each with its target pace."
+                />
+              </div>
+            </article>
+          </Reveal>
+
+          <Reveal>
+            <article className="story-card dark">
+              <h3>Run with guidance.</h3>
+              <p>
+                Pace bands, rep countdowns, heart-rate zones, and voice cues are there when you want
+                them — then get out of the way.
+              </p>
+              <div className="story-media">
+                <PhoneFrame
+                  src="/shots/live-run.png"
+                  alt="A guided run in progress: the live route, the current interval, target pace, and heart-rate zone."
+                />
+              </div>
+            </article>
+          </Reveal>
         </div>
       </div>
     </section>
   );
 }
 
-function Gallery() {
-  const items = [
-    {
-      src: "/shots/plan.png",
-      alt: "Training plan with week chips, Base phase label, and a long-run session card",
-      h: "A periodized plan",
-      p: "Base, build, and taper — every week labeled with why it exists, capped by workload guardrails.",
-    },
-    {
-      src: "/shots/live-run.png",
-      alt: "Live guided run: warm-up step with target pace, distance remaining, live heart rate in zone 2",
-      h: "Coached mid-run",
-      p: "Step-by-step guidance with target paces, rep countdowns, and your live heart-rate zone.",
-    },
-    {
-      src: "/shots/coach.png",
-      alt: "Coach chat asking how training is trending",
-      h: "A coach you can ask",
-      p: "Pace, programming, or how a session felt — answers grounded in your actual training data.",
-    },
-    {
-      src: "/shots/profile-grid.png",
-      alt: "Profile grid of workout tiles — route art and muscle maps",
-      h: "Every run becomes art",
-      p: "Your profile is a wall of routes and muscle maps — a private mirror of the work you've put in.",
-    },
+/* ————————————————————————————————————————————————————————————
+   5 · 02 · Intelligence — near-black, the coach as proof.
+   ———————————————————————————————————————————————————————————— */
+
+function Intelligence() {
+  const notes = [
+    "Plans adapt after every run",
+    "Recovery changes tomorrow",
+    "Every adjustment is explained",
   ];
   return (
-    <section className="section" id="gallery" style={{ paddingTop: 0 }}>
-      <div className="wrap">
-        <Reveal>
-          <div className="section-head center" style={{ textAlign: "center" }}>
-            <p className="eyebrow">The whole journey</p>
-            <h2 className="display">Plan it. Run it. <em>Understand it.</em></h2>
-          </div>
-        </Reveal>
-        <div className="gallery">
-          {items.map((it, i) => (
-            <Reveal key={it.h} delay={i * 100}>
-              <figure>
-                <PhoneFrame small src={it.src} alt={it.alt} />
-                <figcaption>
-                  <h4>{it.h}</h4>
-                  <p>{it.p}</p>
-                </figcaption>
-              </figure>
-            </Reveal>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function DeepDives() {
-  return (
-    <section className="section" id="intelligence" style={{ paddingTop: 0 }}>
-      <div className="wrap">
-        <div className="duo">
-          <div>
-            <p className="eyebrow">Pace intelligence</p>
-            <h3>A coach that <em>reviews</em> your run — not just records it.</h3>
-            <p>
-              After every guided session, momentum compares what was prescribed with what you ran,
-              rep by rep, and gives you a verdict in plain language.
-            </p>
-            <ul>
-              <li>
-                <span className="tick" aria-hidden />
-                On point, Ahead, Review, or Variable — judged against your prescribed pace bands
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Strong runs sharpen your future paces automatically
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Easing your targets always asks first — your plan never lurches
-              </li>
-            </ul>
-          </div>
-          <div className="duo-media">
-            <PhoneFrame small src="/shots/pace-review.png" alt="Post-run pace review: six reps with verdicts and the coach's read" />
-          </div>
-        </div>
-
-        <div className="duo flip">
-          <div className="duo-media">
-            <PhoneFrame small src="/shots/progress.png" alt="Your vitals: HRV, resting heart rate, respiratory rate, and wrist temperature, each within your personal normal range" />
-          </div>
-          <div>
-            <p className="eyebrow">Your body, measured</p>
-            <h3>Heart rate, zones, and recovery — from the gear you <em>already own.</em></h3>
-            <p>
-              Apple Watch, Garmin, or a chest strap: live BPM and your current zone on the run
-              screen, time-in-zones afterwards, and readiness signals that shape tomorrow&apos;s
-              session.
-            </p>
-            <ul>
-              <li>
-                <span className="tick" aria-hidden />
-                Zones personalized from your max and resting heart rate
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                HRV, resting HR, and sleep flow in through Apple Health
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Every reading saved the moment it arrives
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="duo">
-          <div>
-            <p className="eyebrow">Fuel, not a diet</p>
-            <h3>Eat to train — floors to hit, <em>never numbers to fear.</em></h3>
-            <p>
-              Tell momentum what you ate in a sentence and it reads the carbs, protein, fat, and
-              sodium — then shows what today&apos;s training actually asks for. More carbs on a
-              long-run day, always fueling, never dieting.
-            </p>
-            <ul>
-              <li>
-                <span className="tick" aria-hidden />
-                Log a meal in plain words — no barcodes, no weighing
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Targets that move with your plan, not a one-size calorie cap
-              </li>
-              <li>
-                <span className="tick" aria-hidden />
-                Floors to hit, never ceilings to fear — with a RED-S-aware guard
-              </li>
-            </ul>
-          </div>
-          <div className="duo-media">
-            <PhoneFrame small src="/shots/fuel.png" alt="Fuel dashboard: daily calories with carbs, protein, fat, and sodium rings and a plain-language meal log" />
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Predictor() {
-  return (
-    <section className="section" id="predictor" style={{ paddingTop: 0 }}>
-      <div className="wrap">
-        <Reveal>
-          <div className="section-head center" style={{ textAlign: "center" }}>
-            <p className="eyebrow">Try the engine</p>
-            <h2 className="display">What <em>could</em> you run?</h2>
-            <p className="lede">
-              Enter a recent result and the same deterministic model that calibrates momentum&apos;s
-              training paces projects your other distances.
-            </p>
-          </div>
-        </Reveal>
-        <Reveal delay={80}>
-          <RaceCalc />
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-function Goals() {
-  const goals = [
-    { n: "5K", d: "Your first — or your fastest." },
-    { n: "10K", d: "Speed meets staying power." },
-    { n: "Half", d: "The distance that hooks you." },
-    { n: "Marathon", d: "Twenty-six point two, built week by week." },
-    { n: "Run/walk", d: "Brand new? Start exactly where you are." },
-    { n: "Return", d: "Coming back from injury, gated and gradual." },
-    { n: "Faster", d: "No race — just sharper paces." },
-    { n: "Further", d: "Build the engine. Ultra is coming." },
-  ];
-  return (
-    <section className="section" id="goals" style={{ paddingTop: 0 }}>
+    <section className="insight" id="intelligence">
       <div className="wrap">
         <Reveal>
           <div className="section-head">
-            <p className="eyebrow">Every starting line</p>
-            <h2 className="display">A plan for the runner you are <em>today.</em></h2>
+            <div>
+              <p className="kicker">02 · Intelligence</p>
+              <h2 className="display">Your training knows the answer.</h2>
+            </div>
             <p className="lede">
-              Pick the goal; momentum builds the road — and tells you honestly if the date is too
-              tight.
+              AI explains. The training engine decides. Momentum keeps your plan grounded in actual
+              running data instead of inventing numbers.
             </p>
           </div>
         </Reveal>
-        <div className="goals">
-          {goals.map((g, i) => (
-            <Reveal key={g.n} delay={(i % 4) * 70}>
-              <div className="goal">
-                <div className="num">{g.n}</div>
-                <p>{g.d}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
 
-function Pricing() {
-  return (
-    <section className="section" id="pricing" style={{ paddingTop: 0 }}>
-      <div className="wrap">
-        <Reveal>
-          <div className="section-head center" style={{ textAlign: "center" }}>
-            <p className="eyebrow">Pricing</p>
-            <h2 className="display">A coach for less than a <em>race entry.</em></h2>
-            <p className="lede">
-              A personal run coach is $150+ a month. momentum trains you all year for less than
-              half the price of one session.
-            </p>
-          </div>
-        </Reveal>
-        <div className="plans">
+        <div className="coach-wrap">
           <Reveal>
-            <div className="plan">
-              <h3>Free</h3>
-              <div className="plan-price">$0</div>
-              <p className="plan-cycle">forever</p>
-              <ul>
-                <li><span className="tick" aria-hidden />Track every run — GPS, pace, splits, elevation</li>
-                <li><span className="tick" aria-hidden />Live heart rate &amp; zones from your gear</li>
-                <li><span className="tick" aria-hidden />Strength logging with the full exercise library</li>
-                <li><span className="tick" aria-hidden />Your first adaptive training week</li>
-                <li><span className="tick" aria-hidden />Recent history &amp; personal heatmap</li>
-              </ul>
-              <a className="btn btn-ghost" href={APP_STORE_URL} target="_blank" rel="noopener">Start free</a>
-            </div>
-          </Reveal>
-          <Reveal delay={90}>
-            <div className="plan plan-pro">
-              <span className="plan-badge">7-day free trial</span>
-              <h3>momentum Pro</h3>
-              {/* Must match PaywallOffering (monthlyPrice 9.99 / annualPrice 59.99, ASC effective
-                  2026-07-31). The trial is ANNUAL ONLY — never promise one on monthly. */}
-              <div className="plan-price">
-                $59.99 <small>/ year</small>
+            <div className="coach-copy">
+              <h3>A coach that learns your running.</h3>
+              <p>
+                Ask what to run, how you&rsquo;re progressing, whether a goal is realistic, or why
+                today&rsquo;s session changed. Every answer starts from your plan and your history.
+              </p>
+              <div className="coach-notes">
+                {notes.map((n, i) => (
+                  <div className="coach-note" key={n}>
+                    <span>{n}</span>
+                    <span>{String(i + 1).padStart(2, "0")}</span>
+                  </div>
+                ))}
               </div>
-              <p className="plan-cycle">
-                7 days free, then $59.99/year (under $5 a month) · or $9.99/month without the
-                trial, cancel anytime
-              </p>
-              <ul>
-                <li><span className="tick" aria-hidden />The full adaptive plan, recalibrated after every run</li>
-                <li><span className="tick" aria-hidden />AI coach, post-run reads &amp; voice guidance</li>
-                <li><span className="tick" aria-hidden />Recovery-aware training &amp; the injury loop</li>
-                <li><span className="tick" aria-hidden />Advanced analytics, race predictions &amp; full history</li>
-                <li><span className="tick" aria-hidden />Every share style &amp; watch premium</li>
-              </ul>
-              <a className="btn btn-ink" href={APP_STORE_URL} target="_blank" rel="noopener">Start your 7-day free trial</a>
+            </div>
+          </Reveal>
+
+          <Reveal>
+            <div className="coach-stage">
+              <div className="aurora" aria-hidden />
+              <PhoneFrame
+                src="/shots/coach.png"
+                alt="The Momentum coach: a chat that opens with suggested questions about today's session, your trend, and what you could race."
+              />
             </div>
           </Reveal>
         </div>
-        <Reveal>
-          <p className="plans-note">
-            Billed by Apple &middot; Cancel anytime in Settings &middot; Private by default &mdash; no ads, no data sold, ever
-          </p>
-        </Reveal>
       </div>
     </section>
   );
 }
 
-function Manifesto() {
-  return (
-    <section className="section" id="method">
-      <div className="wrap">
-        <Reveal>
-        <div className="manifesto manifesto-photo">
-          <div className="manifesto-media" aria-hidden>
-            <Image
-              src="/athletes/cinema-leaders.jpg"
-              alt=""
-              fill
-              sizes="(max-width: 1100px) 96vw, 1100px"
-              quality={88}
-              placeholder="blur"
-              blurDataURL={athleteBlur["cinema-leaders.jpg"]}
-              style={{ objectFit: "cover", objectPosition: "center 30%" }}
-            />
-          </div>
-          <div className="manifesto-shade" aria-hidden />
-          <p className="eyebrow eyebrow-light">The method</p>
-          <h2 className="display">
-            No red days. No guilt loops. <em>Only momentum.</em>
-          </h2>
-          <div className="manifesto-grid">
-            <div>
-              <h4>Missed sessions move.</h4>
-              <p>
-                Life happens. A missed run reschedules itself with a one-line rationale — there is no
-                &ldquo;failed&rdquo; state anywhere in the app.
-              </p>
-            </div>
-            <div>
-              <h4>Streaks forgive.</h4>
-              <p>
-                Rest days count and one slipped day is forgiven. A streak should measure consistency,
-                not perfection.
-              </p>
-            </div>
-            <div>
-              <h4>Numbers you can trust.</h4>
-              <p>
-                Every pace and load is computed by rules we can test — bounded, explainable, and
-                never invented by a language model.
-              </p>
-            </div>
-          </div>
-        </div>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
+/* ————————————————————————————————————————————————————————————
+   6 · 03 · The method — the philosophy, on paper.
+   ———————————————————————————————————————————————————————————— */
 
-function Principles() {
-  // Honest by design: no fabricated testimonials. These are the commitments the product
-  // actually holds itself to — each one is a real, shipped behavior, not social proof.
-  const cards = [
+function Method() {
+  const principles = [
     {
-      title: "No red X, ever",
-      body: "Miss a session and the plan moves with a one-line reason — it reschedules, it never shames. There is no “failed” state in momentum, by design.",
+      n: "01",
+      t: "Missed sessions move.",
+      d: "Life happens. The week reshapes itself instead of turning a missed run into failure.",
     },
     {
-      title: "Real math, not vibes",
-      body: "Every pace, load, and zone comes from a deterministic, tested engine — VDOT paces, training-load guardrails, personalized zones. The AI writes the explanation; it never invents the numbers.",
+      n: "02",
+      t: "Numbers you can trust.",
+      d: "Paces, load, and zones come from bounded training logic, not generated guesswork.",
     },
     {
-      title: "Your training stays yours",
-      body: "Offline-first, owner-only, opt-in. No feed algorithm, no kudos games, nothing sold. Honest presence when you want it — never a public ledger you can’t leave.",
+      n: "03",
+      t: "Your training stays yours.",
+      d: "Private by default. No public-performance pressure required to make progress.",
     },
   ];
   return (
-    <section className="section" id="principles" style={{ paddingTop: 0 }}>
+    <section className="method" id="method">
       <div className="wrap">
         <Reveal>
-          <div className="section-head center" style={{ textAlign: "center" }}>
-            <p className="eyebrow">Why it’s built this way</p>
-            <h2 className="display">No shame. Real math. <em>Your data.</em></h2>
-          </div>
+          <p className="kicker">03 · The method</p>
+          <h2 className="display">
+            No red days.
+            <br />
+            No guilt loops.
+            <br />
+            Only momentum.
+          </h2>
         </Reveal>
-        <div className="quotes">
-          {cards.map((c, i) => (
-            <Reveal key={c.title} delay={i * 90}>
-              <figure className="quote">
-                <div className="quote-name" style={{ fontSize: "1.15rem", marginBottom: ".55rem" }}>
-                  {c.title}
-                </div>
-                <blockquote style={{ marginTop: 0 }}>{c.body}</blockquote>
-              </figure>
+        <div className="principles">
+          {principles.map((p) => (
+            <Reveal key={p.n}>
+              <article className="principle">
+                <span className="num-label">{p.n}</span>
+                <h3>{p.t}</h3>
+                <p>{p.d}</p>
+              </article>
             </Reveal>
           ))}
         </div>
@@ -721,6 +357,71 @@ function Principles() {
     </section>
   );
 }
+
+/* ————————————————————————————————————————————————————————————
+   7 · 04 · Membership — one plan, stated plainly.
+   ———————————————————————————————————————————————————————————— */
+
+function Pricing() {
+  const features = [
+    "Adaptive training plan",
+    "Guided workouts",
+    "AI training coach",
+    "Post-run analysis",
+    "Recovery-aware adjustments",
+    "Race projections",
+    "Advanced history",
+    "Apple Watch + Garmin support",
+  ];
+  return (
+    <section className="pricing" id="pricing">
+      <div className="wrap pricing-grid">
+        <Reveal>
+          <div>
+            <p className="kicker">04 · Membership</p>
+            <h2 className="display">
+              One app.
+              <br />
+              Every run.
+            </h2>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="pricecard">
+            <div className="price-row">
+              <h3>momentum Pro</h3>
+              <p className="price">
+                $59.99 <span>/ year</span>
+              </p>
+            </div>
+            <div className="features">
+              {features.map((f) => (
+                <div className="feature" key={f}>
+                  {f}
+                </div>
+              ))}
+            </div>
+            <div className="price-actions">
+              <a className="btn btn-ink" href={APP_STORE_URL} target="_blank" rel="noopener">
+                Start 7 days free <span className="arrow" aria-hidden>↗</span>
+              </a>
+              <p className="price-note">
+                Then $59.99/year — under $5 a month. Or $9.99/month without the trial.
+                <br />
+                Tracking every run is free, forever. Billed by Apple · cancel anytime.
+              </p>
+            </div>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ————————————————————————————————————————————————————————————
+   8 · The questions runners actually ask — hairline rows, and the
+   FAQPage structured data that has been earning search results.
+   ———————————————————————————————————————————————————————————— */
 
 function FAQ() {
   const items = [
@@ -759,17 +460,17 @@ function FAQ() {
     })),
   };
   return (
-    <section className="section" id="faq" style={{ paddingTop: 0 }}>
+    <section className="faq" id="faq">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
-      <div className="wrap">
+      <div className="wrap faq-grid">
         <Reveal>
-          <div className="section-head center" style={{ textAlign: "center" }}>
-            <p className="eyebrow">Questions</p>
-            <h2 className="display">Everything runners <em>ask us.</em></h2>
+          <div>
+            <p className="kicker">05 · Questions</p>
+            <h2 className="display">Before you start.</h2>
           </div>
         </Reveal>
         <Reveal>
-          <div className="faq">
+          <div className="faq-list">
             {items.map((it) => (
               <details key={it.q}>
                 <summary>{it.q}</summary>
@@ -783,80 +484,68 @@ function FAQ() {
   );
 }
 
+/* ————————————————————————————————————————————————————————————
+   9 · The closer — dark, huge, and the cropped wordmark.
+   ———————————————————————————————————————————————————————————— */
+
 function FinalCTA() {
   return (
-    <div id="download">
-      <Cinema
-        src="/athletes/cinema-dusk.jpg"
-        blur={athleteBlur["cinema-dusk.jpg"]}
-        alt="A lone runner silhouetted at dusk, reflected in still water"
-        tall
-        anchor="bottom"
-      >
+    <section className="final" id="download">
+      <div className="final-media">
+        <Image
+          src="/athletes/cinema-dusk.jpg"
+          alt="A lone runner on wet pavement at dusk"
+          fill
+          sizes="100vw"
+          placeholder="blur"
+          blurDataURL={athleteBlur["cinema-dusk.jpg"]}
+        />
+      </div>
+      <div className="final-shade" aria-hidden />
+      <div className="wrap final-inner">
+        <div className="final-top">
+          <span>The running app</span>
+          <span>From your first 5K to your first ultra</span>
+        </div>
         <Reveal>
-          <div className="cta-cinema">
-            <h2 className="display cinema-title">
-              keep <em>moving.</em>
-            </h2>
-            <p className="lede cinema-lede">
-              Seven days of the full coach, free. Bring a goal — momentum will bring the plan.
-            </p>
-            <a className="appstore-badge on-dark" href={APP_STORE_URL} target="_blank" rel="noopener">
-              <AppStoreBadge />
-            </a>
-          </div>
+          <h2>
+            keep
+            <br />
+            moving.
+          </h2>
         </Reveal>
-      </Cinema>
-    </div>
+        <div className="final-bottom">
+          <a className="appstore-badge" href={APP_STORE_URL} target="_blank" rel="noopener">
+            <AppStoreBadge />
+          </a>
+          <p className="final-support">Bring a goal. Momentum will build the road there.</p>
+        </div>
+      </div>
+      <p className="bigword" aria-hidden>
+        momentum
+      </p>
+    </section>
   );
 }
 
+/* ————————————————————————————————————————————————————————————
+   10 · Footer — one quiet line.
+   ———————————————————————————————————————————————————————————— */
+
 function Footer() {
   return (
-    <footer className="footer">
+    <footer className="footerline">
       <div className="wrap">
-        <div className="footer-grid">
-          <div className="footer-brand">
-            <Image className="wordmark-footer" src="/wordmark-black.png" alt="momentum" width={640} height={128} />
-            <p>The adaptive running coach. From your first 5K to your first ultra — keep moving.</p>
-            <a className="appstore-badge sm" href={APP_STORE_URL} target="_blank" rel="noopener">
-              <AppStoreBadge />
-            </a>
-          </div>
-          <div>
-            <h5>Product</h5>
-            <div className="footer-col">
-              <a href="#product">Why momentum</a>
-              <a href="#intelligence">Intelligence</a>
-              <a href="#method">The method</a>
-              <a href={APP_STORE_URL} target="_blank" rel="noopener">Download</a>
-            </div>
-          </div>
-          <div>
-            <h5>Company</h5>
-            <div className="footer-col">
-              <a href="#principles">Principles</a>
-              <a href="#faq">FAQ</a>
-              <a href="mailto:hello@momentumco.app">Contact</a>
-              <a href="mailto:press@momentumco.app">Press</a>
-            </div>
-          </div>
-          <div>
-            <h5>Legal</h5>
-            <div className="footer-col">
-              <a href="/privacy">Privacy Policy</a>
-              <a href="/terms">Terms of Service</a>
-              <a href="mailto:support@momentumco.app">Support</a>
-            </div>
-          </div>
-        </div>
-        <div className="footer-base">
-          <p>© 2026 momentum, Inc. · Made in Austin, TX</p>
-          <p>
-            Apple Health, Apple Watch, and App Store are trademarks of Apple Inc. · Garmin is a
-            trademark of Garmin Ltd.
-          </p>
-        </div>
+        <span>© 2026 momentum, Inc. · Austin, TX</span>
+        <nav className="footer-links" aria-label="Footer">
+          <a href="mailto:support@momentumco.app">Support</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href={APP_STORE_URL} target="_blank" rel="noopener">
+            App Store
+          </a>
+        </nav>
+        <span>Apple Health, Apple Watch, and App Store are trademarks of Apple Inc.</span>
       </div>
     </footer>
   );
