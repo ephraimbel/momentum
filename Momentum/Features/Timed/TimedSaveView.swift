@@ -6,6 +6,10 @@ import SwiftData
 /// read-only via `TimedSummaryContent`.)
 struct TimedSaveView: View {
     let workoutId: UUID
+    /// False when the flow that created this workout already booked its completion (funnel event,
+    /// review counter, Health mirror, awards — the manual-log form does all of that before
+    /// presenting this screen). This screen then only names, decorates, and celebrates.
+    var booksCompletion: Bool = true
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -46,10 +50,13 @@ struct TimedSaveView: View {
         NavigationStack {
             ScrollView {
                 if let workout {
+                    // Name first (user call 2026-08-14, Strava's order): the title and story lead
+                    // the page; the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
+                        titleCard
                         TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true,
                                             showsCalories: false, showsPlanLine: true)
-                        editor
+                        detailsCard
                     }
                     .padding(Theme.Space.md)
                 } else {
@@ -63,8 +70,17 @@ struct TimedSaveView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Discard", role: .destructive) { confirmDiscard = true }
-                        .foregroundStyle(Theme.inkSecondary)
+                    // Discard sits behind a menu (CardioSaveView's rule, unified 2026-08-14): as a
+                    // standing top-left button it made the first thing you saw after finishing an
+                    // invitation to throw it away.
+                    Menu {
+                        Button("Discard session", systemImage: "trash", role: .destructive) {
+                            confirmDiscard = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
+                    }
+                    .accessibilityLabel("More options")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save() }.fontWeight(.bold)
@@ -116,7 +132,9 @@ struct TimedSaveView: View {
         }
     }
 
-    private var editor: some View {
+    /// The session's name and story, LEADING the page (user call 2026-08-14, Strava's order):
+    /// what you call it and what it meant read first; the settings live in `detailsCard` below.
+    private var titleCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             TextField("Name your \(workout?.type.title.lowercased() ?? "session")", text: $title)
                 .font(.display(24, weight: .black))
@@ -129,7 +147,13 @@ struct TimedSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
-            Divider().overlay(Theme.hairline)
+        }
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+    }
+
+    private var detailsCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
             effortRow
             if showsRideDetails {
                 Divider().overlay(Theme.hairline)
@@ -364,15 +388,17 @@ struct TimedSaveView: View {
         workout.syncedAt = nil
         do { try context.save() } catch { saveFailed = true; return }
         let saved = workout
-        // Mirror to Apple Health — but a Health-measured calorie number stays out of the mirror
-        // (its samples are already there; writing them again would double the Move ring).
-        let energyIsOurs = !kcalFromHealth
-        Task { await services.health.save(saved, includeEnergy: energyIsOurs) }
-        // Timed sessions move the streak, session-count, and time-of-day awards (deferred).
-        AwardsBook.syncSoon()
-        AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
-        // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
-        services.analytics.log(.workoutCompleted(type: saved.type.rawValue))
+        if booksCompletion {
+            // Mirror to Apple Health — but a Health-measured calorie number stays out of the mirror
+            // (its samples are already there; writing them again would double the Move ring).
+            let energyIsOurs = !kcalFromHealth
+            Task { await services.health.save(saved, includeEnergy: energyIsOurs) }
+            // Timed sessions move the streak, session-count, and time-of-day awards (deferred).
+            AwardsBook.syncSoon()
+            AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
+            // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
+            services.analytics.log(.workoutCompleted(type: saved.type.rawValue))
+        }
         // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
         // `onDone` when the beat completes or is tapped through.
         celebrating = true

@@ -14,6 +14,11 @@ struct CardioSaveView: View {
     /// The athlete's week and the arc this session added, computed at finish. nil (history, crash
     /// recovery, the debug harness) falls back to a plain sweep.
     var weekRing: WeekRing.Reading? = nil
+    /// False when the flow that created this workout already booked its completion — funnel event,
+    /// review counter, Health mirror, awards, records (the manual-log form does all of that before
+    /// presenting this screen). This screen then only names, decorates, and celebrates; booking
+    /// twice would double the funnel and write the workout to Apple Health twice.
+    var booksCompletion: Bool = true
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -57,15 +62,17 @@ struct CardioSaveView: View {
         return NavigationStack {
             ScrollView {
                 if let workout {
-                    // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
+                    // Name first (user call 2026-08-14, Strava's order): the title and story lead
+                    // the page; the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
+                        titleCard
                         // The cascade plays on arrival now — the celebration moved to Save, so
                         // nothing covers this screen when it appears.
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
                                              showsHeader: false, canEditPhoto: true,
                                              mapStyleOverride: mapStyle,
                                              showsVerdict: true)
-                        editor
+                        detailsCard
                     }
                     .padding(Theme.Space.md)
                 } else if reader != nil {
@@ -193,7 +200,9 @@ struct CardioSaveView: View {
         return "\(Int(ring.completedM / per)) of \(target.value) \(target.unit) this week"
     }
 
-    private var editor: some View {
+    /// The activity's name and story, LEADING the page (user call 2026-08-14, Strava's order):
+    /// what you call it and what it meant read first; the settings live in `detailsCard` below.
+    private var titleCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             TextField("Name your \(sportType.title.lowercased())", text: $title)
                 .font(.display(24, weight: .black))
@@ -206,7 +215,13 @@ struct CardioSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
-            Divider().overlay(Theme.hairline)
+        }
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+    }
+
+    private var detailsCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
             sportRow
             if hasRoute {
                 Divider().overlay(Theme.hairline)
@@ -356,12 +371,14 @@ struct CardioSaveView: View {
         // frames (2026-08-06 user report: "didn't show the full animation"). The beat needs an
         // idle main thread more than the bookkeeping needs to be first; nothing below is visible.
         celebrating = true
-        AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
-        // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a
-        // completed workout. `workout_completed` is also what advances the north-star funnel — it
-        // was declared in the taxonomy but never logged anywhere, so the funnel could never report
-        // `.achieved` (fixed 2026-07-25).
-        services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
+        if booksCompletion {
+            AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
+            // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a
+            // completed workout. `workout_completed` is also what advances the north-star funnel — it
+            // was declared in the taxonomy but never logged anywhere, so the funnel could never report
+            // `.achieved` (fixed 2026-07-25).
+            services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
+        }
 
         // The heavy tail waits out the beat, then runs its detection OFF the main actor. The task
         // holds the reader, so the screen dismissing underneath never cancels or orphans it.
@@ -381,6 +398,9 @@ struct CardioSaveView: View {
             if styleChanged {
                 Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
             }
+            // Everything below is completion BOOKING — already done by the creating flow when
+            // `booksCompletion` is false (the snapshot above is presentation, so it stays).
+            guard booksCompletion else { return }
             // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
             // only). Plan mutations go through the main context; only scalars are read off `workout`.
             if let note = PlanCoaching.adaptToEffort(workout, plan: plan, in: context) {

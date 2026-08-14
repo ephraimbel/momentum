@@ -13,13 +13,19 @@ struct WorkoutDetailView: View {
         ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: Theme.Space.md) {
+                // Photos are editable from History too (2026-08-14, Strava parity): the photo you
+                // took mid-run often lands on the phone AFTER the save screen is gone, and a
+                // memory attached a week later is exactly the point. `WorkoutPhotoSection`
+                // re-dirties sync on every mutation, so late photos still publish.
                 Group {
                     if workout.type.isStrengthStyle {
-                        StrengthSummaryContent(workout: workout, weightUnit: weightUnit)
+                        StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
+                                               canEditPhoto: true)
                     } else if workout.type.isTimed {
-                        TimedSummaryContent(workout: workout)
+                        TimedSummaryContent(workout: workout, canEditPhoto: true)
                     } else {
-                        CardioSummaryContent(workout: workout, distanceUnit: distanceUnit)
+                        CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
+                                             canEditPhoto: true)
                     }
                 }
                 askCoachRow

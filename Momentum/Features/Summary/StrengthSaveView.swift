@@ -8,6 +8,11 @@ import SwiftData
 struct StrengthSaveView: View {
     let workoutId: UUID
     var weightUnit: WeightUnit = .default()
+    /// False when the flow that created this workout already booked its completion — funnel event,
+    /// review counter, Health mirror, awards, records (the manual-log form does all of that before
+    /// presenting this screen). This screen then only names, decorates, and celebrates; booking
+    /// twice would double the funnel and write the workout to Apple Health twice.
+    var booksCompletion: Bool = true
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -30,6 +35,11 @@ struct StrengthSaveView: View {
     /// edit, then Done → the circle-and-check beat draws and dismisses the screen.
     @State private var celebrating = false
     @State private var saveFailed = false
+    @State private var discardFailed = false
+    @State private var confirmDiscard = false
+    /// Session-level perceived effort — the same 1–10 rating the cardio and timed editors collect
+    /// (unified 2026-08-14; strength was the one save screen without it).
+    @State private var effort: Int?
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
 
@@ -38,13 +48,17 @@ struct StrengthSaveView: View {
             ScrollViewReader { proxy in
             ScrollView {
                 if let workout {
-                    // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
+                    // Name first (user call 2026-08-14, Strava's order): the title and story lead
+                    // the page; the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
+                        titleCard
                         // Reveals on arrival — the celebration moved to Save, nothing covers this.
+                        // canEditPhoto was never passed here (caught 2026-08-14) — the one save
+                        // screen where you couldn't attach a photo to the session you just did.
                         StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
                                                celebratePRs: true, showsHeader: false,
-                                               showsPlanLine: true)
-                        editor.id("strengthEditor")
+                                               canEditPhoto: true, showsPlanLine: true)
+                        detailsCard.id("strengthEditor")
                     }
                     .padding(Theme.Space.md)
                     #if DEBUG
@@ -77,9 +91,34 @@ struct StrengthSaveView: View {
             .navigationTitle(workout?.type.title ?? "Workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    // Discard sits behind a menu (CardioSaveView's rule, unified 2026-08-14).
+                    // Strength had NO discard at all — an accidental empty session could only be
+                    // deleted by hunting it down in History afterwards.
+                    Menu {
+                        Button("Discard workout", systemImage: "trash", role: .destructive) {
+                            confirmDiscard = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
+                    }
+                    .accessibilityLabel("More options")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save() }.fontWeight(.bold).disabled(workout == nil)
                 }
+            }
+            .confirmationDialog("Discard this workout?", isPresented: $confirmDiscard,
+                                titleVisibility: .visible) {
+                Button("Discard", role: .destructive) { discard() }
+                Button("Keep", role: .cancel) {}
+            } message: {
+                Text("Every set you logged will be deleted. This can't be undone.")
+            }
+            .alert("Couldn't discard", isPresented: $discardFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Something went wrong deleting this workout. Nothing was deleted — try again.")
             }
         }
         .overlay {
@@ -103,6 +142,7 @@ struct StrengthSaveView: View {
             if let workout = reader.workout {
                 title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
                 desc = workout.note
+                effort = workout.perceivedEffort
                 // The share moment starts from the athlete's chosen default (never silently
                 // public); a workout that already carries a choice (recovery re-save) keeps it.
                 if CommunityAccess.enabled {
@@ -114,7 +154,9 @@ struct StrengthSaveView: View {
         }
     }
 
-    private var editor: some View {
+    /// The session's name and story, LEADING the page (user call 2026-08-14, Strava's order):
+    /// what you call it and what it meant read first; the settings live in `detailsCard` below.
+    private var titleCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             TextField("Name your workout", text: $title)
                 .font(.display(24, weight: .black))
@@ -127,6 +169,14 @@ struct StrengthSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
+        }
+        .padding(Theme.Space.md)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+    }
+
+    private var detailsCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            effortRow
             if CommunityAccess.enabled {
                 Divider().overlay(Theme.hairline)
                 ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
@@ -136,6 +186,57 @@ struct StrengthSaveView: View {
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
     }
 
+    /// The 1–10 effort scale, identical to the timed editor's (unified 2026-08-14).
+    private var effortRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack {
+                Text("Effort").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                Spacer()
+                Text(effortLabel).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+            }
+            HStack(spacing: 6) {
+                ForEach(1...10, id: \.self) { i in
+                    Capsule()
+                        .fill((effort ?? 0) >= i ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.hairline))
+                        .frame(height: 10)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.easeOut(duration: 0.15)) { effort = (effort == i ? nil : i) }
+                            Haptics.selection()
+                        }
+                }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Perceived effort")
+            .accessibilityValue(effort.map { "\($0) of 10" } ?? "not rated")
+        }
+    }
+
+    private var effortLabel: String {
+        guard let e = effort else { return "Tap to rate" }
+        switch e {
+        case 1...2: return "Easy"
+        case 3...4: return "Steady"
+        case 5...6: return "Moderate"
+        case 7...8: return "Hard"
+        default: return "Max"
+        }
+    }
+
+    /// Delete the session outright — CardioSaveView's exact ordering rule: hold the planned
+    /// session BEFORE the delete (the relationship won't resolve afterwards), un-credit it only
+    /// once the delete has actually landed.
+    private func discard() {
+        focus = nil
+        let session = reader?.workout?.plannedSession
+        if let reader, !reader.delete() { discardFailed = true; return }
+        if let reader, let session {
+            PlanCoaching.setCompletion(session, done: false, in: reader.context)
+        }
+        Haptics.medium()
+        onDone()
+    }
+
     private func save() {
         focus = nil
         // Commit through the reader's own context (where `workout` lives) so the write persists.
@@ -143,6 +244,7 @@ struct StrengthSaveView: View {
         guard let reader, reader.commit({
             $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+            $0.perceivedEffort = effort
             // Community builds only — the solo app never touches privacy (see CardioSaveView).
             if CommunityAccess.enabled { $0.privacy = privacy }
         }) else { saveFailed = true; return }
@@ -154,6 +256,7 @@ struct StrengthSaveView: View {
         // The celebration starts NOW (same order as CardioSaveView, 2026-08-06): the beat gets an
         // idle main thread; the bookkeeping below waits it out — none of it is on screen.
         celebrating = true
+        guard booksCompletion else { return }   // already booked by the creating flow — see the flag
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
         // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
         if let workout { services.analytics.log(.workoutCompleted(type: workout.type.rawValue)) }

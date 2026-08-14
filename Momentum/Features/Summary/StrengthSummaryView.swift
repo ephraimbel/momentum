@@ -103,7 +103,8 @@ struct StrengthSummaryContent: View {
             if let competenceText { EarnedLine(text: competenceText).reveal(revealDelay + 0.14) }
             HStack(alignment: .top, spacing: Theme.Space.md) {
                 stat("\(session.totalSets)", "Sets")
-                stat(Formatters.duration(s: workout.durationS), "Duration")
+                // "Time", matching the cardio hero's label for the same slot (unified 2026-08-14).
+                stat(Formatters.duration(s: workout.durationS), "Time")
                 stat("\(session.exercises.count)", "Exercises")
                 if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
             }
@@ -148,9 +149,11 @@ struct StrengthSummaryContent: View {
 
     // MARK: Identity visual — the worked body
 
-    /// The worked body on its iridescent stage (`IridescentWash` is earned here — it only ever
-    /// backs a completed session's worked muscles), with the per-muscle working-set tally
-    /// beneath the figure.
+    /// The worked body on the page's quiet surface, with the per-muscle working-set tally in a
+    /// two-column grid beneath the figure. Deliberately NOT the IridescentWash (user call
+    /// 2026-08-14): on this page the figure's own muscle glow is the colour, and a rainbow card
+    /// behind it plus PR accents elsewhere read as a cluster, not an earned moment. The wash
+    /// stays on the profile tiles and pager, where the figure is the only thing on screen.
     private func muscleCard(_ session: StrengthSession) -> some View {
         let entries = session.exercises.map { row in
             (primary: (row.exercise?.primaryMuscles ?? []).compactMap(MuscleGroup.init(rawValue:)),
@@ -169,31 +172,38 @@ struct StrengthSummaryContent: View {
                 .frame(maxWidth: .infinity)
                 .onScrollVisibilityChange(threshold: 0.05) { muscleMapOnScreen = $0 }
             if !byMuscle.isEmpty {
-                VStack(spacing: Theme.Space.sm) {
+                // Two columns: a ten-muscle session read as a five-row grid, not a ten-row list.
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.lg),
+                                    GridItem(.flexible())], spacing: Theme.Space.sm) {
                     ForEach(byMuscle, id: \.key) { muscle, sets in
                         HStack {
                             Text(muscle.rawValue.capitalized).foregroundStyle(Theme.ink)
-                            Spacer()
-                            Text(sets == sets.rounded() ? "\(Int(sets)) sets" : String(format: "%.1f sets", sets))
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                            Spacer(minLength: Theme.Space.xs)
+                            Text(sets == sets.rounded() ? "\(Int(sets))" : String(format: "%.1f", sets))
                                 .monospacedDigit().foregroundStyle(Theme.inkSecondary)
                         }
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(muscle.rawValue.capitalized), \(sets == sets.rounded() ? "\(Int(sets))" : String(format: "%.1f", sets)) sets")
                     }
                 }
             }
         }
         .padding(Theme.Space.md)
-        .background(IridescentWash())
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
     }
 
     // MARK: Exercise breakdown — the splits grammar, spoken in iron
 
     /// One row per exercise: name, session volume, and a bar whose LENGTH is that volume (the
-    /// session's biggest lift = full width) — the same reading as the run page's split rows. An
-    /// exercise that set a record wears the earned accent on its bar. Tap a row to open the
-    /// set-by-set story; a five-exercise session must never read as a thirty-row wall.
+    /// session's biggest lift = full width, and reads darker) — the same reading as the run
+    /// page's split rows. Bars stay INK (user call 2026-08-14): a four-PR day painted most of
+    /// the column iridescent, and an accent that covers the data is no longer an accent. A
+    /// record is marked with a compact monochrome PR chip beside the name instead; the badge
+    /// section above already carries the celebration. Tap a row to open the set-by-set story;
+    /// a five-exercise session must never read as a thirty-row wall.
     private func exercisesSection(_ session: StrengthSession) -> some View {
         let rows = session.exercises.sorted { $0.order < $1.order }
         let workingByRow: [[SetEntry]] = rows.map { row in
@@ -240,9 +250,19 @@ struct StrengthSummaryContent: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name)
-                                .font(.rounded(Theme.FontSize.body, weight: .bold))
-                                .foregroundStyle(Theme.ink)
+                            HStack(spacing: 6) {
+                                Text(name)
+                                    .font(.rounded(Theme.FontSize.body, weight: .bold))
+                                    .foregroundStyle(Theme.ink)
+                                    .lineLimit(1).minimumScaleFactor(0.8)
+                                if hitPR {
+                                    Text("PR")
+                                        .font(.rounded(10, weight: .heavy)).tracking(0.6)
+                                        .foregroundStyle(Theme.background)
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(Capsule().fill(Theme.ink))
+                                }
+                            }
                             Text(subtitle)
                                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                                 .foregroundStyle(Theme.inkTertiary)
@@ -258,11 +278,11 @@ struct StrengthSummaryContent: View {
                                 .rotationEffect(.degrees(expanded ? 180 : 0))
                         }
                     }
-                    // The volume bar — a record wears the earned accent, everything else stays ink.
+                    // The volume bar — ink only; the session's biggest lift reads darker.
+                    // Hierarchy through weight, never hue (see the section note above).
                     GeometryReader { geo in
                         Capsule()
-                            .fill(hitPR ? AnyShapeStyle(IridescentMaterial())
-                                        : AnyShapeStyle(Theme.ink.opacity(0.55)))
+                            .fill(Theme.ink.opacity(volumeKg >= maxVolumeKg - 0.5 ? 0.6 : 0.3))
                             .frame(width: max(10, geo.size.width * (maxVolumeKg > 0 ? volumeKg / maxVolumeKg : 0)))
                     }
                     .frame(height: 10)

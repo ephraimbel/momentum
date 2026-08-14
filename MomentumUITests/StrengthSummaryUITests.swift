@@ -16,9 +16,19 @@ final class StrengthSummaryUITests: XCTestCase {
                       "Strength save screen didn't open on the hero.")
 
         // The splits-grammar exercise rows live below — swipe until the section header shows.
+        // The photo section sits on the way down (2026-08-14: strength save can now attach
+        // photos — it was the one save screen that couldn't), so assert it as we pass.
         let header = app.staticTexts["EXERCISES"]
+        // The seeded lift already carries demo photos, so the section shows the manage strip
+        // ("Add photo" tile) rather than the empty-state "Add photos" button — accept either.
+        let addEmpty = app.staticTexts["Add photos"], addTile = app.buttons["Add photo"]
+        var sawPhotos = addEmpty.exists || addTile.exists
         let deadline = Date().addingTimeInterval(10)
-        while !header.exists, Date() < deadline { app.swipeUp(); usleep(300_000) }
+        while !header.exists, Date() < deadline {
+            app.swipeUp(); usleep(300_000)
+            sawPhotos = sawPhotos || addEmpty.exists || addTile.exists
+        }
+        XCTAssertTrue(sawPhotos, "Photo section missing from the strength save page.")
         XCTAssertTrue(header.exists, "Exercise breakdown missing from strength summary.")
 
         // Tap the first exercise ROW BUTTON → its set-by-set story opens ("Set 1, …" rows exist

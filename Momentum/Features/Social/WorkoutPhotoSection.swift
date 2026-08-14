@@ -52,6 +52,7 @@ struct WorkoutPhotoSection: View {
                     }
                     .tint(Theme.ink)
                     .onChange(of: workout.coverIsPhoto) {
+                        markEdited()
                         try? context.save()
                         Haptics.selection()
                     }
@@ -155,8 +156,16 @@ struct WorkoutPhotoSection: View {
         migrateLegacyIfNeeded()
         let order = (workout.photos.map(\.order).max() ?? -1) + 1
         workout.photos.append(WorkoutPhoto(order: order, data: Self.downscaled(raw)))
+        markEdited()
         try? context.save()
         Haptics.success()
+    }
+
+    /// Re-dirty for sync (the `FinishedWorkoutReader.commit` contract). Photos are now editable
+    /// from History too (2026-08-14) — there no save screen follows to clear the stamp, so a photo
+    /// added weeks later would otherwise never leave the device.
+    private func markEdited() {
+        workout.syncedAt = nil
     }
 
     // MARK: Mutations (all edits run on the multi-photo set — legacy folds in first)
@@ -172,6 +181,7 @@ struct WorkoutPhotoSection: View {
             order += 1
         }
         picked = []
+        markEdited()
         try? context.save()
         Haptics.success()
     }
@@ -184,6 +194,7 @@ struct WorkoutPhotoSection: View {
         workout.photos.removeAll { $0.id == photo.id }
         context.delete(photo)
         for (i, p) in workout.photos.sorted(by: { $0.order < $1.order }).enumerated() { p.order = i }
+        markEdited()
         try? context.save()
         Haptics.medium()
     }
