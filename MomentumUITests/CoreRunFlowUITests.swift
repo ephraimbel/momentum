@@ -88,7 +88,7 @@ final class CoreRunFlowUITests: XCTestCase {
         // Titled with the discipline, not "Save run": the recording is already on disk by the time
         // this appears, so a filing verb described work the athlete wasn't doing. This assertion
         // still said "Save run" and had been failing the whole end-to-end guard ever since.
-        XCTAssertTrue(app.navigationBars["Run"].waitForExistence(timeout: 15), "Save screen didn't appear after finishing.")
+        XCTAssertTrue(app.buttons["activityDone"].waitForExistence(timeout: 15), "Save screen didn't appear after finishing.")
         sleep(2)
         attach("5-save-screen")           // top of the page — hero route map
 
@@ -130,7 +130,7 @@ final class CoreRunFlowUITests: XCTestCase {
             "The visibility control (ShareVisibilityRow) should be on the save page with community enabled.")
 
         // 7d. Save — the confirmation action is "Done" (it was renamed with the title above).
-        let save = app.navigationBars.buttons["Done"].firstMatch
+        let save = app.buttons["activityDone"].firstMatch
         if save.waitForExistence(timeout: 3) { save.tap() }
         else { app.buttons["Done"].firstMatch.tap() }
         sleep(3)                          // completion celebration auto-dismisses (~1.4s) → back to app

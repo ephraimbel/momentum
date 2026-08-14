@@ -303,6 +303,11 @@ struct SaveScreenChrome<MenuItems: View>: View {
                     .background(Capsule().fill(Theme.surface)).overlay(Capsule().stroke(Theme.hairline))
             }
             .disabled(doneDisabled)
+            // This chrome row replaced the save screen's navigation bar, so `navigationBars
+            // .buttons["Done"]` stopped resolving and took 3 UI suites down with it
+            // (CelebrationFlow, CoreRunFlow, TimedSave). Tests target this identifier now — it
+            // survives the next visual pass in a way a bar lookup or a bare label never will.
+            .accessibilityIdentifier("activityDone")
         }
         .padding(.horizontal, Theme.Space.lg)
     }
