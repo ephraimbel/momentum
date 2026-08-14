@@ -96,6 +96,13 @@ struct TodayView: View {
     /// True once the map backdrop has been mounted — it then stays warm for the session (a
     /// strength-only athlete who never shows the map never pays for it).
     @State private var mapWasShown = false
+    // The deck collapses so the map can have the whole screen. Remembered across launches: an
+    // athlete who wants the map uninterrupted shouldn't have to say so every morning.
+    @AppStorage("todayDeckCollapsed") private var deckCollapsed = false
+    /// The deck's own measured height — the exact distance it must travel to clear the screen.
+    @State private var deckHeight: CGFloat = 0
+    /// The collapsed pill's height, so the map controls can rest just above it.
+    @State private var peekHeight: CGFloat = 0
     /// The strength home's muscle map animates only while visible (see its visibility gate).
     @State private var strengthMapOnScreen = true
     /// The newest GPS fix from history, memoized (non-observed box, invisible to SwiftUI): the raw
@@ -1174,8 +1181,54 @@ struct TodayView: View {
 
     // MARK: Bottom panel
 
+    /// How far the panel travels to clear the screen: its own height plus the bottom padding, so
+    /// nothing of the deck is left hanging over the map.
+    private var deckTravel: CGFloat { max(deckHeight, 1) + Theme.Space.lg }
+
+    /// Where the deck rests. Two states only — `withAnimation` interpolates the offset, so there is
+    /// no intermediate value to track and nothing to fight the map for touches.
+    private var deckOffset: CGFloat { deckCollapsed ? deckTravel : 0 }
+
+    /// The peek owns the bottom exactly when the deck doesn't. Cross-faded rather than slid, so the
+    /// two never read as competing cards.
+    private var peekOpacity: CGFloat { deckCollapsed ? 1 : 0 }
+
+    /// Where the map controls rest, measured up from the screen's bottom edge: just above the peek
+    /// when collapsed, just above the deck when expanded. Both measured heights already include their
+    /// own bottom padding, so this is the whole distance (double-counting it made them collide with
+    /// the Start pill the first time round).
+    private var mapControlsLift: CGFloat {
+        (deckCollapsed ? peekHeight : deckHeight) + Theme.Space.sm
+    }
+
+    private func setDeck(collapsed: Bool) {
+        guard collapsed != deckCollapsed else { return }
+        Haptics.light()
+        if reduceMotion {
+            deckCollapsed = collapsed
+        } else {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { deckCollapsed = collapsed }
+        }
+    }
+
     private var bottomPanel: some View {
-        VStack(spacing: Theme.Space.sm) {
+        ZStack(alignment: .bottom) {
+            // Collapsed state: one glass pill carrying the only two things worth the space when the
+            // map owns the screen — what's on today, and Start.
+            collapsedPeek
+                .padding(.horizontal, Theme.Space.md)
+                .padding(.bottom, Theme.Space.sm)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { peekHeight = $0 }
+                .opacity(peekOpacity)
+                // Never let the invisible pill eat taps meant for the map (or for the deck mid-drag).
+                .allowsHitTesting(peekOpacity > 0.9)
+                // ...and never let it be READ either: both states carry a "Start run" control, so
+                // leaving the hidden one in the tree gave VoiceOver two identical buttons.
+                .accessibilityHidden(peekOpacity < 0.9)
+
+            // The map's own controls live OUTSIDE the sliding deck: collapsing is the moment the
+            // athlete most wants layers and recenter, and riding the deck down took them off-screen
+            // exactly then. They ride a shorter path instead, coming to rest just above the peek.
             if isCardio {
                 HStack {
                     Spacer()
@@ -1188,11 +1241,70 @@ struct TodayView: View {
                         recenterButton
                     }
                 }
+                .padding(.horizontal, Theme.Space.md)
+                .offset(y: -mapControlsLift)
             }
-            deck
+
+            VStack(spacing: Theme.Space.sm) {
+                deck
+            }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.bottom, Theme.Space.sm)     // sit closer to the tab bar so more map shows
+            // Measure once per size change; `deckTravel` needs the real height because the deck grows
+            // on mornings the coach added a rationale or a fueling line.
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deckHeight = $0 }
+            // Transform only — the deck slides, it never re-lays-out. The map underneath is already
+            // edge-to-edge, so travelling down reveals it rather than resizing anything.
+            .offset(y: deckOffset)
+            .opacity(1 - peekOpacity)
+            .allowsHitTesting(peekOpacity < 0.5)
+            .accessibilityHidden(peekOpacity > 0.5)
         }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.bottom, Theme.Space.sm)     // sit closer to the tab bar so more map shows
+    }
+
+    /// The collapsed deck: expand on the left, Start on the right. Start stays the only filled
+    /// element here too, so the hierarchy survives the collapse.
+    private var collapsedPeek: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Button { setDeck(collapsed: false) } label: {
+                HStack(spacing: Theme.Space.sm) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    Text(peekTitle)
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(Theme.ink).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show today's deck")
+
+            Button { Haptics.light(); startFree() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.fill").font(.system(size: 13, weight: .bold))
+                    Text("Start").font(.rounded(Theme.FontSize.body, weight: .bold))
+                }
+                .foregroundStyle(Theme.background)
+                .padding(.horizontal, 18).frame(height: 44)
+                .background(Capsule().fill(Theme.ink))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(startTitle)
+            // Same spoken label as the deck's Start (they are the same action), so tests need an
+            // identifier to tell the two states apart.
+            .accessibilityIdentifier("todayPeekStart")
+        }
+        .padding(.leading, Theme.Space.md)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
+        .momentumGlass(in: Capsule())
+    }
+
+    /// What the collapsed pill says: today's prescription when there is one, else the neutral date.
+    private var peekTitle: String {
+        if let session = pendingToday { return PlanCoaching.brief(for: session) }
+        return activity.isStrengthStyle ? "Today" : "Ready when you are"
     }
 
     /// The control deck — ONE glass surface, not a stack of cards. Reads top-to-bottom as a single
@@ -1209,6 +1321,7 @@ struct TodayView: View {
         let session = pendingToday
         let state = session == nil ? planState : nil
         return VStack(spacing: 0) {
+            deckGrabber
             if let session {
                 planRow(session)
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
@@ -1223,12 +1336,31 @@ struct TodayView: View {
                 HStack(spacing: Theme.Space.sm) {
                     logButton
                     OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+                        .accessibilityIdentifier("todayDeckStart")
                 }
                 utilityLine
             }
             .padding(Theme.Space.md)
         }
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+    }
+
+    /// Collapse control: one plain button at the top of the card. This was briefly a drag handle with
+    /// a card-wide swipe, and it glitched — the deck fought the map's own pan and the deck's buttons
+    /// for the same touches (owner report 2026-08-14). A tap has none of that ambiguity, so the arrow
+    /// is the whole affordance: down to hide the deck, up (on the peek) to bring it back.
+    private var deckGrabber: some View {
+        Button { setDeck(collapsed: true) } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Theme.inkTertiary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide today's deck for a full map")
+        .accessibilityIdentifier("todayDeckCollapse")
     }
 
     /// One utility line under Start — whichever matters right now: an active injury (with the way
