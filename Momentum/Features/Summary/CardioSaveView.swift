@@ -50,6 +50,10 @@ struct CardioSaveView: View {
     @State private var saveFailed = false
     @State private var discardFailed = false
     @State private var confirmDiscard = false
+    /// Content has scrolled under the floating chrome — see `SaveScreenChrome.showsScrim`.
+    @State private var scrolledUnderChrome = false
+    /// The second discard gate — the point-blank "Are you sure?" (user call 2026-08-14).
+    @State private var confirmDiscardFinal = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
 
@@ -62,19 +66,24 @@ struct CardioSaveView: View {
         return NavigationStack {
             ScrollView {
                 if let workout {
-                    // Name first (user call 2026-08-14, Strava's order): the title and story lead
-                    // the page; the summary follows; the settings close it.
+                    // The scene leads (user call 2026-08-14): the route runs edge-to-edge from the
+                    // very top and dissolves into the page; the name and story print over its tail;
+                    // the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
-                        titleCard
-                        // The cascade plays on arrival now — the celebration moved to Save, so
-                        // nothing covers this screen when it appears.
-                        CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
-                                             showsHeader: false, canEditPhoto: true,
-                                             mapStyleOverride: mapStyle,
-                                             showsVerdict: true)
-                        detailsCard
+                        ActivityHero(workout: workout, mapStyleOverride: mapStyle, canAddPhotos: true)
+                        Group {
+                            titleCard
+                            // The cascade plays on arrival now — the celebration moved to Save, so
+                            // nothing covers this screen when it appears.
+                            CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
+                                                 showsHeader: false, canEditPhoto: true,
+                                                 mapStyleOverride: mapStyle,
+                                                 showsVerdict: true)
+                            detailsCard
+                        }
+                        .padding(.horizontal, Theme.Space.md)
                     }
-                    .padding(Theme.Space.md)
+                    .padding(.bottom, Theme.Space.md)
                 } else if reader != nil {
                     // A dead-end error screen on a fullScreenCover is a trap — Done/Discard both
                     // only raise alerts here, so this state needs its own way out (mirrors
@@ -99,25 +108,24 @@ struct CardioSaveView: View {
             #endif
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
-            // Not "Save run": the recording was already on disk before this screen appeared, so a
-            // filing verb described work the athlete wasn't doing and framed their run as paperwork.
-            .navigationTitle(workout?.type.title ?? workoutType.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    // Discard sits behind a menu now. As a standing top-left button it made the
-                    // first thing you saw after finishing a run an invitation to throw it away.
-                    Menu {
-                        Button("Discard recording", systemImage: "trash", role: .destructive) {
-                            confirmDiscard = true
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
-                    }
-                    .accessibilityLabel("More options")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { save() }.fontWeight(.bold)
+            // The hero reaches the physical top of the screen; chrome floats over it (the
+            // full-screen map's grammar) instead of a navigation bar.
+            .ignoresSafeArea(edges: .top)
+            .toolbar(.hidden, for: .navigationBar)
+            // The chrome's scrim keys off scroll: invisible while the hero owns the top,
+            // materializing once content slides under the clock.
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > 40
+            } action: { _, scrolled in
+                withAnimation(.easeOut(duration: 0.18)) { scrolledUnderChrome = scrolled }
+            }
+        }
+        .overlay(alignment: .top) {
+            SaveScreenChrome(onDone: { save() }, showsScrim: scrolledUnderChrome) {
+                // Discard sits behind the menu — as a standing button it made the first thing
+                // you saw after finishing a run an invitation to throw it away.
+                Button("Discard recording", systemImage: "trash", role: .destructive) {
+                    confirmDiscard = true
                 }
             }
         }
@@ -177,10 +185,18 @@ struct CardioSaveView: View {
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { discard() }
+            // Two gates, deliberately (user call 2026-08-14): the sheet states the stakes, the
+            // alert asks point-blank. A recording is unrecoverable — one slip must not erase it.
+            Button("Discard", role: .destructive) { confirmDiscardFinal = true }
             Button("Keep", role: .cancel) {}
         } message: {
             Text("This permanently deletes the recording — it won't be saved to your history.")
+        }
+        .alert("Are you sure?", isPresented: $confirmDiscardFinal) {
+            Button("Yes, discard it", role: .destructive) { discard() }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("There's no way to get this \(workout?.type.title.lowercased() ?? "activity") back.")
         }
     }
 
@@ -200,24 +216,25 @@ struct CardioSaveView: View {
         return "\(Int(ring.completedM / per)) of \(target.value) \(target.unit) this week"
     }
 
-    /// The activity's name and story, LEADING the page (user call 2026-08-14, Strava's order):
-    /// what you call it and what it meant read first; the settings live in `detailsCard` below.
+    /// The activity's name and story printed directly on the page under the hero's fade (user
+    /// call 2026-08-14) — no card box; the eyebrow names the sport and the moment, the title
+    /// sets the page's voice, the description sits quietly beneath a hairline.
     private var titleCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if let workout { ActivityEyebrow(type: sportType, date: workout.startedAt) }
             TextField("Name your \(sportType.title.lowercased())", text: $title)
-                .font(.display(24, weight: .black))
+                .font(.display(30, weight: .black))
                 .foregroundStyle(Theme.ink)
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
-            Divider().overlay(Theme.hairline)
+            Divider().overlay(Theme.hairline).padding(.vertical, 2)
             TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
         }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var detailsCard: some View {

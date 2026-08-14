@@ -41,22 +41,15 @@ struct CardioSummaryContent: View {
     /// nonsense on a run from six months ago.
     @State private var planLine: PlanConnection?
     private struct PlanConnection { let text: String; let credited: Bool }
-    // The route, replayed ONCE off the samples and cached — `routeCoordinates` runs the full
-    // Kalman pass, and calling it inside `routeMap` re-ran it on every body invalidation through
-    // the reveal cascade (the same trap the old splits section fixed for its own walk). The
-    // smoothed variant is what the map actually draws, so both are held.
-    @State private var routeCoords: [CLLocationCoordinate2D] = []
-    @State private var smoothedCoords: [CLLocationCoordinate2D] = []
-    @State private var routeResolved = false
+    // (The route map lives in `ActivityHero` now — the full-bleed faded hero the HOSTS render
+    // above this content, 2026-08-14. The coordinate replay, remount keying, and full-screen
+    // zoom all moved with it.)
     /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
     /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
     @State private var healthHR: [(date: Date, bpm: Double)] = []
     /// The run's seven-day window, fetched here (on this always-present task) and handed to the
     /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
     @State private var weekWorkouts: [Workout] = []
-    // (The hero map's full-screen expansion state lives in `RouteMapCard` now — as @State on this
-    // summary, every map tap re-evaluated the ENTIRE page, charts included, in the same frame the
-    // zoom transition started. Perf audit 2026-08-13.)
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -67,7 +60,7 @@ struct CardioSummaryContent: View {
             // Reveal-first: lead with the mastery payoff (hero distance + any "you got better" win),
             // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.lg) {
-                if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
+                if showsHeader { titleHeader }   // always has content now (type-title fallback + date)
                 headline(workout, gps)   // staggers its own children; no outer reveal
                 // The plan connection, at the payoff moment: "Today's tempo run — checked off your
                 // plan" when this run credited a session, or the honest partial when it didn't
@@ -78,10 +71,7 @@ struct CardioSummaryContent: View {
                                earned: line.credited)
                         .reveal(revealDelay + 0.08)
                 }
-                // Strava/Runna information order (2026-08-13): the map is the run's identity and
-                // reads directly under the hero numbers — it used to sit below the share button
-                // and photo, mid-page. Tap zooms it to a full-screen explorable map.
-                routeMap(gps).reveal(revealDelay + 0.12)
+                // (The map moved above this content — `ActivityHero`, 2026-08-14.)
                 if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.16) }
                 // Sharing is not gated on a record. It used to sit inside the achievements branch, so
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
@@ -141,15 +131,6 @@ struct CardioSummaryContent: View {
                     let end = workout.startedAt.addingTimeInterval(max(workout.elapsedS, workout.durationS))
                     healthHR = await services.health.heartRateSeries(start: workout.startedAt, end: end)
                 }
-            }
-            // The route replay (Kalman over every sample) resolves ONCE here, not in `routeMap`'s
-            // body — re-keyed when the map-matched route lands post-finish so the snapped line
-            // still supersedes the raw one.
-            .task(id: gps.matchedRouteData != nil) {
-                let coords = gps.routeCoordinates(type: workout.type)
-                routeCoords = coords
-                smoothedCoords = coords.count > 1 ? RouteSmoothing.smooth(coords) : []
-                routeResolved = true
             }
         } else {
             Text("No GPS data").foregroundStyle(Theme.inkTertiary)
@@ -298,23 +279,17 @@ struct CardioSummaryContent: View {
 
     private var titleHeader: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            if !workout.title.isEmpty {
-                Text(workout.title).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-            }
+            // The eyebrow names the sport and the moment; the title sets the page's voice —
+            // the same block the save screens print under the hero's fade (2026-08-14).
+            ActivityEyebrow(type: workout.type, date: workout.startedAt)
+            Text(workout.title.isEmpty ? workout.type.title : workout.title)
+                .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
             if !workout.note.isEmpty {
                 Text(workout.note).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func routeMap(_ gps: GPSDetail) -> some View {
-        RouteMapCard(smoothedCoords: smoothedCoords,
-                     style: mapStyleOverride ?? gps.mapStyle,
-                     hasMatchedRoute: gps.matchedRouteData != nil,
-                     isGPS: workout.type.isGPS,
-                     routeResolved: routeResolved)
     }
 
     private func headline(_ workout: Workout, _ gps: GPSDetail) -> some View {
@@ -336,16 +311,10 @@ struct CardioSummaryContent: View {
                 EarnedLine(text: line.text, systemImage: glyph(line.tone), earned: line.tone == .earned)
                     .reveal(revealDelay + 0.14)
             }
-            // Equal-width stats so the row stays balanced whether it's 3 or 5 — Avg HR joins Time,
-            // pace, and elevation whenever the run has heart-rate data (ours, or backfilled from Health).
-            HStack(alignment: .top, spacing: Theme.Space.md) {
-                stat(Formatters.duration(s: workout.durationS), "Time")
-                stat(paceOrSpeed(workout, gps), workout.type.isCycling ? "Avg speed" : "Avg pace")
-                if let hr = avgHR(gps), hr > 0 { stat("\(hr)", "Avg HR") }
-                stat(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit), "Elevation")
-                if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
-            }
-            .reveal(revealDelay + 0.22)
+            // The organized reading (2026-08-14): a labelled two-column grid instead of five
+            // stats squeezed shoulder to shoulder. Avg HR joins whenever the run has heart-rate
+            // data (ours, or backfilled from Health).
+            KeyStatsGrid(stats: keyStats(workout, gps)).reveal(revealDelay + 0.22)
         }
         .padding(.vertical, Theme.Space.md)
     }
@@ -463,14 +432,13 @@ struct CardioSummaryContent: View {
             }
     }
 
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
+    private func keyStats(_ workout: Workout, _ gps: GPSDetail) -> [KeyStat] {
+        var stats = [KeyStat(Formatters.duration(s: workout.durationS), "Time"),
+                     KeyStat(paceOrSpeed(workout, gps), workout.type.isCycling ? "Avg speed" : "Avg pace")]
+        if let hr = avgHR(gps), hr > 0 { stats.append(KeyStat("\(hr) bpm", "Avg HR")) }
+        stats.append(KeyStat(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit), "Elevation"))
+        if let kcal = workout.calories, kcal > 0 { stats.append(KeyStat("\(Int(kcal))", "Calories")) }
+        return stats
     }
 
     /// The run's average heart rate — our own captured average, else the mean of the Health series
@@ -550,117 +518,3 @@ enum RepGrouping {
     }
 }
 
-// MARK: - Full-screen route map
-
-/// The hero map, expanded: the whole route on an explorable full-bleed canvas (pinch, pan,
-/// rotate — `RouteMapView`'s explore gestures). Presented from the summary's map with a zoom
-/// transition, so the card literally becomes the page. Chrome follows the immersive pager's
-/// grammar: surface circles, hairline strokes, and the re-center control that appears only
-/// once the athlete has explored away from the fitted overview.
-private struct RunMapFullScreen: View {
-    let coordinates: [CLLocationCoordinate2D]
-    let style: MapStyleOption
-    /// Host-owned close (the ImmersiveWorkoutPager pattern): the summary flips its own
-    /// presentation flag — `@Environment(\.dismiss)` silently did nothing from inside this
-    /// zoom-transition cover nested in the post-run presentation stack (verified on-sim).
-    let onClose: () -> Void
-    @State private var camera = RouteMapCameraHandle()
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            RouteMapView(coordinates: coordinates, style: style,
-                         interactive: true, padding: 56, cameraHandle: camera)
-                .ignoresSafeArea()
-            HStack(alignment: .top) {
-                Button { onClose() } label: {
-                    Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
-                }
-                .accessibilityLabel("Close map")
-                Spacer()
-                if camera.isExplored {
-                    Button { camera.recenter() } label: {
-                        Image(systemName: "viewfinder").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
-                    }
-                    .accessibilityLabel("Re-center route")
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                }
-            }
-            .animation(.easeOut(duration: 0.25), value: camera.isExplored)
-            .padding(.horizontal, Theme.Space.lg)
-        }
-        .background(Theme.background)
-    }
-}
-
-/// The hero map card AND its full-screen expansion, as one leaf (perf audit 2026-08-13): with
-/// `showFullMap` as summary-level @State, tapping the map re-evaluated the entire page — all four
-/// analysis charts, zones, the week card — in the same frame the zoom transition started. As a
-/// leaf, the tap invalidates only this card.
-private struct RouteMapCard: View {
-    let smoothedCoords: [CLLocationCoordinate2D]
-    let style: MapStyleOption
-    let hasMatchedRoute: Bool
-    let isGPS: Bool
-    let routeResolved: Bool
-
-    @State private var showFullMap = false
-    @Namespace private var mapZoom
-
-    var body: some View {
-        if smoothedCoords.count > 1 {
-            RouteMapView(coordinates: smoothedCoords, style: style)
-                .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                // When the map-matched route lands post-finish (nil→present), the coordinates change
-                // underneath RouteMapView. Its route line is added imperatively once on style-load (a
-                // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
-                // identity on match-presence (and the previewed style) forces one clean remount,
-                // re-running style-load with the snapped route.
-                .id("\(hasMatchedRoute)-\(style.rawValue)")
-                // Tap → the full-screen explorable map. The card map is non-interactive
-                // (allowsHitTesting false), so the tap lands on this wrapper; the corner chip is
-                // the affordance that says so.
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "arrow.down.left.and.arrow.up.right")
-                        .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(Theme.background.opacity(0.92)))
-                        .overlay(Circle().stroke(Theme.hairline))
-                        .padding(Theme.Space.sm)
-                }
-                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                .matchedTransitionSource(id: "runMap", in: mapZoom)
-                .onTapGesture { showFullMap = true }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("Route map. Opens full screen.")
-                .fullScreenCover(isPresented: $showFullMap) {
-                    RunMapFullScreen(coordinates: smoothedCoords, style: style,
-                                     onClose: { showFullMap = false })
-                        .navigationTransition(.zoom(sourceID: "runMap", in: mapZoom))
-                }
-        } else if !routeResolved, isGPS {
-            // The replay hasn't landed yet (first frames only) — hold the map's footprint quietly.
-            // Falling through to "No route recorded" here flashed that claim over every real route
-            // for the beat before the cached coordinates resolved.
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                .frame(height: 220)
-        } else if isGPS {
-            // A GPS-discipline run with no usable route (treadmill, or GPS never locked) — a quiet
-            // card instead of a silent gap where the map belongs.
-            ZStack {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                VStack(spacing: 6) {
-                    Image(systemName: "mappin.slash").font(.system(size: 22, weight: .semibold))
-                    Text("No route recorded").font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                }
-                .foregroundStyle(Theme.inkTertiary)
-            }
-            .frame(height: 120)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-        }
-    }
-}

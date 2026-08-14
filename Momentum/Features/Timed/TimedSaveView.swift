@@ -41,6 +41,10 @@ struct TimedSaveView: View {
     /// Plays after SAVE — see `CardioSaveView.celebrating` (user call 2026-07-23).
     @State private var celebrating = false
     @State private var confirmDiscard = false
+    /// Content has scrolled under the floating chrome — see `SaveScreenChrome.showsScrim`.
+    @State private var scrolledUnderChrome = false
+    /// The second discard gate — the point-blank "Are you sure?" (user call 2026-08-14).
+    @State private var confirmDiscardFinal = false
     @State private var saveFailed = false
     @State private var discardFailed = false
     @FocusState private var focus: Field?
@@ -50,15 +54,20 @@ struct TimedSaveView: View {
         NavigationStack {
             ScrollView {
                 if let workout {
-                    // Name first (user call 2026-08-14, Strava's order): the title and story lead
-                    // the page; the summary follows; the settings close it.
+                    // The scene leads (user call 2026-08-14): the sport's glyph band runs from the
+                    // very top and dissolves into the page; the name and story print over its
+                    // tail; the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
-                        titleCard
-                        TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true,
-                                            showsCalories: false, showsPlanLine: true)
-                        detailsCard
+                        ActivityHero(workout: workout, canAddPhotos: true)
+                        Group {
+                            titleCard
+                            TimedSummaryContent(workout: workout, showsHeader: false, canEditPhoto: true,
+                                                showsCalories: false, showsPlanLine: true)
+                            detailsCard
+                        }
+                        .padding(.horizontal, Theme.Space.md)
                     }
-                    .padding(Theme.Space.md)
+                    .padding(.bottom, Theme.Space.md)
                 } else {
                     ContentUnavailableView("Workout not found", systemImage: "questionmark")
                 }
@@ -66,25 +75,24 @@ struct TimedSaveView: View {
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
             // Not "Save …": the session was on disk before this screen appeared.
-            .navigationTitle(workout?.type.title ?? "Activity")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    // Discard sits behind a menu (CardioSaveView's rule, unified 2026-08-14): as a
-                    // standing top-left button it made the first thing you saw after finishing an
-                    // invitation to throw it away.
-                    Menu {
-                        Button("Discard session", systemImage: "trash", role: .destructive) {
-                            confirmDiscard = true
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
-                    }
-                    .accessibilityLabel("More options")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { save() }.fontWeight(.bold)
-                        .disabled(workout == nil)   // mirrors StrengthSaveView — no confirming a ghost
+            // The hero reaches the physical top of the screen; chrome floats over it (the
+            // full-screen map's grammar) instead of a navigation bar.
+            .ignoresSafeArea(edges: .top)
+            .toolbar(.hidden, for: .navigationBar)
+            // The chrome's scrim keys off scroll — see CardioSaveView.
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > 40
+            } action: { _, scrolled in
+                withAnimation(.easeOut(duration: 0.18)) { scrolledUnderChrome = scrolled }
+            }
+        }
+        .overlay(alignment: .top) {
+            SaveScreenChrome(onDone: { save() }, doneDisabled: workout == nil,
+                             showsScrim: scrolledUnderChrome) {
+                // Discard sits behind the menu — as a standing button it made the first thing
+                // you saw after finishing an invitation to throw it away.
+                Button("Discard session", systemImage: "trash", role: .destructive) {
+                    confirmDiscard = true
                 }
             }
         }
@@ -125,31 +133,38 @@ struct TimedSaveView: View {
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { discard() }
+            // Two gates, deliberately — see CardioSaveView.
+            Button("Discard", role: .destructive) { confirmDiscardFinal = true }
             Button("Keep", role: .cancel) {}
         } message: {
             Text("This permanently deletes the recording — it won't be saved to your history.")
         }
+        .alert("Are you sure?", isPresented: $confirmDiscardFinal) {
+            Button("Yes, discard it", role: .destructive) { discard() }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("There's no way to get this \(workout?.type.title.lowercased() ?? "activity") back.")
+        }
     }
 
-    /// The session's name and story, LEADING the page (user call 2026-08-14, Strava's order):
-    /// what you call it and what it meant read first; the settings live in `detailsCard` below.
+    /// The session's name and story printed directly on the page under the hero's fade (user
+    /// call 2026-08-14) — no card box; see CardioSaveView's titleCard.
     private var titleCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if let workout { ActivityEyebrow(type: workout.type, date: workout.startedAt) }
             TextField("Name your \(workout?.type.title.lowercased() ?? "session")", text: $title)
-                .font(.display(24, weight: .black))
+                .font(.display(30, weight: .black))
                 .foregroundStyle(Theme.ink)
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
-            Divider().overlay(Theme.hairline)
+            Divider().overlay(Theme.hairline).padding(.vertical, 2)
             TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
         }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var detailsCard: some View {

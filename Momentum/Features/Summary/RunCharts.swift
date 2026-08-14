@@ -506,8 +506,9 @@ struct WeekContextCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animate = false
 
-    /// `raw` is the metric's SI value for the day (metres or kilograms).
-    private struct DayBar: Identifiable { let id = UUID(); let dayStart: Date; let raw: Double; let isAnchor: Bool }
+    /// `raw` is the metric's SI value for the day (metres or kilograms). `idx` (0…6, oldest →
+    /// newest) is the bar's x position — the chart plots INDEXES, not dates (see the chart note).
+    private struct DayBar: Identifiable { let id = UUID(); let idx: Int; let dayStart: Date; let raw: Double; let isAnchor: Bool }
 
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var unitLabel: String {
@@ -558,7 +559,7 @@ struct WeekContextCard: View {
             let total = weekWorkouts
                 .filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd }
                 .reduce(0.0) { $0 + rawValue($1) }
-            bars.append(DayBar(dayStart: dayStart, raw: total, isAnchor: i == 0))
+            bars.append(DayBar(idx: bars.count, dayStart: dayStart, raw: total, isAnchor: i == 0))
         }
         return bars
     }
@@ -570,10 +571,14 @@ struct WeekContextCard: View {
             if days.filter({ $0.raw > 0 }).count >= 2 {
                 let maxDist = days.map { disp($0.raw) }.max() ?? 0
                 let total = days.reduce(0) { $0 + $1.raw }
-                let anchorDate = days.first(where: \.isAnchor)?.dayStart
                 card(total: total) {
+                    // Plotted on a plain INDEX axis, not dates (2026-08-14): date bands put each
+                    // bar at the band's centre (noon) while the domain ended at the last
+                    // midnight+12h, so the anchor bar clipped at the edge and every weekday
+                    // letter sat half a bar off. Integer x-positions with labels AT those same
+                    // integers make bar and letter alignment exact by construction.
                     Chart(days) { d in
-                        BarMark(x: .value("Day", d.dayStart, unit: .day),
+                        BarMark(x: .value("Day", d.idx),
                                 y: .value("Total", animate ? disp(d.raw) : 0),
                                 width: .fixed(20))
                             .foregroundStyle(d.isAnchor ? AnyShapeStyle(IridescentMaterial())
@@ -587,16 +592,16 @@ struct WeekContextCard: View {
                                 }
                             }
                     }
-                    .chartXScale(domain: xDomain)
+                    .chartXScale(domain: -0.5...6.5)
                     .chartYScale(domain: 0...max(1, maxDist * 1.2))
                     .chartYAxis(.hidden)
                     .chartXAxis {
-                        AxisMarks(values: .stride(by: .day)) { value in
+                        AxisMarks(values: Array(0...6)) { value in
                             AxisValueLabel {
-                                if let d = value.as(Date.self) {
-                                    Text(d, format: .dateTime.weekday(.narrow))
-                                        .font(.rounded(9, weight: d == anchorDate ? .bold : .semibold))
-                                        .foregroundStyle(d == anchorDate ? Theme.ink : Theme.inkTertiary)
+                                if let i = value.as(Int.self), let d = days.first(where: { $0.idx == i }) {
+                                    Text(d.dayStart, format: .dateTime.weekday(.narrow))
+                                        .font(.rounded(9, weight: d.isAnchor ? .bold : .semibold))
+                                        .foregroundStyle(d.isAnchor ? Theme.ink : Theme.inkTertiary)
                                 }
                             }
                         }
@@ -609,14 +614,6 @@ struct WeekContextCard: View {
                 .task { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { animate = true } }
             }
         }
-    }
-
-    /// Half-a-day of padding on each edge so the first/last bars aren't clipped by the plot frame.
-    private var xDomain: ClosedRange<Date> {
-        guard let lo = days.first?.dayStart, let hi = days.last?.dayStart, lo <= hi else {
-            return anchor...anchor.addingTimeInterval(1)
-        }
-        return lo.addingTimeInterval(-12 * 3600)...hi.addingTimeInterval(12 * 3600)
     }
 
     private func card<Content: View>(total: Double, @ViewBuilder _ content: () -> Content) -> some View {

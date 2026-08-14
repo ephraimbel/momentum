@@ -31,15 +31,18 @@ struct TimeInZonesCard: View {
                         ForEach(zones) { z in
                             let secs = dist[z.index - 1]
                             HStack(spacing: Theme.Space.md) {
+                                // The zone palette the Progress page's HR-zones card wears
+                                // (cool → hot, `MetricColor.zone`) — one zone language app-wide
+                                // (design-consistency call 2026-08-14).
                                 Text(z.label)
                                     .font(.rounded(Theme.FontSize.caption, weight: .black)).monospacedDigit()
-                                    .foregroundStyle(z.index >= 4 ? Theme.background : Theme.ink)
+                                    .foregroundStyle(.white)
                                     .frame(width: 34, height: 24)
                                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(Theme.ink.opacity(0.06 + 0.18 * Double(z.index))))
+                                        .fill(MetricColor.zone(z.index)))
                                 GeometryReader { geo in
                                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                        .fill(Theme.ink.opacity(0.10 + 0.16 * Double(z.index)))
+                                        .fill(MetricColor.zone(z.index).opacity(0.85))
                                         .frame(width: max(secs > 0 ? 6 : 0, geo.size.width * (total > 0 ? secs / total : 0)))
                                         .frame(maxHeight: .infinity, alignment: .center)
                                 }

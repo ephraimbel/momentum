@@ -29,21 +29,19 @@ struct StrengthSummaryContent: View {
     @State private var weekWorkouts: [Workout] = []
     /// The plan connection at the payoff moment — same slot as the run summary's line.
     @State private var planLine: String?
-    /// The identity card's muscle map animates only while visible (see `muscleCard`).
-    @State private var muscleMapOnScreen = true
 
     var body: some View {
         if let session = workout.strength {
             VStack(spacing: Theme.Space.lg) {
-                if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
+                if showsHeader { titleHeader }   // always has content now (type-title fallback + date)
                 headline(workout, session)   // staggers its own children; no outer reveal
                 if let planLine {
                     EarnedLine(text: planLine, systemImage: "calendar.badge.checkmark")
                         .reveal(revealDelay + 0.08)
                 }
-                // The session's identity visual, directly under the hero — the same slot the run
-                // page gives its route map. It used to sit mid-page, below the AI read.
-                muscleCard(session).reveal(revealDelay + 0.12)
+                // (The worked-body figure moved above this content — `ActivityHero`, 2026-08-14.
+                // The per-muscle tally keeps the identity slot.)
+                muscleTally(session).reveal(revealDelay + 0.12)
                 if !prs.isEmpty { prSection.reveal(revealDelay + 0.16) }
                 // Always offered — see CardioSummaryView. The title stays honest: a session with no
                 // record on it is worth sharing, but it isn't a PR and must not claim to be.
@@ -101,14 +99,8 @@ struct StrengthSummaryContent: View {
                         delay: revealDelay)
                 .reveal(revealDelay)
             if let competenceText { EarnedLine(text: competenceText).reveal(revealDelay + 0.14) }
-            HStack(alignment: .top, spacing: Theme.Space.md) {
-                stat("\(session.totalSets)", "Sets")
-                // "Time", matching the cardio hero's label for the same slot (unified 2026-08-14).
-                stat(Formatters.duration(s: workout.durationS), "Time")
-                stat("\(session.exercises.count)", "Exercises")
-                if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
-            }
-            .reveal(revealDelay + 0.22)
+            // The organized reading (2026-08-14): the labelled two-column grid every summary uses.
+            KeyStatsGrid(stats: keyStats(workout, session)).reveal(revealDelay + 0.22)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.Space.md)
@@ -116,9 +108,11 @@ struct StrengthSummaryContent: View {
 
     private var titleHeader: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            if !workout.title.isEmpty {
-                Text(workout.title).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-            }
+            // The eyebrow names the sport and the moment; the title sets the page's voice —
+            // the same block the save screens print under the hero's fade (2026-08-14).
+            ActivityEyebrow(type: workout.type, date: workout.startedAt)
+            Text(workout.title.isEmpty ? workout.type.title : workout.title)
+                .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
             if !workout.note.isEmpty {
                 Text(workout.note).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -127,16 +121,12 @@ struct StrengthSummaryContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            // Scale, never wrap — the 4-up row ("EXERCISES" et al.) breaks baseline alignment on
-            // an SE otherwise (mirrors CardioSummaryContent's stat).
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
+    private func keyStats(_ workout: Workout, _ session: StrengthSession) -> [KeyStat] {
+        var stats = [KeyStat("\(session.totalSets)", "Sets"),
+                     KeyStat(Formatters.duration(s: workout.durationS), "Time"),
+                     KeyStat("\(session.exercises.count)", "Exercises")]
+        if let kcal = workout.calories, kcal > 0 { stats.append(KeyStat("\(Int(kcal))", "Calories")) }
+        return stats
     }
 
     private var prSection: some View {
@@ -147,32 +137,23 @@ struct StrengthSummaryContent: View {
         }
     }
 
-    // MARK: Identity visual — the worked body
+    // MARK: Identity detail — the per-muscle tally
 
-    /// The worked body on the page's quiet surface, with the per-muscle working-set tally in a
-    /// two-column grid beneath the figure. Deliberately NOT the IridescentWash (user call
-    /// 2026-08-14): on this page the figure's own muscle glow is the colour, and a rainbow card
-    /// behind it plus PR accents elsewhere read as a cluster, not an earned moment. The wash
-    /// stays on the profile tiles and pager, where the figure is the only thing on screen.
-    private func muscleCard(_ session: StrengthSession) -> some View {
+    /// The working-set tally under the hero figure (the figure itself moved to `ActivityHero`,
+    /// 2026-08-14). Two columns: a ten-muscle session reads as a five-row grid, not a ten-row list.
+    @ViewBuilder
+    private func muscleTally(_ session: StrengthSession) -> some View {
         let entries = session.exercises.map { row in
             (primary: (row.exercise?.primaryMuscles ?? []).compactMap(MuscleGroup.init(rawValue:)),
              secondary: (row.exercise?.secondaryMuscles ?? []).compactMap(MuscleGroup.init(rawValue:)),
              sets: row.sets.filter { $0.isComplete && $0.type == .working }.count)
         }
-        let activation = StrengthMath.weeklySetsByMuscle(entries)
-        let byMuscle = activation
+        let byMuscle = StrengthMath.weeklySetsByMuscle(entries)
             .filter { $0.value > 0 }
             .sorted { $0.value > $1.value }
-        return VStack(spacing: Theme.Space.md) {
-            // Frozen once scrolled past (the AthletePanel pattern, perf audit 2026-08-13): the
-            // 250pt figure's mesh otherwise kept animating at 30 fps under the whole page visit.
-            MuscleMapView(activation: activation, forceStatic: !muscleMapOnScreen)
-                .frame(height: 250)
-                .frame(maxWidth: .infinity)
-                .onScrollVisibilityChange(threshold: 0.05) { muscleMapOnScreen = $0 }
-            if !byMuscle.isEmpty {
-                // Two columns: a ten-muscle session read as a five-row grid, not a ten-row list.
+        if !byMuscle.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                sectionTitle("Muscles worked")
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.lg),
                                     GridItem(.flexible())], spacing: Theme.Space.sm) {
                     ForEach(byMuscle, id: \.key) { muscle, sets in
@@ -189,10 +170,11 @@ struct StrengthSummaryContent: View {
                     }
                 }
             }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
         }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
     }
 
     // MARK: Exercise breakdown — the splits grammar, spoken in iron

@@ -8,11 +8,16 @@ struct WorkoutDetailView: View {
     var distanceUnit: DistanceUnit = .auto
     @Environment(CoachPresenter.self) private var coach
     @Environment(\.modelContext) private var context
+    /// Content has scrolled under the transparent bar — drives the top scrim below.
+    @State private var scrolledUnderBar = false
 
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: Theme.Space.md) {
+                // The scene leads here too (2026-08-14): the same full-bleed faded hero the save
+                // screens wear, running under the (transparent) navigation bar.
+                ActivityHero(workout: workout, canAddPhotos: true)
                 // Photos are editable from History too (2026-08-14, Strava parity): the photo you
                 // took mid-run often lands on the phone AFTER the save screen is gone, and a
                 // memory attached a week later is exactly the point. `WorkoutPhotoSection`
@@ -27,21 +32,42 @@ struct WorkoutDetailView: View {
                         CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
                                              canEditPhoto: true)
                     }
+                    askCoachRow
+                    // Change your mind later (the save screen's picker, revisitable): flipping the
+                    // audience re-dirties the workout so the next publish sweep reconciles the post —
+                    // up on share, DOWN on a downgrade to private. The regret path must be as easy
+                    // as the share path.
+                    if CommunityAccess.enabled {
+                        ShareVisibilityRow(privacy: $workout.privacy, boxed: true)
+                            .onChange(of: workout.privacy) {
+                                workout.syncedAt = nil
+                                try? context.save()
+                            }
+                    }
                 }
-                askCoachRow
-                // Change your mind later (the save screen's picker, revisitable): flipping the
-                // audience re-dirties the workout so the next publish sweep reconciles the post —
-                // up on share, DOWN on a downgrade to private. The regret path must be as easy
-                // as the share path.
-                if CommunityAccess.enabled {
-                    ShareVisibilityRow(privacy: $workout.privacy, boxed: true)
-                        .onChange(of: workout.privacy) {
-                            workout.syncedAt = nil
-                            try? context.save()
-                        }
-                }
+                .padding(.horizontal, Theme.Space.md)
             }
-            .padding(Theme.Space.md)
+            .padding(.bottom, Theme.Space.md)
+        }
+        // The hero draws under the transparent bar; the back button floats over the scene.
+        .ignoresSafeArea(edges: .top)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        // Same scrim contract as the save screens' chrome: invisible while the hero owns the
+        // top, materializing once content scrolls under the bar so text fades out beneath it.
+        .onScrollGeometryChange(for: Bool.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top > 40
+        } action: { _, scrolled in
+            withAnimation(.easeOut(duration: 0.18)) { scrolledUnderBar = scrolled }
+        }
+        .overlay(alignment: .top) {
+            LinearGradient(colors: [Theme.background.opacity(0.96),
+                                    Theme.background.opacity(0.85),
+                                    Theme.background.opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 90)
+                .ignoresSafeArea(edges: .top)
+                .opacity(scrolledUnderBar ? 1 : 0)
+                .allowsHitTesting(false)
         }
         .onAppear {
             #if DEBUG

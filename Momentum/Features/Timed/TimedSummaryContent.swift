@@ -50,22 +50,15 @@ struct TimedSummaryContent: View {
         return "\(prefix) \(kind): checked off your plan."
     }
 
-    /// The activity's identity — its glyph on the earned-iridescent stage (this is the timed
-    /// sport's map slot), with the session's name and date.
+    /// The session's name and date, under the hero (the glyph moved to `ActivityHero`,
+    /// 2026-08-14) — the same left-aligned title block every discipline's history page leads with.
     private var header: some View {
-        VStack(spacing: Theme.Space.sm) {
-            ZStack {
-                Circle().fill(LinearGradient(colors: Theme.iridescent.map { $0.opacity(0.25) },
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 72, height: 72)
-                Image(systemName: workout.type.systemImage)
-                    .font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink)
-            }
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            ActivityEyebrow(type: workout.type, date: workout.startedAt)
             Text(workout.title.isEmpty ? workout.type.title : workout.title)
-                .font(.display(Theme.FontSize.title, weight: .black)).foregroundStyle(Theme.ink)
-            Text(workout.startedAt.formatted(.dateTime.weekday(.wide).month().day().hour().minute()))
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The duration hero with the shared count-up reveal, over an equal-width row of whatever the
@@ -76,13 +69,10 @@ struct TimedSummaryContent: View {
                         format: { Formatters.duration(s: $0) },
                         label: "Duration",
                         delay: revealDelay)
+            // The organized reading (2026-08-14): the labelled two-column grid every summary uses.
             let stats = statEntries
             if !stats.isEmpty {
-                HStack(alignment: .top, spacing: Theme.Space.md) {
-                    ForEach(stats, id: \.label) { entry in
-                        stat(entry.value, entry.label)
-                    }
-                }
+                KeyStatsGrid(stats: stats.map { KeyStat($0.value, $0.label) })
             }
         }
         .frame(maxWidth: .infinity)
@@ -104,13 +94,4 @@ struct TimedSummaryContent: View {
         return out
     }
 
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
-    }
 }

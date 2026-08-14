@@ -37,6 +37,10 @@ struct StrengthSaveView: View {
     @State private var saveFailed = false
     @State private var discardFailed = false
     @State private var confirmDiscard = false
+    /// Content has scrolled under the floating chrome — see `SaveScreenChrome.showsScrim`.
+    @State private var scrolledUnderChrome = false
+    /// The second discard gate — the point-blank "Are you sure?" (user call 2026-08-14).
+    @State private var confirmDiscardFinal = false
     /// Session-level perceived effort — the same 1–10 rating the cardio and timed editors collect
     /// (unified 2026-08-14; strength was the one save screen without it).
     @State private var effort: Int?
@@ -48,19 +52,22 @@ struct StrengthSaveView: View {
             ScrollViewReader { proxy in
             ScrollView {
                 if let workout {
-                    // Name first (user call 2026-08-14, Strava's order): the title and story lead
-                    // the page; the summary follows; the settings close it.
+                    // The scene leads (user call 2026-08-14): the worked body runs edge-to-edge
+                    // from the very top and dissolves into the page; the name and story print
+                    // over its tail; the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
-                        titleCard
-                        // Reveals on arrival — the celebration moved to Save, nothing covers this.
-                        // canEditPhoto was never passed here (caught 2026-08-14) — the one save
-                        // screen where you couldn't attach a photo to the session you just did.
-                        StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
-                                               celebratePRs: true, showsHeader: false,
-                                               canEditPhoto: true, showsPlanLine: true)
-                        detailsCard.id("strengthEditor")
+                        ActivityHero(workout: workout, canAddPhotos: true)
+                        Group {
+                            titleCard
+                            // Reveals on arrival — the celebration moved to Save, nothing covers this.
+                            StrengthSummaryContent(workout: workout, weightUnit: weightUnit,
+                                                   celebratePRs: true, showsHeader: false,
+                                                   canEditPhoto: true, showsPlanLine: true)
+                            detailsCard.id("strengthEditor")
+                        }
+                        .padding(.horizontal, Theme.Space.md)
                     }
-                    .padding(Theme.Space.md)
+                    .padding(.bottom, Theme.Space.md)
                     #if DEBUG
                     // Deterministic sim verification of the lower page (exercise bars, week
                     // tonnage card) — simctl can't scroll a headless sim.
@@ -87,38 +94,45 @@ struct StrengthSaveView: View {
             }
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
-            // Not "Save workout": the session was on disk before this screen appeared.
-            .navigationTitle(workout?.type.title ?? "Workout")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    // Discard sits behind a menu (CardioSaveView's rule, unified 2026-08-14).
-                    // Strength had NO discard at all — an accidental empty session could only be
-                    // deleted by hunting it down in History afterwards.
-                    Menu {
-                        Button("Discard workout", systemImage: "trash", role: .destructive) {
-                            confirmDiscard = true
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
-                    }
-                    .accessibilityLabel("More options")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { save() }.fontWeight(.bold).disabled(workout == nil)
-                }
+            // The hero reaches the physical top of the screen; chrome floats over it (the
+            // full-screen map's grammar) instead of a navigation bar.
+            .ignoresSafeArea(edges: .top)
+            .toolbar(.hidden, for: .navigationBar)
+            // The chrome's scrim keys off scroll — see CardioSaveView.
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > 40
+            } action: { _, scrolled in
+                withAnimation(.easeOut(duration: 0.18)) { scrolledUnderChrome = scrolled }
             }
             .confirmationDialog("Discard this workout?", isPresented: $confirmDiscard,
                                 titleVisibility: .visible) {
-                Button("Discard", role: .destructive) { discard() }
+                // Two gates, deliberately — see CardioSaveView.
+                Button("Discard", role: .destructive) { confirmDiscardFinal = true }
                 Button("Keep", role: .cancel) {}
             } message: {
                 Text("Every set you logged will be deleted. This can't be undone.")
+            }
+            .alert("Are you sure?", isPresented: $confirmDiscardFinal) {
+                Button("Yes, discard it", role: .destructive) { discard() }
+                Button("Keep it", role: .cancel) {}
+            } message: {
+                Text("There's no way to get this workout back.")
             }
             .alert("Couldn't discard", isPresented: $discardFailed) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("Something went wrong deleting this workout. Nothing was deleted — try again.")
+            }
+        }
+        .overlay(alignment: .top) {
+            SaveScreenChrome(onDone: { save() }, doneDisabled: workout == nil,
+                             showsScrim: scrolledUnderChrome) {
+                // Discard sits behind the menu (CardioSaveView's rule). Strength had NO discard
+                // at all before 2026-08-14 — an accidental empty session could only be deleted
+                // by hunting it down in History afterwards.
+                Button("Discard workout", systemImage: "trash", role: .destructive) {
+                    confirmDiscard = true
+                }
             }
         }
         .overlay {
@@ -154,24 +168,24 @@ struct StrengthSaveView: View {
         }
     }
 
-    /// The session's name and story, LEADING the page (user call 2026-08-14, Strava's order):
-    /// what you call it and what it meant read first; the settings live in `detailsCard` below.
+    /// The session's name and story printed directly on the page under the hero's fade (user
+    /// call 2026-08-14) — no card box; see CardioSaveView's titleCard.
     private var titleCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if let workout { ActivityEyebrow(type: workout.type, date: workout.startedAt) }
             TextField("Name your workout", text: $title)
-                .font(.display(24, weight: .black))
+                .font(.display(30, weight: .black))
                 .foregroundStyle(Theme.ink)
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
-            Divider().overlay(Theme.hairline)
+            Divider().overlay(Theme.hairline).padding(.vertical, 2)
             TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
         }
-        .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var detailsCard: some View {

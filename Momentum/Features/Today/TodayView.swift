@@ -127,6 +127,10 @@ struct TodayView: View {
     /// Today's pending plan session, memoized for the same reason (see `pendingToday`).
     @State private var cachedPendingToday: PlannedSession?
     @State private var pendingTodayToken: Int = 0
+    /// The strength home's memoized reads — see `lastStrength`.
+    @State private var cachedLastStrength: Workout?
+    @State private var cachedLastActivation: [MuscleGroup: Double] = [:]
+    @State private var strengthMemoToken: Int = 0
     /// The deck's plan story when nothing is left to start — "today's done" or "rest day, next up
     /// Thursday". Cached beside `cachedPendingToday` (same invalidation token) because the deck body
     /// re-evaluates per frame while the map pans, and filtering the full session list per frame is
@@ -293,6 +297,7 @@ struct TodayView: View {
             // AFTER bootstrap (its reconcile pass can move sessions): snapshot today's plan row so
             // body reads stay cheap. Every appear, so plan-tab edits show the moment you return.
             refreshPendingToday()
+            refreshStrengthMemo()
             matchPickerToTodaysPlan()
             #if DEBUG
             if debugFlag("--sport-picker") { showSportPicker = true }   // picker face verification
@@ -325,6 +330,7 @@ struct TodayView: View {
         // Any signature change (new plan, session added/removed, workout landed, day rollover)
         // re-snapshots the deck's plan row.
         .onChange(of: currentPendingToken) { refreshPendingToday() }
+        .onChange(of: currentStrengthToken) { refreshStrengthMemo() }
         // The morning readout's number, computed off the render path (page-load-perf rule — the
         // Health reads are async and `RecoveryModel` folds a month of workouts). Recomputes when a
         // workout lands or today's check-in is answered. `ReadinessToday` is the ONE full-blend
@@ -1026,15 +1032,46 @@ struct TodayView: View {
         return repText.isEmpty ? "\(n) set\(n == 1 ? "" : "s")\(weight)" : "\(n) × \(repText)\(weight)"
     }
 
+    /// The most recent lift, memoized behind the same cheap signature `pendingToday` uses (perf
+    /// 2026-08-14). Both this and `lastStrengthActivation` are read from `body` — the readout
+    /// reads one, the body map the other — so on the strength home EVERY body pass (the scroll
+    /// offset changing, the deck animating, any store change) re-walked the whole workout table
+    /// and re-ran the activation engine. That is the jank the athlete feels while scrolling.
     private var lastStrength: Workout? {
-        workouts.filter { $0.type.isStrengthStyle }.max(by: { $0.startedAt < $1.startedAt })
+        strengthMemoToken == currentStrengthToken ? cachedLastStrength : computeLastStrength()
     }
 
     /// Muscles worked in the most recent strength session — drives the strength-home body map.
     /// Empty (a faint silhouette) before the athlete's first lift.
     private var lastStrengthActivation: [MuscleGroup: Double] {
-        guard let session = lastStrength?.strength else { return [:] }
+        strengthMemoToken == currentStrengthToken ? cachedLastActivation : computeLastActivation()
+    }
+
+    /// Cheap signature — read off the CACHED workout, never a fresh table walk:
+    /// - `workouts.count` catches a session appearing or being deleted;
+    /// - the cached session's `totalSets` catches sets landing on the session we're already
+    ///   showing. That second term is load-bearing: a live lift inserts its workout row FIRST and
+    ///   persists sets as they happen, so a count-only token would leave Today's body map showing
+    ///   an empty silhouette for the session that just finished.
+    private var currentStrengthToken: Int {
+        var h = Hasher()
+        h.combine(workouts.count)
+        h.combine(cachedLastStrength?.persistentModelID)
+        h.combine(cachedLastStrength?.strength?.totalSets ?? -1)
+        return h.finalize()
+    }
+    private func computeLastStrength() -> Workout? {
+        workouts.filter { $0.type.isStrengthStyle }.max(by: { $0.startedAt < $1.startedAt })
+    }
+    private func computeLastActivation() -> [MuscleGroup: Double] {
+        guard let session = computeLastStrength()?.strength else { return [:] }
         return MuscleActivation.from(session: session)
+    }
+    /// Refill both caches together — called from the same lifecycle hooks as `refreshPendingToday`.
+    private func refreshStrengthMemo() {
+        cachedLastStrength = computeLastStrength()
+        cachedLastActivation = computeLastActivation()
+        strengthMemoToken = currentStrengthToken
     }
 
     private func relativeDay(_ date: Date) -> String {
