@@ -25,6 +25,19 @@ const inter = localFont({
   display: "swap",
 });
 
+// The editorial voice (2026-08-14 aesthetic pass): Instrument Serif — condensed, high-contrast,
+// sharp-serifed display face with lively true italics (OFL). One optical weight, made for exactly
+// the print-poster scale headlines this direction calls for. Headlines speak in this; Space
+// Grotesk keeps the numbers (the app's data voice) and Inter keeps the UI.
+const instrumentSerif = localFont({
+  src: [
+    { path: "../public/fonts/InstrumentSerif-Regular.ttf", weight: "400", style: "normal" },
+    { path: "../public/fonts/InstrumentSerif-Italic.ttf", weight: "400", style: "italic" },
+  ],
+  variable: "--font-serif",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   // The canonical home (momentumco.app, live 2026-07-12): absolute URLs for OG/Twitter cards
   // and canonicals resolve against this, not the per-deployment *.vercel.app hostname.
@@ -60,14 +73,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#ffffff",
+  themeColor: "#faf7f2",
   width: "device-width",
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${spaceGrotesk.variable} ${inter.variable}`}>
+    <html lang="en" className={`${spaceGrotesk.variable} ${inter.variable} ${instrumentSerif.variable}`}>
       <body>{children}</body>
     </html>
   );

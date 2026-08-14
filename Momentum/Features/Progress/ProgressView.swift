@@ -423,14 +423,20 @@ struct ProgressScreen: View {
         }
         .task(id: aggregateKey) {
             if aggregatedForKey != aggregateKey {
-                await Task.yield()   // let the skeleton frame paint before the heavy pass
+                // A real pause, not a bare yield — one suspension hop resumed inside the same
+                // transition, so the whole stack below still ran back-to-back on the main actor
+                // before the skeleton could paint (perf audit 2026-08-13). Each stage gets the
+                // run loop back before the next starts; cancellation exits between stages.
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
                 // The PR shelf must be complete BEFORE the aggregate pass snapshots it into
                 // prBadgeIDs — running the one-time backfill after it left History badge-less
                 // for the whole first session. Flag-guarded: one UserDefaults read thereafter.
                 RecordsBook.backfillIfNeeded(in: context)
+                await Task.yield()
                 // Awards ride the same visit: history that predates the awards system earns its
                 // coins here (already-seen — no celebration spam for months-old milestones).
                 AwardsBook.sync(in: context)
+                await Task.yield()
                 withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
                 aggregatedForKey = aggregateKey
             }
@@ -438,6 +444,7 @@ struct ProgressScreen: View {
             // Once per screen instance, and after first paint: ingest re-walks history.
             guard !didUpkeep, let p = profiles.first else { return }
             didUpkeep = true
+            await Task.yield()
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
         }
@@ -564,6 +571,19 @@ struct ProgressScreen: View {
                     // bars — F&F's fatigue line tells that story — and the vitals/cadence/climb/
                     // efficiency deep-dive wall: vitals live on the Health page, and the exotic
                     // mechanics read as noise next to the numbers athletes actually track.)
+                    // Free tier renders the static teaser column, not the live cluster: `.proLocked`
+                    // blurs already-built content, so an un-entitled athlete used to pay the FULL
+                    // build of the heaviest stack in the app (five chart systems) plus a live-subtree
+                    // blur pass on every scroll frame, to see frost (perf audit 2026-08-13). Behind
+                    // radius-9 blur + the 0.55 scrim, same-footprint surface shapes read identically
+                    // as "the whole page, withheld". ProTrendsSection/StrengthProgressSection keep
+                    // their own `pro:` seam for the `--analytics-lab` harness.
+                    if !isAnalyticsPro {
+                        proClusterTeaser
+                            .reveal(0.06, once: "trends.pro")
+                            .id("charts")
+                            .proLocked(.advancedAnalytics)
+                    } else {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
@@ -596,7 +616,7 @@ struct ProgressScreen: View {
                     }
                     .reveal(0.06, once: "trends.pro")
                     .id("charts")
-                    .proLocked(.advancedAnalytics)
+                    }
                     // App Review 1.4.1: the citations door, at the foot of the page that shows
                     // the calculations (every chart's ⓘ sheet also carries its own source link).
                     SourcesFooterLink()
@@ -669,6 +689,10 @@ struct ProgressScreen: View {
                 #endif
             }
             .task {
+                // Staggered off the first Trends paint — this, the steps fetch and the readiness
+                // cold path all used to fan out HealthKit queries in the same frame the skeleton
+                // was still settling (perf audit 2026-08-13).
+                do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
                 async let s = services.health.recoverySignals()
                 async let v = services.health.measuredVO2Max()
                 signals = await s
@@ -677,6 +701,7 @@ struct ProgressScreen: View {
             // Daily movement for the steps card — refetched per window (a cheap statistics query).
             // Week fetches 14 days: the headline's vs-last-week delta needs the prior seven.
             .task(id: "steps-\(trendRange.rawValue)") {
+                do { try await Task.sleep(for: .milliseconds(300)) } catch { return }   // see stagger note above
                 let days = await services.health.dailySteps(daysBack: trendIsDaily ? 14 : trendRange.weeks * 7)
                 stepDays = days.map { TrendsEssentials.StepPoint(date: $0.day, steps: $0.steps) }
             }
@@ -685,6 +710,7 @@ struct ProgressScreen: View {
             // publishes so every sibling surface shows this exact number.
             .task(id: "\(workouts.count)-\(checkins.count)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))") {
                 guard ReadinessTodayCache.today() == nil else { return }
+                do { try await Task.sleep(for: .milliseconds(600)) } catch { return }   // see stagger note above
                 if let r = await ReadinessToday.compute(health: services.health,
                                                         workouts: workouts, checkins: checkins) {
                     ReadinessToday.publish(r)
@@ -2020,6 +2046,22 @@ struct ProgressScreen: View {
 
     /// Whether the deep analytics are unlocked — the whole Progress page's Pro gate.
     private var isAnalyticsPro: Bool { paywallController.isEntitled(to: .advancedAnalytics) }
+
+    /// What the un-entitled athlete's `.proLocked` frost covers — the Pro cluster's FOOTPRINT
+    /// (chart-height surface shapes with hairlines), not the live cluster itself. Behind the
+    /// radius-9 blur and 0.55 scrim the two are indistinguishable, and this one costs nothing to
+    /// build and nothing per scroll frame (perf audit 2026-08-13).
+    private var proClusterTeaser: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            ForEach(Array([210, 150, 240, 180, 260, 150, 220].enumerated()), id: \.offset) { _, h in
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .fill(Theme.surface)
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                        .stroke(Theme.hairline))
+                    .frame(height: CGFloat(h))
+            }
+        }
+    }
 
     /// Free-tier anchor: distance, not VO₂max. Everyone gets to see the miles they ran; the
     /// fitness read (and everything the body's rail carries) is the Pro upgrade.

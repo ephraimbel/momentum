@@ -41,6 +41,8 @@ struct ReadinessHeroCard: View {
     @State private var revealTask: Task<Void, Never>?
     @State private var glintPhase = 0.0     // 0→1 carries the one-time primed sweep around the ring
     @State private var glintShown = false
+    /// The primed ring's mesh animates only while the card is visible (AthletePanel pattern).
+    @State private var onScreen = true
 
     private static let ringSize: CGFloat = 180
     private static let ringWidth: CGFloat = 14
@@ -65,6 +67,7 @@ struct ReadinessHeroCard: View {
                 educationFooter
             }
         }
+        .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
         .onAppear(perform: reveal)
         .onDisappear {
             revealTask?.cancel()
@@ -179,9 +182,16 @@ struct ReadinessHeroCard: View {
                 .opacity(trackShown ? 1 : 0)
 
             if band == .primed {
-                IridescentView(intensity: 0.95)
-                    .mask { fillArc(progress, style: style) }
+                // The glow rides a STATIC ghost of the arc, not the animated mesh — a soft shadow
+                // over a 30 fps-invalidating layer forced an offscreen shadow re-raster every
+                // frame (perf audit 2026-08-13). The ghost draws solid in the band color so the
+                // shadow has alpha to cast from; the mesh covers it at 0.95, so at most 5% of the
+                // green bleeds through — imperceptible, and it IS the ring's own glow color.
+                fillArc(progress, style: style)
+                    .foregroundStyle(color)
                     .shadow(color: color.opacity(0.45), radius: 12)
+                IridescentView(intensity: 0.95, isStatic: !onScreen)
+                    .mask { fillArc(progress, style: style) }
                 sweepGlint
                     .mask { fillArc(progress, style: style) }
             } else {

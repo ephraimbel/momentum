@@ -100,6 +100,26 @@ The first Momentum: your adaptive running coach. Build a plan for your race, tra
 ```
 
 ## Privacy nutrition label (App Store Connect → App Privacy)
+
+> ### ⚠️ BUILD 25 CHANGES THIS SECTION — do not submit build 25 without updating the label first
+> Build 25 is the first build where the **Meta SDK actually initializes** (`META_APP_ID` /
+> `META_CLIENT_TOKEN` are now set in `Secrets.xcconfig`). It sends `CompletedRegistration` plus
+> StoreKit-observed purchase / subscribe / start-trial events to Meta, which combines them with its
+> own data to measure advertising. **That is "tracking" by Apple's definition**, so the app now also
+> ships an **App Tracking Transparency prompt** (`AdTrackingConsent` + `NSUserTrackingUsageDescription`).
+>
+> In App Store Connect → App Privacy you must now ALSO declare, with **"Used for Tracking" checked**:
+> - **Identifiers → Device ID** (the IDFA, read only when the athlete allows tracking)
+> - **Purchases → Purchase History** (purchase / subscribe / trial events reach Meta)
+> - **Usage Data → Product Interaction** (the account-created event reaches Meta)
+>
+> This is exactly the disclosure whose absence made us blank the TikTok keys in build 22 — shipping
+> the Meta keys without it is the same violation. If you would rather not make these declarations,
+> the fix is to blank `META_APP_ID`/`META_CLIENT_TOKEN` again and re-cut the build; SKAdNetwork
+> install attribution keeps working either way, since SKAN is explicitly not tracking.
+>
+> HealthKit / location / workout data is **still never** used for advertising and must never be.
+
 Declare accurately (you collect these):
 - **Location** — precise, for tracking runs (linked to the user, used for App Functionality; not for tracking/ads).
 - **Health & Fitness** — workouts, heart rate, HRV, sleep (via HealthKit; App Functionality; not shared).

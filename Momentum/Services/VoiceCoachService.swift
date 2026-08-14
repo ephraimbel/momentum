@@ -15,14 +15,20 @@ final class VoiceCoachService: NSObject, VoiceCoachServing {
         set { UserDefaults.standard.set(newValue, forKey: Self.storageKey) }
     }
 
-    private let synthesizer = AVSpeechSynthesizer()
+    /// Lazily created: `AVSpeechSynthesizer()` spins up the speech/audio stack, which is real cost
+    /// on the cold-start path (this service is built inside `Services.live()` in `MomentumApp.init`)
+    /// for something only ever needed mid-run. First `announce` pays it instead.
     private let logger = Logger(subsystem: "com.ephraimbel.momentum.app", category: "voicecoach")
 
-    override init() {
-        super.init()
+    private var _synthesizer: AVSpeechSynthesizer?
+    private var synthesizer: AVSpeechSynthesizer {
+        if let existing = _synthesizer { return existing }
+        let fresh = AVSpeechSynthesizer()
         // Without the delegate, `didFinish` never fires and the ducking session is only released at
         // finish() — leaving the athlete's music quiet for the entire run after the first cue.
-        synthesizer.delegate = self
+        fresh.delegate = self
+        _synthesizer = fresh
+        return fresh
     }
 
     /// Speak a cue. Activates a ducking audio session, speaks, and lets the session deactivate when
@@ -39,7 +45,9 @@ final class VoiceCoachService: NSObject, VoiceCoachServing {
     }
 
     func stop() {
-        synthesizer.stopSpeaking(at: .immediate)
+        // Only touch the synthesizer if it was ever created — `stop()` runs at every workout
+        // finish, and spinning up the audio stack just to stop nothing defeats the lazy init.
+        _synthesizer?.stopSpeaking(at: .immediate)
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 

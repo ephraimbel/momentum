@@ -5,6 +5,9 @@ import SwiftUI
 struct ProgressRing: View {
     var progress: Double                 // 0...1
     var lineWidth: CGFloat = 12
+    /// Freeze the iridescent fill (no 30 fps mesh) — pass from any scrolling/occluded host, same
+    /// contract as `MuscleMapView.forceStatic` (perf audit 2026-08-13).
+    var isStatic: Bool = false
 
     // A two-tone version of this — ink for the portion already banked, iridescence for the part just
     // earned — was tried and removed. Iridescence is deliberately soft on white, so beside an ink arc
@@ -15,7 +18,7 @@ struct ProgressRing: View {
         ZStack {
             Circle()
                 .stroke(Theme.hairline, lineWidth: lineWidth)
-            IridescentView(intensity: 0.95)
+            IridescentView(intensity: 0.95, isStatic: isStatic)
                 .mask {
                     Circle()
                         .trim(from: 0, to: max(0.0001, min(1, progress)))

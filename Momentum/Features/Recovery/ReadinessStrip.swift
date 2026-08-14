@@ -62,6 +62,8 @@ struct ReadinessStrip: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The primed mini-ring's mesh animates only while visible (see `miniRing`).
+    @State private var onScreen = true
 
     private var primed: Bool { bandWord == RecoveryModel.Readiness.primed.rawValue }
 
@@ -72,6 +74,7 @@ struct ReadinessStrip: View {
         } label: {
             label
         }
+        .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
         .buttonStyle(.plain)
         // No `.accessibilityElement(children: .ignore)` here — a Button is already one element,
         // and the extra wrapper made XCUITest/VoiceOver read the combined child text instead of
@@ -139,7 +142,10 @@ struct ReadinessStrip: View {
                     .shadow(color: color.opacity(0.5), radius: 6)
                     .overlay {
                         if primed {
-                            IridescentView(intensity: 0.9, isStatic: reduceMotion)
+                            // Frozen when scrolled off — this strip lives inside the Progress
+                            // scroll and its mesh kept ticking at 30 fps once past (perf audit
+                            // 2026-08-13; visibility gate set on the strip's body).
+                            IridescentView(intensity: 0.9, isStatic: reduceMotion || !onScreen)
                                 .mask(Circle().trim(from: 0, to: CGFloat(score) / 100)
                                     .stroke(style: StrokeStyle(lineWidth: 5, lineCap: .round))
                                     .rotationEffect(.degrees(-90)))

@@ -134,23 +134,24 @@ struct RunAnalysisSection: View {
         let avg = gps.avgHR ?? RunSignals.mean(hr.map(\.bpm))
         let floorBPM = Double(hr.map(\.bpm).min() ?? 0)
         let xs = hr.map { $0.t / 60 }
+        // XY hoisted out of the per-tick closure — see paceCard.
+        let xy = hr.enumerated().map { XY(id: $0.offset, x: $0.element.t / 60, y: Double($0.element.bpm)) }
         return chartCard("Heart rate", subtitle: avg.map { "avg \($0) bpm" } ?? "bpm over time") {
             RunScrubHost(xs: xs) { pinned in
-                hrChart(hr, avg: avg, floorBPM: floorBPM, pinned: pinned)
+                hrChart(xy, avg: avg, floorBPM: floorBPM, pinned: pinned)
             }
             .accessibilityLabel("Heart rate over time" + (avg.map { ", average \($0) beats per minute" } ?? ""))
         }
     }
 
-    private func hrChart(_ hr: [HRPt], avg: Int?, floorBPM: Double, pinned: Double?) -> some View {
+    private func hrChart(_ xy: [XY], avg: Int?, floorBPM: Double, pinned: Double?) -> some View {
         // Resolved OUTSIDE the ChartContentBuilder — a min(by:) search inside the builder is
         // exactly the expression shape that times out the type-checker.
         let avgY: Double? = avg.map(Double.init)
         let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
-            hr.min(by: { abs($0.t / 60 - pinX) < abs($1.t / 60 - pinX) })
-                .map { (pinX, "\($0.bpm) bpm", minuteLabel($0.t)) }
+            xy.min(by: { abs($0.x - pinX) < abs($1.x - pinX) })
+                .map { (pinX, "\(Int($0.y.rounded())) bpm", minuteLabel($0.x * 60)) }
         }
-        let xy = hr.enumerated().map { XY(id: $0.offset, x: $0.element.t / 60, y: Double($0.element.bpm)) }
         return Chart {
             floorAreaMarks(xy, floor: floorBPM)
             traceMarks(xy, color: Theme.ink, width: 2)
@@ -208,22 +209,26 @@ struct RunAnalysisSection: View {
         // SLOWEST pace — the area fills from there up to the line.
         let slowest = paced.map { perUnit($0.paceSPerKm) }.max() ?? 0
         let xs = paced.map { $0.distanceM / unitMeters }
+        // XY built ONCE per card, OUTSIDE the scrub closure — the closure re-runs on every scrub
+        // tick, and rebuilding ~200 plot structs (plus a full-series pace scan for the pin) per
+        // tick was real drag cost (perf audit 2026-08-13). The pin resolves from the same xy:
+        // its y IS the display value.
+        let xy = paced.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
+                                             y: perUnit($0.element.paceSPerKm)) }
         return chartCard("Pace", subtitle: subtitle) {
             RunScrubHost(xs: xs) { pinned in
-                paceChart(paced, avgSPerKm: avgSPerKm, slowest: slowest, pinned: pinned)
+                paceChart(xy, avgSPerKm: avgSPerKm, slowest: slowest, pinned: pinned)
             }
         }
     }
 
-    private func paceChart(_ paced: [Pt], avgSPerKm: Double?, slowest: Double, pinned: Double?) -> some View {
+    private func paceChart(_ xy: [XY], avgSPerKm: Double?, slowest: Double, pinned: Double?) -> some View {
         // Resolved outside the builder — see hrChart.
         let avgY: Double? = avgSPerKm.map(perUnit)
         let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
-            paced.min(by: { abs($0.distanceM / unitMeters - pinX) < abs($1.distanceM / unitMeters - pinX) })
-                .map { (pinX, "\(pace(perUnit($0.paceSPerKm))) /\(unitLabel)", distanceLabel(pinX)) }
+            xy.min(by: { abs($0.x - pinX) < abs($1.x - pinX) })
+                .map { (pinX, "\(pace($0.y)) /\(unitLabel)", distanceLabel(pinX)) }
         }
-        let xy = paced.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
-                                             y: perUnit($0.element.paceSPerKm)) }
         return Chart {
             // The reversed y-axis puts the SLOWEST pace at the visual floor — the area fills
             // from there up to the line, i.e. visually beneath it.
@@ -260,22 +265,23 @@ struct RunAnalysisSection: View {
         let subtitle = avgSpeed.map { "avg \(speedString($0)) \(speedUnitLabel)" } ?? "\(speedUnitLabel) over distance"
         let slowest = paced.map { speedPerHour(perUnit($0.paceSPerKm)) }.min() ?? 0
         let xs = paced.map { $0.distanceM / unitMeters }
+        // XY hoisted out of the per-tick closure — see paceCard.
+        let xy = paced.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
+                                             y: speedPerHour(perUnit($0.element.paceSPerKm))) }
         return chartCard("Speed", subtitle: subtitle) {
             RunScrubHost(xs: xs) { pinned in
-                speedChart(paced, avgSpeed: avgSpeed, slowest: slowest, pinned: pinned)
+                speedChart(xy, avgSpeed: avgSpeed, slowest: slowest, pinned: pinned)
             }
             .accessibilityLabel("Speed over distance" + (avgSpeed.map { ", average \(speedString($0)) \(speedUnitLabel)" } ?? ""))
         }
     }
 
-    private func speedChart(_ paced: [Pt], avgSpeed: Double?, slowest: Double, pinned: Double?) -> some View {
+    private func speedChart(_ xy: [XY], avgSpeed: Double?, slowest: Double, pinned: Double?) -> some View {
         // Resolved outside the builder — see hrChart.
         let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
-            paced.min(by: { abs($0.distanceM / unitMeters - pinX) < abs($1.distanceM / unitMeters - pinX) })
-                .map { (pinX, "\(speedString(speedPerHour(perUnit($0.paceSPerKm)))) \(speedUnitLabel)", distanceLabel(pinX)) }
+            xy.min(by: { abs($0.x - pinX) < abs($1.x - pinX) })
+                .map { (pinX, "\(speedString($0.y)) \(speedUnitLabel)", distanceLabel(pinX)) }
         }
-        let xy = paced.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
-                                             y: speedPerHour(perUnit($0.element.paceSPerKm))) }
         return Chart {
             floorAreaMarks(xy, floor: slowest)
             traceMarks(xy, color: Theme.ink, width: 2)
@@ -334,25 +340,22 @@ struct RunAnalysisSection: View {
         let yScale = distanceUnit.resolved() == .imperial ? Formatters.feetPerMeter : 1
         let unitName = distanceUnit.resolved() == .imperial ? "ft" : "m"
         let xs = pts.map { $0.distanceM / unitMeters }
+        // XY hoisted out of the per-tick closure — see paceCard.
+        let xy = pts.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
+                                           y: ($0.element.altitudeM - minAlt) * yScale) }
         return chartCard("Elevation", subtitle: "\(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit)) gain") {
             RunScrubHost(xs: xs) { pinned in
-                elevationChart(pts, minAlt: minAlt, yScale: yScale, unitName: unitName, pinned: pinned)
+                elevationChart(xy, unitName: unitName, pinned: pinned)
             }
         }
     }
 
-    private func elevationChart(_ pts: [Pt], minAlt: Double, yScale: Double,
-                                unitName: String, pinned: Double?) -> some View {
+    private func elevationChart(_ xy: [XY], unitName: String, pinned: Double?) -> some View {
         // Resolved outside the builder — see hrChart.
         let pin: (x: Double, value: String, label: String)? = pinned.flatMap { pinX in
-            pts.min(by: { abs($0.distanceM / unitMeters - pinX) < abs($1.distanceM / unitMeters - pinX) })
-                .map { p in
-                    let height = Int(((p.altitudeM - minAlt) * yScale).rounded())
-                    return (pinX, "\(height) \(unitName)", distanceLabel(pinX))
-                }
+            xy.min(by: { abs($0.x - pinX) < abs($1.x - pinX) })
+                .map { (pinX, "\(Int($0.y.rounded())) \(unitName)", distanceLabel(pinX)) }
         }
-        let xy = pts.enumerated().map { XY(id: $0.offset, x: $0.element.distanceM / unitMeters,
-                                           y: ($0.element.altitudeM - minAlt) * yScale) }
         return Chart {
             groundAreaMarks(xy)
             traceMarks(xy, color: Theme.inkSecondary, width: 1.5)
@@ -665,10 +668,19 @@ private struct RunScrubHost<ChartView: View>: View {
     @ViewBuilder let chart: (Double?) -> ChartView
     @State private var scrub = RunScrubState()
 
+    /// Compact change key — `.onChange(of: xs)` diffed the full ~200-element array on every body
+    /// pass of every scrub tick (perf audit 2026-08-13). Count + endpoints move whenever the
+    /// series really changes (unit flip, HR backfill, re-derive).
+    private var xsToken: Int {
+        var h = Hasher()
+        h.combine(xs.count); h.combine(xs.first ?? 0); h.combine(xs.last ?? 0)
+        return h.finalize()
+    }
+
     var body: some View {
         chart(scrub.pinned)
             .chartXSelection(value: Binding(get: { scrub.pinned },
                                             set: { scrub.handle($0, xs: xs) }))
-            .onChange(of: xs) { scrub = .init() }
+            .onChange(of: xsToken) { scrub = .init() }
     }
 }

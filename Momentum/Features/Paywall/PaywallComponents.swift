@@ -35,6 +35,10 @@ struct PaywallBackground: View {
                                        startPoint: .top, endPoint: .bottom)
                     }
                 )
+                // Flatten the animating mesh + two-gradient mask into one Metal composite — as
+                // plain layers, every 30fps tick re-ran the full-screen mask on the CPU
+                // compositor (perf audit 2026-08-13).
+                .drawingGroup()
         }
         .ignoresSafeArea()
     }
@@ -197,7 +201,12 @@ struct PaywallShowcase: View {
         let sink = h * 0.036
         return GeometryReader { geo in
             ScrollView(.horizontal) {
-                HStack(spacing: Theme.Space.md) {
+                // Lazy, deliberately: a plain HStack realized all nine device cards at once — nine
+                // full-screen PNG decodes and nine shadow passes on the page's FIRST frame, which
+                // was most of the onboarding paywall's arrival jank (perf audit 2026-08-13). Lazy
+                // keeps only the on-screen fan alive; the fade floor below never hides a card
+                // fully, but cards beyond the viewport are simply not realized.
+                LazyHStack(spacing: Theme.Space.md) {
                     ForEach(Array(Self.slides.enumerated()), id: \.offset) { i, name in
                         deviceCard(name, w: w, h: h)
                             .visualEffect { content, proxy in
@@ -239,8 +248,11 @@ struct PaywallShowcase: View {
             .fill(LinearGradient(colors: [Color(white: 0.38), Color(white: 0.16)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))   // titanium rail
             .overlay {
+                // `.medium` interpolation: the shots ship pre-downsampled to ~the glass's own pixel
+                // size (720 wide, 2026-08-13), so the near-1:1 draw gains nothing from Lanczos —
+                // `.high` was pure GPU cost across every card of the fan.
                 Image(name)
-                    .resizable().interpolation(.high).scaledToFill()
+                    .resizable().interpolation(.medium).scaledToFill()
                     // Top-aligned: the tiny aspect difference between capture and glass crops off
                     // the BOTTOM edge (under the home indicator), never the status bar — the
                     // island always reads complete.

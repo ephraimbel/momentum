@@ -30,7 +30,11 @@ struct PlanView: View {
     @State private var adjusted = false
     @State private var launch: TodayLaunch?
     @State private var pendingStart: PlannedSession?     // start after the detail sheet dismisses
-    @State private var locator = LocationService()
+    /// Created on first cardio start, not at init: this view is constructed on every RootView
+    /// body pass (the TabView content builder runs eagerly), and a `CLLocationManager` per pass
+    /// for a one-shot authorization ask was pure launch cost (perf audit 2026-08-13). Held in
+    /// @State so the manager outlives the authorization prompt it raises.
+    @State private var locator: LocationService?
     @State private var showSettings = false
     @State private var showNewPlan = false
     /// "Plan it myself" confirmation — dropping the coach's prescriptions deserves one honest ask.
@@ -265,7 +269,9 @@ struct PlanView: View {
         if t.isStrengthStyle { launch = .strength(type: t, planned: session) }
         else if t.isTimed { launch = .timed(type: t) }
         else {
-            locator.requestAuthorization()
+            let loc = locator ?? LocationService()
+            locator = loc
+            loc.requestAuthorization()
             launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
         }
     }
@@ -832,7 +838,21 @@ struct PlanView: View {
         let planTok = h.finalize()
         if planTok != planScopeToken {
             planScopeToken = planTok
-            rebuildPlanScoped(plan: plan, calendar: cal)
+            // Deferred one beat (perf audit 2026-08-13): this is the expensive half — the tune
+            // proposal's ~18 workout-table passes, PaceInsights faulting session→workout→gps, the
+            // arc volumes — and running it inline meant the Plan tab's FIRST frame paid all of it
+            // before anything appeared. The board above renders immediately; the tune card, the
+            // coach's read and the arc fill in a beat later. A newer rebuild supersedes via the
+            // token guard; the week-scoped `weekPhase`/hybrid refresh below re-runs after it lands
+            // because both read plan-scoped caches.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard planScopeToken == planTok, let livePlan = self.plan else { return }
+                rebuildPlanScoped(plan: livePlan, calendar: cal)
+                weekPhaseCache = computeWeekPhase()
+                coachsReadModel.hybridInsight = hybridWeekInsight
+            }
+            return
         }
         weekPhaseCache = computeWeekPhase()
         coachsReadModel.hybridInsight = hybridWeekInsight

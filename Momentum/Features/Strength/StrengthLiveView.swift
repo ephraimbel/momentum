@@ -23,6 +23,8 @@ struct StrengthLiveView: View {
     @State private var finishing = false
     /// The exercise waiting for its superset partner — presents the library in pick-one mode.
     @State private var supersetAnchor: SupersetAnchor?
+    /// The live muscle map animates only while visible — see its `.onScrollVisibilityChange`.
+    @State private var mapOnScreen = true
     private struct SupersetAnchor: Identifiable { let id: UUID }
 
     /// Display groups: superset members render as one card, everything else as singles.
@@ -95,11 +97,15 @@ struct StrengthLiveView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: Theme.Space.lg) {
-                            MuscleMapView(activation: vm.muscleActivation)
+                            // Frozen once scrolled past (the AthletePanel pattern, perf audit
+                            // 2026-08-13): the live mesh otherwise burned 30 fps under the whole
+                            // session while the athlete worked far down the exercise list.
+                            MuscleMapView(activation: vm.muscleActivation, forceStatic: !mapOnScreen)
                                 .frame(height: 150)
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, Theme.Space.xs)
                                 .animation(Motion.standard, value: vm.completedSetCount)
+                                .onScrollVisibilityChange(threshold: 0.05) { mapOnScreen = $0 }
                             ForEach(exerciseGroups(vm), id: \.first!.id) { group in
                                 if group.count > 1 {
                                     SupersetSection(vm: vm, members: group)
@@ -441,16 +447,13 @@ private struct SupersetSection: View {
 }
 
 /// Floating rest-timer ring (PRD §4.4) — depletes with an iridescent edge; medium haptic at zero.
+/// The 10 Hz clock lives in `RestRingTicker`, the leaf that actually depletes — as one view, every
+/// tick re-composited the glass panel and buttons too (perf audit 2026-08-13; the MicLevelBars
+/// leaf rule: high-frequency state is read only by the smallest view that needs it).
 private struct RestBar: View {
     let vm: StrengthViewModel
-    @Environment(Services.self) private var services
-    @State private var now = Date()
-    @State private var didPulse = false
-    private let tick = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let remaining = vm.restRemaining(at: now) ?? 0
-        let progress = vm.restTotal > 0 ? remaining / vm.restTotal : 0
         VStack {
             Spacer()
             HStack(spacing: Theme.Space.lg) {
@@ -458,12 +461,8 @@ private struct RestBar: View {
                     Image(systemName: "gobackward.15").frame(width: 56, height: 56).contentShape(Rectangle())
                 }
                 .accessibilityLabel("Subtract 15 seconds")
-                RestTimerRing(progress: progress, remainingText: Formatters.duration(s: remaining),
-                              isComplete: remaining <= 0)
+                RestRingTicker(vm: vm)
                     .frame(width: 96, height: 96)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Rest timer")
-                    .accessibilityValue(remaining <= 0 ? "Done" : "\(Formatters.duration(s: remaining)) remaining")
                 Button { vm.adjustRest(by: 15) } label: {
                     Image(systemName: "goforward.15").frame(width: 56, height: 56).contentShape(Rectangle())
                 }
@@ -482,22 +481,41 @@ private struct RestBar: View {
             }
             .padding(.bottom, 100)
         }
-        .onReceive(tick) { date in
-            now = date
-            let remaining = vm.restRemaining(at: date) ?? 0
-            if remaining > 0 {
-                // A new rest is running — re-arm the completion pulse. Without this, only the FIRST
-                // rest of a continuous bar session ever buzzed/announced (the view instance survives
-                // between sets, so a one-way flag stayed latched).
-                didPulse = false
-            } else if !didPulse {
-                Haptics.medium()
-                services.analytics.log(.restTimerComplete)
-                if services.paywall.isEntitled(to: .voiceCoach) {
-                    services.voiceCoach.announce(CoachingCueBuilder.restComplete())
+    }
+}
+
+/// The depleting ring itself — the ONLY reader of the 10 Hz tick.
+private struct RestRingTicker: View {
+    let vm: StrengthViewModel
+    @Environment(Services.self) private var services
+    @State private var now = Date()
+    @State private var didPulse = false
+    private let tick = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        let remaining = vm.restRemaining(at: now) ?? 0
+        let progress = vm.restTotal > 0 ? remaining / vm.restTotal : 0
+        RestTimerRing(progress: progress, remainingText: Formatters.duration(s: remaining),
+                      isComplete: remaining <= 0)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Rest timer")
+            .accessibilityValue(remaining <= 0 ? "Done" : "\(Formatters.duration(s: remaining)) remaining")
+            .onReceive(tick) { date in
+                now = date
+                let remaining = vm.restRemaining(at: date) ?? 0
+                if remaining > 0 {
+                    // A new rest is running — re-arm the completion pulse. Without this, only the
+                    // FIRST rest of a continuous bar session ever buzzed/announced (the view
+                    // instance survives between sets, so a one-way flag stayed latched).
+                    didPulse = false
+                } else if !didPulse {
+                    Haptics.medium()
+                    services.analytics.log(.restTimerComplete)
+                    if services.paywall.isEntitled(to: .voiceCoach) {
+                        services.voiceCoach.announce(CoachingCueBuilder.restComplete())
+                    }
+                    didPulse = true
                 }
-                didPulse = true
             }
-        }
     }
 }

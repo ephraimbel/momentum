@@ -22,6 +22,46 @@ struct RacePickerSheet: View {
     private var results: [RaceCatalog.Race] { RaceCatalog.search(query) }
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
+    // MARK: Per-day caches (perf audit 2026-08-13)
+    //
+    // `body` re-runs per search keystroke, and every race row resolved its next occurrence (up to
+    // three Calendar walks) plus 3-4 fresh `Date.formatted` passes each time — ~20-60 ms per
+    // keystroke across the 100-race catalog. Both caches are static: the catalog is immutable and
+    // the resolved dates only change when the day does.
+
+    /// A race's resolved next date with every string a row renders, computed once per day.
+    private struct RowDate {
+        let date: Date
+        let monthDay: String     // "Apr 21"
+        let year: String         // "2027"
+        let fullLine: String     // "Monday, April 21, 2027"
+        let abbreviated: String  // accessibility label form
+    }
+    @MainActor private static var rowDateCache: (day: Date, rows: [String: RowDate?]) = (.distantPast, [:])
+    @MainActor private static func rowDate(for race: RaceCatalog.Race) -> RowDate? {
+        let day = Calendar.current.startOfDay(for: Date())
+        if rowDateCache.day != day { rowDateCache = (day, [:]) }
+        if let hit = rowDateCache.rows[race.id] { return hit }
+        let built: RowDate? = race.nextDate().map { next in
+            RowDate(date: next,
+                    monthDay: next.formatted(.dateTime.month(.abbreviated).day()),
+                    year: next.formatted(.dateTime.year()),
+                    fullLine: next.formatted(.dateTime.weekday(.wide).month(.wide).day().year()),
+                    abbreviated: next.formatted(date: .abbreviated, time: .omitted))
+        }
+        rowDateCache.rows[race.id] = built
+        return built
+    }
+
+    /// The default (not-searching) region grouping — one pass over the static catalog, ever.
+    private static let racesByRegion: [(region: RaceCatalog.Region, races: [RaceCatalog.Race])] = {
+        let all = RaceCatalog.search("")
+        return RaceCatalog.Region.allCases.compactMap { region in
+            let races = all.filter { $0.region == region }
+            return races.isEmpty ? nil : (region, races)
+        }
+    }()
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -30,12 +70,9 @@ struct RacePickerSheet: View {
                         raceList(results, kicker: results.isEmpty ? nil : "RESULTS")
                         if results.isEmpty { emptyState }
                     } else {
-                        ForEach(RaceCatalog.Region.allCases, id: \.self) { region in
-                            let races = results.filter { $0.region == region }
-                            if !races.isEmpty {
-                                raceList(races, kicker: region.rawValue.uppercased(),
-                                         spotlight: region == .majors)
-                            }
+                        ForEach(Self.racesByRegion, id: \.region) { group in
+                            raceList(group.races, kicker: group.region.rawValue.uppercased(),
+                                     spotlight: group.region == .majors)
                         }
                     }
                     Text("Dates are each race's traditional weekend — an estimate, not a promise. Confirm with your race; the date stays editable after locking in.")
@@ -63,7 +100,7 @@ struct RacePickerSheet: View {
             }
             // The commitment moment, pinned: nothing locks in until the athlete says so.
             .safeAreaInset(edge: .bottom) {
-                if let race = selected, let next = race.nextDate() {
+                if let race = selected, let next = Self.rowDate(for: race)?.date {
                     lockInBar(for: race, date: next)
                         .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 }
@@ -81,7 +118,9 @@ struct RacePickerSheet: View {
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
                     .foregroundStyle(Theme.inkTertiary)
             }
-            VStack(spacing: Theme.Space.sm) {
+            // Lazy: the default view lists ~100 cards across the regions — building them all on
+            // the sheet's first frame is why the race step arrived late.
+            LazyVStack(spacing: Theme.Space.sm) {
                 ForEach(races) { race in
                     raceRow(race, spotlight: spotlight)
                 }
@@ -93,7 +132,7 @@ struct RacePickerSheet: View {
     /// the weekend's distances and the date, so choosing feels considered, never accidental.
     private func raceRow(_ race: RaceCatalog.Race, spotlight: Bool) -> some View {
         let isSelected = selected?.id == race.id
-        let next = race.nextDate()
+        let next = Self.rowDate(for: race)
         return Button {
             Haptics.selection()
             withAnimation(reduceMotion ? nil : Motion.standard) {
@@ -120,10 +159,10 @@ struct RacePickerSheet: View {
                     Spacer(minLength: Theme.Space.sm)
                     if let next {
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text(next.formatted(.dateTime.month(.abbreviated).day()))
+                            Text(next.monthDay)
                                 .font(.display(Theme.FontSize.body, weight: .bold)).monospacedDigit()
                                 .foregroundStyle(Theme.ink)
-                            Text(next.formatted(.dateTime.year()))
+                            Text(next.year)
                                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
                                 .foregroundStyle(Theme.inkTertiary)
                         }
@@ -146,7 +185,7 @@ struct RacePickerSheet: View {
                             }
                         }
                         if let next {
-                            Text("\(next.formatted(.dateTime.weekday(.wide).month(.wide).day().year())) · traditional weekend")
+                            Text("\(next.fullLine) · traditional weekend")
                                 .font(.rounded(Theme.FontSize.label, weight: .medium))
                                 .foregroundStyle(Theme.inkTertiary)
                         }
@@ -163,7 +202,7 @@ struct RacePickerSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(race.name), \(race.city), \(next?.formatted(date: .abbreviated, time: .omitted) ?? "")")
+        .accessibilityLabel("\(race.name), \(race.city), \(next?.abbreviated ?? "")")
         .accessibilityHint(isSelected ? "Selected — choose a distance, then lock it in below" : "Opens this race")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }

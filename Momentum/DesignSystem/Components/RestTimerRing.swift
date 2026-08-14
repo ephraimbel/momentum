@@ -7,13 +7,16 @@ struct RestTimerRing: View {
     var progress: Double             // 1 (full) → 0 (done)
     var remainingText: String
     var isComplete: Bool
+    /// Freeze the iridescent edge (no 30 fps mesh) — for scrolling/occluded hosts, same contract
+    /// as `MuscleMapView.forceStatic`.
+    var isStatic: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             Circle().stroke(Theme.hairline, lineWidth: 8)
-            IridescentView(intensity: 0.9)
+            IridescentView(intensity: 0.9, isStatic: isStatic)
                 .mask {
                     Circle()
                         .trim(from: 0, to: max(0.0001, min(1, progress)))

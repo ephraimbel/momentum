@@ -252,6 +252,15 @@ enum BodyAnatomy {
     static let femaleFrontOutline: Path = SVGPath.parse(MuscleBodyData.femaleFrontOutline)
     static let femaleBackOutline: Path = SVGPath.parse(MuscleBodyData.femaleBackOutline)
 
+    /// Touch every parsed static so the ~131 KB of SVG path parsing happens once, off the main
+    /// thread, at launch — instead of inside the first frame that mounts a body figure (the first
+    /// card of Progress ▸ Trends). `static let` initialization is thread-safe, so warming from a
+    /// background task and a later main-thread read can race harmlessly.
+    static func warm() {
+        _ = (front, back, frontOutline, backOutline,
+             femaleFront, femaleBack, femaleFrontOutline, femaleBackOutline)
+    }
+
     private static func build(_ data: [(slug: String, paths: [String])],
                               map: (String) -> MuscleGroup?, skip: Set<String> = []) -> [Part] {
         data.compactMap { entry in

@@ -390,7 +390,11 @@ struct FuelView: View {
     /// change, on the minute tick, on foreground, and eagerly from every mutator so the change frame
     /// costs one engine run instead of four.
     private func refreshDerived() {
-        let pass = computeReadout(now: Date())
+        // Through `uncachedPass`, not a fresh compute: the first paint already ran the full
+        // engine pass into `passMemo`, and `.onAppear` used to run the identical pass a second
+        // time back-to-back (perf audit 2026-08-13). Same key (signature + minute), so this can
+        // never serve staler data than the direct call did.
+        let pass = uncachedPass()
         cachedReadout = pass.readout
         cachedTip = pass.tip
         cachedTodayMeals = pass.today

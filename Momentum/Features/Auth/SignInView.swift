@@ -187,18 +187,24 @@ private struct WelcomeFilmView: UIViewRepresentable {
         let view = PlayerView()
         // Missing asset → the poster underlay simply stays; the welcome still works.
         guard let url = Bundle.main.url(forResource: "WelcomeVideo", withExtension: "mov") else { return view }
-        let player = AVPlayer(url: url)
-        player.isMuted = true
-        player.actionAtItemEnd = .pause                       // hold the closing card; never loop
-        player.preventsDisplaySleepDuringVideoPlayback = false
-        view.playerLayer.player = player
         view.playerLayer.videoGravity = .resizeAspectFill
-        if reduceMotion {
-            // Straight to the closing card — same destination, no motion. The absurd target time
-            // clamps to the end of the item.
-            player.seek(to: CMTime(seconds: 9_999, preferredTimescale: 600))
-        } else {
-            player.play()
+        let reduceMotion = reduceMotion
+        // Player construction waits one runloop turn: bringing up AVFoundation inside `makeUIView`
+        // sat on the app's very first frame — the first screen a brand-new user ever sees. The
+        // poster underlay holds the identical opening frame until the player attaches.
+        DispatchQueue.main.async {
+            let player = AVPlayer(url: url)
+            player.isMuted = true
+            player.actionAtItemEnd = .pause                   // hold the closing card; never loop
+            player.preventsDisplaySleepDuringVideoPlayback = false
+            view.playerLayer.player = player
+            if reduceMotion {
+                // Straight to the closing card — same destination, no motion. The absurd target
+                // time clamps to the end of the item.
+                player.seek(to: CMTime(seconds: 9_999, preferredTimescale: 600))
+            } else {
+                player.play()
+            }
         }
         return view
     }

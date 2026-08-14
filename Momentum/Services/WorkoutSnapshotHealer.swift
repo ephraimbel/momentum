@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import SwiftData
 import SwiftUI
@@ -28,10 +29,14 @@ enum WorkoutSnapshotHealer {
         // Cheap Set dedupe BEFORE deriving coordinates: a failed-this-session workout otherwise
         // re-paid the full sample fault + Kalman walk on every tile appearance just to bail here.
         guard !inFlight.contains(id), !failed.contains(id) else { return }
-        let coords = gps.routeCoordinates(type: workout.type)
-        guard coords.count > 1 else { return }
         inFlight.insert(id)
         defer { inFlight.remove(id) }
+        // Route derivation (fault every LocationSample + Kalman) hops OFF the main actor via a
+        // background context — this runs per visible tile, and for an imported history with no
+        // snapshots the first Profile-grid scroll used to pay the full walk on main per tile
+        // (perf audit 2026-08-13; the WorkoutTileMedia `routeCoordsOffMain` pattern).
+        let coords = await Self.routeCoordsOffMain(gps: gps, type: workout.type)
+        guard coords.count > 1 else { return }
         while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1
         let style = gps.mapStyle
@@ -92,6 +97,24 @@ enum WorkoutSnapshotHealer {
         }
     }
 
+    /// The route walk faults every GPS sample and Kalman-smooths it — done on the MainActor it
+    /// janked the surface that requested the heal (tiles heal on appearance, so a snapshot-less
+    /// imported history paid this per tile during the first Profile scroll). Fault + smooth on a
+    /// fresh background context instead (the WorkoutTileMedia / HeatmapSource pattern: only the
+    /// container and the detail's persistent id cross the hop — SwiftData models aren't Sendable).
+    /// Transient/preview objects (no container) fall back inline.
+    private static func routeCoordsOffMain(gps: GPSDetail, type: WorkoutType) async -> [CLLocationCoordinate2D] {
+        guard let container = gps.modelContext?.container else {
+            return gps.routeCoordinates(type: type)
+        }
+        let id = gps.persistentModelID
+        return await Task.detached(priority: .utility) {
+            let context = ModelContext(container)
+            guard let detail = context.model(for: id) as? GPSDetail else { return [] }
+            return detail.routeCoordinates(type: type)
+        }.value
+    }
+
     /// Re-render a workout's snapshot in a NEW style (save-screen style change). Replaces the old
     /// image; on failure the previous snapshot is kept and the tile heals later.
     static func rerender(_ workout: Workout, style: MapStyleOption, context: ModelContext) async {
@@ -103,7 +126,7 @@ enum WorkoutSnapshotHealer {
         guard !inFlight.contains(id) else { return }
         inFlight.insert(id)
         defer { inFlight.remove(id) }
-        let coords = gps.routeCoordinates(type: workout.type)
+        let coords = await Self.routeCoordsOffMain(gps: gps, type: workout.type)
         guard coords.count > 1 else { return }
         while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
         active += 1

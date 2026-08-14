@@ -37,6 +37,9 @@ struct RootView: View {
         return .today
     }()
     @State private var showOnboarding = false
+    /// True for ~one dismiss-animation beat after onboarding completes, so the tab shell (and its
+    /// Mapbox map) is built AFTER the cover has left the screen, not during its dismissal.
+    @State private var holdTabsForOnboardingDismiss = false
     /// The athlete's photo, drawn as the Profile tab's icon. Nil until rendered, and while nil the
     /// tab falls back to its SF Symbol — so a profile with no photo behaves exactly as before.
     @State private var profileTabIcon: UIImage?
@@ -49,8 +52,17 @@ struct RootView: View {
     #if DEBUG
     /// One-shot latch for the launch-arg deep links in `onAppear` — see the guard there.
     @MainActor private static var didFireDebugArgs = false
+    /// Newest-first, bounded — see `recentWorkouts` below.
+    private static let recentWorkoutsDescriptor: FetchDescriptor<Workout> = {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        d.fetchLimit = 24
+        return d
+    }()
     // Open the most recent run's detail (for verifying the guided-run Reps breakdown).
-    @Query(sort: \Workout.startedAt, order: .reverse) private var recentWorkouts: [Workout]
+    // Bounded: this lives in the app SHELL, so an unbounded query re-materialized the entire
+    // workout table on every store change and inflated every tab switch in debug builds — the
+    // deep links it feeds only ever want something recent.
+    @Query(RootView.recentWorkoutsDescriptor) private var recentWorkouts: [Workout]
     @State private var showRunDetail = ProcessInfo.processInfo.arguments.contains("--ui-test-run-detail")
     // Flipped AFTER insertion (onAppear + delay) — a cover whose isPresented is already true while
     // the view is being inserted can silently fail to present (see the onboarding note below).
@@ -101,7 +113,15 @@ struct RootView: View {
                 ZStack {
                     // Until onboarding is done, show a clean canvas — don't build the Today map yet,
                     // so it can't trigger a location prompt "up front" (PRD §4.1, §11 privacy).
-                    if showOnboarding { Theme.background.ignoresSafeArea() } else { tabs }
+                    // The hold keeps the canvas one beat longer after onboarding completes: swapping
+                    // in `tabs` the instant the flag flips built the whole shell — Mapbox included —
+                    // in the same frame the cover's dismiss animation started, and that stutter was
+                    // the athlete's very last impression of setup (perf audit 2026-08-13).
+                    if showOnboarding || holdTabsForOnboardingDismiss {
+                        Theme.background.ignoresSafeArea()
+                    } else {
+                        tabs
+                    }
                 }
                 // Award unlocks meet the athlete wherever they land — awards can arrive from any
                 // path (save flows, Health import, a plan week completing), so the presenter sits
@@ -338,6 +358,15 @@ struct RootView: View {
         // and deep links suspend until the flow completes). No `initial:` — isSuspended already
         // defaults false, and an initial-render state write can glitch cover presentation.
         .onChange(of: showOnboarding) { _, showing in
+            if !showing {
+                // Onboarding just finished: hold the tab shell until the cover's dismiss animation
+                // has the screen to itself (see the canvas branch above).
+                holdTabsForOnboardingDismiss = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(550))
+                    holdTabsForOnboardingDismiss = false
+                }
+            }
             coach.isSuspended = showing
             // The account is the last beat of onboarding now, so a sign-in can land with a freshly
             // built profile and plan on disk — `noteRealSignIn` must not read that as a
@@ -409,6 +438,12 @@ struct RootView: View {
             // the next "Logged to Fuel" actually banners.
             NotificationService.promoteReceiptAuthorizationIfNeeded()
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
+            // Ad-tracking consent (2026-08-13). Deliberately NOT at cold launch of a fresh install:
+            // ATT gives each install exactly one prompt, and spending it on someone who has not yet
+            // seen the app converts far worse than asking a runner who is already set up. Reaching
+            // here with a profile means onboarding is behind them. `requestOnce` no-ops forever
+            // after either answer, so this costs nothing on every later launch.
+            if auth.isSignedIn, !profiles.isEmpty { AdTrackingConsent.requestOnce() }
             // One check per cold launch (onAppear re-fires on cover dismissals, when the marker may
             // belong to a legitimately live workout), and never over the sign-in/onboarding gates —
             // the marker survives until handled, so deferring a launch loses nothing.
@@ -425,15 +460,20 @@ struct RootView: View {
                 // right after the celebration. Removed 2026-08-07.)
                 // Heal recent workouts whose route snapshot failed to render at finish — History
                 // thumbnails recover on launch instead of showing bare silhouettes forever.
-                Task { await WorkoutSnapshotHealer.sweep(in: context) }
+                // Deferred well past first paint: each heal constructs a full Mapbox Snapshotter
+                // (its own map engine pulling tiles), and unthrottled it raced Today's map for the
+                // network + main thread at the exact moment of first render (perf audit 2026-08-13).
+                Task {
+                    try? await Task.sleep(for: .seconds(4))
+                    await WorkoutSnapshotHealer.sweep(in: context)
+                }
                 // Claim/refresh the athlete's public identity once per launch (handle, name, bio,
                 // avatar, Pro checkmark) — the community-era hook restored with the launch wiring
                 // (2026-07-29). No-op for guests and dark builds (`isAvailable` gate inside).
                 if CommunityAccess.enabled, let profile = profiles.first {
                     // One-shot: pre-2026-08-06 profiles stored routes-off under a default no UI
                     // could change — their shared runs rendered glyphs on the wall forever.
-                    SocialPrivacy.migrateRouteMapsDefault(profile)
-                    try? context.save()
+                    if SocialPrivacy.migrateRouteMapsDefault(profile) { try? context.save() }
                     Task { await services.social.claimProfile(profile, in: context) }
                 }
                 // Mint the record book on LAUNCH, not on a tab visit. This is one-shot (versioned
@@ -441,9 +481,12 @@ struct RootView: View {
                 // `ProgressView` — so an athlete who imported a history from Apple Health and went
                 // straight to Profile read a flat "0 PRS" until they happened to open Progress.
                 // The trio is one of the first things anyone sees; it has to be true on arrival.
-                // Deferred a beat so the replay never competes with first paint.
+                // Deferred so the replay never competes with first paint — 0.8 s turned out to be
+                // exactly when the athlete starts scrolling, so it moved to 3 s (2026-08-13). A
+                // Progress visit inside that window is covered: its own first task runs the same
+                // one-shot backfill before it snapshots the PR shelf.
                 Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(0.8))
+                    try? await Task.sleep(for: .seconds(3))
                     RecordsBook.backfillIfNeeded(in: context)
                 }
             }

@@ -29,6 +29,8 @@ struct StrengthSummaryContent: View {
     @State private var weekWorkouts: [Workout] = []
     /// The plan connection at the payoff moment — same slot as the run summary's line.
     @State private var planLine: String?
+    /// The identity card's muscle map animates only while visible (see `muscleCard`).
+    @State private var muscleMapOnScreen = true
 
     var body: some View {
         if let session = workout.strength {
@@ -160,9 +162,12 @@ struct StrengthSummaryContent: View {
             .filter { $0.value > 0 }
             .sorted { $0.value > $1.value }
         return VStack(spacing: Theme.Space.md) {
-            MuscleMapView(activation: activation)
+            // Frozen once scrolled past (the AthletePanel pattern, perf audit 2026-08-13): the
+            // 250pt figure's mesh otherwise kept animating at 30 fps under the whole page visit.
+            MuscleMapView(activation: activation, forceStatic: !muscleMapOnScreen)
                 .frame(height: 250)
                 .frame(maxWidth: .infinity)
+                .onScrollVisibilityChange(threshold: 0.05) { muscleMapOnScreen = $0 }
             if !byMuscle.isEmpty {
                 VStack(spacing: Theme.Space.sm) {
                     ForEach(byMuscle, id: \.key) { muscle, sets in

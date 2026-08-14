@@ -31,7 +31,11 @@ struct OnboardingFlow: View {
     @State private var vm = OnboardingViewModel.resuming()
     @State private var profile: UserProfile?
     @State private var goingBack = false
-    @State private var locator = LocationService()   // request location on the final primer
+    /// Request location on the final primer. Created on THAT tap, not at init: this view is
+    /// re-initialized whenever RootView's body re-evaluates (cover content closures re-run), and a
+    /// fresh `CLLocationManager` per pass was pure waste (perf audit 2026-08-13). Held in @State so
+    /// the manager outlives the authorization prompt it raises.
+    @State private var locator: LocationService?
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall — the last beat, before the app
@@ -287,9 +291,15 @@ struct OnboardingFlow: View {
 
     /// Persist the interruption-recovery draft, unless a deep link is driving the flow (those set a
     /// specific step for verification and must stay deterministic — no stray draft written or read).
+    /// The answers snapshot on the main actor NOW; the encode + UserDefaults write hop off it —
+    /// this fires from `.onChange(of: vm.step)`, i.e. on the exact frame the travel transition
+    /// starts (perf audit 2026-08-13). The arguments scan is cached for the same reason.
+    private static let deepLinkDriven =
+        ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding-") })
     private func saveDraftIfEnabled() {
-        guard !ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding-") }) else { return }
-        OnboardingDraftStore.save(vm.draft())
+        guard !Self.deepLinkDriven else { return }
+        let draft = vm.draft()
+        Task.detached(priority: .utility) { OnboardingDraftStore.save(draft) }
     }
 
     // MARK: Content router
@@ -423,10 +433,18 @@ struct OnboardingFlow: View {
                           spacing: Theme.Space.md) {
                     ForEach(AvatarPreset.allCases) { preset in
                         Button {
-                            vm.avatarData = AvatarPreset.bake(preset,
-                                                              name: vm.name.isEmpty ? "You" : vm.name)
                             onboardingPreset = preset
                             Haptics.selection()
+                            // Bake AFTER the selection frame commits: the 512px ImageRenderer +
+                            // PNG encode ran inside the tap handler, so the ring's feedback
+                            // arrived a beat late on every tile (perf audit 2026-08-13). The
+                            // guard drops a bake a faster second tap has superseded.
+                            let name = vm.name.isEmpty ? "You" : vm.name
+                            Task { @MainActor in
+                                await Task.yield()
+                                guard onboardingPreset == preset else { return }
+                                vm.avatarData = AvatarPreset.bake(preset, name: name)
+                            }
                         } label: {
                             PresetAvatarView(preset: preset,
                                              name: vm.name.isEmpty ? "You" : vm.name, size: 56)
@@ -1541,7 +1559,9 @@ struct OnboardingFlow: View {
                 // NEXT beat (the rating ask), which reads as a random permission grab on a screen
                 // that says nothing about location. Only ask if this step is still the one on screen.
                 guard vm.step == .primers else { return }
-                locator.requestAuthorization()
+                let loc = locator ?? LocationService()
+                locator = loc
+                loc.requestAuthorization()
             }
         }
     }

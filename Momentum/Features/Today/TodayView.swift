@@ -96,6 +96,8 @@ struct TodayView: View {
     /// True once the map backdrop has been mounted — it then stays warm for the session (a
     /// strength-only athlete who never shows the map never pays for it).
     @State private var mapWasShown = false
+    /// The strength home's muscle map animates only while visible (see its visibility gate).
+    @State private var strengthMapOnScreen = true
     /// The newest GPS fix from history, memoized (non-observed box, invisible to SwiftUI): the raw
     /// form sorted the whole workout table AND faulted a run's thousands of `LocationSample` rows
     /// on every body evaluation — and the map re-evaluates body constantly while panning.
@@ -327,7 +329,11 @@ struct TodayView: View {
         // re-fires and the deck re-reads the fresh signals — otherwise Today held its 7am score
         // while Progress showed the 9am one, the exact split-number the one-recipe work killed.
         .task(id: "\(workouts.count)-\(checkins.count)-\(ReadinessTodayCache.today()?.score ?? -1)") {
-            await Task.yield()   // let the first frame paint before any engine work
+            // A real pause, not `Task.yield()` — a single suspension hop resumed before the first
+            // frame finished, so the month-of-workouts RecoveryModel fold and 60 days of Health
+            // reads still landed under Mapbox's tile load (perf audit 2026-08-13). Cancellation on
+            // a mid-sleep re-fire (or tab switch) exits before any engine work runs.
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
             let r = await ReadinessToday.compute(health: services.health,
                                                  workouts: workouts, checkins: checkins)
             morningReadiness = r
@@ -426,79 +432,92 @@ struct TodayView: View {
 
         // Post-race continuation first: once race day has passed, the result recalibrates paces and
         // the plan rolls into a recovery-lead-in block — BEFORE reconcile could touch the old plan.
+        // These two stay SYNCHRONOUS: `refreshPendingToday` runs right after this and must see the
+        // reconciled plan, or the deck's row shows a session that has already been moved.
         if let p = profiles.first { PlanService.completeRace(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
-        // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
-        // notification permission on first run.
-        services.notifications.schedulePlannedReminders(plan)
-        // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
-        // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
-        services.notifications.scheduleWeeklyCheckIn()
-        let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
-        // One `todaySessions` pass for the whole bootstrap (it filters the full session list).
-        let sessionsToday = PlanCoaching.todaySessions(plan, on: Date())
-        let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
-        services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
-                                                   isPlannedDayToday: !sessionsToday.isEmpty,
-                                                   hasWorkedOutToday: workedOutToday)
-        // The Home Screen widget snapshot rides the throttled pass (it builds its own ProfileStats
-        // full-history walk — running it on EVERY tab re-visit blocked first paint). The write is
-        // change-guarded, so an identical snapshot never wakes the widget.
-        WidgetBridge.publish(profile: profiles.first, workouts: workouts)
-        // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
-        if let s = sessionsToday.first {
-            AppNotification.post(kind: .reminder, title: "Today's session is ready",
-                                 body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
-        }
-        AppNotification.post(kind: .system, title: "Welcome to momentum",
-                             body: "Your plan is set. Tap Start whenever you're ready to move.",
-                             in: context, dedupeToken: "welcome", daily: false)
-        // The proactive coach: at most one seeded thought in the chat per pass (earned load bump,
-        // Monday recap), badged on the coach button and mirrored to the bell. Deduped inside.
-        CoachProactive.sweep(profile: profiles.first, workouts: workouts, in: context)
-        // Pre-week load recheck (§11.1.1): if next week is PLANNED well above what the athlete has
-        // ACTUALLY been absorbing (misses/pauses drift the two apart), seed one consent-gated trim.
-        _ = CoachProactive.seedPlannedLoadRecheck(plan: profiles.first?.plan,
-                                                  workouts: workouts, in: context)
-        // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
-        // carb-load → kit → race-day fueling), each posted once.
-        if let profile = profiles.first, let raceDate = profile.raceDate,
-           let distanceM = profile.raceDistanceM, distanceM > 0,
-           let daysOut = Calendar.current.dateComponents(
-               [.day], from: Calendar.current.startOfDay(for: Date()),
-               to: Calendar.current.startOfDay(for: raceDate)).day,
-           let briefing = RaceBriefing.build(distanceM: distanceM,
-                                             p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
-            AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
-                                 in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
-        }
-        // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
-        Task { await services.sync.sync(workouts, in: context) }
-        // The community publish sweep rides the same moment (docs/COMMUNITY-FEED-REDESIGN.md §6):
-        // posts for newly-SHARED workouts go up, privacy-downgrades come down, `postPublishedAt`
-        // stamps on success only so failures retry next pass. Inert while community is off, and a
-        // no-op when the backend is dark (guard inside the sweep).
-        if CommunityAccess.enabled {
-            Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
-        }
-        // Pull anything the athlete's devices mirrored into Apple Health since the last sweep —
-        // Watch runs, Garmin rides, a Strava re-sync. Self-throttled (15 min) and incremental, so
-        // this is a no-op on almost every pass; without it wearable workouts only ever arrived when
-        // someone tapped a button in Settings.
-        Task { await services.health.importRecentIfDue(into: context, now: Date(), defaults: .standard) }
-        // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
-        // load in the danger zone + the body agreeing forces a real cutback week (throttled to
-        // one/week); otherwise two warning signs just ease *today's* quality session.
-        Task {
-            let signals = await services.health.recoverySignals()
-            let acwr = ProgressInsights(workouts: workouts).acwr
-            if let cutback = RecoveryAdaptation.tripwire(acwr: acwr, signals: signals) {
-                if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
+        // Everything below is observational (notifications, widget snapshot, inbox posts, proactive
+        // coach, cloud sync, Health import, recovery adaptation) — nothing on screen waits for it,
+        // and running it inline made the first Today frame pay a full ProfileStats history walk plus
+        // three notification-scheduling passes while Mapbox was loading (perf audit 2026-08-13).
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
+            // notification permission on first run.
+            services.notifications.schedulePlannedReminders(plan)
+            // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
+            // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
+            services.notifications.scheduleWeeklyCheckIn()
+            let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
+            // One `todaySessions` pass for the whole bootstrap (it filters the full session list).
+            let sessionsToday = PlanCoaching.todaySessions(plan, on: Date())
+            let workedOutToday = workouts.contains { Calendar.current.isDateInToday($0.startedAt) }
+            services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
+                                                       isPlannedDayToday: !sessionsToday.isEmpty,
+                                                       hasWorkedOutToday: workedOutToday)
+            // The Home Screen widget snapshot rides the throttled pass. The write is change-guarded,
+            // so an identical snapshot never wakes the widget. Reuses this pass's `stats` — the
+            // bridge used to run its own full-history ProfileStats walk back-to-back with ours.
+            WidgetBridge.publish(profile: profiles.first, workouts: workouts, stats: stats)
+            // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
+            if let s = sessionsToday.first {
+                AppNotification.post(kind: .reminder, title: "Today's session is ready",
+                                     body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
             }
-            let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
-            if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier,
-                                                        checkin: DailyCheckin.today(in: checkins)) {
-                _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
+            AppNotification.post(kind: .system, title: "Welcome to momentum",
+                                 body: "Your plan is set. Tap Start whenever you're ready to move.",
+                                 in: context, dedupeToken: "welcome", daily: false)
+            // The proactive coach: at most one seeded thought in the chat per pass (earned load bump,
+            // Monday recap), badged on the coach button and mirrored to the bell. Deduped inside.
+            CoachProactive.sweep(profile: profiles.first, workouts: workouts, in: context)
+            // Pre-week load recheck (§11.1.1): if next week is PLANNED well above what the athlete has
+            // ACTUALLY been absorbing (misses/pauses drift the two apart), seed one consent-gated trim.
+            _ = CoachProactive.seedPlannedLoadRecheck(plan: profiles.first?.plan,
+                                                      workouts: workouts, in: context)
+            // Race week: the coach's briefing lands in the inbox for each of the final days (taper →
+            // carb-load → kit → race-day fueling), each posted once.
+            if let profile = profiles.first, let raceDate = profile.raceDate,
+               let distanceM = profile.raceDistanceM, distanceM > 0,
+               let daysOut = Calendar.current.dateComponents(
+                   [.day], from: Calendar.current.startOfDay(for: Date()),
+                   to: Calendar.current.startOfDay(for: raceDate)).day,
+               let briefing = RaceBriefing.build(distanceM: distanceM,
+                                                 p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
+                AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
+                                     in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
+            }
+            // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
+            Task { await services.sync.sync(workouts, in: context) }
+            // The community publish sweep rides the same moment (docs/COMMUNITY-FEED-REDESIGN.md §6):
+            // posts for newly-SHARED workouts go up, privacy-downgrades come down, `postPublishedAt`
+            // stamps on success only so failures retry next pass. Inert while community is off, and a
+            // no-op when the backend is dark (guard inside the sweep).
+            if CommunityAccess.enabled {
+                Task { await services.social.runPublishSweep(workouts: workouts, profile: profiles.first, in: context) }
+            }
+            // Pull anything the athlete's devices mirrored into Apple Health since the last sweep —
+            // Watch runs, Garmin rides, a Strava re-sync. Self-throttled (15 min) and incremental, so
+            // this is a no-op on almost every pass; without it wearable workouts only ever arrived
+            // when someone tapped a button in Settings. Extra beat of its own: the FIRST import ever
+            // reads a year of Health history, and it must not land while tiles are still streaming.
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                await services.health.importRecentIfDue(into: context, now: Date(), defaults: .standard)
+            }
+            // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
+            // load in the danger zone + the body agreeing forces a real cutback week (throttled to
+            // one/week); otherwise two warning signs just ease *today's* quality session.
+            Task {
+                let signals = await services.health.recoverySignals()
+                let acwr = ProgressInsights(workouts: workouts).acwr
+                if let cutback = RecoveryAdaptation.tripwire(acwr: acwr, signals: signals) {
+                    if RecoveryAdaptation.applyCutback(cutback, plan: plan, in: context) != nil { return }
+                }
+                let tier = PlanIntensity(rawValue: profiles.first?.planIntensity ?? "") ?? .balanced
+                if let decision = RecoveryAdaptation.decide(signals: signals, intensity: tier,
+                                                            checkin: DailyCheckin.today(in: checkins)) {
+                    _ = RecoveryAdaptation.applyToToday(decision, plan: plan, in: context)
+                }
             }
         }
     }
@@ -777,16 +796,32 @@ struct TodayView: View {
     /// zoom-out, not a fallback).
     private var canCenterMap: Bool { locator.isAuthorized || lastKnownCoordinate != nil }
 
+    /// Persisted last-known fix: `[count]` (computed, no GPS history) or `[count, lat, lon]`.
+    /// The history walk below faults an entire route's `LocationSample` rows, and it used to run
+    /// inside the FIRST body pass of every cold launch — this cache makes that a once-per-new-
+    /// workout cost instead (perf audit 2026-08-13). A same-count-different-workout edit serves a
+    /// slightly stale neighborhood, which is all this camera ever promised.
+    private static let lastFixKey = "com.momentum.today.lastKnownFix"
+
     private var lastKnownCoordinate: CLLocationCoordinate2D? {
         if let live = locator.lastLocation { return live }
         if historyFixMemo.count != workouts.count {
             historyFixMemo.count = workouts.count
-            historyFixMemo.coord = workouts
-                .sorted { $0.startedAt > $1.startedAt }
-                .lazy
-                .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
-                .first
-                .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+            if let stored = UserDefaults.standard.array(forKey: Self.lastFixKey) as? [Double],
+               stored.first.map({ Int($0) }) == workouts.count {
+                historyFixMemo.coord = stored.count == 3
+                    ? CLLocationCoordinate2D(latitude: stored[1], longitude: stored[2]) : nil
+            } else {
+                historyFixMemo.coord = workouts
+                    .sorted { $0.startedAt > $1.startedAt }
+                    .lazy
+                    .compactMap { $0.gps?.samples.first(where: { $0.accepted }) }
+                    .first
+                    .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                let record = historyFixMemo.coord.map { [Double(workouts.count), $0.latitude, $0.longitude] }
+                    ?? [Double(workouts.count)]
+                UserDefaults.standard.set(record, forKey: Self.lastFixKey)
+            }
         }
         return historyFixMemo.coord
     }
@@ -876,9 +911,13 @@ struct TodayView: View {
                     if activity.isStrengthStyle {
                         // The lifting identity: a body map glowing with the muscles from your last
                         // session (a quiet empty silhouette before your first lift), then the readout.
-                        MuscleMapView(activation: lastStrengthActivation)
+                        MuscleMapView(activation: lastStrengthActivation,
+                                      forceStatic: !strengthMapOnScreen)
                             .frame(height: 236)
                             .frame(maxWidth: .infinity)
+                            // Frozen when scrolled off (AthletePanel pattern) — the mesh otherwise
+                            // kept animating at 30 fps behind the readout for the whole visit.
+                            .onScrollVisibilityChange(threshold: 0.05) { strengthMapOnScreen = $0 }
                         lastStrengthReadout
                     } else if activity.isGPS {
                         // A cardio sport before any location exists: the sport leads, never a

@@ -59,7 +59,23 @@ final class OnboardingViewModel {
 
     /// The honest read on the athlete's goal vs. the calendar + their current fitness — drives the
     /// intensity step's headline, recommendation, and any "here's the truth" alternatives.
+    /// Memoized on its inputs (perf audit 2026-08-13): the intensity step reads this from `body`,
+    /// so every flow-wide invalidation re-ran the full assessment (two engine read passes + string
+    /// building) even when nothing it depends on had moved.
+    @ObservationIgnored private var feasibilityCache: (key: String, value: PlanFeasibility)?
     var feasibility: PlanFeasibility {
+        let key = [String(describing: calibration), String(describing: goal),
+                   String(describing: raceDistance), "\(goalHours):\(goalMinutes)",
+                   "\(weeklyRunVolumeM ?? -1)", "\(hasRace):\(weeksToRace ?? -1)",
+                   String(describing: experience), "\(injuryAreas.count)",
+                   "\(daysPerWeek)", String(describing: intensity)].joined(separator: "|")
+        if let c = feasibilityCache, c.key == key { return c.value }
+        let value = computeFeasibility()
+        feasibilityCache = (key, value)
+        return value
+    }
+
+    private func computeFeasibility() -> PlanFeasibility {
         let p5k = calibration.recentRun.map { PlanEngine.riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
             ?? calibration.estimatedP5kSPerKm
         // If they gave a time AT the race distance (a marathoner's own marathon, say), that's the
@@ -164,8 +180,29 @@ final class OnboardingViewModel {
     var running: Bool { disciplines.contains(.running) }
     var hybrid: Bool { running && lifting }
 
+    /// Cache for `steps`/`questionSteps` (perf audit 2026-08-13): the flow's chrome reads these
+    /// ~8× per body pass (every keystroke in the name field re-filters `Step.allCases` repeatedly).
+    /// Keyed on the only answers that branch the list; `@ObservationIgnored` so the cache itself
+    /// never participates in invalidation.
+    @ObservationIgnored private var stepsCache: (key: String, steps: [Step], questions: [Step])?
+    private var stepsBranchKey: String {
+        "\(String(describing: goal))|\(String(describing: disciplines))|\(String(describing: experience))"
+    }
+    private var cachedStepLists: (steps: [Step], questions: [Step]) {
+        let key = stepsBranchKey
+        if let c = stepsCache, c.key == key { return (c.steps, c.questions) }
+        let all = computeSteps()
+        let questions = all.filter {
+            ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0)
+        }
+        stepsCache = (key, all, questions)
+        return (all, questions)
+    }
+
     /// The ordered steps for this user — branches on goal + disciplines.
-    var steps: [Step] {
+    var steps: [Step] { cachedStepLists.steps }
+
+    private func computeSteps() -> [Step] {
         Step.allCases.filter { step in
             switch step {
             case .race:        return goal == .raceDistance && running
@@ -191,12 +228,11 @@ final class OnboardingViewModel {
     }
 
     /// The answerable steps (drives the progress bar + the question chrome).
-    private var questionSteps: [Step] {
-        // `.health` is an opt-in consent beat (like notifications), not an answerable question.
-        // `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
-        // bar (which would then never reach 100% on the last question).
-        steps.filter { ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0) }
-    }
+    /// `.health` is an opt-in consent beat (like notifications), not an answerable question.
+    /// `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
+    /// bar (which would then never reach 100% on the last question). The filter lives in
+    /// `cachedStepLists` alongside `steps`.
+    private var questionSteps: [Step] { cachedStepLists.questions }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 
     var progress: Double {

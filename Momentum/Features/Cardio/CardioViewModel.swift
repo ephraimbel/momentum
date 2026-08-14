@@ -506,6 +506,19 @@ final class CardioViewModel {
         (snapshot?.route ?? []).map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
     }
 
+    /// Read THIS when only the count matters (change-detection keys). `coordinates` copies the
+    /// whole route into a fresh array per read — keying `onChange` on it re-copied a 90-minute
+    /// route several times a second for the entire run (perf audit 2026-08-13).
+    var routePointCount: Int { snapshot?.route.count ?? 0 }
+    /// Endpoint accessors for the same reason — `.first`/`.last` on `coordinates` paid the full
+    /// array transform to read one element.
+    var firstCoordinate: CLLocationCoordinate2D? {
+        (snapshot?.route.first).map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+    }
+    var lastCoordinate: CLLocationCoordinate2D? {
+        (snapshot?.route.last).map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+    }
+
     var distanceM: Double { snapshot?.distanceM ?? 0 }
     var movingTimeS: TimeInterval { snapshot?.movingTimeS ?? 0 }
 

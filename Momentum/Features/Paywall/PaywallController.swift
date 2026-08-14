@@ -192,20 +192,39 @@ final class PaywallController: PaywallServing {
         if UserDefaults.standard.bool(forKey: Self.devUnlockKey) { pricingIsLive = true; return }
         #endif
         #if canImport(RevenueCat)
-        Purchases.logLevel = .warn
-        Purchases.configure(withAPIKey: BillingKeys.revenueCat)
-        Task {
+        Task { @MainActor in
+            // Deferred past first paint: `Purchases.configure` is synchronous SDK bring-up
+            // (receipt/keychain reads + StoreKit listener registration) and was measured on the
+            // cold-start critical path (perf audit 2026-08-13). Gating keeps working meanwhile —
+            // `isPro` was seeded from the persisted entitlement in `init` — and StoreKit queues
+            // transactions, so a listener that attaches 600 ms late misses nothing.
+            try? await Task.sleep(for: .milliseconds(600))
+            Purchases.logLevel = .warn
+            Purchases.configure(withAPIKey: BillingKeys.revenueCat)
+            #if canImport(SuperwallKit)
+            Superwall.configure(apiKey: BillingKeys.superwall)
+            #endif
+            // An identity that arrived while the SDK was still down queued itself — apply it first
+            // so `customerInfo()` below reads the right customer.
+            if let queued = pendingIdentity {
+                pendingIdentity = nil
+                identify(userID: queued)
+            }
             await refreshEntitlement()
             await loadOffering()
             for await info in Purchases.shared.customerInfoStream { apply(info) }   // live entitlement
         }
         #else
         pricingIsLive = true   // local seam (SDK not linked): the PRD prices are all there is
-        #endif
         #if canImport(SuperwallKit)
         Superwall.configure(apiKey: BillingKeys.superwall)
         #endif
+        #endif
     }
+
+    /// Identity queued while the deferred RevenueCat bring-up was still pending (see `identify`).
+    /// Outer optional = "is something queued", inner = the identity itself (nil = sign-out).
+    @ObservationIgnored private var pendingIdentity: String??
 
     // MARK: Gating (PaywallServing)
 
@@ -331,7 +350,14 @@ final class PaywallController: PaywallServing {
     /// what they paid for.
     func identify(userID: String?) {
         #if canImport(RevenueCat)
-        guard Purchases.isConfigured else { return }   // hermetic DEBUG paths never configured the SDK
+        guard Purchases.isConfigured else {
+            // The SDK bring-up is deferred past first paint (see `configure`). An identity landing
+            // before it must WAIT, not drop — a dropped identify leaves the athlete an anonymous
+            // customer for the whole session. Hermetic DEBUG paths never configure, so their queued
+            // value is simply never consumed. Double-optional: `.some(nil)` queues a sign-out.
+            pendingIdentity = .some(userID)
+            return
+        }
         identityChangedAt = Date()   // arms the anti-downgrade reconciliation in `apply`
         Task {
             if let userID {

@@ -54,9 +54,9 @@ struct CardioSummaryContent: View {
     /// The run's seven-day window, fetched here (on this always-present task) and handed to the
     /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
     @State private var weekWorkouts: [Workout] = []
-    /// The hero map's full-screen expansion (tap → zoom transition → explorable map).
-    @State private var showFullMap = false
-    @Namespace private var mapZoom
+    // (The hero map's full-screen expansion state lives in `RouteMapCard` now — as @State on this
+    // summary, every map tap re-evaluated the ENTIRE page, charts included, in the same frame the
+    // zoom transition started. Perf audit 2026-08-13.)
 
     private var unitMeters: Double {
         distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
@@ -105,12 +105,6 @@ struct CardioSummaryContent: View {
                 // The text splits list is gone (2026-08-06): RunAnalysisSection's splits card is now
                 // the Strava-style row list — ordinal + exact pace + speed bar — so a second textual
                 // rendering of the same numbers directly below it was noise.
-            }
-            .fullScreenCover(isPresented: $showFullMap) {
-                RunMapFullScreen(coordinates: smoothedCoords,
-                                 style: mapStyleOverride ?? gps.mapStyle,
-                                 onClose: { showFullMap = false })
-                    .navigationTransition(.zoom(sourceID: "runMap", in: mapZoom))
             }
             .task {
                 if showsVerdict { planLine = computePlanConnection(gps) }
@@ -315,55 +309,12 @@ struct CardioSummaryContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
     private func routeMap(_ gps: GPSDetail) -> some View {
-        let style = mapStyleOverride ?? gps.mapStyle
-        if smoothedCoords.count > 1 {
-            RouteMapView(coordinates: smoothedCoords, style: style)
-                .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                // When the map-matched route lands post-finish (nil→present), the coordinates change
-                // underneath RouteMapView. Its route line is added imperatively once on style-load (a
-                // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
-                // identity on match-presence (and the previewed style) forces one clean remount,
-                // re-running style-load with the snapped route.
-                .id("\(gps.matchedRouteData != nil)-\(style.rawValue)")
-                // Tap → the full-screen explorable map. The card map is non-interactive
-                // (allowsHitTesting false), so the tap lands on this wrapper; the corner chip is
-                // the affordance that says so.
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "arrow.down.left.and.arrow.up.right")
-                        .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(Theme.background.opacity(0.92)))
-                        .overlay(Circle().stroke(Theme.hairline))
-                        .padding(Theme.Space.sm)
-                }
-                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                .matchedTransitionSource(id: "runMap", in: mapZoom)
-                .onTapGesture { showFullMap = true }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("Route map. Opens full screen.")
-        } else if !routeResolved, workout.type.isGPS {
-            // The replay hasn't landed yet (first frames only) — hold the map's footprint quietly.
-            // Falling through to "No route recorded" here flashed that claim over every real route
-            // for the beat before the cached coordinates resolved.
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                .frame(height: 220)
-        } else if workout.type.isGPS {
-            // A GPS-discipline run with no usable route (treadmill, or GPS never locked) — a quiet
-            // card instead of a silent gap where the map belongs.
-            ZStack {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                VStack(spacing: 6) {
-                    Image(systemName: "mappin.slash").font(.system(size: 22, weight: .semibold))
-                    Text("No route recorded").font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                }
-                .foregroundStyle(Theme.inkTertiary)
-            }
-            .frame(height: 120)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-        }
+        RouteMapCard(smoothedCoords: smoothedCoords,
+                     style: mapStyleOverride ?? gps.mapStyle,
+                     hasMatchedRoute: gps.matchedRouteData != nil,
+                     isGPS: workout.type.isGPS,
+                     routeResolved: routeResolved)
     }
 
     private func headline(_ workout: Workout, _ gps: GPSDetail) -> some View {
@@ -642,5 +593,74 @@ private struct RunMapFullScreen: View {
             .padding(.horizontal, Theme.Space.lg)
         }
         .background(Theme.background)
+    }
+}
+
+/// The hero map card AND its full-screen expansion, as one leaf (perf audit 2026-08-13): with
+/// `showFullMap` as summary-level @State, tapping the map re-evaluated the entire page — all four
+/// analysis charts, zones, the week card — in the same frame the zoom transition started. As a
+/// leaf, the tap invalidates only this card.
+private struct RouteMapCard: View {
+    let smoothedCoords: [CLLocationCoordinate2D]
+    let style: MapStyleOption
+    let hasMatchedRoute: Bool
+    let isGPS: Bool
+    let routeResolved: Bool
+
+    @State private var showFullMap = false
+    @Namespace private var mapZoom
+
+    var body: some View {
+        if smoothedCoords.count > 1 {
+            RouteMapView(coordinates: smoothedCoords, style: style)
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                // When the map-matched route lands post-finish (nil→present), the coordinates change
+                // underneath RouteMapView. Its route line is added imperatively once on style-load (a
+                // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
+                // identity on match-presence (and the previewed style) forces one clean remount,
+                // re-running style-load with the snapped route.
+                .id("\(hasMatchedRoute)-\(style.rawValue)")
+                // Tap → the full-screen explorable map. The card map is non-interactive
+                // (allowsHitTesting false), so the tap lands on this wrapper; the corner chip is
+                // the affordance that says so.
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "arrow.down.left.and.arrow.up.right")
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Theme.background.opacity(0.92)))
+                        .overlay(Circle().stroke(Theme.hairline))
+                        .padding(Theme.Space.sm)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                .matchedTransitionSource(id: "runMap", in: mapZoom)
+                .onTapGesture { showFullMap = true }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Route map. Opens full screen.")
+                .fullScreenCover(isPresented: $showFullMap) {
+                    RunMapFullScreen(coordinates: smoothedCoords, style: style,
+                                     onClose: { showFullMap = false })
+                        .navigationTransition(.zoom(sourceID: "runMap", in: mapZoom))
+                }
+        } else if !routeResolved, isGPS {
+            // The replay hasn't landed yet (first frames only) — hold the map's footprint quietly.
+            // Falling through to "No route recorded" here flashed that claim over every real route
+            // for the beat before the cached coordinates resolved.
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                .frame(height: 220)
+        } else if isGPS {
+            // A GPS-discipline run with no usable route (treadmill, or GPS never locked) — a quiet
+            // card instead of a silent gap where the map belongs.
+            ZStack {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
+                VStack(spacing: 6) {
+                    Image(systemName: "mappin.slash").font(.system(size: 22, weight: .semibold))
+                    Text("No route recorded").font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                }
+                .foregroundStyle(Theme.inkTertiary)
+            }
+            .frame(height: 120)
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        }
     }
 }

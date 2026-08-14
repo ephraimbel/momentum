@@ -52,11 +52,16 @@ enum SocialPrivacy {
     /// about the athlete's wishes — it just made every own GPS post render as a sport glyph
     /// instead of its route. Flip once to the new default (routes on, like every fresh profile);
     /// any future toggle the settings surface grows will stick, because this runs only once.
-    static func migrateRouteMapsDefault(_ profile: UserProfile) {
+    /// Returns whether it changed anything, so the caller only pays a context save when it did —
+    /// the one-shot guard lives in here, and an unconditional save at the call site put a
+    /// main-thread store write on every single cold launch (perf audit 2026-08-13).
+    @discardableResult
+    static func migrateRouteMapsDefault(_ profile: UserProfile) -> Bool {
         let key = "com.momentum.social.routeMapsOnByDefault"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        guard !UserDefaults.standard.bool(forKey: key) else { return false }
         UserDefaults.standard.set(true, forKey: key)
         profile.publicRouteMaps = true
+        return true
     }
 
     /// Whether exact numbers (pace, weights) appear on the athlete's public posts.

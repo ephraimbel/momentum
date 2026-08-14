@@ -132,6 +132,8 @@ struct ProfileScreen: View {
 
     @State private var aggregatedForCount = -1   // matches the count the caches were built for
     @State private var shelfForAwardCount = -1   // awards can land without a new workout (plan check-offs)
+    /// Last time the follower count was fetched — the call is a network round trip, throttled here.
+    @MainActor private static var lastFollowCountsFetch = Date.distantPast
 
     private func refreshAggregates() {
         cachedStats = ProfileStats(workouts: workouts, plan: profile?.plan)
@@ -204,15 +206,40 @@ struct ProfileScreen: View {
             }
             #endif
             guard CommunityAccess.enabled else { return }
+            // Throttled: this is a network round trip and the task re-fires on every appearance
+            // of the tab — once a minute is plenty for a follow-back to land (perf audit 2026-08-13).
+            let now = Date()
+            guard now.timeIntervalSince(Self.lastFollowCountsFetch) > 60 else { return }
+            Self.lastFollowCountsFetch = now
             if let counts = await services.social.followCounts() {
                 followerCount = counts.followers
             }
         }
     }
 
+    /// First-visit skeleton (ProgressScreen's `warmup` pattern, perf audit 2026-08-13): before the
+    /// aggregate task fills `cachedStats`, `body` used to build ProfileStats AND the awards
+    /// snapshot inline on the tab-switch frame — the full-history walk as the price of the first
+    /// paint. Quiet surface shapes hold the canvas for the one beat the task needs.
+    private var profileWarmup: some View {
+        VStack(spacing: Theme.Space.lg) {
+            Circle().fill(Theme.surface).frame(width: 96, height: 96)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface).frame(height: 64)
+                .padding(.horizontal, Theme.Space.xl)
+            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface).frame(height: 420)
+        }
+        .padding(.top, Theme.Space.md)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .transition(.opacity)
+    }
+
     private var profileBody: some View {
         ScrollViewReader { scroll in
         ScrollView {
+            if cachedStats == nil && !workouts.isEmpty {
+                profileWarmup
+            } else {
             // The Grid / Highlights toggle scrolls WITH the content — no `pinnedViews`, so it rides
             // just above the grid and moves off-screen as you scroll (user preference 2026-07-22),
             // rather than sticking under the profile header as a mini-header.
@@ -254,6 +281,7 @@ struct ProfileScreen: View {
             }
             .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
+            }
         }
         .background(Theme.background)
         .navigationBarHidden(true)
@@ -344,6 +372,10 @@ struct ProfileScreen: View {
         }
         #endif
         .task(id: workoutsSignature) {
+            // Let the tab-switch transition land first — this task's first synchronous chunk used
+            // to run inside it (perf audit 2026-08-13). Cancellation (data changed mid-sleep,
+            // screen left) exits before any engine work.
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
             // Award sync first, every visit: new awards can land without a new workout (a plan
             // week checked off, a Health import elsewhere). No-ops when nothing changed.
             AwardsBook.sync(in: context)

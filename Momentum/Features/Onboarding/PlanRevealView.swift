@@ -17,30 +17,51 @@ struct PlanRevealView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
-    private var planWeekCount: Int {
-        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return 0 }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
-        let maxW = sessions.map { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: $0.date)).day ?? 0) / 7) }.max() ?? 0
-        return maxW + 1
-    }
     private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
 
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
 
-    /// The whole plan, grouped into weeks (1-based) so the athlete can browse every session ahead.
-    private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] {
-        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return [] }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
-        func weekOf(_ d: Date) -> Int { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: d)).day ?? 0) / 7) }
-        var groups: [Int: [PlannedSession]] = [:]
-        for s in sessions { groups[weekOf(s.date), default: []].append(s) }
-        return groups.keys.sorted().map { w in
-            (week: w + 1, sessions: groups[w]!.sorted { $0.date < $1.date })
-        }
+    // MARK: One-pass derivation (perf audit 2026-08-13)
+    //
+    // `planWeekCount` / `weeksGrouped` / `weekly` / `peakWeekStats` were four separate computed
+    // properties, each re-walking every session with per-session `Calendar.dateComponents` on
+    // every body evaluation — ~1,000 Calendar calls per pass on a 30-week plan, re-paid on each
+    // of the reveal's own animation ticks. They all derive from ONE week-bucketing pass now,
+    // memoized in a reference box (invisible to SwiftUI, same pattern as ProfileScreen's
+    // FallbackMemo). Safe to hold `PlannedSession` refs here because the reveal only exists in
+    // onboarding, AFTER generation — nothing can rebuild (and so delete) the plan underneath it.
+    private struct Derived {
+        var weekCount = 0
+        var weeksGrouped: [(week: Int, sessions: [PlannedSession])] = []
     }
+    private final class DerivedBox { var value: Derived? }
+    @State private var derivedBox = DerivedBox()
+    private var derived: Derived {
+        if let v = derivedBox.value { return v }
+        var v = Derived()
+        if let sessions = profile?.plan?.sessions, !sessions.isEmpty {
+            let cal = Calendar.current
+            let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
+            var groups: [Int: [PlannedSession]] = [:]
+            for s in sessions {
+                let w = max(0, (cal.dateComponents([.day], from: start,
+                                                   to: cal.startOfDay(for: s.date)).day ?? 0) / 7)
+                groups[w, default: []].append(s)
+            }
+            v.weekCount = (groups.keys.max() ?? 0) + 1
+            v.weeksGrouped = groups.keys.sorted().map { w in
+                (week: w + 1, sessions: groups[w]!.sorted { $0.date < $1.date })
+            }
+        }
+        derivedBox.value = v
+        return v
+    }
+
+    /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
+    private var planWeekCount: Int { derived.weekCount }
+
+    /// The whole plan, grouped into weeks (1-based) so the athlete can browse every session ahead.
+    private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] { derived.weeksGrouped }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -212,29 +233,32 @@ struct PlanRevealView: View {
     /// Per-week planned volume across the whole block: run distance for runners, else session count.
     /// This is the plan's *actual* periodization (build → deload → taper), not a made-up line.
     private var weekly: (values: [Double], caption: String) {
-        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return ([], "") }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
-        func weekOf(_ d: Date) -> Int { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: d)).day ?? 0) / 7) }
-        let weekCount = min(16, (sessions.map { weekOf($0.date) }.max() ?? 0) + 1)
+        // Reads the memoized grouping — no per-session Calendar math left on this path.
+        let weeks = derived.weeksGrouped
+        guard !weeks.isEmpty else { return ([], "") }
+        let totalWeeks = derived.weekCount
+        let weekCount = min(16, totalWeeks)
         guard weekCount > 0 else { return ([], "") }
 
         // A long season charts its first 16 weeks — say so, or "30 WEEKS" in the stat strip above
         // sits over a 16-bar chart with no explanation.
-        let totalWeeks = (sessions.map { weekOf($0.date) }.max() ?? 0) + 1
         let truncationNote = totalWeeks > weekCount ? " · first \(weekCount) of \(totalWeeks) weeks shown" : ""
 
         if vm.running {
             var m = [Double](repeating: 0, count: weekCount)
-            for s in sessions where s.discipline == .running && weekOf(s.date) < weekCount {
-                m[weekOf(s.date)] += s.targetDistanceM ?? 0
+            for group in weeks where group.week <= weekCount {
+                for s in group.sessions where s.discipline == .running {
+                    m[group.week - 1] += s.targetDistanceM ?? 0
+                }
             }
             let peak = m.max() ?? 0
             let cap = "Peaks at \(Formatters.distance(meters: peak, unit: distanceUnit)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
             return (m, peak > 0 ? cap + truncationNote : "")
         } else {
             var c = [Double](repeating: 0, count: weekCount)
-            for s in sessions where weekOf(s.date) < weekCount { c[weekOf(s.date)] += 1 }
+            for group in weeks where group.week <= weekCount {
+                c[group.week - 1] += Double(group.sessions.count)
+            }
             return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week" + truncationNote)
         }
     }
@@ -406,8 +430,12 @@ struct PlanRevealView: View {
             ss.filter { $0.discipline == .running && $0.runType != .race }
                 .compactMap(\.targetDistanceM).reduce(0, +)
         }
-        guard let peak = weeks.max(by: { runVol($0.sessions) < runVol($1.sessions) }) else { return nil }
-        let vol = runVol(peak.sessions)
+        // Volumes computed once per week — `max(by:)`'s comparator used to re-run the filter +
+        // reduce on BOTH sides of every comparison.
+        let vols = weeks.map { runVol($0.sessions) }
+        guard let peakIdx = vols.indices.max(by: { vols[$0] < vols[$1] }) else { return nil }
+        let peak = weeks[peakIdx]
+        let vol = vols[peakIdx]
         guard vol > 0 else { return nil }
         let longest = profile?.plan?.sessions
             .filter { $0.discipline == .running && $0.runType != .race }

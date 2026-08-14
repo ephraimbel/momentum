@@ -12,8 +12,10 @@ import WidgetKit
 enum WidgetBridge {
 
     static func publish(profile: UserProfile?, workouts: [Workout],
-                        today: Date = Date(), calendar: Calendar = .current) {
-        let snapshot = build(profile: profile, workouts: workouts, today: today, calendar: calendar)
+                        today: Date = Date(), calendar: Calendar = .current,
+                        stats: ProfileStats? = nil) {
+        let snapshot = build(profile: profile, workouts: workouts, today: today, calendar: calendar,
+                             stats: stats)
         guard snapshot != WidgetSnapshot.load() else { return }
         snapshot.save()
         WidgetCenter.shared.reloadTimelines(ofKind: "TodayWidget")
@@ -29,9 +31,12 @@ enum WidgetBridge {
 
     /// Pure composition — separated so fixtures can assert on it directly.
     static func build(profile: UserProfile?, workouts: [Workout],
-                      today: Date = Date(), calendar: Calendar = .current) -> WidgetSnapshot {
+                      today: Date = Date(), calendar: Calendar = .current,
+                      stats: ProfileStats? = nil) -> WidgetSnapshot {
         let plan = profile?.plan
-        let stats = ProfileStats(workouts: workouts, plan: plan, calendar: calendar)
+        // A caller that already walked the history this pass hands its stats in — the walk is the
+        // expensive part of this build, and Today's bootstrap was paying it twice back-to-back.
+        let stats = stats ?? ProfileStats(workouts: workouts, plan: plan, calendar: calendar)
 
         // Today's session — the first still-open one; done when it completed or a workout landed.
         let todays = PlanCoaching.todaySessions(plan, on: today, calendar: calendar)

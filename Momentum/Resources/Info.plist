@@ -32,7 +32,7 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>FacebookAdvertiserIDCollectionEnabled</key>
-	<false/>
+	<true/>
 	<key>FacebookAppID</key>
 	<string>$(META_APP_ID)</string>
 	<key>FacebookClientToken</key>
@@ -61,6 +61,8 @@
 	<string>momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>momentum uses this to measure which ads bring runners to the app, so we can keep showing them to people like you and stop wasting money on the rest. Your training data is never sold.</string>
 	<key>RevenueCatAPIKey</key>
 	<string>appl_RCnCHIbAdYuSJAkzepPxxmnGVMJ</string>
 	<key>SKAdNetworkItems</key>

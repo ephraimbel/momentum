@@ -37,6 +37,14 @@ enum MetaAdsService {
             || args.contains("--ui-test-route") { return }
         #endif
         guard !appId.isEmpty, !clientToken.isEmpty else { return }
+        // ATT has not been answered yet this launch, so start with the advertiser ID OFF: the SDK
+        // must never be in a position to read the IDFA before the athlete has seen the prompt.
+        // `AdTrackingConsent` turns these back on only if they allow tracking (and re-applies the
+        // stored answer on later launches). iOS already zeroes the IDFA without authorization, but
+        // setting it explicitly is what an App Review pass should see, and it keeps the SDK honest
+        // if Apple's own gate ever loosens.
+        Settings.shared.isAdvertiserIDCollectionEnabled = false
+        Settings.shared.isAdvertiserTrackingEnabled = false
         ApplicationDelegate.shared.initializeSDK()
         isLive = true
         #endif

@@ -32,8 +32,25 @@ final class VoiceTranscriber {
     /// false when this device/locale can't recognize speech at all → the mic button hides.
     var isSupported: Bool { recognizer != nil }
 
-    private let recognizer = SFSpeechRecognizer()
-    private let audioEngine = AVAudioEngine()
+    // Both lazily created (perf audit 2026-08-13): this class is `@State`-initialized by three
+    // composer hosts, and FuelView's copy is constructed on every RootView body pass (the TabView
+    // content builder runs eagerly) — paying SFSpeechRecognizer + a full AVAudioEngine per pass
+    // for a mic that may never be tapped. Manual backing vars because @Observable rejects `lazy`;
+    // `@ObservationIgnored` so the memo writes never invalidate views.
+    @ObservationIgnored private var _recognizer: SFSpeechRecognizer??
+    private var recognizer: SFSpeechRecognizer? {
+        if let cached = _recognizer { return cached }
+        let fresh = SFSpeechRecognizer()
+        _recognizer = .some(fresh)
+        return fresh
+    }
+    @ObservationIgnored private var _audioEngine: AVAudioEngine?
+    private var audioEngine: AVAudioEngine {
+        if let engine = _audioEngine { return engine }
+        let engine = AVAudioEngine()
+        _audioEngine = engine
+        return engine
+    }
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     /// Finalized segments, joined — the part of `transcript` no later partial may ever replace.
@@ -210,8 +227,11 @@ final class VoiceTranscriber {
         task = nil
         request?.endAudio()
         request = nil
-        if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        // Through the backing var: `stop()` must never be the thing that CREATES the engine.
+        if let engine = _audioEngine {
+            if engine.isRunning { engine.stop() }
+            engine.inputNode.removeTap(onBus: 0)
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         isRecording = false
         level = 0
