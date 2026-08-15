@@ -18,14 +18,55 @@ final class HealthService: HealthServing {
     /// charger, a Garmin that uploads on Wi-Fi), so the window overlaps generously; the persisted
     /// UUID ledger makes re-reading free.
     static let autoImportOverlapS: TimeInterval = 3 * 86_400
+    /// The moment this athlete connected Apple Health. **Nothing recorded before it is ever
+    /// imported.**
+    ///
+    /// The import used to read a year back on its first pass, and a year of Apple Health is not a
+    /// year of *our* workouts — it is every Watch walk, every Garmin ride, every Strava re-sync,
+    /// and the same physical run mirrored by all three. A new athlete signing in on a well-used
+    /// phone pulled five figures of rows on their first visit to Today, on the main actor, and the
+    /// app was unusable until it finished. Connecting Health means "understand me from here", not
+    /// "ingest my life", so the start line is the floor on every import path without exception.
+    private static let startLineKey = "com.momentum.health.importStartLine"
+
+    /// Stamp the start line, once. Idempotent — a second call never moves an existing line, so
+    /// re-authorizing or a later build can't re-open the back catalogue.
+    nonisolated static func markImportStartLine(now: Date = Date(), defaults: UserDefaults = .standard) {
+        guard defaults.object(forKey: startLineKey) == nil else { return }
+        defaults.set(now, forKey: startLineKey)
+    }
+
+    nonisolated static func importStartLine(defaults: UserDefaults = .standard) -> Date? {
+        defaults.object(forKey: startLineKey) as? Date
+    }
+
+    /// The effective floor for a requested window: never earlier than the start line.
+    /// Pure, so the guarantee is a test rather than a comment.
+    nonisolated static func effectiveCutoff(requested: Date?, startLine: Date?) -> Date? {
+        switch (requested, startLine) {
+        case let (r?, s?): max(r, s)
+        case let (r?, nil): r
+        case let (nil, s?): s
+        case (nil, nil): nil
+        }
+    }
+    /// Hard ceiling on one import pass, applied at the HealthKit query so a huge library is never
+    /// even materialised. Sorted newest-first, so the cap keeps the most recent workouts.
+    static let maxImportPerPass = 300
+    /// Above this batch size we stop probing HealthKit for a per-workout average HR. Each probe is
+    /// its own round trip to healthd; at backfill scale the probes, not the import, are the cost.
+    static let hrProbeBatchCeiling = 40
 
     /// Forget the save/import dedupe ledgers — called by the data wipes. Without this, a
     /// "Delete all data" reset left the sets in UserDefaults and a later "Import workouts"
     /// silently skipped every previously imported workout ("No new workouts to import.").
-    static func resetDedupe(defaults: UserDefaults = .standard) {
+    nonisolated static func resetDedupe(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: savedKey)
         defaults.removeObject(forKey: importedKey)
         defaults.removeObject(forKey: lastAutoImportKey)   // else the post-wipe sweep waits out its throttle
+        // Re-stamped by the next authorization or sweep, so a wipe restarts from that moment
+        // rather than re-opening the history the athlete just chose to leave behind.
+        defaults.removeObject(forKey: startLineKey)
     }
 
     /// Types we write. Reads (HR, resting HR, body mass, steps) are requested so a later slice can
@@ -76,6 +117,9 @@ final class HealthService: HealthServing {
         guard HKHealthStore.isHealthDataAvailable() else { return false }
         do { try await store.requestAuthorization(toShare: Self.shareTypes, read: Self.readTypes) }
         catch { return false }
+        // Connecting IS the start line — stamp it at the moment of consent, not at the first sweep,
+        // so nothing recorded before this instant is ever eligible for import.
+        if isAuthorized { Self.markImportStartLine() }
         return isAuthorized
     }
 
@@ -210,9 +254,18 @@ final class HealthService: HealthServing {
     @discardableResult
     func importExternalWorkouts(into context: ModelContext, since: Date? = nil) async -> Int {
         guard HKHealthStore.isHealthDataAvailable() else { return 0 }
-        let cutoff = since ?? Calendar.current.date(byAdding: .year, value: -1, to: Date())
-        let hkWorkouts = await fetchWorkouts(since: cutoff)
+        // The start line is the floor on every path, including the explicit Settings button: no
+        // caller can ask for history that predates the athlete connecting Health.
+        Self.markImportStartLine()
+        let cutoff = Self.effectiveCutoff(
+            requested: since ?? Calendar.current.date(byAdding: .year, value: -1, to: Date()),
+            startLine: Self.importStartLine())
+        let hkWorkouts = await fetchWorkouts(since: cutoff, limit: Self.maxImportPerPass)
         guard !hkWorkouts.isEmpty else { return 0 }
+        // Below the ceiling we still probe Health for average HR per workout; above it we take only
+        // what the workout already carries. A backfill that issues one statistics query per row is
+        // what turned "import my history" into a frozen app.
+        let probeHR = hkWorkouts.count <= Self.hrProbeBatchCeiling
 
         let ownBundle = Bundle.main.bundleIdentifier
         var imported = savedSet(Self.importedKey)
@@ -224,18 +277,21 @@ final class HealthService: HealthServing {
         // (so the same-bundle echo check can't catch it). Importing that copy double-counts weekly
         // volume, ACWR, and every stat. Spans include this loop's own imports so two external
         // copies of one run don't both land either.
-        var existingSpans: [(start: Date, end: Date)] =
+        var existingSpans = SpanIndex(
             ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
-                .map { ($0.startedAt, $0.startedAt.addingTimeInterval(max($0.elapsedS, $0.durationS))) }
+                .map { ($0.startedAt, $0.startedAt.addingTimeInterval(max($0.elapsedS, $0.durationS))) })
         let plan = ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? []).first?.plan
         var importedWorkouts: [Workout] = []
 
-        for hk in hkWorkouts {
+        for (offset, hk) in hkWorkouts.enumerated() {
+            // The loop owns the main actor for its whole run. Let the run loop breathe between
+            // chunks so scrolling and taps stay live while a first sweep lands.
+            if offset > 0, offset.isMultiple(of: 25) { await Task.yield() }
             guard Self.shouldImport(sourceBundle: hk.sourceRevision.source.bundleIdentifier,
                                     ownBundle: ownBundle, metadata: hk.metadata ?? [:],
                                     alreadyImported: imported, uuid: hk.uuid.uuidString)
             else { continue }
-            guard !Self.overlapsExisting(start: hk.startDate, end: hk.endDate, spans: existingSpans) else {
+            guard !existingSpans.overlaps(start: hk.startDate, end: hk.endDate) else {
                 imported.insert(hk.uuid.uuidString)   // remember the verdict — don't re-evaluate every sync
                 continue
             }
@@ -249,14 +305,21 @@ final class HealthService: HealthServing {
                     ? .distanceCycling : .distanceWalkingRunning
                 distanceM = hk.statistics(for: HKQuantityType(distID))?.sumQuantity()?.doubleValue(for: .meter()) ?? 0
             }
-            let avgHR = await averageHR(start: hk.startDate, end: hk.endDate)
+            // Prefer the average the workout already carries — Watch and most mirroring apps attach
+            // it, and reading it is free. Only fall back to a live probe on small batches.
+            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+            let attached = hk.statistics(for: HKQuantityType(.heartRate))?
+                .averageQuantity()?.doubleValue(for: bpmUnit)
+            let avgHR: Int? = if let attached { Int(attached.rounded()) }
+                else if probeHR { await averageHR(start: hk.startDate, end: hk.endDate) }
+                else { nil }
 
             let workout = Self.assembleImport(
                 type: type, start: hk.startDate, duration: hk.duration,
                 elapsed: hk.endDate.timeIntervalSince(hk.startDate),
                 calories: calories, distanceM: distanceM, avgHR: avgHR)
             context.insert(workout)
-            existingSpans.append((hk.startDate, hk.endDate))
+            existingSpans.insert((start: hk.startDate, end: hk.endDate))
             imported.insert(hk.uuid.uuidString)
             saved.insert(workout.id.uuidString)
             // A Garmin/Watch long run fulfills the plan exactly like a tracked one — credit it, so
@@ -318,10 +381,14 @@ final class HealthService: HealthServing {
         guard isAuthorized else { return 0 }
         let last = defaults.object(forKey: Self.lastAutoImportKey) as? Date
         if let last, now.timeIntervalSince(last) < Self.autoImportIntervalS { return 0 }
-        // First sweep reads a year (the athlete's existing device history); later ones read only
-        // since the last sweep, overlapped, so a late-syncing device can't fall through a gap.
+        // Stamp the start line before computing the window, so a brand-new athlete's first sweep
+        // asks for "since now" and imports nothing historical at all. Later sweeps read since the
+        // last one, overlapped, so a late-syncing device can't fall through a gap — and the overlap
+        // is clamped to the start line inside `importExternalWorkouts`, so it can never reach back
+        // past the connection moment either.
+        Self.markImportStartLine(now: now, defaults: defaults)
         let since = last.map { $0.addingTimeInterval(-Self.autoImportOverlapS) }
-            ?? Calendar.current.date(byAdding: .year, value: -1, to: now)
+            ?? Self.importStartLine(defaults: defaults) ?? now
         let count = await importExternalWorkouts(into: context, since: since)
         // Stamp AFTER the pass so a crash mid-import simply retries the same window.
         defaults.set(now, forKey: Self.lastAutoImportKey)
@@ -365,6 +432,42 @@ final class HealthService: HealthServing {
         // Our own write: same app bundle *and* carries the externalUUID we stamp on save().
         if sourceBundle == ownBundle, metadata[HKMetadataKeyExternalUUID] != nil { return false }
         return !alreadyImported.contains(uuid)
+    }
+
+    /// Day-bucketed index over `overlapsExisting`.
+    ///
+    /// The import loop checked each incoming workout against a flat array that it also appended to,
+    /// so a backfill was quadratic — 5,000 rows is 12.5M interval comparisons on the main actor,
+    /// on top of everything else it was doing per row. Two workouts can only overlap if they share
+    /// a day, so bucketing by day makes each check constant-time while the arithmetic stays
+    /// identical: the bucket lookup only narrows the candidate list, and the verdict still comes
+    /// from the same pure function the tests pin.
+    nonisolated struct SpanIndex {
+        private var buckets: [Int: [(start: Date, end: Date)]] = [:]
+
+        /// A workout longer than this contributes only its first and last day to the index. Nothing
+        /// legitimate spans more (a 48h ultra is two keys); a corrupt end date would otherwise spin.
+        private static let maxSpannedDays = 3
+        private static func key(_ date: Date) -> Int { Int(date.timeIntervalSince1970 / 86_400) }
+
+        init(_ spans: [(start: Date, end: Date)]) { for s in spans { insert(s) } }
+
+        mutating func insert(_ span: (start: Date, end: Date)) {
+            let lo = Self.key(span.start)
+            let hi = max(lo, min(Self.key(span.end), lo + Self.maxSpannedDays))
+            for k in lo...hi { buckets[k, default: []].append(span) }
+        }
+
+        /// Neighbouring buckets are included so a workout straddling midnight still meets its twin.
+        func overlaps(start: Date, end: Date) -> Bool {
+            let lo = Self.key(start)
+            let hi = max(lo, min(Self.key(end), lo + Self.maxSpannedDays))
+            var candidates: [(start: Date, end: Date)] = []
+            for k in (lo - 1)...(hi + 1) {
+                if let bucket = buckets[k] { candidates.append(contentsOf: bucket) }
+            }
+            return HealthService.overlapsExisting(start: start, end: end, spans: candidates)
+        }
     }
 
     /// Pure overlap check (testable): an incoming Health workout that shares more than half of the
@@ -431,12 +534,15 @@ final class HealthService: HealthServing {
         }
     }
 
-    private func fetchWorkouts(since: Date?) async -> [HKWorkout] {
+    /// Newest-first, and **limited** — an unbounded query against a long-lived Health library
+    /// returns every mirrored Watch/Garmin/Strava row at once. The sort makes the limit meaningful:
+    /// what survives the cap is the most recent history, which is the part anyone will look at.
+    private func fetchWorkouts(since: Date?, limit: Int = HealthService.maxImportPerPass) async -> [HKWorkout] {
         await withCheckedContinuation { continuation in
             let predicate = since.map { HKQuery.predicateForSamples(withStart: $0, end: nil) }
             let sort = [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate,
-                                      limit: HKObjectQueryNoLimit, sortDescriptors: sort) { _, samples, _ in
+                                      limit: max(1, limit), sortDescriptors: sort) { _, samples, _ in
                 continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
             }
             store.execute(query)
