@@ -421,22 +421,8 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.vertical, 11)
-                inset
-                actionRow("Import workouts", icon: "square.and.arrow.down", busy: importingHealth) {
-                    Task {
-                        importingHealth = true
-                        importMessage = nil
-                        let n = await services.health.importExternalWorkouts(into: context, since: nil)
-                        importMessage = n == 0 ? "No new workouts to import."
-                            : "Imported \(n) workout\(n == 1 ? "" : "s")."
-                        importingHealth = false
-                    }
-                }
-                if let importMessage {
-                    Text(importMessage)
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .padding(.leading, 40).padding(.bottom, 10)
-                }
+                // No "Import workouts" row. Health feeds sleep, HRV and resting heart rate; it is
+                // never a source of workouts, so there is nothing here to pull.
             } else {
                 Button {
                     Haptics.light()
@@ -450,10 +436,8 @@ struct SettingsView: View {
                             if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
                             if let rhr = metrics.restingHR { profile.restingHR = rhr }
                             try? context.save()
-                            // Connect = filled, not connect-then-find-the-import-button: pull the
-                            // history their devices already mirrored into Health, right now.
-                            let n = await services.health.importExternalWorkouts(into: context, since: nil)
-                            if n > 0 { importMessage = "Imported \(n) workout\(n == 1 ? "" : "s") from Health." }
+                            // Connecting is the whole action. Body mass and resting heart rate are
+                            // current readings, not history; no workouts are pulled, then or ever.
                         } else if !healthConnected {
                             // HealthKit only shows its sheet while permission is undetermined —
                             // after one decline every later tap is a spinner then nothing, so

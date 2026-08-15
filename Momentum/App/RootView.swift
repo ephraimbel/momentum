@@ -87,11 +87,7 @@ struct RootView: View {
 
     var body: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--health-e2e") {
-            HealthE2EView()
-        } else {
-            mainBody
-        }
+        mainBody
         #else
         mainBody
         #endif
