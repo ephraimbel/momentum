@@ -31,8 +31,6 @@ struct SettingsView: View {
     @State private var healthConnected = false
     @State private var connectingHealth = false
     @State private var healthDenied = false   // the permission sheet was declined — say so, don't dead-end
-    @State private var importingHealth = false
-    @State private var importMessage: String?
     @State private var showingSignInOptions = false   // guest upgrade via Google/email (the gate's page)
     @State private var confirmDeleteAccount = false
     @State private var deletingAccount = false
