@@ -41,9 +41,9 @@ struct CardioSummaryContent: View {
     /// nonsense on a run from six months ago.
     @State private var planLine: PlanConnection?
     private struct PlanConnection { let text: String; let credited: Bool }
-    // The splits' cumulative-distance walk (a haversine per accepted sample) cached once — the
-    // splits section re-ran it on every body pass through the reveal cascade.
-    @State private var samplePts: [CardioMetrics.SamplePoint] = []
+    // (The route map lives in `ActivityHero` now — the full-bleed faded hero the HOSTS render
+    // above this content, 2026-08-14. The coordinate replay, remount keying, and full-screen
+    // zoom all moved with it.)
     /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
     /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
     @State private var healthHR: [(date: Date, bpm: Double)] = []
@@ -60,7 +60,7 @@ struct CardioSummaryContent: View {
             // Reveal-first: lead with the mastery payoff (hero distance + any "you got better" win),
             // then the route, the AI read, and the splits. Naming lives at the bottom of the save flow.
             VStack(spacing: Theme.Space.lg) {
-                if showsHeader, !workout.title.isEmpty || !workout.note.isEmpty { titleHeader }
+                if showsHeader { titleHeader }   // always has content now (type-title fallback + date)
                 headline(workout, gps)   // staggers its own children; no outer reveal
                 // The plan connection, at the payoff moment: "Today's tempo run — checked off your
                 // plan" when this run credited a session, or the honest partial when it didn't
@@ -71,15 +71,17 @@ struct CardioSummaryContent: View {
                                earned: line.credited)
                         .reveal(revealDelay + 0.08)
                 }
-                if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.10) }
+                // (The map moved above this content — `ActivityHero`, 2026-08-14.)
+                if !hits.isEmpty { achievementsSection.reveal(revealDelay + 0.16) }
                 // Sharing is not gated on a record. It used to sit inside the achievements branch, so
                 // the ~90% of runs that set no PR offered no way to share at all — and the share card
                 // is the growth loop for a solo app. The badge above is what's *earned*; the run
                 // itself is always worth showing.
+                // The CTA names the sport it's sharing — "Share your run" on a ride reads as a
+                // template leak (caught on the seeded ride, 2026-08-13).
                 EarnedShareButton(workout: workout, distanceUnit: distanceUnit,
-                                  title: "Share your run").reveal(revealDelay + 0.16)
-                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.20)
-                routeMap(gps).reveal(revealDelay + 0.22)
+                                  title: "Share your \(workout.type.title.lowercased())").reveal(revealDelay + 0.20)
+                WorkoutPhotoSection(workout: workout, canEdit: canEditPhoto).reveal(revealDelay + 0.24)
                 AIReadCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.30)
                 if workout.durationS >= FuelingGuide.carbsFromS { refuelNote.reveal(revealDelay + 0.32) }
                 PlanProposalCard().reveal(revealDelay + 0.34)
@@ -87,23 +89,42 @@ struct CardioSummaryContent: View {
                 SessionPaceReviewCard(workout: workout, distanceUnit: distanceUnit).reveal(revealDelay + 0.36)
                 RunAnalysisSection(gps: gps, type: workout.type, distanceUnit: distanceUnit,
                                    healthHRSeries: healthHR).reveal(revealDelay + 0.38)
-                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(revealDelay + 0.385)
-                TimeInZonesCard(workout: workout).reveal(revealDelay + 0.39)
-                splitsSection(gps).reveal(revealDelay + 0.40)
+                // Zones sit WITH the analysis charts (they are one) — the week card closes the page.
+                TimeInZonesCard(workout: workout).reveal(revealDelay + 0.385)
+                WeekContextCard(anchor: workout.startedAt, weekWorkouts: weekWorkouts, distanceUnit: distanceUnit).reveal(revealDelay + 0.39)
+                // The text splits list is gone (2026-08-06): RunAnalysisSection's splits card is now
+                // the Strava-style row list — ordinal + exact pace + speed bar — so a second textual
+                // rendering of the same numbers directly below it was noise.
             }
             .task {
-                samplePts = samplePoints(gps)
-                hits = CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: context)
-                // Only when no badge fired — a record run is already spoken for, and two readings of
-                // the same run stacked on each other is noise, not generosity. The extra fetch is
-                // skipped entirely in history, where the line isn't shown.
-                if hits.isEmpty { verdict = computeVerdict(gps) }
                 if showsVerdict { planLine = computePlanConnection(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
                 if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
                     weekWorkouts = (try? context.fetch(desc)) ?? []
                 }
+                // The record scan + verdict, OFF the main actor (2026-08-06): `detect` replays
+                // every prior run's samples through the Kalman filter, and running it here on the
+                // main context froze the summary right after first paint — the page appeared, then
+                // wouldn't scroll. A detached task with its own background context does the same
+                // work invisibly; only the value results hop back.
+                let container = context.container
+                let workoutId = workout.id
+                let unit = distanceUnit
+                let analysis: (hits: [CardioAchievements.Hit], verdict: RunVerdict.Verdict?) =
+                    await Task.detached(priority: .userInitiated) {
+                        let ctx = ModelContext(container)
+                        var d = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == workoutId })
+                        d.fetchLimit = 1
+                        guard let w = (try? ctx.fetch(d))?.first, let g = w.gps else { return ([], nil) }
+                        let hits = CardioAchievements.detect(for: w, distanceUnit: unit, in: ctx)
+                        // Verdict only when no badge fired — a record run is already spoken for, and
+                        // two readings of the same run stacked on each other is noise.
+                        let verdict = hits.isEmpty ? Self.verdict(for: w, gps: g, unit: unit, in: ctx) : nil
+                        return (hits, verdict)
+                    }.value
+                hits = analysis.hits
+                verdict = analysis.verdict
                 // Backfill the HR series from Health when we didn't record one live (Watch / imported
                 // runs). Same window + threshold as the time-in-zones card, so the two agree.
                 if (gps.hrSamples.filter { $0.bpm > 0 }).count < 4 {
@@ -174,7 +195,11 @@ struct CardioSummaryContent: View {
     /// The cost is nil in practice: `CardioAchievements.detect` already fetches the entire table
     /// unbounded in this same `.task`, a beat earlier. Type filtering stays in memory — a
     /// `#Predicate` on the enum isn't worth the risk of silently matching nothing.
-    private func computeVerdict(_ gps: GPSDetail) -> RunVerdict.Verdict? {
+    ///
+    /// Static + nonisolated: runs inside the same detached analysis task as `detect`, against the
+    /// same background context, so the whole history walk stays off the main actor.
+    nonisolated private static func verdict(for workout: Workout, gps: GPSDetail,
+                                            unit: DistanceUnit, in context: ModelContext) -> RunVerdict.Verdict? {
         let start = workout.startedAt
         var descriptor = FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt < start })
         descriptor.sortBy = [SortDescriptor(\.startedAt, order: .reverse)]
@@ -192,8 +217,8 @@ struct CardioSummaryContent: View {
         // matches costs a comparison per prior run and nothing else.
         let route = RouteMatch.context(for: workout, gps: gps, priors: earlier)
         let this = RunVerdict.Run(date: start, distanceM: gps.distanceM,
-                                  durationS: workout.durationS, avgHR: avgHR(gps))
-        return RunVerdict.verdict(for: this, priors: priors, route: route, unit: distanceUnit)
+                                  durationS: workout.durationS, avgHR: gps.avgHR)
+        return RunVerdict.verdict(for: this, priors: priors, route: route, unit: unit)
     }
 
     private var achievementsSection: some View {
@@ -254,45 +279,17 @@ struct CardioSummaryContent: View {
 
     private var titleHeader: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            if !workout.title.isEmpty {
-                Text(workout.title).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-            }
+            // The eyebrow names the sport and the moment; the title sets the page's voice —
+            // the same block the save screens print under the hero's fade (2026-08-14).
+            ActivityEyebrow(type: workout.type, date: workout.startedAt)
+            Text(workout.title.isEmpty ? workout.type.title : workout.title)
+                .font(.display(30, weight: .black)).foregroundStyle(Theme.ink)
             if !workout.note.isEmpty {
                 Text(workout.note).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func routeMap(_ gps: GPSDetail) -> some View {
-        let coords = gps.routeCoordinates(type: workout.type)
-        let style = mapStyleOverride ?? gps.mapStyle
-        if coords.count > 1 {
-            RouteMapView(coordinates: RouteSmoothing.smooth(coords), style: style)
-                .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-                // When the map-matched route lands post-finish (nil→present), the coordinates change
-                // underneath RouteMapView. Its route line is added imperatively once on style-load (a
-                // live gradient update crashes Mapbox), so a reframe would drop the line. Keying the
-                // identity on match-presence (and the previewed style) forces one clean remount,
-                // re-running style-load with the snapped route.
-                .id("\(gps.matchedRouteData != nil)-\(style.rawValue)")
-        } else if workout.type.isGPS {
-            // A GPS-discipline run with no usable route (treadmill, or GPS never locked) — a quiet
-            // card instead of a silent gap where the map belongs.
-            ZStack {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                VStack(spacing: 6) {
-                    Image(systemName: "mappin.slash").font(.system(size: 22, weight: .semibold))
-                    Text("No route recorded").font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                }
-                .foregroundStyle(Theme.inkTertiary)
-            }
-            .frame(height: 120)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-        }
     }
 
     private func headline(_ workout: Workout, _ gps: GPSDetail) -> some View {
@@ -314,16 +311,10 @@ struct CardioSummaryContent: View {
                 EarnedLine(text: line.text, systemImage: glyph(line.tone), earned: line.tone == .earned)
                     .reveal(revealDelay + 0.14)
             }
-            // Equal-width stats so the row stays balanced whether it's 3 or 5 — Avg HR joins Time,
-            // pace, and elevation whenever the run has heart-rate data (ours, or backfilled from Health).
-            HStack(alignment: .top, spacing: Theme.Space.md) {
-                stat(Formatters.duration(s: workout.durationS), "Time")
-                stat(paceOrSpeed(workout, gps), workout.type.isCycling ? "Avg speed" : "Avg pace")
-                if let hr = avgHR(gps), hr > 0 { stat("\(hr)", "Avg HR") }
-                stat("\(Int(gps.elevationGainM)) m", "Elevation")
-                if let kcal = workout.calories, kcal > 0 { stat("\(Int(kcal))", "Calories") }
-            }
-            .reveal(revealDelay + 0.22)
+            // The organized reading (2026-08-14): a labelled two-column grid instead of five
+            // stats squeezed shoulder to shoulder. Avg HR joins whenever the run has heart-rate
+            // data (ours, or backfilled from Health).
+            KeyStatsGrid(stats: keyStats(workout, gps)).reveal(revealDelay + 0.22)
         }
         .padding(.vertical, Theme.Space.md)
     }
@@ -335,27 +326,6 @@ struct CardioSummaryContent: View {
         }
         let pace = gps.distanceM > 0 ? workout.durationS / (gps.distanceM / 1000) : 0
         return Formatters.pace(secPerKm: pace, unit: distanceUnit)
-    }
-
-    private func splitsSection(_ gps: GPSDetail) -> some View {
-        let splits = CardioMetrics.splits(samplePts, unitMeters: unitMeters)
-        let unitLabel = distanceUnit.resolved() == .imperial ? "mi" : "km"
-        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            if !splits.isEmpty {
-                Text("SPLITS").font(.rounded(Theme.FontSize.label, weight: .bold))
-                    .tracking(1.4).foregroundStyle(Theme.inkTertiary)
-                ForEach(splits, id: \.index) { split in
-                    HStack {
-                        Text("\(split.index + 1) \(unitLabel)\(split.isPartial ? " (partial)" : "")")
-                            .foregroundStyle(Theme.inkSecondary)
-                        Spacer()
-                        Text(Formatters.duration(s: split.durationS)).monospacedDigit().foregroundStyle(Theme.ink)
-                    }
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Per-rep adherence breakdown for a guided structured run — how each rep landed vs its target
@@ -462,14 +432,13 @@ struct CardioSummaryContent: View {
             }
     }
 
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
+    private func keyStats(_ workout: Workout, _ gps: GPSDetail) -> [KeyStat] {
+        var stats = [KeyStat(Formatters.duration(s: workout.durationS), "Time"),
+                     KeyStat(paceOrSpeed(workout, gps), workout.type.isCycling ? "Avg speed" : "Avg pace")]
+        if let hr = avgHR(gps), hr > 0 { stats.append(KeyStat("\(hr) bpm", "Avg HR")) }
+        stats.append(KeyStat(Formatters.elevation(meters: gps.elevationGainM, unit: distanceUnit), "Elevation"))
+        if let kcal = workout.calories, kcal > 0 { stats.append(KeyStat("\(Int(kcal))", "Calories")) }
+        return stats
     }
 
     /// The run's average heart rate — our own captured average, else the mean of the Health series
@@ -480,9 +449,6 @@ struct CardioSummaryContent: View {
         return Int((healthHR.map(\.bpm).reduce(0, +) / Double(healthHR.count)).rounded())
     }
 
-    private func samplePoints(_ gps: GPSDetail) -> [CardioMetrics.SamplePoint] {
-        gps.samplePoints(type: workout.type)
-    }
 }
 
 // MARK: - Rep grouping (pure — unit-tested)
@@ -551,3 +517,4 @@ enum RepGrouping {
         return sorted[sorted.count / 2]
     }
 }
+

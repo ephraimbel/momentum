@@ -154,11 +154,13 @@ private struct FeedTile: View {
     }
 
     private var metricStrip: some View {
+        // Shadows only on photo tiles: a zero-opacity `.shadow` still allocates its offscreen
+        // render pass, and two of them per tile made every scrolled frame of the 3-across wall
+        // pay ~24 dead passes (perf audit 2026-08-13).
         Text(metric)
             .font(.display(11.5, weight: .heavy)).monospacedDigit()
             .foregroundStyle(metricInk)
-            .shadow(color: .black.opacity(ink == .photo ? 0.55 : 0), radius: 2, y: 0.5)
-            .shadow(color: .black.opacity(ink == .photo ? 0.25 : 0), radius: 5)
+            .modifier(PhotoLegibilityShadow(active: ink == .photo))
             .padding(.horizontal, 7).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -377,5 +379,22 @@ struct CommunityScopeTabs: View {
         .buttonStyle(.plain)
         .accessibilityLabel(s.label)
         .accessibilityAddTraits(on ? [.isSelected] : [])
+    }
+}
+
+/// Two-layer legibility shadow for text over photo media — structurally ABSENT when inactive.
+/// A `.shadow` with 0-opacity color still allocates its offscreen pass; grids apply this per
+/// tile, so the dead passes were real scroll cost (perf audit 2026-08-13). Shared by the
+/// community wall and the profile grid so the two walls keep identical text treatment.
+struct PhotoLegibilityShadow: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .shadow(color: .black.opacity(0.55), radius: 2, y: 0.5)
+                .shadow(color: .black.opacity(0.25), radius: 5)
+        } else {
+            content
+        }
     }
 }

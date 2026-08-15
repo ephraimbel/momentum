@@ -37,6 +37,9 @@ struct RootView: View {
         return .today
     }()
     @State private var showOnboarding = false
+    /// True for ~one dismiss-animation beat after onboarding completes, so the tab shell (and its
+    /// Mapbox map) is built AFTER the cover has left the screen, not during its dismissal.
+    @State private var holdTabsForOnboardingDismiss = false
     /// The athlete's photo, drawn as the Profile tab's icon. Nil until rendered, and while nil the
     /// tab falls back to its SF Symbol — so a profile with no photo behaves exactly as before.
     @State private var profileTabIcon: UIImage?
@@ -47,26 +50,44 @@ struct RootView: View {
     /// fifth presentation modifier to this chain (see the ceiling note above).
     @State private var gateAccountBeat = false
     #if DEBUG
+    /// One-shot latch for the launch-arg deep links in `onAppear` — see the guard there.
+    @MainActor private static var didFireDebugArgs = false
+    /// Newest-first, bounded — see `recentWorkouts` below.
+    private static let recentWorkoutsDescriptor: FetchDescriptor<Workout> = {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        d.fetchLimit = 24
+        return d
+    }()
     // Open the most recent run's detail (for verifying the guided-run Reps breakdown).
-    @Query(sort: \Workout.startedAt, order: .reverse) private var recentWorkouts: [Workout]
+    // Bounded: this lives in the app SHELL, so an unbounded query re-materialized the entire
+    // workout table on every store change and inflated every tab switch in debug builds — the
+    // deep links it feeds only ever want something recent.
+    @Query(RootView.recentWorkoutsDescriptor) private var recentWorkouts: [Workout]
     @State private var showRunDetail = ProcessInfo.processInfo.arguments.contains("--ui-test-run-detail")
     // Flipped AFTER insertion (onAppear + delay) — a cover whose isPresented is already true while
     // the view is being inserted can silently fail to present (see the onboarding note below).
     @State private var showSaveScreen = false
     // Straight to Settings (screenshot verification of the settings surface).
     @State private var showSettingsDeepLink = false
+    #if DEBUG
+    /// --explainer-demo: presents the hrZones MetricDetailSheet directly — deterministic screenshot
+    /// of the citation card (App Review 1.4.1) without fighting chart-ⓘ tap coordinates.
+    @State private var showExplainerDemo = false
+    #endif
+    // The onboarding paywall flow, presented directly for screenshot verification.
+    @State private var showOnboardingPaywallFlow = false
+    // --timed-save-ebike: the stationary e-bike save screen over a minted session.
+    @State private var showTimedSaveEbike = false
+    @State private var ebikeDebugWorkout: Workout?
     @State private var showWidgetPreview = ProcessInfo.processInfo.arguments.contains("--widget-preview")
     // Straight into the planned-lift checklist (screenshot verification of the live strength flow).
     @State private var showStrengthLivePlanned = false
+    @State private var showStrengthSave = false
     #endif
 
     var body: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--health-e2e") {
-            HealthE2EView()
-        } else {
-            mainBody
-        }
+        mainBody
         #else
         mainBody
         #endif
@@ -88,7 +109,15 @@ struct RootView: View {
                 ZStack {
                     // Until onboarding is done, show a clean canvas — don't build the Today map yet,
                     // so it can't trigger a location prompt "up front" (PRD §4.1, §11 privacy).
-                    if showOnboarding { Theme.background.ignoresSafeArea() } else { tabs }
+                    // The hold keeps the canvas one beat longer after onboarding completes: swapping
+                    // in `tabs` the instant the flag flips built the whole shell — Mapbox included —
+                    // in the same frame the cover's dismiss animation started, and that stutter was
+                    // the athlete's very last impression of setup (perf audit 2026-08-13).
+                    if showOnboarding || holdTabsForOnboardingDismiss {
+                        Theme.background.ignoresSafeArea()
+                    } else {
+                        tabs
+                    }
                 }
                 // Award unlocks meet the athlete wherever they land — awards can arrive from any
                 // path (save flows, Health import, a plan week completing), so the presenter sits
@@ -110,17 +139,15 @@ struct RootView: View {
                     set: { paywall.presentedFeature = $0 })) { feature in
                     PaywallView(feature: feature)
                 }
-                // The onboarding hard gate (2026-07-28). `finishOnboarding` sets the flag when setup
-                // reaches the paywall un-entitled, and only a purchase/restore clears it — so the wall
-                // is re-raised on every launch and force-quitting it is never a way into the app.
-                // Athletes who finished onboarding BEFORE the flip never set the flag and keep the
-                // free tier they already had; this walls new signups only.
-                // `set` deliberately does NOT clear `onboardingGatePending` — only an entitlement
-                // does (`setPro(true)`). It used to self-clear, from the freemium era when this cover
-                // was dismissible and the worst case was walling someone out of a free tier; with a
-                // hard gate that would make one dismissal a permanent bypass. The store-unreachable
-                // escape is the one non-purchase way out, and it defers via `storeUnreachableDeferral`
-                // — unpersisted, so the wall is back on the next launch.
+                // The onboarding gate — SOFT since 2026-08-06 (user call). `finishOnboarding` still
+                // sets the flag when setup reaches the paywall un-entitled, so a force-quit at the
+                // wall re-raises it here once; but the wall's X now clears the flag and moves on,
+                // so no one is ever locked out. Anyone left mid-gate by the hard era (the flag
+                // persisted) gets the same X on their next launch.
+                // `set` still does NOT clear `onboardingGatePending` — the clears are an entitlement
+                // (`setPro(true)`) and the flow's own close(), both of which run before this cover
+                // resolves, so a dismissal here never needs to. The store-unreachable deferral
+                // (`storeUnreachableDeferral`, unpersisted) remains as a belt-and-braces escape.
                 .fullScreenCover(isPresented: Binding(
                     get: { gateAccountBeat
                         || (paywall.onboardingGatePending && !paywall.isPro && !paywall.storeUnreachableDeferral
@@ -135,13 +162,23 @@ struct RootView: View {
                             })
                         .environment(\.colorScheme, .dark)   // same dark sequence onboarding runs in
                     } else {
-                        PaywallView(feature: .fullPlan, hard: true, onEntitled: {
+                        // Re-enters the three-page flow AT the checkout page — the athlete saw
+                        // the try-free and reminder pages before force-quitting; re-telling the
+                        // story would read as a loop.
+                        OnboardingPaywallFlow(startAtCheckout: true, onEntitled: {
                             // A purchase landed HERE, so onboarding's own paywall → `.account`
                             // hand-off never ran. Swap this cover to the account beat instead of
                             // letting the paywall dismiss — flipping `gateAccountBeat` keeps `get`
                             // true, so the cover is never torn down and there is no re-presentation
                             // to lose under load. If they already have a real account there's nothing
                             // to offer: leave it alone and `get` goes false on its own.
+                            guard !(auth.isSignedIn && !auth.isGuest) else { return }
+                            gateAccountBeat = true
+                        }, onClose: {
+                            // The X (soft gate): they skipped paying, but they also never reached
+                            // onboarding's account beat — offer it the same cover-swapping way.
+                            // close() already cleared the gate flag, so for a signed-in athlete
+                            // `get` goes false on its own and the cover resolves.
                             guard !(auth.isSignedIn && !auth.isGuest) else { return }
                             gateAccountBeat = true
                         })
@@ -190,7 +227,11 @@ struct RootView: View {
                 // presenting (--ui-test-run-detail is affected too).
                 .background {
                     Color.clear.fullScreenCover(isPresented: $showSaveScreen) {
-                        if let run = recentWorkouts.first(where: { $0.type.isGPS && $0.gps != nil }) {
+                        // --save-screen-ride narrows to the seeded ride — the summary reads a ride
+                        // in speed (chart + splits), and that branch is unreachable from a run.
+                        let wantRide = ProcessInfo.processInfo.arguments.contains("--save-screen-ride")
+                        if let run = recentWorkouts.first(where: {
+                            $0.type.isGPS && $0.gps != nil && (!wantRide || $0.type.isCycling) }) {
                             // Reads the real week through the shared reader, so this harness verifies
                             // the ring the finish flow actually draws — not a lookalike. `--ring-demo`
                             // substitutes a mid-week reading, because the seed's run is the only one
@@ -204,6 +245,17 @@ struct RootView: View {
                                                                         profile: profiles.first, in: context)) {
                                 showSaveScreen = false
                             }
+                        }
+                    }
+                }
+                // --strength-save: the post-lift save editor for the newest seeded strength
+                // session — deterministic verification of the summary's Strava-shaped order
+                // (muscle-map identity card, exercise volume bars, week tonnage card). Own
+                // background view (same 4th-modifier gotcha as above).
+                .background {
+                    Color.clear.fullScreenCover(isPresented: $showStrengthSave) {
+                        if let lift = recentWorkouts.first(where: { $0.strength != nil }) {
+                            StrengthSaveView(workoutId: lift.id) { showStrengthSave = false }
                         }
                     }
                 }
@@ -302,6 +354,15 @@ struct RootView: View {
         // and deep links suspend until the flow completes). No `initial:` — isSuspended already
         // defaults false, and an initial-render state write can glitch cover presentation.
         .onChange(of: showOnboarding) { _, showing in
+            if !showing {
+                // Onboarding just finished: hold the tab shell until the cover's dismiss animation
+                // has the screen to itself (see the canvas branch above).
+                holdTabsForOnboardingDismiss = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(550))
+                    holdTabsForOnboardingDismiss = false
+                }
+            }
             coach.isSuspended = showing
             // The account is the last beat of onboarding now, so a sign-in can land with a freshly
             // built profile and plan on disk — `noteRealSignIn` must not read that as a
@@ -320,6 +381,27 @@ struct RootView: View {
         .fullScreenCover(isPresented: $showWidgetPreview) {
             WidgetPreviewHarness()
         }
+        // --paywall-onboarding [--paywall-onboarding-2]: the two-page onboarding wall, for
+        // screenshot verification without driving the whole onboarding. -2 enters at checkout,
+        // the relaunch-gate framing.
+        .fullScreenCover(isPresented: $showOnboardingPaywallFlow) {
+            OnboardingPaywallFlow(
+                startAtCheckout: ProcessInfo.processInfo.arguments.contains("--paywall-onboarding-2"))
+        }
+        // --timed-save-ebike: mints a finished 25-minute stationary e-bike session and opens its
+        // save screen — verifies the console-readout rows (distance/elevation/avg speed) without
+        // driving a live session.
+        .fullScreenCover(isPresented: $showTimedSaveEbike) {
+            if let w = ebikeDebugWorkout {
+                TimedSaveView(workoutId: w.id) { showTimedSaveEbike = false }
+            }
+        }
+        #if DEBUG
+        .sheet(isPresented: $showExplainerDemo) {
+            MetricDetailSheet(explainer: MetricExplainers.hrZones)
+                .presentationDetents([.large])
+        }
+        #endif
         .fullScreenCover(isPresented: $showSettingsDeepLink) {
             NavigationStack {
                 SettingsView()
@@ -338,12 +420,26 @@ struct RootView: View {
             if url.host == "today" { selection = .today; return }
             auth.handleAuthCallback(url)
         }
-        .sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
+        // Own background host (the 4th-chained-presentation gotcha documented above): this sheet
+        // sat 4th on the outer chain in Release, exactly where covers silently stop presenting —
+        // the recovery email's whole payoff could fail to appear, leaving the athlete signed in
+        // but never asked for a new password. A separate host also stops it fighting the
+        // onboarding cover for one slot when a recovery link lands on a profile-less install
+        // (both raise in the same update). (Audit 2026-08-11.)
+        .background {
+            Color.clear.sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
+        }
         .onAppear {
             // A Siri receipt posted under quiet provisional delivery → ask properly (once) so
             // the next "Logged to Fuel" actually banners.
             NotificationService.promoteReceiptAuthorizationIfNeeded()
             if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
+            // Ad-tracking consent (2026-08-13). Deliberately NOT at cold launch of a fresh install:
+            // ATT gives each install exactly one prompt, and spending it on someone who has not yet
+            // seen the app converts far worse than asking a runner who is already set up. Reaching
+            // here with a profile means onboarding is behind them. `requestOnce` no-ops forever
+            // after either answer, so this costs nothing on every later launch.
+            if auth.isSignedIn, !profiles.isEmpty { AdTrackingConsent.requestOnce() }
             // One check per cold launch (onAppear re-fires on cover dismissals, when the marker may
             // belong to a legitimately live workout), and never over the sign-in/onboarding gates —
             // the marker survives until handled, so deferring a launch loses nothing.
@@ -353,26 +449,27 @@ struct RootView: View {
                     recoveredWorkout = pending
                     showRecoveryPrompt = true
                 }
-                #if DEBUG
-                // --save-screen: present the save editor on the newest seeded GPS workout — the
-                // only sim-reachable door to the share-visibility row (a real one needs a live run).
-                if ProcessInfo.processInfo.arguments.contains("--save-screen") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        var newest = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
-                        newest.fetchLimit = 20
-                        if let w = (try? context.fetch(newest))?.first(where: { $0.type.isGPS }) {
-                            recoverySave = PresentedWorkout(id: w.id, type: w.type)
-                        }
-                    }
-                }
-                #endif
+                // (The `--save-screen` deep link lives ONLY in the arg block below, presenting
+                // through `showSaveScreen`'s dedicated cover. A second copy here queued the SAME
+                // editor through `recoverySave` — it couldn't present while the dedicated cover
+                // was up, so it fired the moment Done dismissed it, re-opening the save screen
+                // right after the celebration. Removed 2026-08-07.)
                 // Heal recent workouts whose route snapshot failed to render at finish — History
                 // thumbnails recover on launch instead of showing bare silhouettes forever.
-                Task { await WorkoutSnapshotHealer.sweep(in: context) }
+                // Deferred well past first paint: each heal constructs a full Mapbox Snapshotter
+                // (its own map engine pulling tiles), and unthrottled it raced Today's map for the
+                // network + main thread at the exact moment of first render (perf audit 2026-08-13).
+                Task {
+                    try? await Task.sleep(for: .seconds(4))
+                    await WorkoutSnapshotHealer.sweep(in: context)
+                }
                 // Claim/refresh the athlete's public identity once per launch (handle, name, bio,
                 // avatar, Pro checkmark) — the community-era hook restored with the launch wiring
                 // (2026-07-29). No-op for guests and dark builds (`isAvailable` gate inside).
                 if CommunityAccess.enabled, let profile = profiles.first {
+                    // One-shot: pre-2026-08-06 profiles stored routes-off under a default no UI
+                    // could change — their shared runs rendered glyphs on the wall forever.
+                    if SocialPrivacy.migrateRouteMapsDefault(profile) { try? context.save() }
                     Task { await services.social.claimProfile(profile, in: context) }
                 }
                 // Mint the record book on LAUNCH, not on a tab visit. This is one-shot (versioned
@@ -380,13 +477,23 @@ struct RootView: View {
                 // `ProgressView` — so an athlete who imported a history from Apple Health and went
                 // straight to Profile read a flat "0 PRS" until they happened to open Progress.
                 // The trio is one of the first things anyone sees; it has to be true on arrival.
-                // Deferred a beat so the replay never competes with first paint.
+                // Deferred so the replay never competes with first paint — 0.8 s turned out to be
+                // exactly when the athlete starts scrolling, so it moved to 3 s (2026-08-13). A
+                // Progress visit inside that window is covered: its own first task runs the same
+                // one-shot backfill before it snapshots the PR shelf.
                 Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(0.8))
+                    try? await Task.sleep(for: .seconds(3))
                     RecordsBook.backfillIfNeeded(in: context)
                 }
             }
             #if DEBUG
+            // ONE-SHOT per process: `onAppear` re-fires every time a cover dismisses (see the
+            // recovery note above), so an unguarded deep-link arg here re-triggered itself forever
+            // — `--save-screen` re-presented the save editor 0.8s after the celebration closed it
+            // (caught 2026-08-07: CardioSaveMapStyleUITests could only pass by racing the re-present),
+            // and `--timed-save-ebike` minted a duplicate workout per dismissal.
+            guard !Self.didFireDebugArgs else { return }
+            Self.didFireDebugArgs = true
             if ProcessInfo.processInfo.arguments.contains("--onboarding") { showOnboarding = true }
             if ProcessInfo.processInfo.arguments.contains("--paywall") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { paywall.present(for: .aiCoach) }
@@ -394,11 +501,14 @@ struct RootView: View {
             if ProcessInfo.processInfo.arguments.contains("--coach") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { coach.open() }
             }
-            if ProcessInfo.processInfo.arguments.contains("--save-screen") {
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--save-screen") }) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showSaveScreen = true }
             }
             if ProcessInfo.processInfo.arguments.contains("--strength-live-planned") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showStrengthLivePlanned = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--strength-save") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showStrengthSave = true }
             }
             if ProcessInfo.processInfo.arguments.contains("--coach-card") {
                 // Deterministic proposal in the thread (no network) — screenshot the card + Apply flow.
@@ -411,6 +521,22 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettingsDeepLink = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--explainer-demo") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showExplainerDemo = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--paywall-onboarding") }) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showOnboardingPaywallFlow = true }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--timed-save-ebike") {
+                let w = Workout()
+                w.type = .eBikeRide
+                w.durationS = 25 * 60
+                w.elapsedS = 25 * 60
+                context.insert(w)
+                try? context.save()
+                ebikeDebugWorkout = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { showTimedSaveEbike = true }
             }
             // --siri-log: exercise the Siri logging path end-to-end (meal + receipt notification)
             // without Siri — the intent's perform() runs this exact code.

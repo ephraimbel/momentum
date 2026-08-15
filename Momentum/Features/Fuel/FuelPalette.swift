@@ -19,6 +19,116 @@ extension Theme {
         // deliberately stay monochrome for now.
         static let iron = Color(hex: "C4586B")       // garnet rose
         static let calcium = Color(hex: "2FA96C")    // spring mint
+
+        /// The health-score band inks (2026-08-15) — same INK-grade discipline as the metric
+        /// colors above, and deliberately drawn from the same validated family: mint for whole,
+        /// honey for solid, peach for mixed, garnet for processed. Garnet is a rose, not an
+        /// alarm — no red "failed" state, ever (house rule).
+        static func score(_ band: HealthScore.Band) -> Color {
+            switch band {
+            case .whole: return Color(hex: "2FA96C")
+            case .solid: return Color(hex: "D5A017")
+            case .mixed: return Color(hex: "C96F3B")
+            case .processed: return Color(hex: "C4586B")
+            }
+        }
+    }
+}
+
+// MARK: - Meal → HealthScore facts (the SwiftData↔engine bridge, so the engine stays pure)
+
+extension MealItem {
+    /// This item's facts at its CURRENT portion — what the deterministic `HealthScore` judges.
+    var healthFacts: HealthScore.Facts {
+        HealthScore.Facts(name: name, kcal: kcal, carbsG: carbsG, proteinG: proteinG, fatG: fatG,
+                          sodiumMg: sodiumMg, fiberG: fiberG, sugarG: sugarG, satFatG: satFatG,
+                          potassiumMg: potassiumMg, nova: nova)
+    }
+}
+
+extension Meal {
+    /// The meal's item facts — itemized meals judge per item; a totals-only meal (manual entry,
+    /// pre-itemization history) judges as one pseudo-item from its scalar totals. One definition,
+    /// so every surface (journal row, detail sheet, health page) scores a meal identically.
+    var healthFacts: [HealthScore.Facts] {
+        let items = self.items
+        if !items.isEmpty { return items.map(\.healthFacts) }
+        // Totals-only: only judge a meal that actually has numbers.
+        guard let kcal, kcal > 0 || carbsG != nil else { return [] }
+        return [HealthScore.Facts(name: text, kcal: kcal, carbsG: carbsG ?? 0,
+                                  proteinG: proteinG ?? 0, fatG: fatG ?? 0,
+                                  sodiumMg: sodiumMg ?? 0, fiberG: fiberG, sugarG: sugarG,
+                                  satFatG: satFatG, potassiumMg: potassiumMg, nova: nil)]
+    }
+
+    /// The meal's health verdict, or nil while the numbers are pending. Decodes `itemsData` —
+    /// hot paths (the journal rows) cache the result per refresh, exactly like `journalTitle`.
+    var healthVerdict: HealthScore.Verdict? { HealthScore.aggregate(healthFacts) }
+}
+
+// MARK: - The score chip (journal rows) and gauge (detail sheet, health page)
+
+/// The score at row size: the number in its band's ink on a soft tinted capsule. Quiet by
+/// design — one glance says "82, whole-ish" without shouting at a meal.
+struct HealthScoreChip: View {
+    let verdict: HealthScore.Verdict
+
+    var body: some View {
+        let tint = Theme.Fuel.score(verdict.band)
+        Text("\(verdict.score)")
+            .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2.5)
+            .background(Capsule().fill(tint.opacity(0.12)))
+            .contentTransition(.numericText())
+            .accessibilityLabel("Health score \(verdict.score), \(verdict.band.word)")
+    }
+}
+
+/// The score as a gauge — a ring drawn to score/100 in the band's ink, the numeral centered,
+/// the band word beneath. A whole-food score (80+) earns iridescence: quality is progress here,
+/// and the arrival is marked exactly like a fueled ring. Transform-only draw-in, Reduce Motion
+/// renders complete.
+struct HealthScoreGauge: View {
+    let verdict: HealthScore.Verdict
+    /// Ring diameter; the type scales with it (row 48 … hero 120).
+    var diameter: CGFloat = 96
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drawn = false
+
+    var body: some View {
+        let tint = Theme.Fuel.score(verdict.band)
+        let earned = verdict.band == .whole
+        let stroke = max(4, diameter / 14)
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().stroke(Theme.hairline, lineWidth: stroke)
+                Circle()
+                    .trim(from: 0, to: drawn ? CGFloat(verdict.score) / 100 : 0)
+                    .rotation(.degrees(-90))
+                    .stroke(earned ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(tint),
+                            style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+                    .shadow(color: (earned ? Theme.iridescent.first ?? tint : tint).opacity(0.45),
+                            radius: diameter / 16)
+                    .animation(Motion.lively, value: verdict.score)
+                Text("\(verdict.score)")
+                    .font(.display(diameter * 0.34, weight: .black)).monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+                    .contentTransition(.numericText())
+            }
+            .frame(width: diameter, height: diameter)
+            Text(verdict.band.word)
+                .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                .foregroundStyle(tint)
+        }
+        .onAppear {
+            if reduceMotion { drawn = true }
+            else { withAnimation(Motion.pen(0.8)) { drawn = true } }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Health score")
+        .accessibilityValue("\(verdict.score) out of 100, \(verdict.band.word)")
     }
 }
 

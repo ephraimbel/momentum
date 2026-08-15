@@ -103,7 +103,9 @@ enum RecordsBook {
     }
 
     /// The record candidates one workout offers (same definitions as `CardioAchievements`).
-    static func cardioCandidates(_ workout: Workout) -> [(type: PRType, value: Double)] {
+    /// Nonisolated (2026-08-06): the benchmark-window scan replays every sample, and the save
+    /// flow now runs it on a background context so the Done-tap celebration keeps its frames.
+    nonisolated static func cardioCandidates(_ workout: Workout) -> [(type: PRType, value: Double)] {
         var out: [(PRType, Double)] = []
         // Longest session (any discipline, by moving time).
         if workout.durationS > 0 { out.append((.longestDuration, workout.durationS)) }

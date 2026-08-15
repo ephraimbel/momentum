@@ -26,7 +26,14 @@ final class EmailAuthUITests: XCTestCase {
         XCTAssertTrue(returning.waitForExistence(timeout: 10), "welcome beat should show on a fresh install")
         returning.tap()
 
+        // Tap-and-verify: the welcome's settle-in animation can eat the first tap (same miss the
+        // identity walk below already guards against — seen as "email box should be on the
+        // account page" failing with the welcome still on screen, 2026-08-11).
         let emailField = app.textFields["Email"]
+        for _ in 0..<4 where !emailField.exists {
+            if returning.exists && returning.isHittable { returning.tap() }
+            _ = emailField.waitForExistence(timeout: 2)
+        }
         XCTAssertTrue(emailField.waitForExistence(timeout: 5), "email box should be on the account page")
         attach(app, "signin-page")
 
@@ -53,7 +60,7 @@ final class EmailAuthUITests: XCTestCase {
 
         // Confirmations are ON: the account exists but there's no session yet — the gate shows
         // the "check your email" beat. This asserts the confirm-gated UX in its own right.
-        let confirmPrompt = app.staticTexts["Almost there — tap the link we just emailed you and you're in."]
+        let confirmPrompt = app.staticTexts["Almost there. Tap the link we just emailed you and you're in."]
         XCTAssertTrue(confirmPrompt.waitForExistence(timeout: 30), "signup should show the confirm-email prompt")
         attach(app, "signin-confirm-prompt")
 
@@ -111,8 +118,12 @@ final class EmailAuthUITests: XCTestCase {
         // Walk the remaining steps generically: answer the two steps that demand input,
         // dismiss opt-in beats, Continue through the rest.
         let week1 = app.staticTexts["Week 1"]   // the plan reveal
+        // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
+        // anymore) — it presents from com.apple.Health, so drive that process directly.
+        let health = XCUIApplication(bundleIdentifier: "com.apple.Health")
         for _ in 0..<25 {
             if week1.exists { break }
+            grantHealthSheet(health)
             if app.staticTexts["What do you want to do?"].exists,
                !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Lift weights"].firstMatch.tap()
@@ -139,6 +150,18 @@ final class EmailAuthUITests: XCTestCase {
         XCTAssertTrue(cont.waitForExistence(timeout: 5))
         XCTAssertTrue(cont.isEnabled)
         cont.tap()
+    }
+
+    /// Grant the HealthKit authorization sheet if it's up (same pattern as HealthImportUITests).
+    private func grantHealthSheet(_ health: XCUIApplication) {
+        for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
+            let sw = health.switches[label]
+            if sw.exists && sw.isHittable { sw.tap() }
+            let btn = health.buttons[label]
+            if btn.exists && btn.isHittable { btn.tap() }
+        }
+        let allow = health.buttons["Allow"]
+        if allow.exists && allow.isHittable { allow.tap() }
     }
 
     private func attach(_ app: XCUIApplication, _ name: String) {

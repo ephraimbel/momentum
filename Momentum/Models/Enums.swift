@@ -254,15 +254,24 @@ extension WorkoutType: Identifiable {
         }
     }
     /// Timed sports capture via a simple stopwatch — no GPS route, no logged sets.
+    /// E-bike is here deliberately (owner call 2026-08-05): picking "E-Bike Ride" means a
+    /// STATIONARY e-bike, so it captures like the other stationary sports — glyph over the
+    /// iridescent glow, never a map. Outdoor e-bikers pick Ride.
     var isTimed: Bool {
         switch self {
-        case .tennis, .soccer, .basketball, .golf, .yoga, .pilates, .swimming, .rowing, .other: true
+        case .tennis, .soccer, .basketball, .golf, .yoga, .pilates, .swimming, .rowing, .other,
+             .eBikeRide: true
         default: false
         }
     }
     /// A GPS/map workout (run/ride/walk family) — carries a `gps` payload. The three capture modes
     /// are mutually exclusive: `isGPS`, `isStrengthStyle`, `isTimed`.
     var isGPS: Bool { !isStrengthStyle && !isTimed }
+
+    /// Sports that carry a real distance/speed even without a route: every GPS sport, plus the
+    /// stationary e-bike, whose console reports miles, speed and elevation like an outdoor ride —
+    /// it just never maps. Gates distance ENTRY and display, never map rendering (that's `isGPS`).
+    var tracksDistance: Bool { isGPS || self == .eBikeRide }
 
     /// Any bike. **Use this, never `== .ride`,** wherever a surface picks speed over pace or hides
     /// pace-shaped UI: cycling is FOUR cases, and an exact match against `.ride` silently left mountain,

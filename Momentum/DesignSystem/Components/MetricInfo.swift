@@ -11,10 +11,23 @@ struct MetricExplainer: Identifiable, Equatable, Sendable {
     var formula: String? = nil
     let sections: [Section]      // what it is · how we work it out · how to read it
     var footnote: String? = nil  // e.g. "Not medical advice."
+    /// The published basis for the calculation/claim, rendered as a tappable citation at the foot
+    /// of the sheet (App Review 1.4.1: citations must live where the health information is shown).
+    var source: Source? = nil
 
     struct Section: Equatable, Sendable {
         let heading: String
         let body: String
+    }
+
+    struct Source: Equatable, Sendable {
+        let label: String   // "Foster C, et al. J Strength Cond Res. 2001."
+        let url: URL
+
+        init(_ label: String, _ urlString: String) {
+            self.label = label
+            self.url = URL(string: urlString) ?? URL(string: "https://pubmed.ncbi.nlm.nih.gov")!
+        }
     }
 }
 
@@ -91,6 +104,32 @@ struct MetricDetailSheet: View {
                         Text(footnote)
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                             .padding(.top, Theme.Space.xs)
+                    }
+
+                    if let source = explainer.source {
+                        Link(destination: source.url) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("SOURCE")
+                                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
+                                    .foregroundStyle(Theme.inkTertiary)
+                                HStack(alignment: .top, spacing: 5) {
+                                    Text(source.label)
+                                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                                        .foregroundStyle(Theme.inkSecondary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(Theme.inkTertiary)
+                                        .padding(.top, 2)
+                                }
+                            }
+                            .padding(Theme.Space.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
+                                .fill(Theme.surface).overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)))
+                        }
+                        .accessibilityLabel("Source: \(source.label). Opens in your browser.")
                     }
                 }
                 .padding(Theme.Space.lg)

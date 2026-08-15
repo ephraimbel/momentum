@@ -33,7 +33,10 @@ struct AnatomyGlowView: View {
 
     var body: some View {
         MuscleMapView(activation: shown, sides: sides, sex: sex)
-            .animation(.easeOut(duration: 0.45), value: lit)
+            // Keyed to the RENDERED dict, not just the ignite counter — a toggled selection (same
+            // count, different muscle) swaps `shown` without `lit` moving, and it must fade, not
+            // jump. Opacity-only, so it stays a crossfade under Reduce Motion.
+            .animation(.easeOut(duration: 0.45), value: shown)
             .task(id: activationKey) { await ignite() }
     }
 

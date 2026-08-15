@@ -56,12 +56,15 @@ struct SocialPrivacyTests {
         #expect(SocialPrivacy.isShared(pub))
     }
 
-    @Test func routeRequiresShareAndOptIn() {
+    /// Routes ride shared posts by default (2026-08-06 — the old opt-in default had no UI and
+    /// silently glyph'd every own post); opting out still hides them, and private never shows one.
+    @Test func routeFollowsShareAndOptOut() {
         let p = UserProfile()
         let w = Workout(); w.privacy = .public
-        #expect(!SocialPrivacy.showsRoute(w, profile: p))             // route maps off by default
+        #expect(SocialPrivacy.showsRoute(w, profile: p))             // shared → route, by default
+        p.publicRouteMaps = false
+        #expect(!SocialPrivacy.showsRoute(w, profile: p))            // opted out → hidden
         p.publicRouteMaps = true
-        #expect(SocialPrivacy.showsRoute(w, profile: p))             // opted in + public → shown
         w.privacy = .private
         #expect(!SocialPrivacy.showsRoute(w, profile: p))            // private never shows route
     }

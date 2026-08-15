@@ -257,12 +257,18 @@ final class AuthController {
             // No Apple id to key on — the Supabase user id (prefixed so `refresh()` knows not to
             // run the Apple credential check against it) becomes the local identity.
             let gid = "google:\(session.user.id.uuidString)"
+            let switchingIdentity = userID != gid
             noteRealSignIn(gid)
             userID = gid
             UserDefaults.standard.set(userID, forKey: Self.userIDKey)
             if let name, !name.isEmpty {
                 displayName = name
                 UserDefaults.standard.set(name, forKey: Self.nameKey)
+            } else if switchingIdentity {
+                // No name in the Google metadata: never keep the PREVIOUS account's name for a
+                // different identity (same leak as adoptEmailSession — audit 2026-08-11).
+                displayName = nil
+                UserDefaults.standard.removeObject(forKey: Self.nameKey)
             }
             if let mail = session.user.email, !mail.isEmpty {
                 email = mail
@@ -298,7 +304,7 @@ final class AuthController {
         } catch {
             let text = (error as? AuthError)?.message ?? ""
             if text.localizedCaseInsensitiveContains("not confirmed") {
-                return .failure("Confirm your email first — check your inbox for the link we sent.")
+                return .failure("Confirm your email first. Check your inbox for the link we sent.")
             }
             return .failure("That email and password don't match an account.")
         }
@@ -317,23 +323,23 @@ final class AuthController {
                 redirectTo: URL(string: "momentum://auth-callback"))
             guard case .session(let session) = response else {
                 // Confirmations are on: the session arrives via the emailed link instead.
-                return .failure("Almost there — tap the link we just emailed you and you're in.")
+                return .failure("Almost there. Tap the link we just emailed you and you're in.")
             }
             adoptEmailSession(session)
             return .success
         } catch {
             let text = (error as? AuthError)?.message ?? ""
             if text.localizedCaseInsensitiveContains("already registered") {
-                return .failure("That email already has an account — sign in instead.")
+                return .failure("That email already has an account. Sign in instead.")
             }
             if text.localizedCaseInsensitiveContains("rate limit") {
                 // The mailer's hourly cap (tight until custom SMTP lands) — be honest about it.
-                return .failure("Too many sign-ups right now — give it a while and try again.")
+                return .failure("Too many sign-ups right now. Give it a while and try again.")
             }
             if text.localizedCaseInsensitiveContains("password") {
                 return .failure("Passwords need at least 8 characters.")
             }
-            return .failure("Couldn't create the account — check the email and try again.")
+            return .failure("Couldn't create the account. Check the email and try again.")
         }
     }
 
@@ -448,6 +454,14 @@ final class AuthController {
     /// so `refresh()` skips the Apple credential check).
     private func adoptEmailSession(_ session: Session) {
         let eid = "email:\(session.user.id.uuidString)"
+        // A different account's link opened on this phone must not inherit the previous owner's
+        // name — it resurfaced in the Settings header and as the onboarding name prefill
+        // (audit 2026-08-11). Same-user recovery keeps theirs; email sessions carry no name of
+        // their own to adopt.
+        if userID != eid {
+            displayName = nil
+            UserDefaults.standard.removeObject(forKey: Self.nameKey)
+        }
         noteRealSignIn(eid)
         userID = eid
         UserDefaults.standard.set(userID, forKey: Self.userIDKey)

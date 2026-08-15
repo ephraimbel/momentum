@@ -40,6 +40,28 @@ extension Binding where Value == ChartScrubState {
     }
 }
 
+/// Owns one chart's tap-to-inspect cursor so scrub ticks re-render only that card. When the
+/// `ChartScrubState` lived as `@State` on the screen, every selection update during a drag
+/// invalidated the entire Progress tree (~60×/s) — the P1 Trends scroll glitch. The chart builder
+/// receives the pinned date to draw its `TrendScrub.mark`; the host applies `chartXSelection`.
+struct ScrubChartHost<ChartView: View>: View {
+    /// The chart's own data points — selection snaps to these, and a change (range flip, new
+    /// data) clears any pin, since a pinned day from the old window means nothing in the new one.
+    let dates: [Date]
+    /// Deterministic pin from outside (the `--scrub-demo` harness — simctl can't tap a chart).
+    var seed: Date? = nil
+    @ViewBuilder let chart: (Date?) -> ChartView
+    @State private var scrub = ChartScrubState()
+
+    var body: some View {
+        chart(scrub.pinned)
+            .chartXSelection(value: $scrub.selection(dates: dates))
+            .onChange(of: dates) { scrub = .init() }
+            .onChange(of: seed) { if let seed { scrub.pinned = seed } }
+            .onAppear { if let seed { scrub.pinned = seed } }   // seed set before this chart mounted
+    }
+}
+
 enum TrendScrub {
     /// The scrub callout drawn inside a chart: a vertical hairline at the selected bucket, topped by
     /// a value + date pill. Pass the same calendar `unit` the chart's marks plot with so the cursor

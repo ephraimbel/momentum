@@ -35,4 +35,31 @@ final class RunChartsUITests: XCTestCase {
         XCTAssertTrue(pace.exists, "Pace chart missing from run detail.")
         XCTAssertTrue(elevation.exists, "Elevation chart missing from run detail.")
     }
+
+    /// The hero map's tap-through (2026-08-13): tap → full-screen explorable map, X → back to
+    /// the summary. Tap with a retry — taps over a Mapbox canvas can drop once basemap tiles
+    /// land (the map-chrome tap race), and a single dropped tap must not fail the CONTRACT.
+    func testMapExpandsFullScreenAndCloses() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-run-detail"]
+        app.launch()
+
+        let hero = app.descendants(matching: .any)["Route map. Opens full screen."].firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 15), "Summary map hero missing.")
+
+        let close = app.buttons["Close map"]
+        for _ in 0..<3 where !close.exists {
+            hero.tap()
+            _ = close.waitForExistence(timeout: 4)
+        }
+        dump(app, "verify_fullmap_open")
+        XCTAssertTrue(close.exists, "Tapping the map never opened the full-screen map.")
+
+        close.tap()
+        let goneByDeadline = Date().addingTimeInterval(6)
+        while close.exists, Date() < goneByDeadline { usleep(200_000) }
+        dump(app, "verify_fullmap_closed")
+        XCTAssertFalse(close.exists, "Close didn't dismiss the full-screen map.")
+        XCTAssertTrue(hero.waitForExistence(timeout: 6), "Summary didn't return after closing the map.")
+    }
 }

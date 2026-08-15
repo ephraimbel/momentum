@@ -17,30 +17,51 @@ struct PlanRevealView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
-    private var planWeekCount: Int {
-        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return 0 }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
-        let maxW = sessions.map { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: $0.date)).day ?? 0) / 7) }.max() ?? 0
-        return maxW + 1
-    }
     private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
 
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
 
-    /// The whole plan, grouped into weeks (1-based) so the athlete can browse every session ahead.
-    private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] {
-        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return [] }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
-        func weekOf(_ d: Date) -> Int { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: d)).day ?? 0) / 7) }
-        var groups: [Int: [PlannedSession]] = [:]
-        for s in sessions { groups[weekOf(s.date), default: []].append(s) }
-        return groups.keys.sorted().map { w in
-            (week: w + 1, sessions: groups[w]!.sorted { $0.date < $1.date })
-        }
+    // MARK: One-pass derivation (perf audit 2026-08-13)
+    //
+    // `planWeekCount` / `weeksGrouped` / `weekly` / `peakWeekStats` were four separate computed
+    // properties, each re-walking every session with per-session `Calendar.dateComponents` on
+    // every body evaluation — ~1,000 Calendar calls per pass on a 30-week plan, re-paid on each
+    // of the reveal's own animation ticks. They all derive from ONE week-bucketing pass now,
+    // memoized in a reference box (invisible to SwiftUI, same pattern as ProfileScreen's
+    // FallbackMemo). Safe to hold `PlannedSession` refs here because the reveal only exists in
+    // onboarding, AFTER generation — nothing can rebuild (and so delete) the plan underneath it.
+    private struct Derived {
+        var weekCount = 0
+        var weeksGrouped: [(week: Int, sessions: [PlannedSession])] = []
     }
+    private final class DerivedBox { var value: Derived? }
+    @State private var derivedBox = DerivedBox()
+    private var derived: Derived {
+        if let v = derivedBox.value { return v }
+        var v = Derived()
+        if let sessions = profile?.plan?.sessions, !sessions.isEmpty {
+            let cal = Calendar.current
+            let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
+            var groups: [Int: [PlannedSession]] = [:]
+            for s in sessions {
+                let w = max(0, (cal.dateComponents([.day], from: start,
+                                                   to: cal.startOfDay(for: s.date)).day ?? 0) / 7)
+                groups[w, default: []].append(s)
+            }
+            v.weekCount = (groups.keys.max() ?? 0) + 1
+            v.weeksGrouped = groups.keys.sorted().map { w in
+                (week: w + 1, sessions: groups[w]!.sorted { $0.date < $1.date })
+            }
+        }
+        derivedBox.value = v
+        return v
+    }
+
+    /// Number of distinct weeks the plan spans (for the "weeks" stat + the chart header).
+    private var planWeekCount: Int { derived.weekCount }
+
+    /// The whole plan, grouped into weeks (1-based) so the athlete can browse every session ahead.
+    private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] { derived.weeksGrouped }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -189,8 +210,20 @@ struct PlanRevealView: View {
                             .overlay(Capsule().stroke(Theme.hairline))
                     }
                 }
+                // Parks the last chip clear of the trailing fade below when scrolled to the end.
+                .padding(.trailing, Theme.Space.lg)
             }
             .scrollIndicators(.hidden)
+            // Soft trailing fade at the clip edge: when the row overflows, the cut chip dissolves
+            // instead of slicing mid-capsule (the same scrim idea the paywall CTA uses). The
+            // leading edge stays crisp so the row reads left-aligned with the label above.
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.92),
+                    .init(color: .clear, location: 1.0),
+                ], startPoint: .leading, endPoint: .trailing)
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -200,29 +233,32 @@ struct PlanRevealView: View {
     /// Per-week planned volume across the whole block: run distance for runners, else session count.
     /// This is the plan's *actual* periodization (build → deload → taper), not a made-up line.
     private var weekly: (values: [Double], caption: String) {
-        guard let sessions = profile?.plan?.sessions, !sessions.isEmpty else { return ([], "") }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: sessions.map(\.date).min() ?? Date())
-        func weekOf(_ d: Date) -> Int { max(0, (cal.dateComponents([.day], from: start, to: cal.startOfDay(for: d)).day ?? 0) / 7) }
-        let weekCount = min(16, (sessions.map { weekOf($0.date) }.max() ?? 0) + 1)
+        // Reads the memoized grouping — no per-session Calendar math left on this path.
+        let weeks = derived.weeksGrouped
+        guard !weeks.isEmpty else { return ([], "") }
+        let totalWeeks = derived.weekCount
+        let weekCount = min(16, totalWeeks)
         guard weekCount > 0 else { return ([], "") }
 
         // A long season charts its first 16 weeks — say so, or "30 WEEKS" in the stat strip above
         // sits over a 16-bar chart with no explanation.
-        let totalWeeks = (sessions.map { weekOf($0.date) }.max() ?? 0) + 1
         let truncationNote = totalWeeks > weekCount ? " · first \(weekCount) of \(totalWeeks) weeks shown" : ""
 
         if vm.running {
             var m = [Double](repeating: 0, count: weekCount)
-            for s in sessions where s.discipline == .running && weekOf(s.date) < weekCount {
-                m[weekOf(s.date)] += s.targetDistanceM ?? 0
+            for group in weeks where group.week <= weekCount {
+                for s in group.sessions where s.discipline == .running {
+                    m[group.week - 1] += s.targetDistanceM ?? 0
+                }
             }
             let peak = m.max() ?? 0
             let cap = "Peaks at \(Formatters.distance(meters: peak, unit: distanceUnit)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
             return (m, peak > 0 ? cap + truncationNote : "")
         } else {
             var c = [Double](repeating: 0, count: weekCount)
-            for s in sessions where weekOf(s.date) < weekCount { c[weekOf(s.date)] += 1 }
+            for group in weeks where group.week <= weekCount {
+                c[group.week - 1] += Double(group.sessions.count)
+            }
             return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week" + truncationNote)
         }
     }
@@ -334,7 +370,7 @@ struct PlanRevealView: View {
                         outlookCell("\(s.hardDays)", "HARD DAYS / WK")
                     }
                 }
-                Text("Projected from your logged fitness — the work still has to happen.")
+                Text("Projected from your logged fitness. The work still has to happen.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
             }
@@ -376,7 +412,7 @@ struct PlanRevealView: View {
                 if proj.builtS <= goalS + 1 {
                     return "Today's fitness runs a \(now) \(race). This block is built to get you to your \(PlanFeasibility.hms(goalS)) goal."
                 }
-                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)) — real ground toward your \(PlanFeasibility.hms(goalS)) goal."
+                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)), real ground toward your \(PlanFeasibility.hms(goalS)) goal."
             }
             return "Today's fitness runs a \(now) \(race). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
         }
@@ -394,8 +430,12 @@ struct PlanRevealView: View {
             ss.filter { $0.discipline == .running && $0.runType != .race }
                 .compactMap(\.targetDistanceM).reduce(0, +)
         }
-        guard let peak = weeks.max(by: { runVol($0.sessions) < runVol($1.sessions) }) else { return nil }
-        let vol = runVol(peak.sessions)
+        // Volumes computed once per week — `max(by:)`'s comparator used to re-run the filter +
+        // reduce on BOTH sides of every comparison.
+        let vols = weeks.map { runVol($0.sessions) }
+        guard let peakIdx = vols.indices.max(by: { vols[$0] < vols[$1] }) else { return nil }
+        let peak = weeks[peakIdx]
+        let vol = vols[peakIdx]
         guard vol > 0 else { return nil }
         let longest = profile?.plan?.sessions
             .filter { $0.discipline == .running && $0.runType != .race }
@@ -447,9 +487,14 @@ struct PlanRevealView: View {
     private var fullPlanList: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             sectionLabel("YOUR PLAN, WEEK BY WEEK").reveal(0.34)
+            // Week 1 carries the full browsable detail; the later weeks are HEADER-ONLY (week +
+            // shape, no session content, not expandable) — owner call 2026-08-11: rendering every
+            // week's disclosure tree made the reveal load glitchy, and the block's shape is
+            // already told by the volume chart above. Week 1 is the sell; the rest is the promise.
             ForEach(Array(weeksGrouped.enumerated()), id: \.element.week) { i, group in
                 WeekSection(week: group.week, sessions: group.sessions, profile: profile,
-                            distanceUnit: distanceUnit, running: vm.running, startExpanded: group.week == 1)
+                            distanceUnit: distanceUnit, running: vm.running,
+                            startExpanded: group.week == 1, browsable: group.week == 1)
                     .reveal(min(0.6, 0.38 + Double(i) * 0.05))
             }
         }
@@ -477,9 +522,10 @@ struct PlanRevealView: View {
 
 // MARK: - Collapsible week
 
-/// One week of the plan, collapsible so the athlete can browse the whole block without an endless wall.
-/// The header shows the week's shape (session count + mileage); expanding reveals every session, each of
-/// which expands again to the concrete work and — for long runs — fueling guidance. Week 1 opens by default.
+/// One week of the plan. Week 1 is browsable — its header expands to every session, each of which
+/// expands again to the concrete work and — for long runs — fueling guidance. Later weeks render as
+/// header-only rows (`browsable: false`): the week's shape without its content, so the reveal never
+/// builds the whole block's disclosure tree (perf, owner call 2026-08-11).
 private struct WeekSection: View {
     let week: Int
     let sessions: [PlannedSession]
@@ -487,6 +533,7 @@ private struct WeekSection: View {
     let distanceUnit: DistanceUnit
     let running: Bool
     let startExpanded: Bool
+    var browsable = true
 
     @State private var expanded = false
 
@@ -501,28 +548,19 @@ private struct WeekSection: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
-            Button {
-                Haptics.selection()
-                withAnimation(.snappy(duration: 0.26)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Text("WEEK \(week)")
-                        .font(.rounded(Theme.FontSize.caption, weight: .black)).tracking(1.2)
-                        .foregroundStyle(Theme.ink)
-                    Spacer(minLength: Theme.Space.sm)
-                    Text(summary)
-                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(Theme.inkTertiary)
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
+            if browsable {
+                Button {
+                    Haptics.selection()
+                    withAnimation(.snappy(duration: 0.26)) { expanded.toggle() }
+                } label: {
+                    header(chevron: true)
                 }
-                .padding(.horizontal, Theme.Space.xs)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+            } else {
+                header(chevron: false)
             }
-            .buttonStyle(.plain)
 
-            if expanded {
+            if browsable, expanded {
                 VStack(spacing: Theme.Space.sm) {
                     ForEach(Array(sessions.enumerated()), id: \.element.persistentModelID) { i, session in
                         SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
@@ -533,6 +571,25 @@ private struct WeekSection: View {
             }
         }
         .onAppear { if startExpanded { expanded = true } }
+    }
+
+    private func header(chevron: Bool) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text("WEEK \(week)")
+                .font(.rounded(Theme.FontSize.caption, weight: .black)).tracking(1.2)
+                .foregroundStyle(Theme.ink)
+            Spacer(minLength: Theme.Space.sm)
+            Text(summary)
+                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.inkTertiary)
+            if chevron {
+                Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+            }
+        }
+        .padding(.horizontal, Theme.Space.xs)
+        .contentShape(Rectangle())
     }
 }
 

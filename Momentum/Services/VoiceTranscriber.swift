@@ -32,8 +32,25 @@ final class VoiceTranscriber {
     /// false when this device/locale can't recognize speech at all → the mic button hides.
     var isSupported: Bool { recognizer != nil }
 
-    private let recognizer = SFSpeechRecognizer()
-    private let audioEngine = AVAudioEngine()
+    // Both lazily created (perf audit 2026-08-13): this class is `@State`-initialized by three
+    // composer hosts, and FuelView's copy is constructed on every RootView body pass (the TabView
+    // content builder runs eagerly) — paying SFSpeechRecognizer + a full AVAudioEngine per pass
+    // for a mic that may never be tapped. Manual backing vars because @Observable rejects `lazy`;
+    // `@ObservationIgnored` so the memo writes never invalidate views.
+    @ObservationIgnored private var _recognizer: SFSpeechRecognizer??
+    private var recognizer: SFSpeechRecognizer? {
+        if let cached = _recognizer { return cached }
+        let fresh = SFSpeechRecognizer()
+        _recognizer = .some(fresh)
+        return fresh
+    }
+    @ObservationIgnored private var _audioEngine: AVAudioEngine?
+    private var audioEngine: AVAudioEngine {
+        if let engine = _audioEngine { return engine }
+        let engine = AVAudioEngine()
+        _audioEngine = engine
+        return engine
+    }
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     /// Finalized segments, joined — the part of `transcript` no later partial may ever replace.
@@ -47,6 +64,7 @@ final class VoiceTranscriber {
     /// two permission awaits, so a double-tap through the first-run mic dialog used to run
     /// `start()` twice (the second tore down the first's engine → dictation silently dead).
     private var starting = false
+    private var abandonedStart = false   // a stop() landed while start() awaited permissions
 
     /// The mic must NEVER outlive the screen: backgrounding mid-dictation kept the session
     /// active (other apps stayed ducked, mic hot), and a phone call left `isRecording` true over
@@ -73,7 +91,9 @@ final class VoiceTranscriber {
         for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
-    private func stopIfRecording() {
+    /// Stop if the mic is live OR mid-start — hosts should call this on dismissal rather than
+    /// checking `isRecording` themselves, which misses the permission-await window.
+    func stopIfRecording() {
         guard isRecording || starting else { return }
         stop()
     }
@@ -85,6 +105,7 @@ final class VoiceTranscriber {
     func start() async {
         guard !isRecording, !starting, let recognizer, recognizer.isAvailable else { return }
         starting = true
+        abandonedStart = false
         defer { starting = false }
         // Both gates up front (speech, then mic) — the composer keyboard stays usable throughout.
         let speech = await withCheckedContinuation { cont in
@@ -98,6 +119,11 @@ final class VoiceTranscriber {
             showPermissionAlert = true
             return
         }
+
+        // The host may have dismissed while the permission awaits ran — a stop() from that
+        // window would otherwise be outrun by the engine start below, leaving a hot mic and an
+        // active audio session with no UI attached (audit 2026-08-11).
+        guard !abandonedStart else { abandonedStart = false; return }
 
         transcript = ""
         banked = ""
@@ -195,13 +221,17 @@ final class VoiceTranscriber {
     /// Stop capturing. The transcript keeps everything banked plus the last partial — review,
     /// then send.
     func stop() {
+        if starting { abandonedStart = true }   // start() checks this after its awaits
         segmentToken += 1   // orphan any in-flight callback before tearing down
         task?.cancel()
         task = nil
         request?.endAudio()
         request = nil
-        if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        // Through the backing var: `stop()` must never be the thing that CREATES the engine.
+        if let engine = _audioEngine {
+            if engine.isRunning { engine.stop() }
+            engine.inputNode.removeTap(onBus: 0)
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         isRecording = false
         level = 0

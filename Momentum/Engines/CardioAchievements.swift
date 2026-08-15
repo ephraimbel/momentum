@@ -5,9 +5,14 @@ import SwiftData
 /// that headline the post-workout moment (PRD §22, §8.7). Deterministic + local: compares against
 /// strictly-earlier workouts of the SAME type, so we never over-claim. Display-only for now
 /// (persisting `PersonalRecord` rows is the analytics pass); mirrors `StrengthPRs`.
-@MainActor
+///
+/// Deliberately NOT `@MainActor` (2026-08-06): the detector replays every prior run's samples
+/// through the Kalman filter — seconds of CPU at a real history — and pinning it to the main
+/// actor froze the summary right after first paint and stalled the Done-tap celebration. It's a
+/// pure engine: callers own the isolation by choosing the `ModelContext` they pass (the summary
+/// and save flows hand it a background context built off a container).
 enum CardioAchievements {
-    struct Hit: Identifiable {
+    struct Hit: Identifiable, Sendable {
         let id = UUID()
         let label: String    // e.g. "Longest run", "Fastest 5K"
         let detail: String   // e.g. "8.42 km", "24:18"

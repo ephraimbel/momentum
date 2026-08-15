@@ -60,6 +60,7 @@ struct LogWorkoutView: View {
     }
 
     @State private var date = Date()
+    @State private var saving = false   // one save per tap (see save())
     @State private var hours = 0
     @State private var minutes = 45
     @State private var distanceText = ""
@@ -68,6 +69,11 @@ struct LogWorkoutView: View {
     @State private var effort: Int?
     @State private var notes = ""
     @State private var saveFailed = false
+    /// The just-logged workout, now open on the SAME structured post-activity page a tracked one
+    /// gets (user ask 2026-08-14): name it, describe it, attach photos, adjust effort — one page,
+    /// every path. The booking below already ran, so the page presents with
+    /// `booksCompletion: false` and only names, decorates, and celebrates.
+    @State private var reviewing: PresentedWorkout?
 
     private var distanceUnit: DistanceUnit { DistanceUnit.auto.resolved() }
     private var weightUnit: WeightUnit { .default() }
@@ -89,6 +95,8 @@ struct LogWorkoutView: View {
         }
         // Same relaxation for cardio: the composer logs "walked 30 min" without a distance, so
         // its card editor can't demand one. Direct adds keep the stricter typed-flow rule.
+        // Outdoor GPS sports demand a distance on direct adds; the stationary e-bike offers the
+        // field but never requires it — "30 min e-bike" with no console readout is a real session.
         if type.isGPS { return onDraftReturn != nil || distanceMeters > 0 }
         return true   // timed sports need only a duration
     }
@@ -98,12 +106,15 @@ struct LogWorkoutView: View {
             Form {
                 typeSection
                 whenSection
-                if type.isGPS {
+                if type.tracksDistance {
                     cardioSection
                 } else if type.isStrengthStyle {
                     strengthSection
                 }
-                detailsSection
+                // Effort + notes belong to the structured save page that now follows a direct
+                // add (2026-08-14) — collecting them here too was double entry in one flow. The
+                // composer's card editor keeps them: its receipt has no page after.
+                if onDraftReturn != nil { detailsSection }
             }
             .navigationTitle(onDraftReturn == nil ? "Add a workout" : "Adjust workout")
             .navigationBarTitleDisplayMode(.inline)
@@ -121,7 +132,35 @@ struct LogWorkoutView: View {
             } message: {
                 Text("Something went wrong writing to storage. Everything you entered is still here — try Save again.")
             }
+            // The logged workout's structured page (the same one a tracked workout finishes on),
+            // presented over this form; its Done/celebration closes both.
+            .fullScreenCover(item: $reviewing) { presented in
+                reviewScreen(presented)
+            }
         }
+    }
+
+    /// Route the just-logged workout to its discipline's save page — the same routing
+    /// `WorkoutRunner.saveScreen` uses for a tracked workout, minus the completion booking
+    /// (already done in `save()`).
+    @ViewBuilder
+    private func reviewScreen(_ presented: PresentedWorkout) -> some View {
+        if presented.type.isStrengthStyle {
+            StrengthSaveView(workoutId: presented.id, booksCompletion: false) { closeReview() }
+        } else if presented.type.isTimed {
+            TimedSaveView(workoutId: presented.id, booksCompletion: false) { closeReview() }
+        } else {
+            // The athlete's explicit unit choice, like WorkoutRunner passes it — bare `.auto`
+            // would silently ignore a metric/imperial preference on this one path.
+            CardioSaveView(workoutId: presented.id,
+                           distanceUnit: DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto,
+                           workoutType: presented.type, booksCompletion: false) { closeReview() }
+        }
+    }
+
+    private func closeReview() {
+        reviewing = nil
+        dismiss()
     }
 
     // MARK: Sections
@@ -181,11 +220,14 @@ struct LogWorkoutView: View {
                     .frame(width: 90)
                 Text(distanceUnit == .imperial ? "mi" : "km").foregroundStyle(Theme.inkTertiary)
             }
-            Toggle(isOn: $indoor) {
-                Text(isBike ? "Indoor / trainer" : "Treadmill / indoor")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+            // The e-bike IS the indoor trainer (stationary by definition, 2026-08-05) — no toggle.
+            if type.isGPS {
+                Toggle(isOn: $indoor) {
+                    Text(isBike ? "Indoor / trainer" : "Treadmill / indoor")
+                        .font(.rounded(Theme.FontSize.body, weight: .medium))
+                }
+                .tint(Theme.purple)
             }
-            .tint(Theme.purple)
             if let pace = paceOrSpeedPreview {
                 HStack {
                     Text("Avg \(isBike ? "speed" : "pace")").foregroundStyle(Theme.inkTertiary)
@@ -299,6 +341,12 @@ struct LogWorkoutView: View {
     // MARK: Save
 
     private func save() {
+        // One save per tap: the toolbar Save stays hittable through the dismissal animation,
+        // and a double-tap used to run this whole pipeline twice — duplicate workout, double
+        // plan credit, double records entry (audit 2026-08-11). Re-armed only on a rolled-back
+        // save so a genuine retry still works.
+        guard !saving else { return }
+        saving = true
         // Card-editor mode: the values go back to the composer's receipt, not to storage.
         if let onDraftReturn {
             onDraftReturn(currentDraft())
@@ -340,6 +388,7 @@ struct LogWorkoutView: View {
         do { try context.save() } catch {
             context.delete(w)   // roll back the orphaned insert so a retry can't double-log
             saveFailed = true
+            saving = false      // the write never landed — let them tap Save again
             return
         }
         PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
@@ -355,7 +404,10 @@ struct LogWorkoutView: View {
         // A logged workout moves streak/session/distance awards like a tracked one (deferred).
         AwardsBook.syncSoon()
         Haptics.success()
-        dismiss()
+        // On to the structured post-activity page (see `reviewing`) — not a bare dismiss. The
+        // form captured the numbers; the page is where the workout becomes theirs: title,
+        // description, photos, effort, and the same summary a tracked session earns.
+        reviewing = PresentedWorkout(id: w.id, type: w.type)
     }
 
     /// The form's current values as a prefill — what draft-return hands back to the composer.
@@ -382,7 +434,7 @@ struct LogWorkoutView: View {
             }
         }
         return LogWorkoutPrefill(type: type, date: date, durationS: durationS,
-                                 distanceM: type.isGPS ? distanceMeters : 0,
+                                 distanceM: type.tracksDistance ? distanceMeters : 0,
                                  indoor: indoor, effort: effort, exercises: lines)
     }
 
@@ -438,7 +490,10 @@ enum LogWorkoutBuilder {
         if !userNote.isEmpty { noteParts.append(userNote) }
         w.note = noteParts.joined(separator: " · ")
 
-        if type.isGPS {
+        // GPS sports always carry the payload; the stationary e-bike carries one only when a
+        // console distance was actually entered — a duration-only e-bike stays a plain timed
+        // session like a swim.
+        if type.isGPS || (type.tracksDistance && distanceM > 0) {
             let gps = GPSDetail()
             gps.distanceM = distanceM
             if durationS > 0, distanceM > 0 {

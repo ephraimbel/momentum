@@ -28,7 +28,7 @@ private struct ProLockModifier: ViewModifier {
                 .allowsHitTesting(false)
                 .overlay { lockOverlay }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Locked — unlock \(feature.displayName) with Pro")
+                .accessibilityLabel("Locked. Unlock \(feature.displayName) with Pro")
         } else {
             // Untouched when unlocked — the zero-radius blur + clip still cost a compositing pass
             // on the largest subtrees of the app (the whole plan board, the whole trends stack).

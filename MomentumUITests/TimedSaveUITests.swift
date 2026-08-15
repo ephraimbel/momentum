@@ -40,7 +40,7 @@ final class TimedSaveUITests: XCTestCase {
         // Done pressed with the field STILL FOCUSED — the typed number must survive to the save.
         // The celebration beat is ~1s and auto-dismisses (asserting its transient face is a race);
         // the durable outcome is the save screen closing back onto Today.
-        app.navigationBars.buttons["Done"].tap()
+        app.buttons["activityDone"].tap()
         XCTAssertTrue(start.waitForExistence(timeout: 15),
                       "Save didn't complete — the save screen never dismissed back to Today.")
     }

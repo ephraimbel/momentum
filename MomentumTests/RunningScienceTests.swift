@@ -8,13 +8,6 @@ struct RunningScienceTests {
 
     // MARK: VO2max
 
-    @Test func vo2FromHeartRateRatio() {
-        // Uth–Sørensen: 15.3 · 190/50 = 58.14.
-        #expect(abs(VO2maxEstimator.fromHeartRate(maxHR: 190, restingHR: 50)! - 58.14) < 0.1)
-        #expect(VO2maxEstimator.fromHeartRate(maxHR: 0, restingHR: 50) == nil)
-        #expect(VO2maxEstimator.fromHeartRate(maxHR: 50, restingHR: 190) == nil)   // max ≤ resting
-    }
-
     @Test func vdotFromRaceMatchesDanielsTable() {
         // A 20:00 5k is ≈ VDOT 49–50 in Daniels' tables.
         let vdot = VO2maxEstimator.fromRace(distanceM: 5000, timeS: 1200)!

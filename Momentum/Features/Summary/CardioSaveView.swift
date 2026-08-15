@@ -14,6 +14,11 @@ struct CardioSaveView: View {
     /// The athlete's week and the arc this session added, computed at finish. nil (history, crash
     /// recovery, the debug harness) falls back to a plain sweep.
     var weekRing: WeekRing.Reading? = nil
+    /// False when the flow that created this workout already booked its completion — funnel event,
+    /// review counter, Health mirror, awards, records (the manual-log form does all of that before
+    /// presenting this screen). This screen then only names, decorates, and celebrates; booking
+    /// twice would double the funnel and write the workout to Apple Health twice.
+    var booksCompletion: Bool = true
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -45,6 +50,10 @@ struct CardioSaveView: View {
     @State private var saveFailed = false
     @State private var discardFailed = false
     @State private var confirmDiscard = false
+    /// Content has scrolled under the floating chrome — see `SaveScreenChrome.showsScrim`.
+    @State private var scrolledUnderChrome = false
+    /// The second discard gate — the point-blank "Are you sure?" (user call 2026-08-14).
+    @State private var confirmDiscardFinal = false
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
 
@@ -57,17 +66,24 @@ struct CardioSaveView: View {
         return NavigationStack {
             ScrollView {
                 if let workout {
-                    // Reveal first, name last: the payoff leads; the editor sits quietly at the bottom.
+                    // The scene leads (user call 2026-08-14): the route runs edge-to-edge from the
+                    // very top and dissolves into the page; the name and story print over its tail;
+                    // the summary follows; the settings close it.
                     VStack(spacing: Theme.Space.lg) {
-                        // The cascade plays on arrival now — the celebration moved to Save, so
-                        // nothing covers this screen when it appears.
-                        CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
-                                             showsHeader: false, canEditPhoto: true,
-                                             mapStyleOverride: mapStyle,
-                                             showsVerdict: true)
-                        editor
+                        ActivityHero(workout: workout, mapStyleOverride: mapStyle, canAddPhotos: true)
+                        Group {
+                            titleCard
+                            // The cascade plays on arrival now — the celebration moved to Save, so
+                            // nothing covers this screen when it appears.
+                            CardioSummaryContent(workout: workout, distanceUnit: distanceUnit,
+                                                 showsHeader: false, canEditPhoto: true,
+                                                 mapStyleOverride: mapStyle,
+                                                 showsVerdict: true)
+                            detailsCard
+                        }
+                        .padding(.horizontal, Theme.Space.md)
                     }
-                    .padding(Theme.Space.md)
+                    .padding(.bottom, Theme.Space.md)
                 } else if reader != nil {
                     // A dead-end error screen on a fullScreenCover is a trap — Done/Discard both
                     // only raise alerts here, so this state needs its own way out (mirrors
@@ -85,30 +101,31 @@ struct CardioSaveView: View {
             }
             #if DEBUG
             // --save-bottom: open pre-scrolled to the editor (route-avatar offer verification —
-            // simctl can't scroll). Same trick as Settings' --settings-bottom.
-            .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--save-bottom") ? .bottom : .top)
+            // simctl can't scroll). Same trick as Settings' --settings-bottom. --save-center lands
+            // mid-page — the analysis charts (pace/speed, splits, HR, elevation) live there.
+            .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--save-bottom") ? .bottom
+                                 : ProcessInfo.processInfo.arguments.contains("--save-center") ? .center : .top)
             #endif
             .background(Theme.background)
             .scrollDismissesKeyboard(.interactively)
-            // Not "Save run": the recording was already on disk before this screen appeared, so a
-            // filing verb described work the athlete wasn't doing and framed their run as paperwork.
-            .navigationTitle(workout?.type.title ?? workoutType.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    // Discard sits behind a menu now. As a standing top-left button it made the
-                    // first thing you saw after finishing a run an invitation to throw it away.
-                    Menu {
-                        Button("Discard recording", systemImage: "trash", role: .destructive) {
-                            confirmDiscard = true
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").foregroundStyle(Theme.inkSecondary)
-                    }
-                    .accessibilityLabel("More options")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { save() }.fontWeight(.bold)
+            // The hero reaches the physical top of the screen; chrome floats over it (the
+            // full-screen map's grammar) instead of a navigation bar.
+            .ignoresSafeArea(edges: .top)
+            .toolbar(.hidden, for: .navigationBar)
+            // The chrome's scrim keys off scroll: invisible while the hero owns the top,
+            // materializing once content slides under the clock.
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > 40
+            } action: { _, scrolled in
+                withAnimation(.easeOut(duration: 0.18)) { scrolledUnderChrome = scrolled }
+            }
+        }
+        .overlay(alignment: .top) {
+            SaveScreenChrome(onDone: { save() }, showsScrim: scrolledUnderChrome) {
+                // Discard sits behind the menu — as a standing button it made the first thing
+                // you saw after finishing a run an invitation to throw it away.
+                Button("Discard recording", systemImage: "trash", role: .destructive) {
+                    confirmDiscard = true
                 }
             }
         }
@@ -152,7 +169,11 @@ struct CardioSaveView: View {
                 effort = workout.perceivedEffort
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
-                hasRoute = (workout.gps?.routeCoordinates(type: workout.type).count ?? 0) > 1
+                // Stored distance, NOT the samples relationship — filtering `samples` faulted
+                // every LocationSample of a long run on the main actor right as the summary
+                // presented (audit 2026-08-11; the earlier fix here had already banished the
+                // Kalman replay for the same reason). A route worth a map moved somewhere.
+                hasRoute = (workout.gps?.distanceM ?? 0) > 0
                 // The share moment starts from the athlete's chosen default (never silently
                 // public); a workout that already carries a choice (recovery re-save) keeps it.
                 if CommunityAccess.enabled {
@@ -164,10 +185,18 @@ struct CardioSaveView: View {
         }
         .confirmationDialog("Discard this \(workout?.type.title.lowercased() ?? "activity")?",
                             isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { discard() }
+            // Two gates, deliberately (user call 2026-08-14): the sheet states the stakes, the
+            // alert asks point-blank. A recording is unrecoverable — one slip must not erase it.
+            Button("Discard", role: .destructive) { confirmDiscardFinal = true }
             Button("Keep", role: .cancel) {}
         } message: {
             Text("This permanently deletes the recording — it won't be saved to your history.")
+        }
+        .alert("Are you sure?", isPresented: $confirmDiscardFinal) {
+            Button("Yes, discard it", role: .destructive) { discard() }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("There's no way to get this \(workout?.type.title.lowercased() ?? "activity") back.")
         }
     }
 
@@ -187,20 +216,29 @@ struct CardioSaveView: View {
         return "\(Int(ring.completedM / per)) of \(target.value) \(target.unit) this week"
     }
 
-    private var editor: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
+    /// The activity's name and story printed directly on the page under the hero's fade (user
+    /// call 2026-08-14) — no card box; the eyebrow names the sport and the moment, the title
+    /// sets the page's voice, the description sits quietly beneath a hairline.
+    private var titleCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if let workout { ActivityEyebrow(type: sportType, date: workout.startedAt) }
             TextField("Name your \(sportType.title.lowercased())", text: $title)
-                .font(.display(24, weight: .black))
+                .font(.display(30, weight: .black))
                 .foregroundStyle(Theme.ink)
                 .focused($focus, equals: .title)
                 .submitLabel(.done)
-            Divider().overlay(Theme.hairline)
+            Divider().overlay(Theme.hairline).padding(.vertical, 2)
             TextField("How did it go — and why did this one matter?", text: $desc, axis: .vertical)
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
-            Divider().overlay(Theme.hairline)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var detailsCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
             sportRow
             if hasRoute {
                 Divider().overlay(Theme.hairline)
@@ -344,54 +382,78 @@ struct CardioSaveView: View {
             try? context.save()
         }
 
-        // The saved snapshot must match the chosen basemap (grid tile + History thumb). Re-render
-        // off the save path when the style changed (or the finish-time render failed); the tile
-        // shows the previous image until the new one lands, and the healer covers a failure.
-        if mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil {
-            let style = mapStyle
-            let readerContext = reader.context
-            Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
-        }
-        // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
-        // only). Plan mutations go through the main context; only scalars are read off `workout`.
-        if let note = PlanCoaching.adaptToEffort(workout, plan: profiles.first?.plan, in: context) {
-            services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
-            services.notifications.schedulePlannedReminders(profiles.first?.plan)
-        }
-        // Persist any records this run set (detected against the fresh context, so the samples
-        // are complete) — the PR shelf is what the "PRs" stat counts.
-        let recordsContext = reader.context
-        var records: [(type: PRType, value: Double, exercise: Exercise?)] =
-            CardioAchievements.detect(for: workout, distanceUnit: distanceUnit, in: recordsContext)
-                .compactMap { hit in hit.prType.map { (type: $0, value: hit.value, exercise: Exercise?.none) } }
-        // A first-of-discipline workout earns no "you got better" headline (detect guards on an
-        // empty prior), yet its own bests must still SEED the record book — mirror how StrengthPRs
-        // records the first lift off a 0 baseline. persist dedupes per (type, workout), so a run
-        // that also headlined can never double-log.
-        if CardioAchievements.isFirstOfType(workout, in: recordsContext) {
-            records += RecordsBook.cardioCandidates(workout)
-                .map { (type: $0.type, value: $0.value, exercise: Exercise?.none) }
-        }
-        PersonalRecord.persist(records, workout: workout, in: recordsContext)
-        // Awards read the whole ledger (distance totals, streak, records) — deferred so the
-        // walk never delays this dismissal, and the unlock presents on the destination screen.
-        AwardsBook.syncSoon()
-        // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
-        // (a never-locked GPS run finished by accident has nothing worth exporting).
-        if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
-            let saved = workout
-            Task { await services.health.save(saved) }
-        }
-        AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
-        // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a
-        // completed workout. `workout_completed` is also what advances the north-star funnel — it
-        // was declared in the taxonomy but never logged anywhere, so the funnel could never report
-        // `.achieved` (fixed 2026-07-25).
-        services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
-        for record in records { services.analytics.log(.prHit(type: record.type.rawValue)) }
-        // The celebration is the exit: it draws over this screen (its own haptic fires — no extra
-        // success buzz here) and calls `onDone` when the beat completes or is tapped through.
+        // The celebration starts NOW — before any of the post-save bookkeeping below. It used to
+        // come last, after a synchronous record scan that Kalman-replays every prior run's
+        // samples, so the Done tap froze and the check-and-glow beat started late and dropped
+        // frames (2026-08-06 user report: "didn't show the full animation"). The beat needs an
+        // idle main thread more than the bookkeeping needs to be first; nothing below is visible.
         celebrating = true
+        if booksCompletion {
+            AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
+            // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a
+            // completed workout. `workout_completed` is also what advances the north-star funnel — it
+            // was declared in the taxonomy but never logged anywhere, so the funnel could never report
+            // `.achieved` (fixed 2026-07-25).
+            services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
+        }
+
+        // The heavy tail waits out the beat, then runs its detection OFF the main actor. The task
+        // holds the reader, so the screen dismissing underneath never cancels or orphans it.
+        let styleChanged = mapStyle != initialMapStyle || workout.gps?.mapSnapshotData == nil
+        let style = mapStyle
+        let readerContext = reader.context
+        let container = context.container
+        let workoutId = workout.id
+        let unit = distanceUnit
+        let plan = profiles.first?.plan
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.4))
+            // The saved snapshot must match the chosen basemap (grid tile + History thumb) —
+            // re-rendered after the beat so the Mapbox snapshotter can't steal its frames; the
+            // tile shows the previous image until the new one lands, and the healer covers a
+            // failure.
+            if styleChanged {
+                Task { await WorkoutSnapshotHealer.rerender(workout, style: style, context: readerContext) }
+            }
+            // Everything below is completion BOOKING — already done by the creating flow when
+            // `booksCompletion` is false (the snapshot above is presentation, so it stays).
+            guard booksCompletion else { return }
+            // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
+            // only). Plan mutations go through the main context; only scalars are read off `workout`.
+            if let note = PlanCoaching.adaptToEffort(workout, plan: plan, in: context) {
+                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
+                services.notifications.schedulePlannedReminders(plan)
+            }
+            // Records, detected on a background context (the scan replays the whole history);
+            // only the typed values hop back, and the shelf write stays on the reader's context.
+            let detected: [(type: PRType, value: Double)] = await Task.detached(priority: .utility) {
+                let ctx = ModelContext(container)
+                var d = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == workoutId })
+                d.fetchLimit = 1
+                guard let w = (try? ctx.fetch(d))?.first else { return [] }
+                var records = CardioAchievements.detect(for: w, distanceUnit: unit, in: ctx)
+                    .compactMap { hit in hit.prType.map { (type: $0, value: hit.value) } }
+                // A first-of-discipline workout earns no "you got better" headline (detect guards
+                // on an empty prior), yet its own bests must still SEED the record book — mirror
+                // how StrengthPRs records the first lift off a 0 baseline. persist dedupes per
+                // (type, workout), so a run that also headlined can never double-log.
+                if CardioAchievements.isFirstOfType(w, in: ctx) {
+                    records += RecordsBook.cardioCandidates(w).map { (type: $0.type, value: $0.value) }
+                }
+                return records
+            }.value
+            PersonalRecord.persist(detected.map { (type: $0.type, value: $0.value, exercise: Exercise?.none) },
+                                   workout: workout, in: readerContext)
+            for record in detected { services.analytics.log(.prHit(type: record.type.rawValue)) }
+            // Awards read the whole ledger (distance totals, streak, records) — after the records
+            // land, so a record set just now counts toward an unlock.
+            AwardsBook.syncSoon()
+            // Mirror to Apple Health (no-op unless connected) — but never a zero-content recording
+            // (a never-locked GPS run finished by accident has nothing worth exporting).
+            if workout.durationS >= 60 || (workout.gps?.distanceM ?? 0) > 0 {
+                await services.health.save(workout)
+            }
+        }
     }
 
     /// Throw the recording away (an explicit user action — distinct from the never-destroy-on-edit

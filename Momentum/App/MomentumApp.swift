@@ -30,7 +30,11 @@ struct MomentumApp: App {
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
         // environment (reactive view gating), so entitlement never diverges (PRD §10).
         let controller = PaywallController()
-        controller.configure()   // RevenueCat/Superwall when linked; no-op local seam otherwise
+        controller.configure()   // local seams resolve NOW; the RevenueCat bring-up defers itself
+        // Apple's own attribution framework. It needs no credentials, no ATT prompt and no privacy
+        // disclosure, so it is always on — it is what lets a campaign optimise toward trials
+        // instead of the cheapest install. Cheap (UserDefaults + an async postback), so it stays.
+        SKANConversion.registerInstall()
         _paywall = State(initialValue: controller)
         let services = Services.live(paywall: controller)
         _services = State(initialValue: services)
@@ -46,6 +50,10 @@ struct MomentumApp: App {
                 workout.postPublishedAt = nil
             }
             try? context.save()
+            // The account moment is the registration event ad campaigns optimize on.
+            TikTokAdsService.trackRegistration()
+            MetaAdsService.trackRegistration()
+            SKANConversion.record(.accountCreated)
         }
         // A DIFFERENT real account signing in on this device (shared/hand-me-down) must never see the
         // prior owner's data: wipe local SwiftData so they start clean. RootView re-onboards the
@@ -59,8 +67,8 @@ struct MomentumApp: App {
         authController.onIdentityChange = { [weak controller] userID in
             controller?.identify(userID: userID)
         }
-        authController.refresh()   // sign out if the Apple credential was revoked
         // Link the already-restored session on a warm launch — `signIn` only fires on a fresh one.
+        // (`identify` queues until the deferred RevenueCat bring-up lands, so nothing is lost.)
         if let existing = authController.userID, !authController.isGuest {
             controller.identify(userID: existing)
         }
@@ -77,7 +85,23 @@ struct MomentumApp: App {
         remoteFeed.backend = services.social
         remoteFeed.reactions = reactions
         remoteFeed.follows = follows
-        MetricsMonitor.shared.start()   // crash + performance monitoring (PRD §13.5)
+        // Wrist sync (Watch Slice 4): the health handle must be wired before any watch message can
+        // arrive, but activation itself rides the deferred block below.
+        PhoneWatchSync.shared.health = services.health
+    }
+
+    /// Everything the first frame does NOT need, run once shortly after it is on screen. Each of
+    /// these used to run synchronously inside `init` — together they put the ads SDKs, Supabase,
+    /// WCSession, ActivityKit and MetricKit on the cold-start critical path (perf audit 2026-08-13).
+    /// None has a deadline measured in milliseconds; all are one-shots or start listeners.
+    @MainActor private static var didRunDeferredLaunchWork = false
+    private func runDeferredLaunchWork() {
+        guard !Self.didRunDeferredLaunchWork else { return }
+        Self.didRunDeferredLaunchWork = true
+        TikTokAdsService.configure()   // TikTok ads attribution — dark until Secrets.xcconfig keys are set
+        MetaAdsService.configure()     // Meta ads attribution — same dark-seam contract
+        auth.refresh()                 // sign out if the Apple credential was revoked (Supabase touch)
+        MetricsMonitor.shared.start()  // crash + performance monitoring (PRD §13.5)
         // A previous launch could not open the store and moved it aside (`PersistenceController`).
         // Report it exactly once — it is the only signal that a shipped migration broke somebody's
         // install — but leave the record in place, because Settings goes on offering the file back
@@ -86,14 +110,16 @@ struct MomentumApp: App {
             services.analytics.log(.storeQuarantined(recovered: quarantine.recovered))
             PersistenceController.markQuarantineReported()
         }
-        // Wrist sync (Watch Slice 4): readiness/session/race push out, the morning check-in
-        // comes back. Best-effort — no paired watch means these are no-ops.
-        PhoneWatchSync.shared.health = services.health
+        // No paired watch means this is a no-op.
         PhoneWatchSync.shared.activate()
         // A force-quit mid-workout strands its Live Activity — end leftovers before anything can
-        // start a new one (the workout itself is recovered separately via WorkoutRecovery).
+        // start a new one (the workout itself is recovered separately via WorkoutRecovery). A new
+        // activity can only start from a workout start, which is never reachable this early.
         CardioActivityController.endOrphans()
         RestActivityController.endOrphans()
+        // Warm the anatomy geometry off the main thread: `BodyAnatomy`'s statics parse ~131 KB of
+        // SVG path data on first touch, which used to land inside Progress's first frame.
+        Task.detached(priority: .utility) { BodyAnatomy.warm() }
     }
 
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
@@ -159,6 +185,12 @@ struct MomentumApp: App {
             // it cannot re-trigger the System-appearance invalidation loop noted above.
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background { services.analytics.flush() }
+            }
+            // The deferred half of launch (see `runDeferredLaunchWork`). 600 ms is past the first
+            // paint and the tab bar's settle, but well inside the first human interaction.
+            .task {
+                try? await Task.sleep(for: .milliseconds(600))
+                runDeferredLaunchWork()
             }
     }
 }

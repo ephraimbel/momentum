@@ -476,8 +476,9 @@ private struct WorkoutTile: View {
             .foregroundStyle(metricInk)
             // A photo is the only unknown canvas, so it's the only one that needs a halo. On our own
             // canvases the ink already contrasts and a shadow would read as a smudge on a clean map.
-            .shadow(color: .black.opacity(ink == .photo ? 0.55 : 0), radius: 2, y: 0.5)
-            .shadow(color: .black.opacity(ink == .photo ? 0.25 : 0), radius: 5)
+            // Structurally absent when inactive — a 0-opacity shadow still pays its offscreen pass,
+            // twice per tile across the whole scrolling grid (perf audit 2026-08-13).
+            .modifier(PhotoLegibilityShadow(active: ink == .photo))
             .padding(.horizontal, 7).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

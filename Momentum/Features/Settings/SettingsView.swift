@@ -31,8 +31,6 @@ struct SettingsView: View {
     @State private var healthConnected = false
     @State private var connectingHealth = false
     @State private var healthDenied = false   // the permission sheet was declined — say so, don't dead-end
-    @State private var importingHealth = false
-    @State private var importMessage: String?
     @State private var showingSignInOptions = false   // guest upgrade via Google/email (the gate's page)
     @State private var confirmDeleteAccount = false
     @State private var deletingAccount = false
@@ -421,22 +419,8 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.vertical, 11)
-                inset
-                actionRow("Import workouts", icon: "square.and.arrow.down", busy: importingHealth) {
-                    Task {
-                        importingHealth = true
-                        importMessage = nil
-                        let n = await services.health.importExternalWorkouts(into: context, since: nil)
-                        importMessage = n == 0 ? "No new workouts to import."
-                            : "Imported \(n) workout\(n == 1 ? "" : "s")."
-                        importingHealth = false
-                    }
-                }
-                if let importMessage {
-                    Text(importMessage)
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .padding(.leading, 40).padding(.bottom, 10)
-                }
+                // No "Import workouts" row. Health feeds sleep, HRV and resting heart rate; it is
+                // never a source of workouts, so there is nothing here to pull.
             } else {
                 Button {
                     Haptics.light()
@@ -450,10 +434,8 @@ struct SettingsView: View {
                             if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
                             if let rhr = metrics.restingHR { profile.restingHR = rhr }
                             try? context.save()
-                            // Connect = filled, not connect-then-find-the-import-button: pull the
-                            // history their devices already mirrored into Health, right now.
-                            let n = await services.health.importExternalWorkouts(into: context, since: nil)
-                            if n > 0 { importMessage = "Imported \(n) workout\(n == 1 ? "" : "s") from Health." }
+                            // Connecting is the whole action. Body mass and resting heart rate are
+                            // current readings, not history; no workouts are pulled, then or ever.
                         } else if !healthConnected {
                             // HealthKit only shows its sheet while permission is undetermined —
                             // after one decline every later tap is a spinner then nothing, so
@@ -580,6 +562,24 @@ struct SettingsView: View {
                 guard !deletingData else { return }
                 confirmDelete = true
             }
+            inset
+            // App Review 1.4.1: the sports-science citations behind every computed number,
+            // one obvious tap from Settings.
+            NavigationLink { ScienceSourcesView() } label: {
+                HStack(spacing: Theme.Space.md) {
+                    iconChip("text.book.closed")
+                    Text("Science & sources")
+                        .font(.rounded(Theme.FontSize.body, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -660,6 +660,13 @@ struct SettingsView: View {
                 .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
                 .foregroundStyle(Theme.inkTertiary)
             HStack(spacing: Theme.Space.xs) {
+                NavigationLink { ScienceSourcesView() } label: {
+                    Text("Sources").font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .underline()
+                        .contentShape(VerticalHitPad(dy: 16))
+                }
+                .buttonStyle(.plain)
+                dot
                 colophonLink("Terms", url: "https://momentumco.app/terms")
                 dot
                 colophonLink("Privacy", url: "https://momentumco.app/privacy")

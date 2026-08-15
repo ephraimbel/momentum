@@ -30,15 +30,9 @@ enum SyncEngine {
         let route: [[Double]]?
     }
 
-    /// Rows that still need pushing, oldest first.
-    static func pendingUploads(_ workouts: [Workout]) -> [WorkoutSyncDTO] {
-        workouts
-            .filter { $0.syncedAt == nil }
-            .sorted { $0.startedAt < $1.startedAt }
-            .map(dto(for:))
-    }
-
     /// Build the upload row for a workout, applying the privacy + raw-log rules.
+    /// (SyncService owns the pending selection — the old `pendingUploads` wrapper was
+    /// superseded by its live-marker-aware filter and deleted 2026-08-06.)
     static func dto(for w: Workout) -> WorkoutSyncDTO {
         let isPrivate = w.privacy == .private
         let route: [[Double]]? = {

@@ -20,6 +20,8 @@ struct SetRowView: View {
 
     @Environment(Services.self) private var services
     @State private var isEditing = false
+    @State private var toggleInFlight = false          // one log/un-log action per gesture
+    @State private var loggedAt = Date.distantPast     // grace window: a double-tap never "undoes"
     @FocusState private var focused: Field?
     private enum Field { case weight, reps, rpe }
 
@@ -160,8 +162,18 @@ struct SetRowView: View {
             }
             // Toggle: tap to log, tap again to un-log (correct a mis-tap mid-workout).
             Task {
-                if set.isComplete { await vm.uncompleteSet(rowId: rowId, setId: set.id) }
-                else {
+                // One action per gesture: without the in-flight latch a double-tap raced the
+                // actor round-trip (two completes, double rest-timer restart), and without the
+                // grace window the second tap of a gym double-tap read as "undo" and silently
+                // un-logged the set right after its checkmark bounced on (audit 2026-08-11).
+                guard !toggleInFlight else { return }
+                toggleInFlight = true
+                defer { toggleInFlight = false }
+                if set.isComplete {
+                    guard Date().timeIntervalSince(loggedAt) > 0.8 else { return }
+                    await vm.uncompleteSet(rowId: rowId, setId: set.id)
+                } else {
+                    loggedAt = Date()
                     // Log-a-set latency is a §13.1 quality bar (< 3s) — measure the persist round trip.
                     let started = Date()
                     await vm.completeSet(rowId: rowId, setId: set.id)

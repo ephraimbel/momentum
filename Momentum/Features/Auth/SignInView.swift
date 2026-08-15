@@ -1,5 +1,6 @@
 import SwiftUI
 import AuthenticationServices
+import AVFoundation
 
 /// The entry, two beats:
 /// 1. **Welcome** — the full-bleed athletic hero with the wordmark and a single "Get started" that
@@ -68,15 +69,23 @@ struct SignInView: View {
 
     private var welcome: some View {
         ZStack {
-            // Full-bleed black-and-white hero of the runners. Clipped to a screen-sized layer so
-            // `scaledToFill`'s overflow can't inflate the ZStack (which would push the CTA off-screen).
+            // The brand film, full-bleed (owner call 2026-08-11, replacing the static photo AND
+            // the centered lockup): it plays ONCE, muted, and settles on its closing
+            // "momentum keep moving" card — so the screen ends in stillness with the brand on it,
+            // instead of looping restlessly under the CTAs. The poster underlay is the film's own
+            // first frame, so the player readying never flashes black. Clipped to a screen-sized
+            // layer so `scaledToFill`'s overflow can't inflate the ZStack (which would push the
+            // CTA off-screen).
             Color.clear
                 .overlay {
-                    Image("WelcomeBackground")
+                    Image("WelcomePoster")
                         .resizable()
                         .scaledToFill()
                 }
                 .clipped()
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+            WelcomeFilmView()
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
 
@@ -93,23 +102,8 @@ struct SignInView: View {
             )
             .ignoresSafeArea()
 
-            // Centered brand lockup: the wordmark with the motto right under it. A soft shadow keeps
-            // it legible over the photo.
-            VStack(spacing: Theme.Space.sm) {
-                Image("WordmarkWhite")
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(height: 40)   // fixed height; width follows the wordmark's aspect ratio
-                    .accessibilityLabel("momentum")
-                Text("keep moving")
-                    .font(.serif(24, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .multilineTextAlignment(.center)
-            }
-            .shadow(color: .black.opacity(0.4), radius: 14, y: 2)
-            .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
-            .offset(y: welcomeAppeared || reduceMotion ? 0 : 12)
+            // No centered lockup anymore (owner call 2026-08-11): the film's own closing card
+            // carries the wordmark and motto, and a static overlay would double-brand the ending.
 
             // The positioning line sits right above the CTA pair, all anchored to the bottom.
             VStack(spacing: Theme.Space.md) {
@@ -173,6 +167,51 @@ struct SignInView: View {
     }
 }
 
+// MARK: - The welcome film
+
+/// The brand film behind the welcome: plays ONCE, muted, then holds its final frame — the
+/// "momentum keep moving" closing card — so the welcome settles into the same stillness the old
+/// static hero had, with the brand carried by the film itself (owner call 2026-08-11; loop was
+/// considered and rejected — endless motion under the CTAs reads restless and burns battery).
+/// Reduce Motion: no playback at all, the view opens directly on the closing card. The audio
+/// track is stripped from the bundled asset, so playback can never duck the athlete's music.
+private struct WelcomeFilmView: UIViewRepresentable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    final class PlayerView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+
+    func makeUIView(context: Context) -> PlayerView {
+        let view = PlayerView()
+        // Missing asset → the poster underlay simply stays; the welcome still works.
+        guard let url = Bundle.main.url(forResource: "WelcomeVideo", withExtension: "mov") else { return view }
+        view.playerLayer.videoGravity = .resizeAspectFill
+        let reduceMotion = reduceMotion
+        // Player construction waits one runloop turn: bringing up AVFoundation inside `makeUIView`
+        // sat on the app's very first frame — the first screen a brand-new user ever sees. The
+        // poster underlay holds the identical opening frame until the player attaches.
+        DispatchQueue.main.async {
+            let player = AVPlayer(url: url)
+            player.isMuted = true
+            player.actionAtItemEnd = .pause                   // hold the closing card; never loop
+            player.preventsDisplaySleepDuringVideoPlayback = false
+            view.playerLayer.player = player
+            if reduceMotion {
+                // Straight to the closing card — same destination, no motion. The absurd target
+                // time clamps to the end of the item.
+                player.seek(to: CMTime(seconds: 9_999, preferredTimescale: 600))
+            } else {
+                player.play()
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerView, context: Context) {}
+}
+
 // MARK: - The account page
 
 /// Every way into an account, in one column: email + password, Sign in with Apple, Continue with
@@ -205,6 +244,7 @@ struct AccountOptionsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var googleInFlight = false
+    @State private var resetInFlight = false
     // Email + password (the classic boxes; the @handle stays the social username — email only signs in)
     @State private var email = ""
     @State private var password = ""
@@ -358,11 +398,19 @@ struct AccountOptionsView: View {
                                     Haptics.light()
                                     sendReset()
                                 } label: {
-                                    Text("Forgot password?")
-                                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                        .foregroundStyle(Theme.inkSecondary)
+                                    // In-flight feedback: without the latch, impatient re-taps on
+                                    // a slow network sent duplicate reset emails against the
+                                    // mailer's tight hourly budget (audit 2026-08-11).
+                                    if resetInFlight {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Text("Forgot password?")
+                                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                                            .foregroundStyle(Theme.inkSecondary)
+                                    }
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(resetInFlight)
                             }
                         }
                         .padding(.top, 2)
@@ -402,9 +450,13 @@ struct AccountOptionsView: View {
                         .signInWithAppleButtonStyle(.black)
                         .frame(height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                        // One sign-in at a time: launching Apple while an email submit is in
+                        // flight let the slower winner silently flip the identity afterwards
+                        // (audit 2026-08-11).
+                        .disabled(emailInFlight || googleInFlight)
 
                         Button {
-                            guard !googleInFlight else { return }
+                            guard !googleInFlight, !emailInFlight else { return }
                             Haptics.light()
                             googleInFlight = true
                             oauthMessage = nil
@@ -425,9 +477,11 @@ struct AccountOptionsView: View {
                                 if googleInFlight {
                                     ProgressView().tint(Theme.ink)
                                 } else {
-                                    Text("G")
-                                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                                        .foregroundStyle(Theme.ink)
+                                    // The official multicolor G (Google's sign-in branding rules
+                                    // want the real mark and "Continue with Google" wording).
+                                    Image("GoogleG")
+                                        .resizable().interpolation(.high).scaledToFit()
+                                        .frame(width: 20, height: 20)
                                 }
                                 Text("Continue with Google")
                                     .font(.system(size: 19, weight: .medium))
@@ -489,6 +543,10 @@ struct AccountOptionsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Not while a sign-in is resolving: entering as a guest mid-flight let the slow
+            // success flip the identity to the email account moments later, silently overriding
+            // the guest choice (audit 2026-08-11).
+            .disabled(emailInFlight || googleInFlight)
             .padding(.top, Theme.Space.sm)
             .padding(.bottom, Theme.Space.xl)
         case .sheet:
@@ -586,17 +644,20 @@ struct AccountOptionsView: View {
     }
 
     private func sendReset() {
+        guard !resetInFlight else { return }
         let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard address.contains("@") else {
             authMessage = "Enter your email above first, then tap Forgot password."
             return
         }
+        resetInFlight = true
         Task {
             let sent = await auth.sendPasswordReset(to: address)
+            resetInFlight = false
             withAnimation(.easeOut(duration: 0.15)) {
                 authMessage = sent
                     ? "Check \(address) for a reset link."
-                    : "Couldn't send a reset link — try again in a moment."
+                    : "Couldn't send a reset link. Try again in a moment."
             }
         }
     }

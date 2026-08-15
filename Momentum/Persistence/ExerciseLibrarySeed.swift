@@ -6,6 +6,10 @@ import SwiftData
 enum ExerciseLibrarySeed {
     static let version = 1
 
+    // NOTE (perf audit 2026-08-13): a UserDefaults stamp fast-path was tried here and REVERTED —
+    // the stamp outlives the store (quarantine-recreated stores would never reseed, and it leaks
+    // across in-memory test containers). The walk below is ~50 tiny rows; it is not the
+    // container-init cost that matters.
     @MainActor
     static func seedIfNeeded(into context: ModelContext) {
         // Count shared-library entries (filtering in memory avoids a #Predicate keypath that

@@ -271,14 +271,25 @@ struct FuelGoalsSheet: View {
 
     // MARK: Live preview — the same engine the page runs
 
+    /// Reference-type memo so body can fill it without an observation cycle: the readout walks
+    /// the plan's WHOLE `sessions` relationship (the exact per-body fault FuelView refuses to
+    /// pay), and this used to re-run per keystroke in the five Custom fields (audit 2026-08-11).
+    private final class PreviewMemo { var key = ""; var readout: FuelReadiness.DayReadout? }
+    @State private var previewMemo = PreviewMemo()
+
     /// The SAME inputs the Fuel page's headline runs (plan + today's workouts) — the preview and
     /// the dashboard must never disagree about today's number. Meals stay out: they drive
     /// consumed totals, not targets.
     private var previewReadout: FuelReadiness.DayReadout {
-        FuelReadoutBuilder.readout(meals: [], plan: profiles.first?.plan,
-                                   workouts: Array(todaysWorkouts),
-                                   profile: profiles.first,
-                                   goalOverride: stagedGoal, massOverride: massKg)
+        let key = "\(String(describing: kind))|\(heightCm)|\(age)|\(sex)|\(customKcal)|\(customProtein)|\(customCarbs)|\(customFat)|\(customSodium)|\(massKg)|\(todaysWorkouts.count)"
+        if previewMemo.key == key, let cached = previewMemo.readout { return cached }
+        let r = FuelReadoutBuilder.readout(meals: [], plan: profiles.first?.plan,
+                                           workouts: Array(todaysWorkouts),
+                                           profile: profiles.first,
+                                           goalOverride: stagedGoal, massOverride: massKg)
+        previewMemo.key = key
+        previewMemo.readout = r
+        return r
     }
 
     /// BASE targets (no training burn) — what a custom goal should prefill from: custom numbers

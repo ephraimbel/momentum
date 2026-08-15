@@ -46,6 +46,29 @@ extension MorningReadiness {
         case .checkin:   return up ? "Feeling good today" : "Body says take it easier"
         }
     }
+
+    /// How much signal built today's number, in plain words — or nil when it was built on enough
+    /// pillars to stand on its own.
+    ///
+    /// The hub's hero card has always carried this in its partial-data footnote, but Today and
+    /// Trends showed a bare score: a watch-less athlete's check-in-and-load number read exactly
+    /// like a full HRV + sleep + resting-HR morning. Same honesty, everywhere the score appears
+    /// (owner ask 2026-08-14). Never a warning — the number is real, it just knows less.
+    var confidenceNote: String? {
+        switch confidence {
+        case .high, .medium: return nil
+        case .low:           return "partial signal"
+        case .minimal:       return "light signal"
+        }
+    }
+
+    /// The one-line summary a compact surface should speak: the driver, plus the confidence
+    /// qualifier when there is one. `displayDriverLine` stays untouched so the hub's hero footnote
+    /// (which states confidence in its own fuller sentence) doesn't say it twice.
+    var displayDriverWithConfidence: String {
+        guard let note = confidenceNote else { return displayDriverLine }
+        return "\(displayDriverLine) · \(note)"
+    }
 }
 
 /// The compact readiness hand-off in Progress → Trends (RECOVERY-HUB-PLAN §2, amended): one glance
@@ -62,6 +85,8 @@ struct ReadinessStrip: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The primed mini-ring's mesh animates only while visible (see `miniRing`).
+    @State private var onScreen = true
 
     private var primed: Bool { bandWord == RecoveryModel.Readiness.primed.rawValue }
 
@@ -72,6 +97,7 @@ struct ReadinessStrip: View {
         } label: {
             label
         }
+        .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
         .buttonStyle(.plain)
         // No `.accessibilityElement(children: .ignore)` here — a Button is already one element,
         // and the extra wrapper made XCUITest/VoiceOver read the combined child text instead of
@@ -93,7 +119,10 @@ struct ReadinessStrip: View {
                         Text(driverLine)
                             .font(.rounded(Theme.FontSize.label, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary)
-                            .lineLimit(1)
+                            // Two lines: this string now carries the confidence qualifier, and at
+                            // one line the truncation eats exactly the clause that keeps the score
+                            // honest on a phone-only morning.
+                            .lineLimit(2)
                     } else {
                         Text("Readiness")
                             .font(.rounded(Theme.FontSize.body, weight: .bold))
@@ -139,7 +168,10 @@ struct ReadinessStrip: View {
                     .shadow(color: color.opacity(0.5), radius: 6)
                     .overlay {
                         if primed {
-                            IridescentView(intensity: 0.9, isStatic: reduceMotion)
+                            // Frozen when scrolled off — this strip lives inside the Progress
+                            // scroll and its mesh kept ticking at 30 fps once past (perf audit
+                            // 2026-08-13; visibility gate set on the strip's body).
+                            IridescentView(intensity: 0.9, isStatic: reduceMotion || !onScreen)
                                 .mask(Circle().trim(from: 0, to: CGFloat(score) / 100)
                                     .stroke(style: StrokeStyle(lineWidth: 5, lineCap: .round))
                                     .rotationEffect(.degrees(-90)))

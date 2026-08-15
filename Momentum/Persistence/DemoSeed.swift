@@ -14,20 +14,20 @@ enum DemoSeed {
     private static func seedFuelHistory(_ context: ModelContext) {
         let existing = (try? context.fetchCount(FetchDescriptor<Meal>())) ?? 0
         guard existing < 10 else { return }
-        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca)
-        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int)] = [
-            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80),
-            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90),
-            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60),
-            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90),
-            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260),
-            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120),
-            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120),
-            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20),
-            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240),
-            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220),
-            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90),
-            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180),
+        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca, fiber, sugar, satFat)
+        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int, Int, Int, Int)] = [
+            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80, 7, 28, 2),
+            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90, 2, 3, 6),
+            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60, 4, 4, 3),
+            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90, 6, 8, 4),
+            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260, 4, 18, 4),
+            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120, 6, 18, 3),
+            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120, 7, 4, 5),
+            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20, 0, 56, 0),
+            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240, 12, 6, 9),
+            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220, 6, 28, 1),
+            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90, 8, 9, 8),
+            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180, 2, 42, 5),
         ]
         var rng = SeededRNG(20260716)
         let cal = Calendar.current
@@ -42,6 +42,7 @@ enum DemoSeed {
                 meal.kcal = f.1; meal.carbsG = f.2; meal.proteinG = f.3; meal.fatG = f.4
                 meal.sodiumMg = f.5; meal.potassiumMg = f.6; meal.magnesiumMg = f.7
                 meal.ironMg = f.8; meal.calciumMg = f.9
+                meal.fiberG = f.10; meal.sugarG = f.11; meal.satFatG = f.12
                 meal.source = "ai"
                 meal.confidence = 0.8
                 context.insert(meal)
@@ -59,17 +60,17 @@ enum DemoSeed {
         let existingToday = ((try? context.fetch(FetchDescriptor<Meal>())) ?? [])
             .filter { cal.isDateInToday($0.eatenAt) }
         guard existingToday.count < 2 else { return }
-        // (hour, minute, text, kcal, carbs, protein, fat, sodium, note?)
-        let day: [(Double, Double, String, Int, Int, Int, Int, Int, String?)] = [
-            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190,
+        // (hour, minute, text, kcal, carbs, protein, fat, sodium, fiber, sugar, satFat, note?)
+        let day: [(Double, Double, String, Int, Int, Int, Int, Int, Int, Int, Int, String?)] = [
+            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190, 7, 34, 2,
              "Strong carb start — this is the fuel today's session runs on."),
-            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, nil),
-            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150,
+            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, 5, 22, 3, nil),
+            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150, 12, 6, 8,
              "Great mixed plate — carbs restocked, protein covered."),
-            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, nil),
-            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480,
+            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, 0, 56, 0, nil),
+            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480, 7, 4, 6,
              "Recovery-forward dinner — protein and healthy fats where they count."),
-            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, nil),
+            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, 3, 24, 10, nil),
         ]
         for m in day where m.0 <= Double(cal.component(.hour, from: Date())) || true {
             let meal = Meal()
@@ -77,7 +78,8 @@ enum DemoSeed {
             meal.eatenAt = start.addingTimeInterval(m.0 * 3600 + m.1 * 60)
             meal.kcal = m.3; meal.carbsG = m.4; meal.proteinG = m.5
             meal.fatG = m.6; meal.sodiumMg = m.7
-            meal.note = m.8
+            meal.fiberG = m.8; meal.sugarG = m.9; meal.satFatG = m.10
+            meal.note = m.11
             meal.source = "ai"
             meal.confidence = 0.85
             context.insert(meal)
@@ -279,6 +281,63 @@ enum DemoSeed {
                 if daysAgo == 2 { run.privacy = .friends }
                 run.gps = gps; context.insert(run)
                 runIndex += 1
+            }
+        }
+
+        // One outdoor ride threaded in, so the ride summary's discipline-specific reading (speed
+        // chart + speed-valued splits, 2026-08-13) always has a seeded specimen to verify against.
+        // Distance and duration derive from the samples' own geometry, so the hero number and the
+        // charts (which replay the samples) can never disagree.
+        // 2.5 days back — BEHIND the freshest run, so plain `--save-screen` (and every UI test on
+        // it) still resolves the run; `--save-screen-ride` is the door to this one.
+        do {
+            let start = Date().addingTimeInterval(-2.5 * 86_400 - 2 * 3600)
+            let samples = loopSamples(start: start, variant: 2, speedScale: 2.5)
+            var distanceM = 0.0
+            for i in 1..<samples.count {
+                distanceM += Geo.distance(lat1: samples[i - 1].lat, lon1: samples[i - 1].lon,
+                                          lat2: samples[i].lat, lon2: samples[i].lon)
+            }
+            let durationS = samples.last.map { $0.t.timeIntervalSince(start) } ?? 0
+            let ride = Workout(); ride.type = .ride; ride.startedAt = start; ride.durationS = durationS
+            let gps = GPSDetail()
+            gps.distanceM = distanceM
+            gps.elevationGainM = 120
+            gps.samples = samples
+            gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: 4)
+            gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
+            gps.avgPaceSPerKm = distanceM > 0 ? durationS / (distanceM / 1000) : 0
+            ride.gps = gps
+            context.insert(ride)
+        }
+
+        // --seed-dense-history: pack the trailing 16 weeks (the consistency graph's exact window)
+        // with light training days so the profile's Consistency card reads like a daily athlete
+        // (~4 of 5 days lit) instead of the 5-week starter history above. Composes with the other
+        // seeds — the graph counts DAYS, so overlaps with the history above just merge.
+        if ProcessInfo.processInfo.arguments.contains("--seed-dense-history") {
+            var drng = SeededRNG(11)
+            for daysAgo in 0..<112 {
+                guard drng.double(0, 1) < 0.8 else { continue }   // ~4 in 5 days active
+                let start = Date().addingTimeInterval(Double(-daysAgo) * 86_400 - 8 * 3600
+                                                      + drng.double(-3600, 3600))
+                if daysAgo % 5 == 4 {
+                    let sw = Workout(); sw.type = .strength; sw.startedAt = start
+                    sw.durationS = 2_400 + drng.double(0, 900)
+                    sw.strength = strengthSession(lifts: lifts, week: Double(daysAgo) / 7)
+                    context.insert(sw)
+                } else {
+                    let run = Workout(); run.type = .run; run.startedAt = start
+                    let dist = 5_000 + drng.double(0, 9_000)
+                    let pace = 285 + drng.double(0, 40)
+                    run.durationS = dist / 1000 * pace
+                    let gps = GPSDetail(); gps.distanceM = dist
+                    gps.avgPaceSPerKm = pace
+                    gps.elevationGainM = 20 + drng.double(0, 90)
+                    gps.samples = loopSamples(start: start, variant: daysAgo)
+                    run.gps = gps
+                    context.insert(run)
+                }
             }
         }
 
@@ -794,7 +853,7 @@ enum DemoSeed {
         return (out, distanceM)
     }
 
-    private static func loopSamples(start: Date, variant: Int) -> [LocationSample] {
+    private static func loopSamples(start: Date, variant: Int, speedScale: Double = 1.0) -> [LocationSample] {
         // Scatter each run around a different Austin neighbourhood so the maps look different.
         let centers = [(30.2672, -97.7431), (30.2849, -97.7341), (30.2530, -97.7594),
                        (30.2711, -97.7539), (30.2456, -97.7688)]
@@ -810,8 +869,9 @@ enum DemoSeed {
             let a = Double(i) / Double(perLap) * 2 * .pi
             let lat = centerLat + r * sin(a) + wobble * sin(a * 3 + Double(variant))
             let lon = centerLon + r * cos(a) * squash + wobble * cos(a * 2)
-            // Cruise ~3.1 m/s (≈5:22/km) with rolling variation + a surge each lap.
-            let speed = 3.1 + 0.5 * sin(a * 2 + Double(variant)) + 0.25 * sin(a * 5)
+            // Cruise ~3.1 m/s (≈5:22/km) with rolling variation + a surge each lap. `speedScale`
+            // turns the same loop into a ride (~2.5 → ≈28 km/h) for the cycling summary's charts.
+            let speed = (3.1 + 0.5 * sin(a * 2 + Double(variant)) + 0.25 * sin(a * 5)) * speedScale
             if i > 0 { elapsed += Geo.distance(lat1: prevLat, lon1: prevLon, lat2: lat, lon2: lon) / max(1.5, speed) }
             let s = LocationSample()
             s.t = start.addingTimeInterval(elapsed)

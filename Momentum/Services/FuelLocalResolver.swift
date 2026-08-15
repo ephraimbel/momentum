@@ -95,6 +95,9 @@ enum FuelLocalResolver {
         meal.magnesiumMg = source.magnesiumMg
         meal.ironMg = source.ironMg
         meal.calciumMg = source.calciumMg
+        meal.fiberG = source.fiberG
+        meal.sugarG = source.sugarG
+        meal.satFatG = source.satFatG
         meal.source = source.source
         meal.confidence = source.confidence
     }
@@ -122,7 +125,8 @@ enum FuelLocalResolver {
                      carbsG: $0.carbsG, proteinG: $0.proteinG, fatG: $0.fatG,
                      sodiumMg: $0.sodiumMg, fluidsMl: $0.fluidsMl,
                      potassiumMg: $0.potassiumMg, magnesiumMg: $0.magnesiumMg,
-                     ironMg: $0.ironMg, calciumMg: $0.calciumMg)
+                     ironMg: $0.ironMg, calciumMg: $0.calciumMg,
+                     fiberG: $0.fiberG, sugarG: $0.sugarG, satFatG: $0.satFatG, nova: $0.nova)
         }
         meal.source = "ai"
         meal.confidence = FoodStaples.confidence

@@ -12,6 +12,9 @@ struct MuscleMapView: View {
     let activation: [MuscleGroup: Double]
     /// Which figures to show, left→right. Default front + back (the iconic anatomy-chart look).
     var sides: [BodySide] = [.front, .back]
+    /// How activation becomes fill intensity — `.session` (default, the rich post-workout burn)
+    /// or `.weeklyVolume` (the Athlete Panel's absolute training portrait). See `MuscleMapGrading`.
+    var grading: MuscleMapGrading = .session
     /// The body figure to render — `.female` renders the true female anatomical dataset. `nil`
     /// (the default) uses the athlete's own figure (`AthleteFigure.sex`), so most call sites need
     /// not pass anything; explicit callers (onboarding, the athlete panel) still override.
@@ -38,7 +41,8 @@ struct MuscleMapView: View {
     var body: some View {
         HStack(spacing: Theme.Space.md) {
             ForEach(sides) { side in
-                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: resolvedSex, forceStatic: forceStatic)
+                BodyFigure(side: side, activation: resolved, maxVal: maxVal, sex: resolvedSex,
+                           forceStatic: forceStatic, grading: grading)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -49,6 +53,36 @@ struct MuscleMapView: View {
         let worked = resolved.filter { $0.value > 0 }.sorted { $0.value > $1.value }
         guard !worked.isEmpty else { return "Muscle map — nothing worked yet." }
         return "Muscles worked: " + worked.prefix(5).map { $0.key.displayName.lowercased() }.joined(separator: ", ") + "."
+    }
+}
+
+/// How raw activation becomes fill intensity — two honest scales for two contexts.
+enum MuscleMapGrading: Equatable {
+    /// Post-session surfaces (summary, tiles, feed, live): what you just worked burns richly —
+    /// 0.62…1.0 relative to the session's top muscle, the celebratory "covered body" look.
+    case session
+    /// The training portrait (Athlete Panel): values are **weekly working-set-equivalents** and the
+    /// scale is ABSOLUTE — a lightly-touched muscle is a faint tint and only consistent volume
+    /// (~10 sets/week, the classic hypertrophy bar) burns full. The figure starts blank, brightens
+    /// as training accumulates, and every window (1M/3M/6M) grades by the same yardstick, so the
+    /// muscles you actually train more visibly carry more light.
+    case weeklyVolume
+
+    /// Weekly set-equivalents at which a muscle reaches full iridescence.
+    static let fullBurnWeeklySets: Double = 10
+
+    /// Fill alpha for one muscle. `maxVal` is the map's top value — `.session` normalizes to it;
+    /// `.weeklyVolume` deliberately ignores it (one easy week must not read as a fully-lit body).
+    func intensity(_ value: Double, maxVal: Double) -> Double {
+        guard value > 0 else { return 0 }
+        switch self {
+        case .session:
+            guard maxVal > 0 else { return 0 }
+            return 0.62 + 0.38 * min(1, value / maxVal)
+        case .weeklyVolume:
+            // Perceptual ramp: ~1 set/wk ≈ 0.33, 3 ≈ 0.51, 5 ≈ 0.66, 10+ = 1.0.
+            return 0.20 + 0.80 * pow(min(1, value / Self.fullBurnWeeklySets), 0.8)
+        }
     }
 }
 
@@ -82,6 +116,7 @@ private struct BodyFigure: View {
     let maxVal: Double
     var sex: BodySex = .neutral
     var forceStatic: Bool = false
+    var grading: MuscleMapGrading = .session
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -159,11 +194,10 @@ private struct BodyFigure: View {
         }
     }
 
-    /// Worked → 0.62…1.0 (even a light muscle is richly lit); unworked → 0. A higher floor makes the
-    /// covered body glow fuller and more premium than a faint wash.
+    /// Unworked → 0; worked → the grading's ramp (see `MuscleMapGrading`).
     private func intensity(_ muscle: MuscleGroup?) -> Double {
-        guard let muscle, let v = activation[muscle], v > 0, maxVal > 0 else { return 0 }
-        return 0.62 + 0.38 * min(1, v / maxVal)
+        guard let muscle, let v = activation[muscle] else { return 0 }
+        return grading.intensity(v, maxVal: maxVal)
     }
 }
 
@@ -217,6 +251,15 @@ enum BodyAnatomy {
     static let femaleBack: [Part] = build(MuscleBodyData.femaleBack, map: backMuscle)
     static let femaleFrontOutline: Path = SVGPath.parse(MuscleBodyData.femaleFrontOutline)
     static let femaleBackOutline: Path = SVGPath.parse(MuscleBodyData.femaleBackOutline)
+
+    /// Touch every parsed static so the ~131 KB of SVG path parsing happens once, off the main
+    /// thread, at launch — instead of inside the first frame that mounts a body figure (the first
+    /// card of Progress ▸ Trends). `static let` initialization is thread-safe, so warming from a
+    /// background task and a later main-thread read can race harmlessly.
+    static func warm() {
+        _ = (front, back, frontOutline, backOutline,
+             femaleFront, femaleBack, femaleFrontOutline, femaleBackOutline)
+    }
 
     private static func build(_ data: [(slug: String, paths: [String])],
                               map: (String) -> MuscleGroup?, skip: Set<String> = []) -> [Part] {

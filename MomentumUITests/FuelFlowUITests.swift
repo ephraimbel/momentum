@@ -54,7 +54,7 @@ final class FuelFlowUITests: XCTestCase {
         // sheet in ITEMS mode (portion steppers); "Set totals by hand" swaps to the direct fields.
         // An offline/fallback meal has no items and opens on the fields directly — handle both.
         row.tap()
-        XCTAssertTrue(app.navigationBars["Edit meal"].waitForExistence(timeout: 8), "Edit sheet didn't open.")
+        XCTAssertTrue(app.navigationBars["Meal"].waitForExistence(timeout: 8), "Edit sheet didn't open.")
         let switchToTotals = app.buttons["Set totals by hand"]
         if switchToTotals.waitForExistence(timeout: 3) {
             shot(app, "3a-items-portions")   // per-item rows + qty steppers (the Amy beat)
@@ -62,9 +62,21 @@ final class FuelFlowUITests: XCTestCase {
         }
         let carbsField = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "—")).element(boundBy: 0)
         XCTAssertTrue(carbsField.waitForExistence(timeout: 5), "Carbs field not found.")
-        // A live estimate may have pre-filled the field; double-tap selects the existing number so
-        // typing REPLACES it (tap+delete is cursor-position roulette in XCUITest).
-        carbsField.doubleTap()
+        // A live estimate may have pre-filled the field, so typing must REPLACE the number.
+        // Focus is a SINGLE tap first — a doubleTap on an unfocused field can register as a
+        // text gesture without ever raising the keyboard — then the doubleTap selects the
+        // existing number once focus is confirmed. Settle first: switching to totals mode
+        // grows the sheet to .large (so the fields are never under the medium fold) and that
+        // transition animates; a tap mid-shift misses.
+        Thread.sleep(forTimeInterval: 0.8)
+        carbsField.tap()
+        var focusTries = 0
+        while !app.keyboards.firstMatch.waitForExistence(timeout: 2), focusTries < 2 {
+            focusTries += 1
+            carbsField.tap()
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Carbs field never took keyboard focus.")
+        carbsField.doubleTap()   // select the prefilled number (field already focused)
         carbsField.typeText("150")
         shot(app, "3-edit-sheet")
         app.buttons["Save"].tap()
@@ -217,6 +229,40 @@ final class FuelFlowUITests: XCTestCase {
         app.buttons["Close"].firstMatch.tap()
         app.buttons["Meal history"].tap()
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 8), "Meal history didn't reach the paywall for a free athlete.")
+
+        // The health-score gauge (2026-08-15) is the third gated toolbar door — visible free,
+        // walls on tap, exactly like its siblings.
+        app.buttons["Close"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Health score"].waitForExistence(timeout: 6),
+                      "Health score gauge should be visible on the free tier (it gates on tap).")
+        app.buttons["Health score"].tap()
+        XCTAssertTrue(trialCTA.waitForExistence(timeout: 8), "Health score didn't reach the paywall for a free athlete.")
+    }
+
+    /// The health-score surface (2026-08-15): meal rows wear score chips, the masthead gauge
+    /// opens the analysis page, and the page carries the day verdict + drivers + ranked food.
+    func testHealthScorePage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--reset-fuel", "--seed-fuel-today",
+                               "--debug-pro", "--fuel"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Fuel"].waitForExistence(timeout: 20), "Fuel page didn't appear.")
+
+        // The seeded day carries quality fields, so rows wear their chips ("Health score N, Band").
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Health score "))
+            .firstMatch.waitForExistence(timeout: 8), "Meal rows didn't grow their score chips.")
+        shot(app, "11-rows-with-scores")
+
+        // The masthead gauge opens the analysis page: hero verdict, drivers, ranked food, trend.
+        app.buttons["Health score"].tap()
+        XCTAssertTrue(app.navigationBars["Health score"].waitForExistence(timeout: 6),
+                      "Health score page didn't open from the gauge.")
+        XCTAssertTrue(app.staticTexts["WHAT SHAPED IT"].waitForExistence(timeout: 6),
+                      "Drivers section missing from the health page.")
+        XCTAssertTrue(app.staticTexts["TODAY'S FOOD, RANKED"].waitForExistence(timeout: 4),
+                      "Ranked-food section missing from the health page.")
+        XCTAssertTrue(app.staticTexts["LAST 7 DAYS"].exists, "Trend section missing.")
+        shot(app, "11a-health-page")
     }
 
     /// Local-first resolution (FUEL-FLOW §1.5): re-typing a meal the athlete has logged before —
@@ -264,7 +310,7 @@ final class FuelFlowUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "2 eggs and toast")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 4), "Logged row not found.")
         row.tap()
-        XCTAssertTrue(app.navigationBars["Edit meal"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.navigationBars["Meal"].waitForExistence(timeout: 5),
                       "Row didn't open its sheet on first tap — it was still estimating, not a local hit.")
         shot(app, "9a-local-first-editable")
     }
@@ -306,9 +352,13 @@ final class FuelFlowUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "2 gels and a banana")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 4), "Composed row not found.")
         row.tap()
-        XCTAssertTrue(app.navigationBars["Edit meal"].waitForExistence(timeout: 5), "Editor didn't open on first tap.")
+        XCTAssertTrue(app.navigationBars["Meal"].waitForExistence(timeout: 5), "Editor didn't open on first tap.")
         XCTAssertTrue(app.buttons["Set totals by hand"].waitForExistence(timeout: 3),
                       "Composed meal should open in items mode.")
+        // The full story (2026-08-15): a composed meal's sheet carries its live health gauge.
+        XCTAssertTrue(app.staticTexts["HEALTH SCORE"].waitForExistence(timeout: 4),
+                      "Items sheet should lead with the health-score hero.")
+        shot(app, "10b-items-sheet")
         app.buttons["Cancel"].tap()
 
         // The meal has numbers now, so the row hands over from starters to the athlete's usuals.

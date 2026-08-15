@@ -13,12 +13,20 @@ struct FuelHistoryView: View {
     @Query private var profiles: [UserProfile]
     @State private var editing: Meal?
     @State private var query = ""
+    /// Search haystacks decoded ONCE per data change: `journalTitle` runs a JSONDecoder over the
+    /// meal's items, and doing that for the whole year's window on every search keystroke janked
+    /// the field for long-tenured athletes (audit 2026-08-11). Rebuilt on appear, on a meal
+    /// count change, and when the editor closes (edits can rename items).
+    @State private var searchIndex: [(meal: Meal, haystack: String)] = []
 
     /// The browsing window — a full training year. The footer says so when there's more beyond it.
     private static let windowDays = 365
 
     var body: some View {
-        ScrollView {
+        // One grouping pass per render — as a computed var this ran 3× per search keystroke
+        // (isEmpty + ForEach + the animation value), each walking the whole year of meals.
+        let months = self.months
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
                 if months.isEmpty {
                     emptyState
@@ -52,7 +60,15 @@ struct FuelHistoryView: View {
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "Search meals — “pasta”, “gel”…")
         .scrollDismissesKeyboard(.interactively)
-        .sheet(item: $editing) { MealDetailSheet(meal: $0) }
+        .sheet(item: $editing, onDismiss: { rebuildSearchIndex() }) { MealDetailSheet(meal: $0) }
+        .onAppear { rebuildSearchIndex() }
+        .onChange(of: meals.count) { rebuildSearchIndex() }
+    }
+
+    private func rebuildSearchIndex() {
+        searchIndex = window.map {
+            (meal: $0, haystack: "\($0.text)\n\($0.journalTitle)\n\($0.note ?? "")")
+        }
     }
 
     // MARK: Window → search → months → days (all lazy-rendered; grouping is plain string/date work)
@@ -66,15 +82,12 @@ struct FuelHistoryView: View {
     private var truncated: Bool { meals.count > window.count }
 
     /// Case-insensitive across the athlete's words, the AI's item names, and the note — "pasta"
-    /// finds "big pasta dinner" and "Cooked Pasta ×2" alike.
+    /// finds "big pasta dinner" and "Cooked Pasta ×2" alike. Searches the precomputed
+    /// `searchIndex`, never live `journalTitle` (see its comment).
     private var filtered: [Meal] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return window }
-        return window.filter {
-            $0.text.localizedCaseInsensitiveContains(q)
-                || $0.journalTitle.localizedCaseInsensitiveContains(q)
-                || ($0.note?.localizedCaseInsensitiveContains(q) ?? false)
-        }
+        return searchIndex.filter { $0.haystack.localizedCaseInsensitiveContains(q) }.map(\.meal)
     }
 
     private var months: [(month: Date, days: [(day: Date, rows: [Meal])])] {
@@ -158,13 +171,26 @@ struct FuelHistoryView: View {
     }
 
     private func row(_ meal: Meal) -> some View {
-        Button { editing = meal } label: {
+        // Decoded once per row body (the chip and VoiceOver both read it).
+        let verdict = meal.healthVerdict
+        return Button {
+            // Mirror FuelView's row rule: a meal mid-estimate is not editable — a partial
+            // manual save landing over the estimate wiped its just-landed numbers with blanks,
+            // unrecoverably (audit 2026-08-11).
+            guard !EstimateGate.isEstimating(meal.id) else { return }
+            editing = meal
+        } label: {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: Theme.Space.sm) {
                     Text(meal.journalTitle)
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                         .lineLimit(2).multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
+                    // Same verdict chip as the main journal — one decode per visible row per
+                    // render, the `journalTitle` precedent (rows are lazily rendered).
+                    if let verdict {
+                        HealthScoreChip(verdict: verdict)
+                    }
                     Text(meal.eatenAt.formatted(date: .omitted, time: .shortened))
                         .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     Image(systemName: "chevron.forward")
@@ -187,6 +213,8 @@ struct FuelHistoryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Meal: \(meal.text)")
+        // The label overrides children for VoiceOver — speak the chip as the row's value.
+        .accessibilityValue(verdict.map { "health score \($0.score), \($0.band.word)" } ?? "")
     }
 
     private var emptyState: some View {

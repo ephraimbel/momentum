@@ -59,7 +59,23 @@ final class OnboardingViewModel {
 
     /// The honest read on the athlete's goal vs. the calendar + their current fitness — drives the
     /// intensity step's headline, recommendation, and any "here's the truth" alternatives.
+    /// Memoized on its inputs (perf audit 2026-08-13): the intensity step reads this from `body`,
+    /// so every flow-wide invalidation re-ran the full assessment (two engine read passes + string
+    /// building) even when nothing it depends on had moved.
+    @ObservationIgnored private var feasibilityCache: (key: String, value: PlanFeasibility)?
     var feasibility: PlanFeasibility {
+        let key = [String(describing: calibration), String(describing: goal),
+                   String(describing: raceDistance), "\(goalHours):\(goalMinutes)",
+                   "\(weeklyRunVolumeM ?? -1)", "\(hasRace):\(weeksToRace ?? -1)",
+                   String(describing: experience), "\(injuryAreas.count)",
+                   "\(daysPerWeek)", String(describing: intensity)].joined(separator: "|")
+        if let c = feasibilityCache, c.key == key { return c.value }
+        let value = computeFeasibility()
+        feasibilityCache = (key, value)
+        return value
+    }
+
+    private func computeFeasibility() -> PlanFeasibility {
         let p5k = calibration.recentRun.map { PlanEngine.riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
             ?? calibration.estimatedP5kSPerKm
         // If they gave a time AT the race distance (a marathoner's own marathon, say), that's the
@@ -108,15 +124,11 @@ final class OnboardingViewModel {
     // Health at the `health` step — that imports REAL logged runs, which is accurate; it just no
     // longer drives pace calibration.
 
-    /// A balanced full-body activation for the anatomy animation, emphasized by the chosen focus.
+    /// The anatomy the muscle-focus step lights: EXACTLY the chosen areas, full-burn. Empty until
+    /// the athlete picks — the figure starts as a quiet chart and each tap ignites its region
+    /// (user call 2026-08-05: no pre-filled body; selection IS the light).
     func targetMuscles() -> [MuscleGroup: Double] {
-        let balanced: [MuscleGroup: Double] = [
-            .chest: 0.85, .back: 0.85, .shoulders: 0.6, .biceps: 0.5, .triceps: 0.5,
-            .quads: 0.9, .hamstrings: 0.7, .glutes: 0.75, .calves: 0.4, .core: 0.6]
-        guard !muscleFocus.isEmpty else { return balanced }
-        var m = balanced.mapValues { _ in 0.35 }
-        for f in muscleFocus { m[f] = 1.0 }
-        return m
+        Dictionary(uniqueKeysWithValues: muscleFocus.map { ($0, 1.0) })
     }
     /// Whether this athlete's plan includes lifting (drives the anatomy beats vs. the route beat).
     var includesStrength: Bool { disciplines.contains(.strength) }
@@ -168,8 +180,29 @@ final class OnboardingViewModel {
     var running: Bool { disciplines.contains(.running) }
     var hybrid: Bool { running && lifting }
 
+    /// Cache for `steps`/`questionSteps` (perf audit 2026-08-13): the flow's chrome reads these
+    /// ~8× per body pass (every keystroke in the name field re-filters `Step.allCases` repeatedly).
+    /// Keyed on the only answers that branch the list; `@ObservationIgnored` so the cache itself
+    /// never participates in invalidation.
+    @ObservationIgnored private var stepsCache: (key: String, steps: [Step], questions: [Step])?
+    private var stepsBranchKey: String {
+        "\(String(describing: goal))|\(String(describing: disciplines))|\(String(describing: experience))"
+    }
+    private var cachedStepLists: (steps: [Step], questions: [Step]) {
+        let key = stepsBranchKey
+        if let c = stepsCache, c.key == key { return (c.steps, c.questions) }
+        let all = computeSteps()
+        let questions = all.filter {
+            ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0)
+        }
+        stepsCache = (key, all, questions)
+        return (all, questions)
+    }
+
     /// The ordered steps for this user — branches on goal + disciplines.
-    var steps: [Step] {
+    var steps: [Step] { cachedStepLists.steps }
+
+    private func computeSteps() -> [Step] {
         Step.allCases.filter { step in
             switch step {
             case .race:        return goal == .raceDistance && running
@@ -195,12 +228,11 @@ final class OnboardingViewModel {
     }
 
     /// The answerable steps (drives the progress bar + the question chrome).
-    private var questionSteps: [Step] {
-        // `.health` is an opt-in consent beat (like notifications), not an answerable question.
-        // `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
-        // bar (which would then never reach 100% on the last question).
-        steps.filter { ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0) }
-    }
+    /// `.health` is an opt-in consent beat (like notifications), not an answerable question.
+    /// `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
+    /// bar (which would then never reach 100% on the last question). The filter lives in
+    /// `cachedStepLists` alongside `steps`.
+    private var questionSteps: [Step] { cachedStepLists.questions }
     var isQuestionStep: Bool { questionSteps.contains(step) }
 
     var progress: Double {
@@ -312,7 +344,7 @@ final class OnboardingViewModel {
         if goal == .raceDistance, let r = raceDistance {
             let subject = goalTimeLabel.map { "\($0) \(r.label.lowercased())" } ?? "\(r.label)-ready"
             if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
-            return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label) — whenever you toe the line"
+            return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label), whenever you toe the line"
         }
         // Every other goal is named for exactly what the athlete CHOSE — the plan is aimed at their
         // goal, and the reveal says so, rather than a generic "faster, stronger runner" for a
@@ -320,18 +352,18 @@ final class OnboardingViewModel {
         let phrase: String
         switch goal {
         case .endurance:
-            phrase = running && lifting ? "Going farther — stronger everywhere" : "Going farther, running stronger"
+            phrase = running && lifting ? "Farther and stronger everywhere" : "Going farther, running stronger"
         case .loseFat:        phrase = "Leaner and fitter"
         case .buildMuscle:    phrase = "Building real muscle"
         case .getStronger:    phrase = "Getting stronger"
-        case .stayConsistent: phrase = "Consistent — moving for good"
+        case .stayConsistent: phrase = "Consistent for good"
         case .generalFitness:
             phrase = running && lifting ? "Fitter and stronger, all over"
                 : running ? "A fitter, stronger runner" : lifting ? "Leaner and stronger" : "Fitter, across the board"
         case .raceDistance:   phrase = "Race-ready"   // handled above; kept for exhaustiveness
         }
         if hasRace { return "\(phrase) by \(raceDate.formatted(.dateTime.month().day()))" }
-        return "\(phrase) — one week at a time"
+        return "\(phrase), one week at a time"
     }
 
     /// Whole weeks until race day (for the reveal countdown), if a dated race was set. Delegates to
@@ -475,7 +507,7 @@ enum PaceFeel: String, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .newRunner: "Walk/jog — just building up"
+        case .newRunner: "Walk/jog, just building up"
         case .easyJogger: "I can hold a conversation"
         case .regular: "Comfortable steady miles"
         case .fast: "I train and race hard"

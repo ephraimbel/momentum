@@ -272,7 +272,7 @@ struct LogActivityView: View {
             .onAppear { if !draft.isEmpty { scheduleCoachRead() } }
             .onDisappear {
                 aiTask?.cancel()
-                if voice.isRecording { voice.stop() }
+                voice.stopIfRecording()   // covers the mid-start permission window too
             }
         }
         .overlay {
@@ -383,14 +383,19 @@ struct LogActivityView: View {
         guard cardEdits.isEmpty else { return }
         guard !text.isEmpty, !voice.isRecording else { return }
         guard force || aiReadText != snapshot else { return }
-        if !force {
-            let grammar = WorkoutLogParser.parseMulti(text, weightUnit: .default(), distanceUnit: distanceUnit)
-            guard WorkoutLogParser.looksRicher(text, than: grammar) else { return }
-        }
         aiGeneration += 1
         let gen = aiGeneration
         aiTask = Task {
-            if !force { try? await Task.sleep(for: .seconds(1.1)) }
+            if !force {
+                try? await Task.sleep(for: .seconds(1.1))
+                guard !Task.isCancelled, gen == aiGeneration else { return }
+                // The richer-than-grammar gate runs AFTER the debounce, once per settled
+                // sentence. It used to run synchronously on every keystroke — a second full
+                // parseMulti (hundreds of uncached regex compiles) per character, on the main
+                // thread, before the debounce could help (audit 2026-08-11).
+                let grammar = WorkoutLogParser.parseMulti(text, weightUnit: .default(), distanceUnit: distanceUnit)
+                guard WorkoutLogParser.looksRicher(text, than: grammar) else { return }
+            }
             guard !Task.isCancelled, gen == aiGeneration else { return }
             aiReading = true
             let outcome = await WorkoutParseService().parse(text: text, weightUnit: .default(),
@@ -401,6 +406,13 @@ struct LogActivityView: View {
             switch outcome {
             case .parsed(let list):
                 guard cardEdits.isEmpty else { return }   // edited mid-flight — their fix wins
+                // The coach's read can change the CARD LIST (that's its whole point), and the
+                // per-card overrides are keyed by INDEX into the old list — a removed card #1 or
+                // a duration chip on old card #0 would silently attach to a different workout in
+                // the new list (audit 2026-08-11). Same reset the text-change path does.
+                durationPicks = [:]
+                dismissedCards = []
+                editingCard = nil
                 aiResult = list
                 aiReadText = snapshot
                 Haptics.light()
@@ -593,7 +605,7 @@ struct LogActivityView: View {
 
             VStack(spacing: 10) {
                 metricRow("Duration", r.durationS.map { Formatters.duration(s: $0) })
-                if r.type?.isGPS ?? false {
+                if r.type?.tracksDistance ?? false {
                     metricRow("Distance", r.distanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) })
                     if let pace = paceLine(r) { metricRow(isBike(r) ? "Avg speed" : "Avg pace", pace) }
                 }
@@ -801,7 +813,7 @@ struct LogActivityView: View {
     private func missingHint(_ r: WorkoutLogParser.Result) -> String? {
         if r.type == nil { return "Which sport? Tap the card to set it." }
         if r.durationS == nil { return "How long was it? Say “45 minutes”, or tap to fill it in." }
-        if r.type?.isGPS ?? false, (r.distanceM ?? 0) <= 0 { return "Add the distance if you know it — say “5 miles”, or tap Edit." }
+        if r.type?.tracksDistance ?? false, (r.distanceM ?? 0) <= 0 { return "Add the distance if you know it — say “5 miles”, or tap Edit." }
         return nil
     }
 
@@ -904,7 +916,9 @@ struct LogActivityView: View {
     /// workout is a real workout.
     private func save() {
         let cards = cards
-        guard canSave, !cards.isEmpty else { return }
+        // `!celebrating` = the one-save latch: the beat overlay covers the button a frame later,
+        // but a touch already in flight could re-enter (audit 2026-08-11).
+        guard canSave, !cards.isEmpty, !celebrating else { return }
         aiTask?.cancel()   // the receipt is frozen the moment they confirm — no late read may land
         if voice.isRecording { voice.stop() }
         // Resolve each name once per save (the LogWorkoutView rule): the `library` snapshot

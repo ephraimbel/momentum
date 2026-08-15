@@ -22,6 +22,7 @@ struct OnboardingFlow: View {
     /// Apple's native App Store rating alert — used by the `.rateUs` beat.
     @Environment(\.requestReview) private var requestReview
     @State private var rateStarsIn = false
+    @State private var rateWorking = false   // "Rate momentum" tapped; the 1.2s settle is underway
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     /// The curated look picked on the identity beat (ring in the strip); cleared by a photo pick.
     @State private var onboardingPreset: AvatarPreset?
@@ -30,13 +31,23 @@ struct OnboardingFlow: View {
     @State private var vm = OnboardingViewModel.resuming()
     @State private var profile: UserProfile?
     @State private var goingBack = false
-    @State private var locator = LocationService()   // request location on the final primer
+    /// Request location on the final primer. Created on THAT tap, not at init: this view is
+    /// re-initialized whenever RootView's body re-evaluates (cover content closures re-run), and a
+    /// fresh `CLLocationManager` per pass was pure waste (perf audit 2026-08-13). Held in @State so
+    /// the manager outlives the authorization prompt it raises.
+    @State private var locator: LocationService?
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall — the last beat, before the app
+    @State private var paywallHandledExit = false    // exitPaywall ran — onDismiss must not advance again
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
     @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
     @State private var remindersAdvanced = false      // same for the reminders primer
+    @State private var lastStepChangeAt = Date.distantPast   // double-tap guard for goNext/goBack
+    /// True while the paywall's exit advances the step UNDER the still-presented cover — the
+    /// travel animation is suppressed so the account beat is fully composed before the cover
+    /// dismisses (the mid-flight crossfade used to ghost the rating step through it).
+    @State private var jumpCut = false
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
@@ -70,7 +81,7 @@ struct OnboardingFlow: View {
             if isQuestion { continueBar }
         }
         .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
-        .animation(Motion.travel, value: vm.step)
+        .animation(jumpCut ? nil : Motion.travel, value: vm.step)
         .onAppear {
             // A returning athlete who came in through "I already have an account" shouldn't retype
             // what they just told us — prefill the name. The guest-first path (2026-07-27) has no
@@ -179,13 +190,21 @@ struct OnboardingFlow: View {
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
         // The onboarding_complete paywall (PRD §10) — shown from the rating beat's hand-off, after
-        // every opt-in. **HARD since 2026-07-28** (user call): no close affordance, no swipe-away.
-        // The only ways forward are the trial, a subscription, or Restore — so this cover can only
-        // dismiss once an entitlement lands, which makes `onDismiss` a post-purchase hand-off to the
-        // `.account` beat rather than a "they skipped it" path. `finishOnboarding` arms
-        // `onboardingGatePending` first so force-quitting the wall isn't a way around it.
-        .fullScreenCover(isPresented: $showPaywall, onDismiss: { goToAccountBeat() }) {
-            PaywallView(feature: .fullPlan, hard: true)
+        // every opt-in. **SOFT since 2026-08-06** (user call, reversing the 2026-07-28 hard flip):
+        // the flow's X closes it un-entitled. Purchase and close both exit through `exitPaywall`,
+        // which advances the flow UNDER the cover before dismissing it — so the dismissal reveals
+        // the account beat, not a half-second flash of the rating step the wall was presented over
+        // (that flash shipped through 1.2.0; fixed 2026-08-06). `onDismiss` remains only for the
+        // store-unreachable deferral, whose escape dismisses without an exit callback.
+        // `finishOnboarding` still arms `onboardingGatePending` first, so a force-quit AT the wall
+        // re-raises it once from RootView (where the X is equally available) and the account beat
+        // is never silently lost. Since 2026-08-05 the wall is the two-page flow (the device tour,
+        // then the same PaywallView the rest of the app shows).
+        .fullScreenCover(isPresented: $showPaywall, onDismiss: {
+            if !paywallHandledExit { goToAccountBeat() }
+            paywallHandledExit = false
+        }) {
+            OnboardingPaywallFlow(onEntitled: { exitPaywall() }, onClose: { exitPaywall() })
         }
     }
 
@@ -252,14 +271,35 @@ struct OnboardingFlow: View {
             .background(Theme.background)
     }
 
-    private func goNext() { goingBack = false; vm.advance() }
-    private func goBack() { goingBack = true; vm.back() }
+    /// One advance per gesture: a fast double-tap on any Continue used to skip a whole step —
+    /// and from the primers beat it skipped the RATING and armed no paywall (audit 2026-08-11).
+    /// Any second advance/back inside the travel animation's window is the same gesture, not a
+    /// decision; swallow it. Programmatic advances (buildPlan, the reminders/health completions,
+    /// exitPaywall) all arrive ≥0.55s after the previous step change, so none can be swallowed.
+    private func goNext() {
+        guard Date().timeIntervalSince(lastStepChangeAt) > 0.45 else { return }
+        lastStepChangeAt = Date()
+        goingBack = false
+        vm.advance()
+    }
+    private func goBack() {
+        guard Date().timeIntervalSince(lastStepChangeAt) > 0.45 else { return }
+        lastStepChangeAt = Date()
+        goingBack = true
+        vm.back()
+    }
 
     /// Persist the interruption-recovery draft, unless a deep link is driving the flow (those set a
     /// specific step for verification and must stay deterministic — no stray draft written or read).
+    /// The answers snapshot on the main actor NOW; the encode + UserDefaults write hop off it —
+    /// this fires from `.onChange(of: vm.step)`, i.e. on the exact frame the travel transition
+    /// starts (perf audit 2026-08-13). The arguments scan is cached for the same reason.
+    private static let deepLinkDriven =
+        ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding-") })
     private func saveDraftIfEnabled() {
-        guard !ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding-") }) else { return }
-        OnboardingDraftStore.save(vm.draft())
+        guard !Self.deepLinkDriven else { return }
+        let draft = vm.draft()
+        Task.detached(priority: .utility) { OnboardingDraftStore.save(draft) }
     }
 
     // MARK: Content router
@@ -306,13 +346,13 @@ struct OnboardingFlow: View {
     private var disciplinesStep: some View {
         let programmed = ActivityChoice.allCases.filter(\.isProgrammed)
         let extras = ActivityChoice.allCases.filter { !$0.isProgrammed }
-        return questionScaffold("What do you want to do?", subtitle: "Pick all that apply — we'll build your plan around these.") {
+        return questionScaffold("What do you want to do?", subtitle: "Pick all that apply. We'll build your plan around these.") {
             activitySectionLabel("TRAIN")
             ForEach(Array(programmed.enumerated()), id: \.element) { i, a in
                 activityCard(a).reveal(cascade(i))
             }
             activitySectionLabel("ALSO TRACK").padding(.top, Theme.Space.xs)
-            Text("Logged as cross-training and added to your weeks — your call.")
+            Text("Logged as cross-training and added to your weeks. Your call.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(Array(extras.enumerated()), id: \.element) { i, a in
@@ -375,7 +415,7 @@ struct OnboardingFlow: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(vm.avatarData == nil ? "Add a photo" : "Change photo")
                                 .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                            Text("Optional — you can always add one later.")
+                            Text("Optional. You can always add one later.")
                                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         }
                     }
@@ -393,10 +433,18 @@ struct OnboardingFlow: View {
                           spacing: Theme.Space.md) {
                     ForEach(AvatarPreset.allCases) { preset in
                         Button {
-                            vm.avatarData = AvatarPreset.bake(preset,
-                                                              name: vm.name.isEmpty ? "You" : vm.name)
                             onboardingPreset = preset
                             Haptics.selection()
+                            // Bake AFTER the selection frame commits: the 512px ImageRenderer +
+                            // PNG encode ran inside the tap handler, so the ring's feedback
+                            // arrived a beat late on every tile (perf audit 2026-08-13). The
+                            // guard drops a bake a faster second tap has superseded.
+                            let name = vm.name.isEmpty ? "You" : vm.name
+                            Task { @MainActor in
+                                await Task.yield()
+                                guard onboardingPreset == preset else { return }
+                                vm.avatarData = AvatarPreset.bake(preset, name: name)
+                            }
                         } label: {
                             PresetAvatarView(preset: preset,
                                              name: vm.name.isEmpty ? "You" : vm.name, size: 56)
@@ -453,7 +501,7 @@ struct OnboardingFlow: View {
     /// used to ask runners the same thing twice.
     private var experienceStep: some View {
         questionScaffold(vm.running ? "How's your running?" : "How experienced are you?",
-                         subtitle: vm.running ? "This sets your starting paces — you can always adjust."
+                         subtitle: vm.running ? "This sets your starting paces. You can always adjust."
                                               : (vm.hybrid ? "We'll set running and lifting separately." : nil)) {
             if vm.running {
                 ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
@@ -483,7 +531,7 @@ struct OnboardingFlow: View {
     /// Current running load — seeds the plan's starting volume so it meets the athlete where they are.
     private var runVolumeStep: some View {
         questionScaffold("How much are you running now?",
-                         subtitle: "So your plan starts where you are — challenging, not crushing.") {
+                         subtitle: "So your plan starts where you are. Challenging, not crushing.") {
             metricRow("Per week", volumeLabel(vm.weeklyRunVolumeM),
                       { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) - 5) },
                       { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) + 5) }).reveal(cascade(0))
@@ -554,7 +602,7 @@ struct OnboardingFlow: View {
                 let minDays = PlanFeasibility.minimumEffectiveDays(forDistanceM: race.meters)
                 HStack(alignment: .top, spacing: Theme.Space.sm) {
                     Image(systemName: "hand.raised.fill").font(.system(size: 13, weight: .semibold))
-                    Text("Honest note: a \(race.label.lowercased()) build really wants \(minDays)+ days — \(vm.daysPerWeek) will maintain fitness, not race readiness. We'll build your week either way.")
+                    Text("Honest note: a \(race.label.lowercased()) build really wants \(minDays)+ days. On \(vm.daysPerWeek) you'll maintain fitness, not race readiness. We'll build your week either way.")
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold))
@@ -609,7 +657,7 @@ struct OnboardingFlow: View {
     /// Optional and shame-free; empty = none. Feeds the protective ramp + the injury loop's watch list.
     private var injuriesStep: some View {
         questionScaffold("Anything to train around?",
-                         subtitle: "Past injuries shape a safer ramp — we'll build up gently where you've been hurt. Skip if you're all clear.") {
+                         subtitle: "Past injuries shape a safer ramp. We'll build up gently where you've been hurt. Skip if you're all clear.") {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],
                       spacing: Theme.Space.sm) {
                 ForEach(Array(InjuryArea.allCases.enumerated()), id: \.element) { i, area in
@@ -645,7 +693,7 @@ struct OnboardingFlow: View {
                 HStack(spacing: Theme.Space.sm) {
                     Image(systemName: "checkmark.circle")
                         .font(.system(size: 16, weight: .bold))
-                    Text("No injuries — I'm all clear")
+                    Text("No injuries, I'm all clear")
                         .font(.rounded(Theme.FontSize.body, weight: .bold))
                 }
                 .foregroundStyle(Theme.ink)
@@ -669,6 +717,11 @@ struct OnboardingFlow: View {
 
     /// The recovery consent beat (ENDURANCE-FOCUS §7) — connect Apple Health so the plan adapts to how
     /// the athlete is *actually* recovering. Benefit-first, names their devices, read-only reassurance.
+    ///
+    /// ⚠️ App Review guideline 5.1.1(iv) (rejected build 17, 2026-08-11): a priming screen before the
+    /// HealthKit request must use a neutral button word ("Continue"/"Next", never "Connect") and must
+    /// NOT offer a way to bypass the system prompt (no "Maybe later"). The athlete's real choice is
+    /// the system sheet itself — declining there advances the flow exactly like accepting.
     private var healthStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer(minLength: 0)
@@ -676,22 +729,22 @@ struct OnboardingFlow: View {
                 Text("Train with your whole picture")
                     .font(.serif(30, weight: .semibold)).foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                Text("Connect Apple Health and momentum learns how you're actually recovering — so each week adapts to you, not a template.")
+                Text("Next, iOS will ask about Apple Health access. With it, momentum learns how you're actually recovering, so each week adapts to you, not a template. You choose what to share.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
             .reveal(0.05)
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 healthBenefitRow("bed.double.fill", "Sleep & heart rate", "Rough night? Your week eases off before you overdo it.")
-                healthBenefitRow("applewatch", "Your devices, one tap", "Oura, Garmin, Whoop & Apple Watch already sync to Apple Health — no separate logins.")
-                healthBenefitRow("lock.fill", "Read-only, always", "It stays on your device, in your control. Disconnect anytime.")
+                healthBenefitRow("applewatch", "Your devices, one tap", "Oura, Garmin, Whoop & Apple Watch already sync to Apple Health. No separate logins.")
+                healthBenefitRow("lock.fill", "Private, always", "Reads your recovery signals, saves your workouts. You pick exactly what, and can turn it off anytime.")
             }
             .padding(Theme.Space.md)
             .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
             .reveal(0.15)
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.sm) {
-                OversizedButton(title: "Connect Apple Health") {
+                OversizedButton(title: "Continue") {
                     // One-shot: when permission is already determined the awaits return instantly
                     // with no system sheet to swallow taps, and a double-tap advanced two steps.
                     guard !healthRequestInFlight else { return }
@@ -715,10 +768,6 @@ struct OnboardingFlow: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { healthRequestInFlight = false }
                     }
                 }
-                Button { Haptics.light(); goNext() } label: {
-                    Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                }
-                .buttonStyle(.plain)
             }
             .reveal(0.28)
         }
@@ -748,7 +797,7 @@ struct OnboardingFlow: View {
     private var intensityStep: some View {
         let f = vm.feasibility
         return questionScaffold("How hard do you want to push?",
-                                subtitle: "Same goal — your pace. You can change this anytime.") {
+                                subtitle: "Same goal, your pace. You can change this anytime.") {
             feasibilityBanner(f).reveal(cascade(0))
             ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { i, tier in
                 SelectionCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
@@ -766,7 +815,7 @@ struct OnboardingFlow: View {
                 .reveal(cascade(i + 1))
             }
             if vm.intensity == .podium {
-                Text("Podium trains \(PlanIntensity.podium.floorDays)+ days a week — we've set your week to \(vm.daysPerWeek). Every recovery guardrail still applies.")
+                Text("Podium trains \(PlanIntensity.podium.floorDays)+ days a week, so we've set your week to \(vm.daysPerWeek). Every recovery guardrail still applies.")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -940,8 +989,8 @@ struct OnboardingFlow: View {
                         Text(vm.plannedRaceName ?? "Find your race")
                             .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
                         Text(vm.plannedRaceName != nil
-                             ? "Locked in — date and distance set below"
-                             : "Boston, Chicago, Hong Kong — the big ones, with dates")
+                             ? "Locked in. Date and distance set below"
+                             : "Boston, Chicago, Hong Kong. The big ones, with dates")
                             .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     }
                     Spacer(minLength: 0)
@@ -1001,7 +1050,7 @@ struct OnboardingFlow: View {
                 DatePicker("Race day", selection: $vm.raceDate, in: Date()..., displayedComponents: .date)
                     .datePickerStyle(.compact).tint(Theme.ink)
             } else {
-                Text("No date is fine — we'll build a rolling block you can race off anytime.")
+                Text("No date is fine. We'll build a rolling block you can race off anytime.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1021,7 +1070,7 @@ struct OnboardingFlow: View {
     }
 
     private var muscleFocusStep: some View {
-        questionScaffold("Where do you want to grow?", subtitle: "Pick areas to emphasize — your plan adds volume there.") {
+        questionScaffold("Where do you want to grow?", subtitle: "Pick areas to emphasize. Your plan adds volume there.") {
             AnatomyGlowView(activation: vm.targetMuscles(), sex: vm.bodySex, sequential: false)
                 .frame(height: 200).frame(maxWidth: .infinity)
                 .reveal(cascade(0))
@@ -1056,7 +1105,7 @@ struct OnboardingFlow: View {
 
     private var preferredDaysStep: some View {
         questionScaffold("Any preferred days?",
-                         subtitle: "Optional — we'll fit your \(vm.daysPerWeek)-day week to these. Skip to auto-spread.") {
+                         subtitle: "Optional. We'll fit your \(vm.daysPerWeek)-day week to these. Skip to auto-spread.") {
             HStack(spacing: 6) {
                 ForEach(1...7, id: \.self) { wd in
                     let on = vm.preferredDays.contains(wd)
@@ -1096,7 +1145,7 @@ struct OnboardingFlow: View {
     }
 
     private var metricsStep: some View {
-        questionScaffold("A bit about you", subtitle: "Optional — sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
+        questionScaffold("A bit about you", subtitle: "Optional. Sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
             sexSelector.reveal(cascade(0))
             metricRow("Age", "\(ageDisplay)",
                       typed: { if let a = Int($0.filter(\.isNumber)) { setAge(a) } },
@@ -1275,7 +1324,7 @@ struct OnboardingFlow: View {
             (.running, "Running comes first", "Lift to support the miles", "figure.run"),
             (.balanced, "Balanced", "Both matter, side by side", "figure.run.circle"),
             (.lifting, "Lifting comes first", "Run to stay conditioned", "dumbbell.fill")]
-        return questionScaffold("Run and lift — where's your focus?",
+        return questionScaffold("Run and lift: where's your focus?",
                                 subtitle: "We'll weight your week toward it. Change it anytime.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
                 SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.hybridPriority == o.0) {
@@ -1290,7 +1339,7 @@ struct OnboardingFlow: View {
     private var raceGoalTimeStep: some View {
         let raceLabel = vm.raceDistance?.label ?? "race"
         return questionScaffold("Chasing a time?",
-                                subtitle: "Optional — your goal for the \(raceLabel). We'll point the plan at it.") {
+                                subtitle: "Optional. Your goal for the \(raceLabel). We'll point the plan at it.") {
             metricRow("Hours", "\(vm.goalHours)",
                       typed: { if let h = Int($0.filter(\.isNumber)) { vm.goalHours = min(9, max(0, h)) } },
                       { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(9, vm.goalHours + 1) }).reveal(cascade(0))
@@ -1298,7 +1347,7 @@ struct OnboardingFlow: View {
                       typed: { if let m = Int($0.filter(\.isNumber)) { vm.goalMinutes = min(59, max(0, m)) } },
                       { vm.goalMinutes = (vm.goalMinutes + 55) % 60 }, { vm.goalMinutes = (vm.goalMinutes + 5) % 60 }).reveal(cascade(1))
             if let t = vm.goalFinishTimeS, let m = vm.raceDistance?.meters, m > 0 {
-                Text("That's about \(Formatters.pace(secPerKm: t / (m / 1000), unit: .auto)) — a strong target.")
+                Text("That's about \(Formatters.pace(secPerKm: t / (m / 1000), unit: .auto)), a strong target.")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading).reveal(cascade(2))
             }
@@ -1339,7 +1388,7 @@ struct OnboardingFlow: View {
                     .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("A quiet nudge before each session keeps you on track. No spam — just your plan.")
+                Text("A quiet nudge before each session keeps you on track. No spam. Just your plan.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1359,7 +1408,17 @@ struct OnboardingFlow: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
                     }
                 }
-                Button { Haptics.light(); goNext() } label: {
+                Button {
+                    // Same one-shot latch as "Turn on reminders" — during the settings round-trip
+                    // before the system alert presents, this button used to stay live, and tapping
+                    // it advanced once immediately and AGAIN from the alert's completion, skipping
+                    // the location primer and stacking its prompt over the rating beat.
+                    guard !remindersAdvanced else { return }
+                    remindersAdvanced = true
+                    Haptics.light()
+                    goNext()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
+                } label: {
                     Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
                 .buttonStyle(.plain)
@@ -1384,6 +1443,8 @@ struct OnboardingFlow: View {
     /// A realistic iPhone caught mid-notification — Dynamic Island, a real status bar, and the momentum
     /// reminder as a frosted lock-screen banner at the top of the screen, on a dark wallpaper. Rendered
     /// at full height; the step masks the lower half so the device dissolves into the copy below.
+    // A lock-screen-clock variant (big 9:41 + date, banner beneath) was built and REVERTED the same
+    // day (owner call 2026-08-11) — the owner prefers this original staging; don't re-propose it.
     private var phoneNotificationMockup: some View {
         let unit = DistanceUnit.auto.resolved() == .imperial ? "3 mi" : "5 km"
         // Warm-graphite wallpaper, on-brand with the monochrome aesthetic (and the warm-charcoal dark
@@ -1498,7 +1559,9 @@ struct OnboardingFlow: View {
                 // NEXT beat (the rating ask), which reads as a random permission grab on a screen
                 // that says nothing about location. Only ask if this step is still the one on screen.
                 guard vm.step == .primers else { return }
-                locator.requestAuthorization()
+                let loc = locator ?? LocationService()
+                locator = loc
+                loc.requestAuthorization()
             }
         }
     }
@@ -1556,6 +1619,11 @@ struct OnboardingFlow: View {
 
             VStack(spacing: Theme.Space.xs) {
                 OversizedButton(title: "Rate momentum") {
+                    // One-shot: during the 1.2s settle the button used to look simply dead when the
+                    // rate-limited system alert chose not to appear — dimming it acknowledges the
+                    // tap (and a second tap re-firing requestReview was pointless anyway).
+                    guard !rateWorking else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { rateWorking = true }
                     // Apple's own alert — the only sanctioned way to open it. It is rate-limited by
                     // the system and may not appear; the flow must continue either way, so we never
                     // wait on it or branch on whether it showed.
@@ -1567,6 +1635,8 @@ struct OnboardingFlow: View {
                     // two modals racing on the same frame is how you get a stuck screen.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finishOnboarding() }
                 }
+                .opacity(rateWorking ? 0.45 : 1)
+                .disabled(rateWorking)
                 Button {
                     Haptics.light()
                     finishOnboarding()
@@ -1597,7 +1667,7 @@ struct OnboardingFlow: View {
     private var accountStep: some View {
         AccountOptionsView(
             presentation: .onboardingBeat,
-            onSkip: { onComplete() },
+            onSkip: { complete() },
             onSignedIn: {
                 // Nothing else ever writes the account's name onto the profile — do it here when
                 // onboarding left the field blank (`OnboardingViewModel.finish` is the only other
@@ -1610,7 +1680,7 @@ struct OnboardingFlow: View {
                 // Let the Apple/Google sheet finish dismissing before this cover tears down — two
                 // modals resolving on one frame is the stuck-screen bug `rateUsStep` already
                 // works around above.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onComplete() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { complete() }
             })
     }
 
@@ -1618,9 +1688,10 @@ struct OnboardingFlow: View {
     /// then the account beat. Was inline in `primersStep` before `.rateUs` was inserted between them.
     private func finishOnboarding() {
         if paywall.isPro { goToAccountBeat(); return }
-        // Arm the relaunch gate BEFORE presenting: a wall a force-quit walks around is a soft wall
-        // with extra steps. `RootView` re-raises it on every launch until an entitlement lands, and
-        // `setPro(true)` clears it the moment one does.
+        // Arm the relaunch gate BEFORE presenting — not to wall anyone in (the gate is soft now),
+        // but so a force-quit mid-wall re-offers it once from RootView instead of dropping the
+        // athlete into the app with the account beat silently skipped. `setPro(true)` or the
+        // flow's X clears it.
         paywall.onboardingGatePending = true
         showPaywall = true
     }
@@ -1630,8 +1701,37 @@ struct OnboardingFlow: View {
     /// arg is driving the flow as `demo-user`). Asking someone to sign in twice is worse than not
     /// asking at all.
     private func goToAccountBeat() {
-        if auth.isSignedIn, !auth.isGuest { onComplete(); return }
+        if auth.isSignedIn, !auth.isGuest { complete(); return }
         goNext()
+    }
+
+    /// Onboarding is over — clear the resume draft BEFORE handing off, or the stale draft
+    /// (saved on every step change, including the post-plan beats) resurrects the tail of the
+    /// flow the next time RootView sees no profile — e.g. right after Settings → Delete all
+    /// data, which used to loop the athlete into a plan-less "Save your progress" forever
+    /// (audit 2026-08-11).
+    private func complete() {
+        OnboardingDraftStore.clear()
+        onComplete()
+    }
+
+    /// The paywall's exit (purchase or the X), sequenced so nothing stale peeks through: advance
+    /// to the account beat FIRST, under the still-presented cover, then dismiss — the dismissal
+    /// reveals "Save your progress" directly instead of flashing the rating step for the length
+    /// of the animation. Signed-in athletes have no account beat to advance to, so the whole flow
+    /// completes in ONE dismissal (`onComplete` tears down the onboarding cover with the paywall
+    /// still nested inside it) rather than two stacked ones.
+    private func exitPaywall() {
+        paywallHandledExit = true
+        if auth.isSignedIn, !auth.isGuest { complete(); return }
+        // Jump-cut, not travel: the advance happens under the still-presented cover, and if it
+        // animates, the cover's dismissal reveals a half-finished crossfade — the rating step
+        // ghosting through "Save your progress" (frame-stepped 2026-08-11). Compose the account
+        // beat instantly, then let the cover's own dismissal be the only motion on screen.
+        jumpCut = true
+        goNext()
+        showPaywall = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { jumpCut = false }
     }
 
     // MARK: Scaffolding
@@ -1709,6 +1809,7 @@ struct OnboardingFlow: View {
             profile = vm.finish(in: context)
             OnboardingDraftStore.clear()   // onboarding succeeded — nothing left to resume
             services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
+            SKANConversion.record(.planBuilt)   // activation, for ad-campaign optimisation
         }
 
         // Reduce Motion: no ticking theatre — build, show the finished state, hold briefly, reveal.

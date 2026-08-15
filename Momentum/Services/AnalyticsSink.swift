@@ -146,10 +146,17 @@ actor AnalyticsSink {
     /// stays under test); they just never leave. Mirrors `PaywallController.isRunningUnitTests`.
     private static let egressAllowed: Bool = {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return false }
-        if NSClassFromString("XCTestCase") != nil { return false }
-        let args = ProcessInfo.processInfo.arguments
-        if args.contains(where: { $0 == "--seed-demo" || $0.hasPrefix("--ui-test") }) { return false }
+        // NO DEBUG BUILD SENDS. The named automation guards below were not enough: a plain Xcode
+        // run — no launch arg, just building to a device or simulator to look at something — sailed
+        // through them and wrote real-looking events. That is the same fabricated traffic this
+        // guard exists to keep out, and it is the traffic that matters most, because a developer
+        // walks the funnel end to end and buys with a sandbox account. It showed: on 2026-08-11 the
+        // funnel read 5 installs and 5 subscribes, a 100% conversion rate, and the whole pre-launch
+        // table is dev sessions rather than a baseline anyone can price ads against.
+        //
+        // Opt back in deliberately with `--telemetry-live` when the point IS to verify the pipeline
+        // end to end against the real table.
+        if !ProcessInfo.processInfo.arguments.contains("--telemetry-live") { return false }
         #endif
         return true
     }()

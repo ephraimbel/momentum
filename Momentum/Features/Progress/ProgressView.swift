@@ -17,13 +17,14 @@ struct ProgressScreen: View {
     @Environment(AppRouter.self) private var router   // consumes pendingProgressSegment (one-shot)
     @State private var animateCharts = false
     @State private var adjustedPlan = false
-    // Tap-to-inspect cursors, one per Trends chart (shared mechanic in ChartScrub.swift).
-    @State private var scrubDistance = ChartScrubState()
-    @State private var scrubPace = ChartScrubState()
+    // Tap-to-inspect lives INSIDE each chart's ScrubChartHost (ChartScrub.swift) — screen-level
+    // scrub @State made every drag tick rebuild this whole tree. These two only feed the
+    // --scrub-demo harness a deterministic pin.
+    @State private var demoScrubDistance: Date?
+    @State private var demoScrubPace: Date?
     /// The Oura tap-through (2026-07-23): whichever card was tapped, presented as the one shared
     /// `TrendDetailSheet` — bigger chart, year-long ranges, window stats, the ⓘ's prose beneath.
     @State private var trendDetail: TrendDetail?
-    @State private var scrubSeason = ChartScrubState()
     @State private var segment: Segment = {
         #if DEBUG   // deterministic segment deep-links for sim verification (tab taps are flaky)
         let a = ProcessInfo.processInfo.arguments
@@ -301,7 +302,14 @@ struct ProgressScreen: View {
 
     private var paceDetail: TrendDetail {
         let du = distanceUnit
-        let workouts = self.workouts
+        // Value snapshot at tap time (one pass, three scalars per run) — the series closure used
+        // to construct the FULL ProgressInsights per range flip (52 whole-table filter passes,
+        // ACWR, a day series the sheet never reads) on the main actor. The weekly buckets below
+        // reproduce ProgressInsights.weeks' pace math exactly: rolling 7-day windows ending now,
+        // distance-weighted running pace, 0 for run-less weeks.
+        let runs: [(t: Date, distM: Double, durS: Double)] = workouts
+            .filter { $0.type.discipline == .running }
+            .map { ($0.startedAt, $0.gps?.distanceM ?? 0, $0.durationS) }
         return TrendDetail(
             id: "pace", title: "Average pace", unit: du.resolved() == .imperial ? "/mi" : "/km",
             form: .line, lowerIsBetter: true, stats: [.best, .latest],
@@ -312,8 +320,18 @@ struct ProgressScreen: View {
                 return "\(t / 60):\(String(format: "%02d", t % 60))"
             },
             series: { weeks in
-                ProgressInsights(workouts: workouts, weeksBack: weeks).weeks
-                    .map { .init(date: $0.weekStart, value: $0.avgPaceSPerKm) }
+                let cal = Calendar.current
+                let now = Date()
+                var pts: [TrendDetail.Point] = []
+                for i in stride(from: max(1, weeks) - 1, through: 0, by: -1) {
+                    guard let end = cal.date(byAdding: .day, value: -7 * i, to: now),
+                          let start = cal.date(byAdding: .day, value: -7, to: end) else { continue }
+                    let inWeek = runs.filter { $0.t > start && $0.t <= end }
+                    let dist = inWeek.reduce(0.0) { $0 + $1.distM }
+                    let dur = inWeek.reduce(0.0) { $0 + $1.durS }
+                    pts.append(.init(date: start, value: dist > 0 ? dur / (dist / 1000) : 0))
+                }
+                return pts
             })
     }
 
@@ -339,7 +357,11 @@ struct ProgressScreen: View {
     private func refreshWindowed() {
         let cutoff = Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
         let inWindow = workouts.filter { $0.startedAt >= cutoff }
+        // Weekly set-equivalents, not the window total — the panel's figure grades ABSOLUTELY
+        // (`.weeklyVolume`), so a muscle's light reflects its sustained weekly rate: the same
+        // honest yardstick at 7D and 6M, brighter only where the athlete actually trains more.
         cachedActivation = MuscleActivation.combined(workouts: inWindow)
+            .mapValues { $0 / Double(trendRange.lookbackWeeks) }
         cachedRangeDistanceM = inWindow.reduce(0) { $0 + ($1.gps?.distanceM ?? 0) }
         cachedRangeSessions = inWindow.count
     }
@@ -397,19 +419,24 @@ struct ProgressScreen: View {
                 cachedInsights = ProgressInsights(workouts: workouts, weeksBack: trendRange.weeks)
                 refreshWindowed()
             }
-            // A pinned day/week from the old window means nothing in the new one.
-            scrubDistance = .init(); scrubPace = .init()
+            // Pinned scrub cursors clear themselves — each ScrubChartHost resets when its dates change.
         }
         .task(id: aggregateKey) {
             if aggregatedForKey != aggregateKey {
-                await Task.yield()   // let the skeleton frame paint before the heavy pass
+                // A real pause, not a bare yield — one suspension hop resumed inside the same
+                // transition, so the whole stack below still ran back-to-back on the main actor
+                // before the skeleton could paint (perf audit 2026-08-13). Each stage gets the
+                // run loop back before the next starts; cancellation exits between stages.
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
                 // The PR shelf must be complete BEFORE the aggregate pass snapshots it into
                 // prBadgeIDs — running the one-time backfill after it left History badge-less
                 // for the whole first session. Flag-guarded: one UserDefaults read thereafter.
                 RecordsBook.backfillIfNeeded(in: context)
+                await Task.yield()
                 // Awards ride the same visit: history that predates the awards system earns its
                 // coins here (already-seen — no celebration spam for months-old milestones).
                 AwardsBook.sync(in: context)
+                await Task.yield()
                 withAnimation(.easeOut(duration: 0.2)) { refreshAggregates() }
                 aggregatedForKey = aggregateKey
             }
@@ -417,6 +444,7 @@ struct ProgressScreen: View {
             // Once per screen instance, and after first paint: ingest re-walks history.
             guard !didUpkeep, let p = profiles.first else { return }
             didUpkeep = true
+            await Task.yield()
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
         }
@@ -543,6 +571,19 @@ struct ProgressScreen: View {
                     // bars — F&F's fatigue line tells that story — and the vitals/cadence/climb/
                     // efficiency deep-dive wall: vitals live on the Health page, and the exotic
                     // mechanics read as noise next to the numbers athletes actually track.)
+                    // Free tier renders the static teaser column, not the live cluster: `.proLocked`
+                    // blurs already-built content, so an un-entitled athlete used to pay the FULL
+                    // build of the heaviest stack in the app (five chart systems) plus a live-subtree
+                    // blur pass on every scroll frame, to see frost (perf audit 2026-08-13). Behind
+                    // radius-9 blur + the 0.55 scrim, same-footprint surface shapes read identically
+                    // as "the whole page, withheld". ProTrendsSection/StrengthProgressSection keep
+                    // their own `pro:` seam for the `--analytics-lab` harness.
+                    if !isAnalyticsPro {
+                        proClusterTeaser
+                            .reveal(0.06, once: "trends.pro")
+                            .id("charts")
+                            .proLocked(.advancedAnalytics)
+                    } else {
                     VStack(alignment: .leading, spacing: Theme.Space.md) {
                         if insights.weeks.contains(where: { $0.avgPaceSPerKm > 0 }) { paceChart(insights) }
                         intensityMixCard.id("intensityMix")
@@ -575,7 +616,11 @@ struct ProgressScreen: View {
                     }
                     .reveal(0.06, once: "trends.pro")
                     .id("charts")
-                    .proLocked(.advancedAnalytics)
+                    }
+                    // App Review 1.4.1: the citations door, at the foot of the page that shows
+                    // the calculations (every chart's ⓘ sheet also carries its own source link).
+                    SourcesFooterLink()
+                        .padding(.top, Theme.Space.sm)
                 }
                 .padding(Theme.Space.md)
                 .padding(.bottom, Theme.Space.xxl)
@@ -589,9 +634,9 @@ struct ProgressScreen: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         guard let insights = cachedInsights else { return }
                         let pts = trendPoints(insights)
-                        if pts.count > 2 { scrubDistance.pinned = pts[pts.count / 2].date }
+                        if pts.count > 2 { demoScrubDistance = pts[pts.count / 2].date }
                         let paced = pts.filter { $0.avgPaceSPerKm > 0 }
-                        if paced.count > 1 { scrubPace.pinned = paced[paced.count / 2].date }
+                        if paced.count > 1 { demoScrubPace = paced[paced.count / 2].date }
                     }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-zones") {
@@ -644,6 +689,10 @@ struct ProgressScreen: View {
                 #endif
             }
             .task {
+                // Staggered off the first Trends paint — this, the steps fetch and the readiness
+                // cold path all used to fan out HealthKit queries in the same frame the skeleton
+                // was still settling (perf audit 2026-08-13).
+                do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
                 async let s = services.health.recoverySignals()
                 async let v = services.health.measuredVO2Max()
                 signals = await s
@@ -652,6 +701,7 @@ struct ProgressScreen: View {
             // Daily movement for the steps card — refetched per window (a cheap statistics query).
             // Week fetches 14 days: the headline's vs-last-week delta needs the prior seven.
             .task(id: "steps-\(trendRange.rawValue)") {
+                do { try await Task.sleep(for: .milliseconds(300)) } catch { return }   // see stagger note above
                 let days = await services.health.dailySteps(daysBack: trendIsDaily ? 14 : trendRange.weeks * 7)
                 stepDays = days.map { TrendsEssentials.StepPoint(date: $0.day, steps: $0.steps) }
             }
@@ -660,11 +710,12 @@ struct ProgressScreen: View {
             // publishes so every sibling surface shows this exact number.
             .task(id: "\(workouts.count)-\(checkins.count)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))") {
                 guard ReadinessTodayCache.today() == nil else { return }
+                do { try await Task.sleep(for: .milliseconds(600)) } catch { return }   // see stagger note above
                 if let r = await ReadinessToday.compute(health: services.health,
                                                         workouts: workouts, checkins: checkins) {
                     ReadinessToday.publish(r)
                     stripReadiness = (Calendar.current.startOfDay(for: Date()),
-                                      r.score, r.band.rawValue, r.displayDriverLine)
+                                      r.score, r.band.rawValue, r.displayDriverWithConfidence)
                 }
             }
         }
@@ -1170,21 +1221,38 @@ struct ProgressScreen: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    /// This-month summary strip: sessions, distance, PRs.
+    /// This-month summary strip: sessions, distance, PRs. Memoized (same non-observed-box pattern
+    /// as `monthGroups` — the month filter + GPS-distance faults ran on every History body pass);
+    /// the cache holds only display strings, never model refs.
+    private final class HistorySummaryMemo {
+        var token = 0
+        var sessions = ""; var distance = ""; var distanceLabel = ""; var prs = ""
+    }
+    @State private var summaryMemo = HistorySummaryMemo()
     private func historySummary() -> some View {
-        let cal = Calendar.current
-        let month = cal.dateInterval(of: .month, for: Date())
-        let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
-        let far = Formatters.wholeDistance(meters: mine.compactMap { $0.gps?.distanceM }.reduce(0, +),
-                                           unit: distanceUnit)
-        return HStack(spacing: 0) {
-            summaryCell("\(mine.count)", "Sessions")
-            Divider().frame(height: 34).overlay(Theme.hairline)
-            summaryCell("\(far.value)", "\(far.unit) this month")
-            Divider().frame(height: 34).overlay(Theme.hairline)
+        var h = Hasher()
+        h.combine(aggregateKey); h.combine(distanceUnit)
+        let token = h.finalize()
+        let memo = summaryMemo
+        if memo.token != token {
+            let month = Calendar.current.dateInterval(of: .month, for: Date())
+            let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
+            let far = Formatters.wholeDistance(meters: mine.compactMap { $0.gps?.distanceM }.reduce(0, +),
+                                               unit: distanceUnit)
+            memo.sessions = "\(mine.count)"
+            memo.distance = "\(far.value)"
+            memo.distanceLabel = "\(far.unit) this month"
             // Month-scoped like its siblings — the lifetime improvement-event count here read
             // as "47 PRs this month" to a two-year athlete.
-            summaryCell("\((profiles.first?.prs ?? []).filter { month?.contains($0.achievedAt) ?? false }.count)", "PRs")
+            memo.prs = "\((profiles.first?.prs ?? []).filter { month?.contains($0.achievedAt) ?? false }.count)"
+            memo.token = token
+        }
+        return HStack(spacing: 0) {
+            summaryCell(memo.sessions, "Sessions")
+            Divider().frame(height: 34).overlay(Theme.hairline)
+            summaryCell(memo.distance, memo.distanceLabel)
+            Divider().frame(height: 34).overlay(Theme.hairline)
+            summaryCell(memo.prs, "PRs")
         }
         .padding(.vertical, Theme.Space.sm)
         .frame(maxWidth: .infinity)
@@ -1383,29 +1451,30 @@ struct ProgressScreen: View {
                             delta: delta, explainer: MetricExplainers.weeklyPace,
                             onOpen: { trendDetail = paceDetail }) {
             if paced.count < 2 { notEnoughData } else {
-                Chart {
-                    ForEach(paced) { p in
-                        LineMark(x: .value("Date", p.date, unit: trendUnit),
-                                 y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                            .foregroundStyle(MetricColor.pace).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                            .interpolationMethod(.monotone)
-                        PointMark(x: .value("Date", p.date, unit: trendUnit),
-                                  y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
-                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.pace))
-                            .symbolSize(p.date == last ? 90 : 22)
+                ScrubChartHost(dates: paced.map(\.date), seed: demoScrubPace) { pinned in
+                    Chart {
+                        ForEach(paced) { p in
+                            LineMark(x: .value("Date", p.date, unit: trendUnit),
+                                     y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                                .foregroundStyle(MetricColor.pace).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                                .interpolationMethod(.monotone)
+                            PointMark(x: .value("Date", p.date, unit: trendUnit),
+                                      y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
+                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.pace))
+                                .symbolSize(p.date == last ? 90 : 22)
+                        }
+                        if let sel = pinned, let p = paced.first(where: { $0.date == sel }) {
+                            TrendScrub.mark(at: sel, unit: trendUnit,
+                                            value: "\(paceMMSS(p.avgPaceSPerKm)) /\(unit)", label: scrubDateLabel(sel))
+                        }
                     }
-                    if let sel = scrubPace.pinned, let p = paced.first(where: { $0.date == sel }) {
-                        TrendScrub.mark(at: sel, unit: trendUnit,
-                                        value: "\(paceMMSS(p.avgPaceSPerKm)) /\(unit)", label: scrubDateLabel(sel))
-                    }
+                    .chartXScale(domain: paddedDomain(paced.map(\.date)))
+                    // Array domain, slowest first → the y-axis runs slow-at-bottom to fast-at-top.
+                    .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
+                    .chartXAxis { trendAxis(insights.weeks.count) }
+                    .chartYAxis { paceAxis }
+                    .frame(height: 172)
                 }
-                .chartXSelection(value: $scrubPace.selection(dates: paced.map(\.date)))
-                .chartXScale(domain: paddedDomain(paced.map(\.date)))
-                // Array domain, slowest first → the y-axis runs slow-at-bottom to fast-at-top.
-                .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
-                .chartXAxis { trendAxis(insights.weeks.count) }
-                .chartYAxis { paceAxis }
-                .frame(height: 172)
             }
         }
     }
@@ -1441,29 +1510,30 @@ struct ProgressScreen: View {
                             delta: delta, explainer: MetricExplainers.weeklyDistance,
                             onOpen: { trendDetail = distanceDetail }) {
             if maxDist <= 0 { notEnoughData } else {
-                Chart {
-                    ForEach(pts) { p in
-                        // Bars read cleanly across rest weeks and rest days alike; widths slim
-                        // as the window widens so 26 weeks never collide.
-                        BarMark(x: .value("Date", p.date, unit: trendUnit),
-                                y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
-                                width: .fixed(trendIsDaily ? 24 : loadBarWidth(pts.count)))
-                            .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
-                                                            : AnyShapeStyle(Theme.ink.opacity(0.82)))
-                            .cornerRadius(3)
+                ScrubChartHost(dates: pts.map(\.date), seed: demoScrubDistance) { pinned in
+                    Chart {
+                        ForEach(pts) { p in
+                            // Bars read cleanly across rest weeks and rest days alike; widths slim
+                            // as the window widens so 26 weeks never collide.
+                            BarMark(x: .value("Date", p.date, unit: trendUnit),
+                                    y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
+                                    width: .fixed(trendIsDaily ? 24 : loadBarWidth(pts.count)))
+                                .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
+                                                                : AnyShapeStyle(Theme.ink.opacity(0.82)))
+                                .cornerRadius(3)
+                        }
+                        if let sel = pinned, let p = pts.first(where: { $0.date == sel }) {
+                            TrendScrub.mark(at: sel, unit: trendUnit,
+                                            value: "\(short(disp(p.distanceM))) \(unit)",
+                                            label: scrubDateLabel(sel))
+                        }
                     }
-                    if let sel = scrubDistance.pinned, let p = pts.first(where: { $0.date == sel }) {
-                        TrendScrub.mark(at: sel, unit: trendUnit,
-                                        value: "\(short(disp(p.distanceM))) \(unit)",
-                                        label: scrubDateLabel(sel))
-                    }
+                    .chartXScale(domain: paddedDomain(pts.map(\.date)))
+                    .chartYScale(domain: 0...max(1, maxDist * 1.18))
+                    .chartXAxis { trendAxis(pts.count) }
+                    .chartYAxis { valueAxis }
+                    .frame(height: 172)
                 }
-                .chartXSelection(value: $scrubDistance.selection(dates: pts.map(\.date)))
-                .chartXScale(domain: paddedDomain(pts.map(\.date)))
-                .chartYScale(domain: 0...max(1, maxDist * 1.18))
-                .chartXAxis { trendAxis(pts.count) }
-                .chartYAxis { valueAxis }
-                .frame(height: 172)
             }
         }
     }
@@ -1716,13 +1786,13 @@ struct ProgressScreen: View {
 
     // MARK: Weekly muscle coverage
 
-    /// Trailing-7-day working-sets-by-muscle (PRD §22) across strength sessions.
-    /// Muscles worked over the selected range (relative emphasis — the map normalizes to the top
-    /// muscle, so a wide window reads as "what you've focused on," not a saturated silhouette).
+    /// Working-sets-by-muscle (PRD §22) over the selected range, as WEEKLY set-equivalents (window
+    /// total ÷ weeks). The panel grades these absolutely (`.weeklyVolume`): no training → blank
+    /// anatomy, light touches → faint tint, sustained volume → the full iridescent burn.
     private var rangeMuscleActivation: [MuscleGroup: Double] {
         cachedActivation ?? MuscleActivation.combined(workouts: workouts.filter {
             $0.startedAt >= Date().addingTimeInterval(-Double(trendRange.activationDays) * 86_400)
-        })
+        }).mapValues { $0 / Double(trendRange.lookbackWeeks) }
     }
     /// Total distance over the selected range — the panel's windowed distance callout.
     private var rangeDistanceM: Double {
@@ -1911,29 +1981,30 @@ struct ProgressScreen: View {
             chartSection("Your season",
                          subtitle: "All time · weekly \(unit == .imperial ? "miles" : "kilometers") · ● a record week",
                          explainer: MetricExplainers.weeklyDistance) {
-                Chart {
-                    ForEach(weeks, id: \.week) { entry in
-                        BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
-                                y: .value("Distance", entry.meters / divisor))
-                            .foregroundStyle(Theme.ink.opacity(0.8))
-                            .cornerRadius(2)
+                ScrubChartHost(dates: weeks.map(\.week)) { pinned in
+                    Chart {
+                        ForEach(weeks, id: \.week) { entry in
+                            BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                                    y: .value("Distance", entry.meters / divisor))
+                                .foregroundStyle(Theme.ink.opacity(0.8))
+                                .cornerRadius(2)
+                        }
+                        ForEach(recordWeeks, id: \.week) { entry in
+                            PointMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                                      y: .value("Distance", entry.meters / divisor))
+                                .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
+                                .symbolSize(70)
+                        }
+                        if let sel = pinned, let entry = weeks.first(where: { $0.week == sel }) {
+                            TrendScrub.mark(at: sel, unit: .weekOfYear,
+                                            value: Formatters.distance(meters: entry.meters, unit: distanceUnit),
+                                            label: TrendScrub.weekLabel(sel))
+                        }
                     }
-                    ForEach(recordWeeks, id: \.week) { entry in
-                        PointMark(x: .value("Week", entry.week, unit: .weekOfYear),
-                                  y: .value("Distance", entry.meters / divisor))
-                            .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
-                            .symbolSize(70)
-                    }
-                    if let sel = scrubSeason.pinned, let entry = weeks.first(where: { $0.week == sel }) {
-                        TrendScrub.mark(at: sel, unit: .weekOfYear,
-                                        value: Formatters.distance(meters: entry.meters, unit: distanceUnit),
-                                        label: TrendScrub.weekLabel(sel))
-                    }
+                    .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
+                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+                    .frame(height: 150)
                 }
-                .chartXSelection(value: $scrubSeason.selection(dates: weeks.map(\.week)))
-                .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
-                .frame(height: 150)
             }
         }
     }
@@ -1975,6 +2046,22 @@ struct ProgressScreen: View {
 
     /// Whether the deep analytics are unlocked — the whole Progress page's Pro gate.
     private var isAnalyticsPro: Bool { paywallController.isEntitled(to: .advancedAnalytics) }
+
+    /// What the un-entitled athlete's `.proLocked` frost covers — the Pro cluster's FOOTPRINT
+    /// (chart-height surface shapes with hairlines), not the live cluster itself. Behind the
+    /// radius-9 blur and 0.55 scrim the two are indistinguishable, and this one costs nothing to
+    /// build and nothing per scroll frame (perf audit 2026-08-13).
+    private var proClusterTeaser: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            ForEach(Array([210, 150, 240, 180, 260, 150, 220].enumerated()), id: \.offset) { _, h in
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .fill(Theme.surface)
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                        .stroke(Theme.hairline))
+                    .frame(height: CGFloat(h))
+            }
+        }
+    }
 
     /// Free-tier anchor: distance, not VO₂max. Everyone gets to see the miles they ran; the
     /// fitness read (and everything the body's rail carries) is the Pro upgrade.

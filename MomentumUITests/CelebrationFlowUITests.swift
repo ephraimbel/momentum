@@ -15,7 +15,7 @@ final class CelebrationFlowUITests: XCTestCase {
         app.launchArguments = ["--seed-demo", "--save-screen"]
         app.launch()
 
-        let done = app.navigationBars.buttons["Done"]
+        let done = app.buttons["activityDone"]
         XCTAssertTrue(done.waitForExistence(timeout: 12), "save screen did not appear")
         sleep(3)   // reveal cascade settles
         XCTAssertFalse(app.buttons["Run complete"].exists,
@@ -23,7 +23,11 @@ final class CelebrationFlowUITests: XCTestCase {
 
         done.tap()
         captureBurst("beat", seconds: 1.4)
-        if done.exists {   // a first tap can be swallowed while the reveal is still settling
+        // A first tap can be swallowed while the reveal is still settling, so a re-tap is allowed —
+        // but `exists` alone RACES the dismissal: it returns a stale true just as the screen leaves,
+        // and the tap then fails with "No matches found". Give the dismissal a moment to win first,
+        // and only re-tap something still genuinely on screen.
+        if !done.waitForNonExistence(timeout: 3), done.isHittable {
             done.tap()
             captureBurst("beat-retap", seconds: 1.4)
         }

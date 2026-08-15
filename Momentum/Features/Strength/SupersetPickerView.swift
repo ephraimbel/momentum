@@ -14,6 +14,11 @@ struct SupersetPickerView: View {
     var onDone: () -> Void
 
     @State private var browsing = false
+    /// Computed ONCE per presentation, off the body path: `supersetSuggestions` synchronously
+    /// fetches the whole exercise catalog from SwiftData, and running that inside body re-paid
+    /// the fetch on every vm refresh while the sheet was open (audit 2026-08-11 — the
+    /// engine-work-in-body rule).
+    @State private var suggestions: [Exercise] = []
 
     private var anchorName: String {
         vm.exercises.first(where: { $0.id == anchorRowId })?.name ?? "this exercise"
@@ -47,7 +52,6 @@ struct SupersetPickerView: View {
                             }
                         }
                     }
-                    let suggestions = vm.supersetSuggestions(for: anchorRowId)
                     if !suggestions.isEmpty {
                         section("SUGGESTED · OPPOSITE MUSCLES") {
                             ForEach(suggestions) { exercise in
@@ -79,6 +83,7 @@ struct SupersetPickerView: View {
                 .padding(Theme.Space.md)
             }
             .background(Theme.background)
+            .onAppear { suggestions = vm.supersetSuggestions(for: anchorRowId) }
         }
     }
 

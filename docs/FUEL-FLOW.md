@@ -182,6 +182,31 @@ guess when the same words come back typed (`MealTextKey.outranks`). The scan but
 the composer beside the mic, behind the same Pro gate as send; `--barcode-demo` lands a canned
 product for sim/UI-test coverage. Engine + decode fixtures pinned in `BarcodeFoodTests`.
 
+## The health score (2026-08-15)
+Every food gets a **0–100 health score** — computed by the deterministic `HealthScore` engine,
+on-device, from facts the meal already carries. The AI's role stays facts-only: the estimate
+schema grew four per-item quality fields (`fiber_g`, `sugar_g` total sugars, `satfat_g`, and
+`nova` — the NOVA processing class 1–4), the staples table and the barcode lane (OFF declares
+all four) carry the same fields, and the SCORE is pure client math (`HealthScoreTests` pins it).
+Per-serving nutrient-profile model (all terms energy-density, since we have no gram weights):
+sugars drag (softened by NOVA class — intrinsic fruit/dairy sugar is not added sugar), refined
+carbs in processed foods drag, saturated fat past a 10%-of-energy grace band drags,
+ultra-processing drags hardest; fiber, protein density, mineral richness (potassium proxy) and
+whole-food class lift. **Sodium never counts against a food** (floors doctrine — it's a training
+target; only an outsized >600 mg single-item load registers). Bands are descriptive, never
+shaming: Whole (80+, mint) · Solid (60+, honey) · Mixed (40+, peach) · Processed (<40, garnet
+rose — never alarm red). Race fuel scores low ON PURPOSE and the analysis says so out loud.
+
+Surfaces: journal + history rows wear a **score chip**; the detail sheet leads with a live
+**score gauge** (steppers roll it) + drivers line + the complete NUTRITION facts panel (macros,
+fiber/sugars/sat-fat, all micros, fluids — "—" for not-estimated, never a fabricated zero); the
+**masthead gauge (top right)** shows the day's energy-weighted score and opens **`FuelHealthView`**:
+hero day verdict + plain-words headline, WHAT SHAPED IT driver rows, the race-fuel caveat,
+LAST 7 DAYS band-colored bars with the week average, and TODAY'S FOOD, RANKED. Same
+action-gated Pro door as History/Goals. A whole-food score (80+) earns iridescence on the gauge.
+Old meals without the quality fields still score from macros+micros alone, just more roughly.
+Recipes: `--fuel-health` self-pushes the page; `--meal-detail` opens the first today-meal's sheet.
+
 ## Later (explicitly deferred)
 Add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness ·
 fueling trends in Progress · refuel push notification · pre-race dinner reminder ·

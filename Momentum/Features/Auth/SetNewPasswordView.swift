@@ -15,7 +15,7 @@ struct SetNewPasswordView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: Theme.Space.sm) {
-                Text("You're signed in from the recovery link — choose a new password for next time.")
+                Text("You're signed in from the recovery link. Choose a new password for next time.")
                     .font(.rounded(Theme.FontSize.body, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -114,7 +114,7 @@ struct SetNewPasswordView: View {
                 Haptics.success()
                 dismiss()
             } else {
-                message = "Couldn't update the password — try again in a moment."
+                message = "Couldn't update the password. Try again in a moment."
             }
         }
     }
