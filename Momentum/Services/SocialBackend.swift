@@ -51,6 +51,11 @@ protocol SocialBackending: AnyObject {
     /// The viewer's REAL follower/following counts (the profile's social line). nil when
     /// unavailable — the UI keeps its honest local numbers rather than fabricating.
     func followCounts() async -> (followers: Int, following: Int)?
+    /// Public follow counts for ANY athlete by handle (2026-08-15) — the numbers another real
+    /// athlete's profile shows. Server-side the followers count EXCLUDES the caller's own edge,
+    /// so the display is always `fetched + (locally following ? 1 : 0)` and a tap moves the
+    /// number instantly and exactly, acknowledged or not. nil = unknown (offline/dark), never 0.
+    func followCounts(of handle: String) async -> (followers: Int, following: Int)?
     func setReaction(postID: UUID, reacted: Bool) async
     func pushComment(_ comment: Comment) async
     func deleteComment(id: UUID) async
@@ -175,6 +180,7 @@ class StubSocialBackend: SocialBackending {
     func pullFollowing() async -> Set<String>? { nil }
     func pullFollowers() async -> [AthleteHit]? { nil }
     func followCounts() async -> (followers: Int, following: Int)? { nil }
+    func followCounts(of handle: String) async -> (followers: Int, following: Int)? { nil }
     func setReaction(postID: UUID, reacted: Bool) async {}
     func pushComment(_ comment: Comment) async {}
     func deleteComment(id: UUID) async {}
@@ -512,6 +518,22 @@ final class SupabaseSocialBackend: SocialBackending {
                 .eq("follower_id", value: session.user.id)
                 .execute().count ?? 0
             return (followers, following)
+        } catch { return nil }
+    }
+
+    /// Another athlete's public counts, via the `follow_counts_of` definer RPC — RLS deliberately
+    /// hides other people's edges from direct queries, so two integers is exactly what the server
+    /// exposes (the graph itself stays viewer-scoped). No session guard: the RPC is granted to
+    /// anon too, and a guest browsing a real profile deserves real numbers.
+    func followCounts(of handle: String) async -> (followers: Int, following: Int)? {
+        guard let client, !handle.isEmpty else { return nil }
+        struct Row: Decodable { let followers: Int; let following: Int }
+        struct Params: Encodable { let _handle: String }
+        do {
+            let rows: [Row] = try await client.rpc("follow_counts_of", params: Params(_handle: handle))
+                .execute().value
+            guard let row = rows.first else { return nil }
+            return (row.followers, row.following)
         } catch { return nil }
     }
 

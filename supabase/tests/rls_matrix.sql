@@ -52,6 +52,14 @@ begin
   select count(*) into n from public.feed_page('following', null, null, 20);
   if n <> 2 then raise exception 'FAIL: feed_page(following) returned %', n; end if;
 
+  -- Public follow counts (follow_counts_of, 2026-08-15). As B, who follows A:
+  -- A's followers read 0 — the CALLER's own edge is excluded (the client adds its local +1),
+  -- and B's own following reads 1 (outgoing edges are never caller-excluded).
+  select followers into n from public.follow_counts_of('athlete_a');
+  if n <> 0 then raise exception 'FAIL: follow_counts_of should exclude the caller''s edge, saw %', n; end if;
+  select following into n from public.follow_counts_of('athlete_b');
+  if n <> 1 then raise exception 'FAIL: follow_counts_of(B).following should be 1, saw %', n; end if;
+
   -- B reacts + comments on the public post.
   insert into public.reactions (post_id, user_id)
   values ('00000000-0000-0000-0002-000000000001', '00000000-0000-0000-0000-00000000000b');
@@ -79,6 +87,10 @@ begin
   -- ── Act as A: block B → B's world goes dark both directions ──────────────
   perform set_config('request.jwt.claims',
     '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', true);
+
+  -- As A (the followee, not the follower): B's edge counts — A really has 1 follower.
+  select followers into n from public.follow_counts_of('athlete_a');
+  if n <> 1 then raise exception 'FAIL: follow_counts_of(A).followers should be 1 for A, saw %', n; end if;
 
   insert into public.blocks (blocker_id, blocked_id)
   values ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b');

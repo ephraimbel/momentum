@@ -14,7 +14,12 @@ struct AthleteProfileView: View {
 
     @Environment(FollowStore.self) private var follows
     @Environment(ModerationStore.self) private var moderation
+    @Environment(Services.self) private var services
     @Environment(\.dismiss) private var dismiss
+    /// A REAL athlete's public counts, fetched per appearance (`follow_counts_of` — the server
+    /// excludes the viewer's own edge, so `+mine` below stays exact). nil until it answers;
+    /// sample athletes never fetch (their graph is the deterministic local one).
+    @State private var remoteCounts: (followers: Int, following: Int)?
     @State private var confirmingReport = false
     @State private var gridTab: ProfileGridTab = .grid
     /// Set by tapping the social line — pushes this athlete's Followers|Following lists.
@@ -87,6 +92,12 @@ struct AthleteProfileView: View {
             AthleteFollowListView(athlete: athlete, initialFace: face)
         }
         .onAppear { if gridPosts.isEmpty { gridPosts = CommunityDirectory.gridPosts(for: athlete) } }
+        // A real athlete's actual audience — one fetch per appearance, cancelled with the view.
+        .task {
+            if !athlete.isSample {
+                remoteCounts = await services.social.followCounts(of: athlete.handle)
+            }
+        }
         .confirmationDialog("Report \(athlete.name)?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
                 Button(reason.rawValue) { athlete.posts.forEach { moderation.reportPost($0.id, reason: reason) }; Haptics.success() }
@@ -212,15 +223,17 @@ struct AthleteProfileView: View {
 
     /// Sample counts come from the SHARED derivation (`sampleFollowerCount` — the same numbers
     /// size the pushed lists, so tapping "141 Followers" opens a list of exactly 141), plus the
-    /// viewer's own follow. Real athletes: only what we actually know.
+    /// viewer's own follow. Real athletes: their ACTUAL audience (`remoteCounts`, which the
+    /// server computed excluding the viewer) plus the same +mine — so following anyone, fake or
+    /// real, moves their number in the same frame, and unfollowing takes it back.
     private var followerCount: Int {
         let mine = follows.isFollowing(athlete.handle) ? 1 : 0
-        guard athlete.isSample else { return mine }
+        guard athlete.isSample else { return (remoteCounts?.followers ?? 0) + mine }
         return athlete.sampleFollowerCount + mine
     }
 
     private var followingCount: Int {
-        athlete.isSample ? athlete.sampleFollowingCount : 0
+        athlete.isSample ? athlete.sampleFollowingCount : (remoteCounts?.following ?? 0)
     }
 
     /// Sits exactly where "Edit profile" sits on the athlete's own page — the one action pill

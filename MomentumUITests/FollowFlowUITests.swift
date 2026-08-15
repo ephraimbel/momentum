@@ -38,6 +38,15 @@ final class FollowFlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["99 followers, 250 following"].waitForExistence(timeout: 5),
                       "Athlete's follower count didn't include the viewer's follow.")
 
+        // And BACK: unfollowing takes the follower away again (2026-08-15 — the other half of
+        // "a follow changes the number for each of them"), then re-follow for phase 2.
+        app.buttons["Following Maya Rivera. Tap to unfollow."].tap()
+        XCTAssertTrue(app.buttons["98 followers, 250 following"].waitForExistence(timeout: 5),
+                      "Unfollow didn't drop the athlete's follower count back.")
+        app.buttons["Follow Maya Rivera"].tap()
+        XCTAssertTrue(app.buttons["99 followers, 250 following"].waitForExistence(timeout: 5),
+                      "Re-follow didn't restore the +1.")
+
         // MARK: Phase 2 — the follow shows on the athlete's OWN account, after a cold start
         app.terminate()
         app.launchArguments = ["--seed-demo", "--profile-tab"]
