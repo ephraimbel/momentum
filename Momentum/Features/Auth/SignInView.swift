@@ -85,7 +85,7 @@ struct SignInView: View {
                 .clipped()
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
-            WelcomeFilmView()
+            WelcomeFilmView(paused: showingSignIn)
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
 
@@ -180,6 +180,11 @@ struct SignInView: View {
 /// heard on the many phones that live in silent mode), and `.mixWithOthers` so it layers over an
 /// athlete's running playlist instead of killing their session — never interrupt, never duck.
 private struct WelcomeFilmView: UIViewRepresentable {
+    /// True while another beat covers the welcome (the account page slides in over it, the welcome
+    /// itself stays mounted underneath): playback holds — frame AND sound — and resumes when the
+    /// athlete comes back. Muted, this leak was invisible; with sound on, a film playing under the
+    /// sign-in page is exactly the "clicked off but still hear it" bug.
+    var paused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     final class PlayerView: UIView {
@@ -218,7 +223,15 @@ private struct WelcomeFilmView: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: PlayerView, context: Context) {}
+    func updateUIView(_ uiView: PlayerView, context: Context) {
+        // Player construction is deferred one runloop turn (see makeUIView); until it lands there
+        // is nothing to pause. Resume is safe unconditionally: once the film has ended,
+        // `actionAtItemEnd = .pause` holds the closing card and play() is a no-op — and under
+        // Reduce Motion the player sits at the end already, so it never springs back to life.
+        guard let player = uiView.playerLayer.player else { return }
+        if paused { player.pause() }
+        else if !reduceMotion { player.play() }
+    }
 }
 
 // MARK: - The account page
