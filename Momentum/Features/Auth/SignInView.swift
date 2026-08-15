@@ -169,12 +169,16 @@ struct SignInView: View {
 
 // MARK: - The welcome film
 
-/// The brand film behind the welcome: plays ONCE, muted, then holds its final frame — the
+/// The brand film behind the welcome: plays ONCE, with sound, then holds its final frame — the
 /// "momentum keep moving" closing card — so the welcome settles into the same stillness the old
 /// static hero had, with the brand carried by the film itself (owner call 2026-08-11; loop was
 /// considered and rejected — endless motion under the CTAs reads restless and burns battery).
-/// Reduce Motion: no playback at all, the view opens directly on the closing card. The audio
-/// track is stripped from the bundled asset, so playback can never duck the athlete's music.
+/// Reduce Motion: no playback at all, the view opens directly on the closing card — and no sound.
+/// Sound is ON (owner call 2026-08-15): the bundled asset carries its AAC track again, and the
+/// audio session is `.playback` + `.mixWithOthers` — deliberate on both counts. `.playback` so the
+/// film is heard even with the ringer switch on silent (an `.ambient` film would simply never be
+/// heard on the many phones that live in silent mode), and `.mixWithOthers` so it layers over an
+/// athlete's running playlist instead of killing their session — never interrupt, never duck.
 private struct WelcomeFilmView: UIViewRepresentable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -194,15 +198,20 @@ private struct WelcomeFilmView: UIViewRepresentable {
         // poster underlay holds the identical opening frame until the player attaches.
         DispatchQueue.main.async {
             let player = AVPlayer(url: url)
-            player.isMuted = true
             player.actionAtItemEnd = .pause                   // hold the closing card; never loop
             player.preventsDisplaySleepDuringVideoPlayback = false
             view.playerLayer.player = player
             if reduceMotion {
-                // Straight to the closing card — same destination, no motion. The absurd target
+                // Straight to the closing card — same destination, no motion, and no sound
+                // (a still frame with a soundtrack would be pure noise). The absurd target
                 // time clamps to the end of the item.
+                player.isMuted = true
                 player.seek(to: CMTime(seconds: 9_999, preferredTimescale: 600))
             } else {
+                // Audible past the silent switch, layered over (never replacing) anything the
+                // athlete is already listening to — see the type doc for why this exact pair.
+                try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+                player.isMuted = false
                 player.play()
             }
         }
