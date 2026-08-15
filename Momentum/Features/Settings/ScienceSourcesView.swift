@@ -86,6 +86,17 @@ struct ScienceSourcesView: View {
                    citation: "Sawka MN, et al. American College of Sports Medicine position stand: Exercise and fluid replacement. Med Sci Sports Exerc. 2007;39(2):377–390.",
                    url: "https://pubmed.ncbi.nlm.nih.gov/17277604/"),
         ]),
+        Group(heading: "FOOD QUALITY (HEALTH SCORE)", sources: [
+            Source(title: "NOVA food-processing classification",
+                   citation: "Monteiro CA, et al. Ultra-processed foods: what they are and how to identify them. Public Health Nutr. 2019;22(5):936–941.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/30744710/"),
+            Source(title: "Ultra-processed food & excess energy intake",
+                   citation: "Hall KD, et al. Ultra-processed diets cause excess calorie intake and weight gain: an inpatient randomized controlled trial. Cell Metab. 2019;30(1):67–77.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/31105044/"),
+            Source(title: "Nutrient-profile scoring (fiber, sugars, saturated fat, protein)",
+                   citation: "Labonté MÈ, et al. Nutrient profile models with applications in government-led nutrition policies: a systematic review. Adv Nutr. 2018;9(6):741–788.",
+                   url: "https://pubmed.ncbi.nlm.nih.gov/30462178/"),
+        ]),
         Group(heading: "STRENGTH", sources: [
             Source(title: "Estimated one-rep max (Epley)",
                    citation: "Epley B. Poundage Chart. Boyd Epley Workout. Lincoln, NE, 1985. Accuracy reviewed in Reynolds JM, et al. J Strength Cond Res. 2006;20(3):584–592.",

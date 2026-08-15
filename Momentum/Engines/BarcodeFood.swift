@@ -28,6 +28,12 @@ enum BarcodeFood {
         var potassiumMg: Double?
         var calciumMg: Double?
         var ironMg: Double?
+        // Quality signals (2026-08-15): declared on most labels, and OFF publishes the NOVA
+        // group per product — a scanned item scores from label truth, not a guess.
+        var fiberG: Double?
+        var sugarG: Double?
+        var satFatG: Double?
+        var nova: Int?
     }
 
     /// Decode an Open Food Facts v2 product response. Returns nil when the product is missing,
@@ -100,7 +106,17 @@ enum BarcodeFood {
             sodiumMg: sodiumMg(basis) ?? 0,
             potassiumMg: value("potassium", basis).map { $0 * 1000 },
             calciumMg: value("calcium", basis).map { $0 * 1000 },
-            ironMg: value("iron", basis).map { $0 * 1000 }   // OFF stores grams; mg is ours
+            ironMg: value("iron", basis).map { $0 * 1000 },   // OFF stores grams; mg is ours
+            fiberG: value("fiber", basis),
+            sugarG: value("sugars", basis),
+            satFatG: value("saturated-fat", basis),
+            // Product-level, number or string in the wild like every OFF field; clamped to the
+            // real 1–4 scale, nil when undeclared (the score just reads rougher).
+            nova: {
+                let raw = product["nova_group"]
+                let n = (raw as? NSNumber)?.intValue ?? (raw as? String).flatMap { Int($0) }
+                return n.map { min(4, max(1, $0)) }
+            }()
         )
     }
 
@@ -115,6 +131,9 @@ enum BarcodeFood {
         var potassiumMg: Int?
         var calciumMg: Int?
         var ironMg: Double?
+        var fiberG: Int?
+        var sugarG: Int?
+        var satFatG: Int?
     }
 
     static func portion(of p: ScannedProduct, servings: Double) -> Portion {
@@ -126,7 +145,10 @@ enum BarcodeFood {
                        sodiumMg: scaled(p.sodiumMg),
                        potassiumMg: p.potassiumMg.map(scaled),
                        calciumMg: p.calciumMg.map(scaled),
-                       ironMg: p.ironMg.map { ($0 * servings * 10).rounded() / 10 })
+                       ironMg: p.ironMg.map { ($0 * servings * 10).rounded() / 10 },
+                       fiberG: p.fiberG.map(scaled),
+                       sugarG: p.sugarG.map(scaled),
+                       satFatG: p.satFatG.map(scaled))
     }
 
     /// The logged meal's text — the athlete's history reads like they wrote it themselves, and

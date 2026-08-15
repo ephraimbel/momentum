@@ -29,7 +29,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const GEMINI_MODEL = Deno.env.get("MEAL_MODEL") ?? "gemini-flash-latest";   // rolling alias — 2.5-flash is sunset for new keys
 const FALLBACK_MODEL = Deno.env.get("MEAL_FALLBACK_MODEL") ?? "claude-haiku-4-5-20251001";
-const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "1600");
+// 1800 (was 1600): the 2026-08-15 quality fields (fiber/sugar/satfat/nova) add four short
+// numerics per item — headroom so a six-item dinner can't truncate mid-JSON.
+const MAX_TOKENS = Number(Deno.env.get("MEAL_MAX_TOKENS") ?? "1800");
 
 // Per-athlete DAILY estimate cap (server-side — a client limit is trivially bypassed). Generous:
 // the heaviest honest day (race-day gels + drinks + meals) sits near 20 estimates; 60 only ever
@@ -71,9 +73,20 @@ Break the meal into ITEMS (the athlete's words may pack several foods: "2 eggs, 
 three items). For each item return: name (short, title-case), qty (a number), unit (a natural short \
 unit for that food: "egg", "slice", "cup", "bowl", "gel", "serving"), and that item's kcal, \
 carbohydrate grams, protein grams, fat grams, sodium milligrams, fluid milliliters (0 unless \
-it's a drink), potassium milligrams, magnesium milligrams, iron milligrams (decimals fine), and \
-calcium milligrams — the endurance micros. Typical home/restaurant portions unless quantities \
-are given. confidence is 0-1 (branded sports nutrition rates higher; vague descriptions lower).
+it's a drink), potassium milligrams, magnesium milligrams, iron milligrams (decimals fine), \
+calcium milligrams — the endurance micros — plus the food-quality facts: fiber_g (dietary fiber \
+grams), sugar_g (TOTAL sugars grams, intrinsic plus added), satfat_g (saturated fat grams), and \
+nova (the NOVA processing classification as an integer: 1 unprocessed/minimally processed food, \
+2 processed culinary ingredient, 3 processed food, 4 ultra-processed food). NOVA anchors: fresh \
+produce, plain meat/fish/eggs, milk, rice, oats are 1; butter, honey, oils, sugar are 2; fresh \
+bread, cheese, cured meats (bacon, ham), canned goods, home-fried foods are 3; sodas, candy, \
+packaged snacks, ice cream, instant noodles, hot dogs/nuggets, fast food, gels and sports drinks \
+are 4. When torn between two classes, pick the HIGHER (more processed). Typical home/restaurant \
+portions unless quantities are given. confidence is 0-1 (branded sports nutrition rates higher; \
+vague descriptions lower).
+
+NUMBERS MUST AGREE. Per item: kcal within ~15% of 4*carbs_g + 4*protein_g + 9*fat_g (alcohol \
+excepted), sugar_g <= carbs_g, fiber_g <= carbs_g, satfat_g <= fat_g. Reconcile before answering.
 
 PORTIONS ARE EXACT. The description is often dictated speech — honor every stated quantity, \
 fraction, and size to the letter, and scale ALL numbers by it. "half a bagel" is qty 0.5 with \
@@ -121,9 +134,16 @@ const ANTHROPIC_SCHEMA = {
           magnesium_mg: { type: "integer" },
           iron_mg: { type: "number" },
           calcium_mg: { type: "integer" },
+          // Food-quality facts (2026-08-15): fiber/total sugars/saturated fat + NOVA class feed
+          // the app's deterministic HealthScore. Facts only — the score itself is client math.
+          fiber_g: { type: "integer" },
+          sugar_g: { type: "integer" },
+          satfat_g: { type: "integer" },
+          nova: { type: "integer" },
         },
         required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml",
-                   "potassium_mg", "magnesium_mg", "iron_mg", "calcium_mg"],
+                   "potassium_mg", "magnesium_mg", "iron_mg", "calcium_mg",
+                   "fiber_g", "sugar_g", "satfat_g", "nova"],
       },
     },
     confidence: { type: "number" },
@@ -172,9 +192,15 @@ async function estimateWithGemini(userJSON: string): Promise<unknown> {
                   magnesium_mg: { type: "integer" },
                   iron_mg: { type: "number" },
                   calcium_mg: { type: "integer" },
+                  // Food-quality facts (2026-08-15) — see ANTHROPIC_SCHEMA.
+                  fiber_g: { type: "integer" },
+                  sugar_g: { type: "integer" },
+                  satfat_g: { type: "integer" },
+                  nova: { type: "integer" },
                 },
                 required: ["name", "qty", "unit", "kcal", "carbs_g", "protein_g", "fat_g", "sodium_mg", "fluids_ml",
-                           "potassium_mg", "magnesium_mg", "iron_mg", "calcium_mg"],
+                           "potassium_mg", "magnesium_mg", "iron_mg", "calcium_mg",
+                           "fiber_g", "sugar_g", "satfat_g", "nova"],
               },
             },
             confidence: { type: "number" },

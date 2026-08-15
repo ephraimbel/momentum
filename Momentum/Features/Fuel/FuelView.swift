@@ -62,10 +62,14 @@ struct FuelView: View {
     /// Drives the `.navigationDestination` for Meal history — a Button gates the push (a
     /// NavigationLink can't be intercepted), so free athletes hit the paywall instead.
     @State private var showingHistory = false
+    /// Same pattern for the health-score analysis page (top-right gauge).
+    @State private var showingHealth = false
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
     @State private var showScanner = false
     @State private var barcodeDemoShown = false   // DEBUG --barcode-demo latch (see onAppear)
+    @State private var healthDemoShown = false    // DEBUG --fuel-health latch (same pattern)
+    @State private var mealDetailShown = false    // DEBUG --meal-detail latch (same pattern)
     /// The "Hey Siri, log a meal in Momentum" tip row — shown until the athlete dismisses it.
     @AppStorage("com.momentum.fuel.siriTip") private var siriTipVisible = true
     @FocusState private var composing: Bool
@@ -90,6 +94,11 @@ struct FuelView: View {
     /// Row titles decoded ONCE per refresh — `Meal.journalTitle` runs a JSONDecoder over `itemsData`
     /// on every single access, and every visible row calls it on every render pass.
     @State private var cachedTitles: [UUID: String] = [:]
+    /// Per-meal health verdicts, computed once per refresh for the same reason (`healthVerdict`
+    /// decodes `itemsData` too). Absent key = no numbers yet, no chip.
+    @State private var cachedScores: [UUID: HealthScore.Verdict] = [:]
+    /// The whole day's verdict — the toolbar gauge and the health page's headline number.
+    @State private var cachedDayVerdict: HealthScore.Verdict?
     /// The signature the caches were built from. nil = never built (first frame).
     @State private var cacheToken: Int?
     /// Within-pass memo for the frames the @State cache CANNOT cover: the very first paint (which
@@ -139,9 +148,10 @@ struct FuelView: View {
                     // No page-footer sources link here (owner call 2026-08-11: it lives in
                     // Settings → Science & sources).
                     // ⚠️ 1.4.1 NOTE: unlike Trends/Health, this page has NO ⓘ explainer sheets,
-                    // so the ONLY citation door for Fuel's targets is the "Science & sources"
-                    // link inside the Today's-fueling sheet (tap the summary strip above). If
-                    // App Review ever questions findability on Fuel again, restore
+                    // so Fuel's citation doors are the "Science & sources" link inside the
+                    // Today's-fueling sheet (tap the summary strip above) and the health-score
+                    // page's footer (top-right gauge — added 2026-08-15 with the score itself).
+                    // If App Review ever questions findability on Fuel again, restore
                     // `SourcesFooterLink()` here first — it is the cheapest fix.
                 }
                 .padding(Theme.Space.lg)
@@ -178,7 +188,19 @@ struct FuelView: View {
                         .foregroundStyle(Theme.ink)
                         .accessibilityAddTraits(.isHeader)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    // The health-score gauge (2026-08-15) — the day's food quality at a glance,
+                    // and the door to the full analysis page. Same action-gating as every
+                    // sibling: always visible, the PUSH walls for free athletes.
+                    Button {
+                        if paywall.isEntitled(to: .fuel) { showingHealth = true }
+                        else { paywall.present(for: .fuel) }
+                    } label: {
+                        healthGaugeGlyph
+                    }
+                    .accessibilityLabel("Health score")
+                    .accessibilityValue(cachedDayVerdict.map { "\($0.score) out of 100, \($0.band.word)" }
+                                        ?? "No meals scored yet")
                     // A NavigationLink can't be intercepted, so this is a Button that gates the push:
                     // entitled → navigate (via the `.navigationDestination` below); free → paywall.
                     Button {
@@ -202,6 +224,8 @@ struct FuelView: View {
             .sheet(isPresented: $showingGoals) { FuelGoalsSheet() }
             // Meal history — pushed only once the gated toolbar button has confirmed entitlement.
             .navigationDestination(isPresented: $showingHistory) { FuelHistoryView() }
+            // The health-score analysis page — same gated-push pattern as History.
+            .navigationDestination(isPresented: $showingHealth) { FuelHealthView() }
             // Dictation streams into the composer as it's recognized — voice is input sugar;
             // everything downstream of the field is identical to typing.
             .onChange(of: voice.transcript) { _, spoken in
@@ -256,6 +280,18 @@ struct FuelView: View {
                     barcodeDemoShown = true
                     showScanner = true
                 }
+                // `--fuel-health` self-pushes the analysis page for sim screenshots/UI tests:
+                // `--seed-demo --debug-pro --fuel --fuel-health`. Latched for the same reason
+                // as the scanner (onAppear re-fires when the push pops).
+                if ProcessInfo.processInfo.arguments.contains("--fuel-health"), !healthDemoShown {
+                    healthDemoShown = true
+                    showingHealth = true
+                }
+                // `--meal-detail` self-opens the first today-meal's detail sheet (screenshots).
+                if ProcessInfo.processInfo.arguments.contains("--meal-detail"), !mealDetailShown {
+                    mealDetailShown = true
+                    editing = meals.first { Calendar.current.isDateInToday($0.eatenAt) }
+                }
             }
             #endif
         }
@@ -284,6 +320,7 @@ struct FuelView: View {
             h.combine(m.fatG); h.combine(m.sodiumMg)
             h.combine(m.potassiumMg); h.combine(m.magnesiumMg)
             h.combine(m.ironMg); h.combine(m.calciumMg)
+            h.combine(m.fiberG); h.combine(m.sugarG); h.combine(m.satFatG)
             // The BREAKDOWN, not just the sums — `cachedTitles` is decoded from `itemsData`, and
             // an edit can rewrite the item list while every total above stays byte-identical:
             // removing a water or a black coffee subtracts zero from all five, and stepping a
@@ -402,9 +439,18 @@ struct FuelView: View {
         cachedUsuals = repeats
         // Decode `itemsData` once per meal per refresh instead of once per row per render pass.
         var titles: [UUID: String] = [:]
-        for m in pass.today { titles[m.id] = m.journalTitle }
+        var scores: [UUID: HealthScore.Verdict] = [:]
+        var dayFacts: [HealthScore.Facts] = []
+        for m in pass.today {
+            titles[m.id] = m.journalTitle
+            let facts = m.healthFacts
+            if let v = HealthScore.aggregate(facts) { scores[m.id] = v }
+            dayFacts.append(contentsOf: facts)
+        }
         for m in repeats where titles[m.id] == nil { titles[m.id] = m.journalTitle }
         cachedTitles = titles
+        cachedScores = scores
+        cachedDayVerdict = HealthScore.aggregate(dayFacts)
         cacheToken = cacheSignature
     }
 
@@ -516,6 +562,33 @@ struct FuelView: View {
             + (r.primary == .carbs ? (r.drivingSession.map { ", keyed to \($0)" } ?? "") : ""))
         .accessibilityHint("Shows the full fueling detail")
         .sheet(isPresented: $showingReadout) { FuelReadoutSheet(readout: readout) }
+    }
+
+    /// The toolbar's day-score gauge: a 22-pt ring drawn to score/100 in the band's ink with the
+    /// numeral inside — the day's food quality readable from the masthead. Before anything is
+    /// scored it rests as a quiet hairline ring with a heart, the affordance without a number.
+    private var healthGaugeGlyph: some View {
+        ZStack {
+            if let v = cachedDayVerdict {
+                let tint = Theme.Fuel.score(v.band)
+                Circle().stroke(Theme.hairline, lineWidth: 2.5)
+                Circle()
+                    .trim(from: 0, to: CGFloat(v.score) / 100)
+                    .rotation(.degrees(-90))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                Text("\(v.score)")
+                    .font(.rounded(9, weight: .bold)).monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+                    .contentTransition(.numericText())
+            } else {
+                Circle().stroke(Theme.hairline, lineWidth: 2.5)
+                Image(systemName: "heart")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+        }
+        .frame(width: 22, height: 22)
+        .animation(Motion.standard, value: cachedDayVerdict?.score)
     }
 
     /// No-shame status words — "behind" never appears; a slow morning is just "building".
@@ -707,7 +780,9 @@ struct FuelView: View {
                                proteinG: numbers.proteinG, fatG: numbers.fatG,
                                sodiumMg: numbers.sodiumMg, fluidsMl: 0,
                                potassiumMg: numbers.potassiumMg, magnesiumMg: nil,
-                               ironMg: numbers.ironMg, calciumMg: numbers.calciumMg)]
+                               ironMg: numbers.ironMg, calciumMg: numbers.calciumMg,
+                               fiberG: numbers.fiberG, sugarG: numbers.sugarG,
+                               satFatG: numbers.satFatG, nova: product.nova)]
         meal.source = "manual"
         meal.confidence = 1
         withAnimation(Motion.standard) {
@@ -1092,6 +1167,12 @@ struct FuelView: View {
                             .lineLimit(2).multilineTextAlignment(.leading)
                             .contentTransition(.opacity)
                         Spacer(minLength: 0)
+                        // The meal's health score, in its band's ink — cached per refresh like
+                        // the title (`healthVerdict` decodes items). No numbers yet, no chip.
+                        if !isEstimating, cacheValid, let verdict = cachedScores[meal.id] {
+                            HealthScoreChip(verdict: verdict)
+                                .transition(.opacity)
+                        }
                         Text(meal.eatenAt.formatted(date: .omitted, time: .shortened))
                             .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         // Editability is a promise, not a mystery — the quiet chevron says "tap
@@ -1126,6 +1207,10 @@ struct FuelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // The row button's label overrides its children for VoiceOver, which would swallow the
+        // score chip — speak it as the row's value instead.
+        .accessibilityValue((cacheValid ? cachedScores[meal.id] : nil)
+            .map { "health score \($0.score), \($0.band.word)" } ?? "")
         .contextMenu {
             // The cap is ours, not the athlete's — asking for it by hand always earns a fresh run.
             // `isEstimable` is the same gate the automatic path uses, minus the cap: without the
@@ -1422,6 +1507,10 @@ struct MealDetailSheet: View {
     @State private var totalsMode = false
     /// The athlete touched numbers (steppers, removal, mode switch) — marks the meal `manual`.
     @State private var numbersDirty = false
+    /// The sheet's height. Reading opens at .medium; TYPING promotes to .large — in totals mode
+    /// the five number fields otherwise sit half-buried under the medium fold with the keyboard
+    /// on top of them (real fingers scroll-fight it; XCUITest's taps land on the page behind).
+    @State private var detent: PresentationDetent = .medium
 
     @State private var carbs = ""
     @State private var kcal = ""
@@ -1438,6 +1527,18 @@ struct MealDetailSheet: View {
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // The coach's one line, where the meal is examined — the row truncates it.
+                    if let note = meal.note, !note.isEmpty {
+                        Text(note)
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // The health verdict, LIVE — recomputed from the working items, so stepping
+                    // a portion or removing a food rolls the gauge in real time.
+                    if let verdict = liveVerdict {
+                        scoreHero(verdict)
+                    }
                     if totalsMode {
                         totalsFields
                     } else {
@@ -1448,6 +1549,9 @@ struct MealDetailSheet: View {
                             .frame(maxWidth: .infinity, alignment: .trailing)
                             .padding(.top, -Theme.Space.sm)
                     }
+                    // Everything the numbers know — the complete facts panel (macros with their
+                    // sugar/fiber/sat-fat sublines, then every micro the meal carries).
+                    nutritionCard
                     eatenAtRow
                     Button(role: .destructive) {
                         context.delete(meal)
@@ -1464,7 +1568,7 @@ struct MealDetailSheet: View {
                 .animation(Motion.standard, value: totalsMode)
             }
             .background(Theme.background)
-            .navigationTitle("Edit meal")
+            .navigationTitle("Meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.fontWeight(.bold) }
@@ -1472,12 +1576,146 @@ struct MealDetailSheet: View {
             }
             .onAppear(perform: load)
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
+    }
+
+    // MARK: The health verdict (live — steppers roll the gauge)
+
+    /// Facts for whatever the athlete is currently looking at: the working items, or in totals
+    /// mode the typed fields as one pseudo-item (quality fields ride from the meal; NOVA is
+    /// per-item and unknowable for hand totals).
+    private var liveFacts: [HealthScore.Facts] {
+        guard totalsMode else { return items.map(\.healthFacts) }
+        guard let k = Int(kcal), k > 0 else { return [] }
+        return [HealthScore.Facts(name: meal.text, kcal: k, carbsG: Int(carbs) ?? 0,
+                                  proteinG: Int(protein) ?? 0, fatG: Int(fat) ?? 0,
+                                  sodiumMg: Int(sodium) ?? 0, fiberG: meal.fiberG,
+                                  sugarG: meal.sugarG, satFatG: meal.satFatG,
+                                  potassiumMg: meal.potassiumMg, nova: nil)]
+    }
+
+    private var liveVerdict: HealthScore.Verdict? { HealthScore.aggregate(liveFacts) }
+
+    /// The gauge beside its plain-words explanation — what the score is and what moved it.
+    private func scoreHero(_ verdict: HealthScore.Verdict) -> some View {
+        HStack(spacing: Theme.Space.lg) {
+            HealthScoreGauge(verdict: verdict, diameter: 84)
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text("HEALTH SCORE")
+                    .font(.rounded(10, weight: .bold)).tracking(1.2)
+                    .foregroundStyle(Theme.inkTertiary)
+                if let line = HealthScore.driversLine(verdict.drivers) {
+                    Text(line)
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(provenanceLine)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .animation(Motion.standard, value: verdict.score)
+    }
+
+    /// Where these numbers came from — the honesty footnote ("your hand outranks the estimate"
+    /// works better when the sheet says whose hand is on the numbers right now).
+    private var provenanceLine: String {
+        switch meal.source {
+        case "manual": return "Your numbers. Every score reads ≈."
+        case "ai": return "AI estimate — your edits outrank it. Every score reads ≈."
+        default: return "Estimate pending. Every score reads ≈."
+        }
+    }
+
+    // MARK: The complete facts panel
+
+    /// The complete facts panel. In ITEMS mode it is the meal's whole story — live Σ over the
+    /// working items, so steppers roll every cell. In TOTALS mode the five editable fields above
+    /// already own the macros, so the grid carries ONLY what they don't (quality facts, micros,
+    /// fluids) and disappears entirely when the meal knows none of them — a pending offline log
+    /// never shows a wall of dashes. nil = "—", never a fabricated zero.
+    @ViewBuilder
+    private var nutritionCard: some View {
+        let t = totals
+        let itemsLive = !totalsMode && !items.isEmpty
+        let fluidsV = itemsLive ? (t.fluids > 0 ? t.fluids : nil) : meal.fluidsMl.flatMap { $0 > 0 ? $0 : nil }
+        let fiberV = itemsLive ? Self.optionalSum(items.compactMap(\.fiberG)) : meal.fiberG
+        let sugarV = itemsLive ? Self.optionalSum(items.compactMap(\.sugarG)) : meal.sugarG
+        let satFatV = itemsLive ? Self.optionalSum(items.compactMap(\.satFatG)) : meal.satFatG
+        let kV = itemsLive ? Self.optionalSum(items.compactMap(\.potassiumMg)) : meal.potassiumMg
+        let mgV = itemsLive ? Self.optionalSum(items.compactMap(\.magnesiumMg)) : meal.magnesiumMg
+        let feV = itemsLive ? Self.optionalSum(items.compactMap(\.ironMg)) : meal.ironMg
+        let caV = itemsLive ? Self.optionalSum(items.compactMap(\.calciumMg)) : meal.calciumMg
+        let detailKnown = fiberV != nil || sugarV != nil || satFatV != nil || kV != nil
+            || mgV != nil || feV != nil || caV != nil || fluidsV != nil
+        if itemsLive || detailKnown {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text("NUTRITION")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
+                    .foregroundStyle(Theme.inkTertiary)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
+                          alignment: .leading, spacing: Theme.Space.md) {
+                    if itemsLive {
+                        factCell("Energy", "\(t.kcal) kcal", tint: Theme.inkSecondary)
+                        factCell("Carbs", "\(t.carbs) g", tint: Theme.Fuel.carbs)
+                        factCell("Protein", "\(t.protein) g", tint: Theme.Fuel.protein)
+                        factCell("Fat", "\(t.fat) g", tint: Theme.Fuel.fat)
+                    }
+                    factCell("Fiber", fiberV.map { "\($0) g" })
+                    factCell("Sugars", sugarV.map { "\($0) g" })
+                    factCell("Saturated fat", satFatV.map { "\($0) g" })
+                    if itemsLive {
+                        factCell("Sodium", "\(t.sodium) mg", tint: Theme.Fuel.sodium)
+                    }
+                    factCell("Potassium", kV.map { "\($0) mg" })
+                    factCell("Magnesium", mgV.map { "\($0) mg" })
+                    factCell("Iron", feV.map { ironText($0) + " mg" })
+                    factCell("Calcium", caV.map { "\($0) mg" })
+                    if let fluidsV {
+                        factCell("Fluids", "\(fluidsV) ml")
+                    }
+                }
+            }
+            .padding(Theme.Space.md)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        }
+    }
+
+    /// One fact: the value in its metric's ink (macros keep the ring binding; quality facts and
+    /// micros stay monochrome), "—" for a value honestly not estimated.
+    private func factCell(_ label: String, _ value: String?, tint: Color = Theme.ink) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value.map { "≈\($0)" } ?? "—")
+                .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                .foregroundStyle(value == nil ? Theme.inkTertiary : tint)
+                .contentTransition(.numericText())
+            Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Σ, but nil for an empty set — mirrors `Meal.applyTotals`: "no data" is never a zero.
+    private static func optionalSum<N: AdditiveArithmetic>(_ values: [N]) -> N? {
+        values.isEmpty ? nil : values.reduce(N.zero, +)
+    }
+
+    /// Iron with a decimal only when it earns one — same rule as the readout sheet.
+    private func ironText(_ v: Double) -> String {
+        v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
     }
 
     private func load() {
         items = meal.items
         totalsMode = items.isEmpty
+        // A totals-only meal opens ONTO the typing fields — give them typing room at once.
+        if totalsMode { detent = .large }
         eatenAt = meal.eatenAt
         carbs = meal.carbsG.map(String.init) ?? ""
         kcal = meal.kcal.map(String.init) ?? ""
@@ -1503,11 +1741,19 @@ struct MealDetailSheet: View {
     }
 
     private func itemRow(_ item: MealItem) -> some View {
-        HStack(spacing: Theme.Space.sm) {
+        // Each food's own verdict as a quiet dot in its band's ink — pure arithmetic per render
+        // (no decode; the items are already in hand).
+        let itemVerdict = HealthScore.score(item.healthFacts)
+        return HStack(spacing: Theme.Space.sm) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Circle().fill(Theme.Fuel.score(itemVerdict.band))
+                        .frame(width: 7, height: 7)
+                        .accessibilityLabel("Health score \(itemVerdict.score)")
+                    Text(item.name)
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                }
                 (Text("\(item.kcal) kcal").foregroundColor(Theme.inkTertiary)
                     + Text(" · ").foregroundColor(Theme.inkTertiary)
                     + Text("\(item.carbsG) g carbs").foregroundColor(Theme.Fuel.carbs)
@@ -1615,7 +1861,10 @@ struct MealDetailSheet: View {
             fat = String(t.fat); sodium = String(t.sodium)
         }
         numbersDirty = true
-        withAnimation(Motion.standard) { totalsMode = true }
+        withAnimation(Motion.standard) {
+            totalsMode = true
+            detent = .large   // typing room — the fields must never hide under the medium fold
+        }
         Haptics.light()
     }
 

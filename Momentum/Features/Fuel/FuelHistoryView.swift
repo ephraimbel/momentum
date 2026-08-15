@@ -171,7 +171,9 @@ struct FuelHistoryView: View {
     }
 
     private func row(_ meal: Meal) -> some View {
-        Button {
+        // Decoded once per row body (the chip and VoiceOver both read it).
+        let verdict = meal.healthVerdict
+        return Button {
             // Mirror FuelView's row rule: a meal mid-estimate is not editable — a partial
             // manual save landing over the estimate wiped its just-landed numbers with blanks,
             // unrecoverably (audit 2026-08-11).
@@ -184,6 +186,11 @@ struct FuelHistoryView: View {
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                         .lineLimit(2).multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
+                    // Same verdict chip as the main journal — one decode per visible row per
+                    // render, the `journalTitle` precedent (rows are lazily rendered).
+                    if let verdict {
+                        HealthScoreChip(verdict: verdict)
+                    }
                     Text(meal.eatenAt.formatted(date: .omitted, time: .shortened))
                         .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                     Image(systemName: "chevron.forward")
@@ -206,6 +213,8 @@ struct FuelHistoryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Meal: \(meal.text)")
+        // The label overrides children for VoiceOver — speak the chip as the row's value.
+        .accessibilityValue(verdict.map { "health score \($0.score), \($0.band.word)" } ?? "")
     }
 
     private var emptyState: some View {

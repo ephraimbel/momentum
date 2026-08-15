@@ -24,6 +24,12 @@ struct FuelEstimator {
             let magnesium_mg: Int?
             let iron_mg: Double?
             let calcium_mg: Int?
+            // Food-quality signals (2026-08-15) — optional for the same reason; they feed the
+            // deterministic HealthScore, and a provider that omits them just scores more roughly.
+            let fiber_g: Int?
+            let sugar_g: Int?
+            let satfat_g: Int?
+            let nova: Int?
         }
         let items: [Item]
         let confidence: Double
@@ -119,7 +125,9 @@ struct FuelEstimator {
                      carbsG: $0.carbs_g, proteinG: $0.protein_g, fatG: $0.fat_g,
                      sodiumMg: $0.sodium_mg, fluidsMl: $0.fluids_ml,
                      potassiumMg: $0.potassium_mg, magnesiumMg: $0.magnesium_mg,
-                     ironMg: $0.iron_mg, calciumMg: $0.calcium_mg)
+                     ironMg: $0.iron_mg, calciumMg: $0.calcium_mg,
+                     fiberG: $0.fiber_g, sugarG: $0.sugar_g, satFatG: $0.satfat_g,
+                     nova: $0.nova.map { min(4, max(1, $0)) })   // clamp a wild class to the real scale
         }
         meal.confidence = e.confidence
         meal.note = e.note.isEmpty ? nil : e.note

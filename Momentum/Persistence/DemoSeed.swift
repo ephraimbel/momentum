@@ -14,20 +14,20 @@ enum DemoSeed {
     private static func seedFuelHistory(_ context: ModelContext) {
         let existing = (try? context.fetchCount(FetchDescriptor<Meal>())) ?? 0
         guard existing < 10 else { return }
-        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca)
-        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int)] = [
-            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80),
-            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90),
-            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60),
-            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90),
-            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260),
-            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120),
-            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120),
-            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20),
-            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240),
-            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220),
-            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90),
-            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180),
+        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca, fiber, sugar, satFat)
+        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int, Int, Int, Int)] = [
+            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80, 7, 28, 2),
+            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90, 2, 3, 6),
+            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60, 4, 4, 3),
+            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90, 6, 8, 4),
+            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260, 4, 18, 4),
+            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120, 6, 18, 3),
+            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120, 7, 4, 5),
+            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20, 0, 56, 0),
+            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240, 12, 6, 9),
+            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220, 6, 28, 1),
+            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90, 8, 9, 8),
+            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180, 2, 42, 5),
         ]
         var rng = SeededRNG(20260716)
         let cal = Calendar.current
@@ -42,6 +42,7 @@ enum DemoSeed {
                 meal.kcal = f.1; meal.carbsG = f.2; meal.proteinG = f.3; meal.fatG = f.4
                 meal.sodiumMg = f.5; meal.potassiumMg = f.6; meal.magnesiumMg = f.7
                 meal.ironMg = f.8; meal.calciumMg = f.9
+                meal.fiberG = f.10; meal.sugarG = f.11; meal.satFatG = f.12
                 meal.source = "ai"
                 meal.confidence = 0.8
                 context.insert(meal)
@@ -59,17 +60,17 @@ enum DemoSeed {
         let existingToday = ((try? context.fetch(FetchDescriptor<Meal>())) ?? [])
             .filter { cal.isDateInToday($0.eatenAt) }
         guard existingToday.count < 2 else { return }
-        // (hour, minute, text, kcal, carbs, protein, fat, sodium, note?)
-        let day: [(Double, Double, String, Int, Int, Int, Int, Int, String?)] = [
-            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190,
+        // (hour, minute, text, kcal, carbs, protein, fat, sodium, fiber, sugar, satFat, note?)
+        let day: [(Double, Double, String, Int, Int, Int, Int, Int, Int, Int, Int, String?)] = [
+            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190, 7, 34, 2,
              "Strong carb start — this is the fuel today's session runs on."),
-            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, nil),
-            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150,
+            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, 5, 22, 3, nil),
+            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150, 12, 6, 8,
              "Great mixed plate — carbs restocked, protein covered."),
-            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, nil),
-            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480,
+            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, 0, 56, 0, nil),
+            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480, 7, 4, 6,
              "Recovery-forward dinner — protein and healthy fats where they count."),
-            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, nil),
+            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, 3, 24, 10, nil),
         ]
         for m in day where m.0 <= Double(cal.component(.hour, from: Date())) || true {
             let meal = Meal()
@@ -77,7 +78,8 @@ enum DemoSeed {
             meal.eatenAt = start.addingTimeInterval(m.0 * 3600 + m.1 * 60)
             meal.kcal = m.3; meal.carbsG = m.4; meal.proteinG = m.5
             meal.fatG = m.6; meal.sodiumMg = m.7
-            meal.note = m.8
+            meal.fiberG = m.8; meal.sugarG = m.9; meal.satFatG = m.10
+            meal.note = m.11
             meal.source = "ai"
             meal.confidence = 0.85
             context.insert(meal)

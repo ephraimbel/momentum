@@ -35,6 +35,13 @@ final class Meal {
     var magnesiumMg: Int?
     var ironMg: Double?
     var calciumMg: Int?
+    // Food-quality signals (2026-08-15, the health-score pass): fiber lifts, total sugars and
+    // saturated fat drag, and together with per-item NOVA class they feed the deterministic
+    // `HealthScore` engine. All defaulted-nil (implicit lightweight migration only) and
+    // nil-preserving like every micro — nil is "not estimated", never zero.
+    var fiberG: Int?
+    var sugarG: Int?
+    var satFatG: Int?
 
     /// The itemized breakdown ("2 eggs · toast · coffee"), JSON-encoded `[MealItem]` — the same
     /// blob pattern as `structuredRepsData`. Totals on the meal are ALWAYS Σ items when items
@@ -76,6 +83,14 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
     var magnesiumMg: Int?
     var ironMg: Double?
     var calciumMg: Int?
+    // Food-quality signals (2026-08-15) — optional for the same reason. `nova` is the NOVA
+    // processing classification 1–4 (1 whole food … 4 ultra-processed), the strongest single
+    // input to the deterministic `HealthScore`; it describes the FOOD, so portion scaling
+    // never touches it.
+    var fiberG: Int?
+    var sugarG: Int?
+    var satFatG: Int?
+    var nova: Int?
 
     /// This item rescaled to a new quantity — linear from per-unit values, rounded (everything ≈).
     func scaled(to newQty: Double) -> MealItem {
@@ -93,6 +108,10 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
         c.magnesiumMg = magnesiumMg.map { Int((Double($0) * f).rounded()) }
         c.ironMg = ironMg.map { ($0 * f * 10).rounded() / 10 }
         c.calciumMg = calciumMg.map { Int((Double($0) * f).rounded()) }
+        c.fiberG = fiberG.map { Int((Double($0) * f).rounded()) }
+        c.sugarG = sugarG.map { Int((Double($0) * f).rounded()) }
+        c.satFatG = satFatG.map { Int((Double($0) * f).rounded()) }
+        // `nova` classifies the food, not the amount — it rides along unscaled.
         return c
     }
 
@@ -143,6 +162,9 @@ extension Meal {
         magnesiumMg = Self.optionalSum(items.compactMap(\.magnesiumMg))
         ironMg = Self.optionalSum(items.compactMap(\.ironMg))
         calciumMg = Self.optionalSum(items.compactMap(\.calciumMg))
+        fiberG = Self.optionalSum(items.compactMap(\.fiberG))
+        sugarG = Self.optionalSum(items.compactMap(\.sugarG))
+        satFatG = Self.optionalSum(items.compactMap(\.satFatG))
     }
 
     /// Σ, but nil for an empty set — keeps "no data" distinct from a real zero.
