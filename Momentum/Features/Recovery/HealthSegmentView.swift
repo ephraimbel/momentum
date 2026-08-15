@@ -329,9 +329,10 @@ struct HealthSegmentView: View {
         connecting = true
         Task {
             _ = await services.health.requestAuthorization()
-            // Connecting grants recovery signals + live HR — it does NOT pull in the athlete's
-            // workout history (user call 2026-07-24). Apple Health workouts never auto-populate the
-            // log; the back-catalog is an explicit Settings → Import from Apple Health action.
+            // Connecting grants recovery signals + live HR, and nothing else: Health never creates
+            // a `Workout` row, here or anywhere (owner call 2026-08-15, `d419f0f` — the importer was
+            // deleted outright after a fresh signup pulled ~10,000 mirrored rows). There is no
+            // back-catalog action to point at; the recovery picture accrues from this moment on.
             connecting = false
             refresh += 1   // new task key → rebuild off the fresh grant
         }

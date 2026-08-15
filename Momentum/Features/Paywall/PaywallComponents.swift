@@ -129,6 +129,14 @@ struct PaywallFeatureList: View {
 
 // MARK: - Showcase — a fanned deck of iPhones, swiped through by hand
 
+/// The auto-play dwell's identity: which card is centered, and whether the deck is currently the
+/// athlete's to move. Either changing restarts the dwell, so a touch cancels the pending advance
+/// and releasing it starts the count again from zero.
+private struct AutoPlayTick: Equatable {
+    var slide: Int
+    var idle: Bool
+}
+
 /// The app shown, not described: a DECK of device mocks — the onboarding notification mock's
 /// titanium-rail hardware — fanned like a hand of cards, each glass carrying one real DARK
 /// screenshot (owner-captured, real status chrome and Dynamic Island in every frame). The
@@ -151,6 +159,11 @@ struct PaywallShowcase: View {
     @State private var slide: Int? = 0
     /// Auto-advance direction; flips at the deck's ends so the show never does a 9-card flyback.
     @State private var forward = true
+    /// Live scroll phase. Auto-advance must never write `slide` while the thumb (or the
+    /// deceleration it handed off to) owns the deck: a programmatic scroll target landing
+    /// mid-gesture is what made a swipe jump to a seemingly random card (owner report
+    /// 2026-08-15). Idle is the only phase in which the show may take a turn.
+    @State private var scrollPhase: ScrollPhase = .idle
 
     private static let slides = [
         "PaywallShotToday", "PaywallShotPlan", "PaywallShotProgress",
@@ -162,10 +175,19 @@ struct PaywallShowcase: View {
         VStack(spacing: Theme.Space.md) {
             deck
                 // Auto-play. `.task` dies with the view (nothing to clean up); the id restarts
-                // the dwell on every advance — including the athlete's own swipes.
-                .task(id: slide) {
-                    guard !reduceMotion else { return }
+                // the dwell on every advance — including the athlete's own swipes. Keying on the
+                // phase too means the moment a finger lands the pending advance is cancelled, and
+                // a fresh dwell only begins once the deck is idle again in the athlete's hands.
+                .task(id: AutoPlayTick(slide: slide ?? 0, idle: scrollPhase == .idle)) {
+                    guard !reduceMotion, scrollPhase == .idle else { return }
                     try? await Task.sleep(for: .seconds(3.0))
+                    // BOTH halves of this guard are load-bearing; neither is a formality.
+                    // `try?` swallows the CancellationError, so a superseded task keeps running
+                    // right past the sleep and would still write `slide` — two dwells racing to
+                    // move the deck was itself a source of the "jumps to a random card" report.
+                    // And the thumb can take over mid-dwell without moving a whole card, so
+                    // `slide` never changes, the id never flips, and nothing cancels us at all.
+                    guard !Task.isCancelled, scrollPhase == .idle else { return }
                     let i = slide ?? 0
                     var direction = forward
                     if i >= Self.slides.count - 1 { direction = false }
@@ -229,9 +251,14 @@ struct PaywallShowcase: View {
                 }
                 .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.viewAligned)
+            // `limitBehavior: .always` — one card per gesture. Plain `.viewAligned` carries the
+            // fling's momentum, so a normal-speed flick crossed three or four devices at once and
+            // the deck felt impossible to aim (owner report 2026-08-15). Capping the travel makes
+            // every swipe land exactly one card over, in both directions.
+            .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
             .scrollPosition(id: $slide)
             .scrollIndicators(.hidden)
+            .onScrollPhaseChange { _, phase in scrollPhase = phase }
             // Shadows, tilted corners, and the sunk neighbors all draw outside the row's bounds —
             // clipping any of them re-creates the TabView seam this design exists to avoid.
             .scrollClipDisabled()

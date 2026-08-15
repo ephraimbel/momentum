@@ -756,12 +756,13 @@ struct OnboardingFlow: View {
                         let metrics = await services.health.importedBodyMetrics()
                         if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
                         if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
-                        // We deliberately do NOT import the athlete's Health workout history here
-                        // (user call 2026-07-24): a fresh account starts on an empty grid and fills
-                        // from what they do IN the app. Their back-catalog is available on demand via
-                        // Settings → Import from Apple Health — never auto-populated. Connecting Health
-                        // still earns the non-workout wins above (resting HR + body mass → Karvonen
-                        // zones) and live HR / recovery signals going forward.
+                        // No workout history is imported here — or anywhere. Health is a source of
+                        // SIGNALS, never workouts (owner call 2026-08-15, `d419f0f`: the importer was
+                        // deleted after a fresh signup pulled ~10,000 mirrored Watch/Garmin/Strava
+                        // rows). A fresh account starts on an empty grid and fills from what the
+                        // athlete does IN the app. What connecting earns is exactly the two reads
+                        // above (resting HR + body mass → Karvonen zones from the first plan) plus
+                        // live HR and the recovery signals accruing from today forward.
                         goNext()
                         // Re-arm AFTER the step transition settles (in case the athlete comes
                         // back) — an immediate reset would re-open the double-tap window.

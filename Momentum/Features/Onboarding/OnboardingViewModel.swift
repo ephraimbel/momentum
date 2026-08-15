@@ -108,9 +108,8 @@ final class OnboardingViewModel {
     var paceFeel: PaceFeel? = nil
     var benchmark: RunBenchmark = .fiveK
     var recentRunSeconds: Double = 1800     // time for the chosen benchmark
-    /// Resting HR read from Apple Health at either consent moment (calibration import or the health
-    /// step) — persisted at finish so HR zones use Karvonen from the very first plan instead of the
-    /// much cruder %-of-max fallback.
+    /// Resting HR read from Apple Health at the `health` step's consent moment — persisted at finish
+    /// so HR zones use Karvonen from the very first plan instead of the much cruder %-of-max fallback.
     var importedRestingHR: Int?
 
     /// A catalog race picked on the race step ("Chicago Marathon") — becomes the plan's name at
@@ -119,10 +118,10 @@ final class OnboardingViewModel {
 
     // Health-derived pace estimation was removed from onboarding (2026-07-24): a baseline inferred
     // from mixed Health run history was too unreliable to seed a plan's paces. Athletes now enter
-    // their fitness directly — by feel or a recent time (calibration step) and their weekly volume
-    // (runVolume step). Past workouts still backfill into the training log when they connect Apple
-    // Health at the `health` step — that imports REAL logged runs, which is accurate; it just no
-    // longer drives pace calibration.
+    // their fitness directly — by feel or a recent time (experience step) and their weekly volume
+    // (runVolume step). Nor does anything backfill: since `d419f0f` (2026-08-15) Health creates no
+    // `Workout` rows at all, so the training log begins empty and fills only from what the athlete
+    // records in the app.
 
     /// The anatomy the muscle-focus step lights: EXACTLY the chosen areas, full-burn. Empty until
     /// the athlete picks — the figure starts as a quiet chart and each tap ignites its region
@@ -158,8 +157,8 @@ final class OnboardingViewModel {
         // about you → race specifics → schedule → equipment/focus → motivation → build → reveal → opt-ins.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
-        // `identity` (the profile photo — the @handle claim left with the community back-burner,
-        // 2026-07-16) follows `name`, both before any training questions.
+        // `identity` (the @handle claim — back since the community launch, 2026-07-29 — plus the
+        // profile photo and avatar looks) follows `name`, both before any training questions.
         // `experience` doubles as the running pace question (2026-07-24), so there's no separate
         // `calibration` step any more — runners are asked their level once.
         // `rateUs` sits between `primers` and the paywall (user call 2026-07-26).
@@ -244,7 +243,9 @@ final class OnboardingViewModel {
 
     var canAdvance: Bool {
         switch step {
-        case .identity: return true   // photo-only since the handle left (2026-07-16) — always optional
+        // Handle, photo and avatar look are all optional here — the handle is seeded from the name,
+        // and the database's unique index is the real arbiter at claim time, not this gate.
+        case .identity: return true
         // Require at least one PROGRAMMABLE discipline (run/strength/…), not just any activity: extras
         // like yoga/swim/row map to `discipline == nil`, and advancing on those alone made finish()
         // silently inject a running plan the user never asked for. A training plan needs something the
