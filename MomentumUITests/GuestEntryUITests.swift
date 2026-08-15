@@ -114,7 +114,20 @@ final class GuestEntryUITests: XCTestCase {
     func testOnboardingAnswersSurviveIntoTheApp() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-auth", "--debug-free", "--uitest-password"]
+        // `--reset-store` makes the precondition self-sufficient. This test needs a device with NO
+        // local profile: it taps "Get started" and expects setup. `--reset-auth` only clears the
+        // stored identity and leaves the SwiftData profile behind, so after any sibling test (or a
+        // manual --seed-demo launch) the app skipped setup entirely and the guard tripped. With the
+        // wipe the walk now reliably starts in onboarding on any device.
+        //
+        // ⚠️ STILL FAILING, and not because of the precondition. The walker gets through the name,
+        // "What do you want to do?" and ~8 more Continues, then stalls dead around the HealthKit
+        // step: since the 5.1.1(iv) fix that Continue raises the real permission sheet from
+        // com.apple.Health with no skip, and the `healthApp` handling below never dismisses it on
+        // current iOS. The remaining ~70 iterations are the `sleep(1)` fallback, which is where the
+        // ~21 minute runtime comes from before the paywall assert fails. Fixing that means getting
+        // the system sheet automation right, not touching the app. Known burn-down item.
+        app.launchArguments = ["--reset-store", "--reset-auth", "--debug-free", "--uitest-password"]
         app.launch()
 
         let getStarted = app.buttons["Get started"]
