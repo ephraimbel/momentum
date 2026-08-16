@@ -508,6 +508,19 @@ struct ProgressScreen: View {
                     .padding(Theme.Space.md)
                     .padding(.bottom, Theme.Space.xxl)
             }
+            #if DEBUG
+            // --progress-scroll-sources: land on the provenance footnote at the segment's foot
+            // (sim verification of the wearable source line; simctl can't scroll). Fires twice —
+            // the footnote mounts only after the Model's HK pipeline resolves the skeleton.
+            .onAppear {
+                guard ProcessInfo.processInfo.arguments.contains("--progress-scroll-sources") else { return }
+                for delay: TimeInterval in [3.5, 6.0] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        withAnimation { proxy.scrollTo("health.footnote", anchor: .bottom) }
+                    }
+                }
+            }
+            #endif
         }
     }
 

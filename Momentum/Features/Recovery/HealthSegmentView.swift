@@ -127,9 +127,9 @@ struct HealthSegmentView: View {
             // ease proposal (deduped upstream; never auto-applies, never stacks with autoAdapt).
             _ = CoachProactive.seedOverreachingEase(state: built.balanceWeek.state,
                                                     plan: plan, in: context)
-            // No automatic workout import (user call 2026-07-24): Apple Health workouts never stream
-            // in on their own — the log is only what the athlete does in the app. Their back-catalog
-            // (and any Watch/Garmin runs they want pulled in) is an explicit Settings → Import action.
+            // No workout import, period (owner calls 2026-07-24 and 2026-08-15): Apple Health is a
+            // source of SIGNALS — sleep, HRV, vitals — never of workouts. The log is only what the
+            // athlete does in the app; the Settings import action was deleted with the importer.
         }
         .sheet(isPresented: $showCheckin) {
             // The check-in saves through its own model context; the host's @Query then feeds a
@@ -201,7 +201,9 @@ struct HealthSegmentView: View {
         // signal is actually arriving, and as the hardware requirement when it isn't — so a
         // connected athlete is never told to connect something.
         WearableFootnote(receivingData: model.sleepReport != nil
-                         || model.vitals.contains { $0.hasAnyData })
+                         || model.vitals.contains { $0.hasAnyData },
+                         sources: model.sources)
+            .id(Anchor.footnote.rawValue)
             .reveal(model.healthAuthorized ? 0.42 : 0.49)
 
         // App Review 1.4.1: the citations door at the foot of the health page (every card's ⓘ
@@ -360,6 +362,7 @@ struct HealthSegmentView: View {
         case sleep = "health.sleep"
         case vitals = "health.vitals"
         case rhythm = "health.rhythm"
+        case footnote = "health.footnote"
     }
 }
 
@@ -375,6 +378,9 @@ extension HealthSegmentView {
         var readout: DriverRow.Readout = .allClear
         var acwr: Double = 0
         var healthAuthorized = false
+        /// The wearables actually feeding the signals (most-contributing first) — names the
+        /// provenance footnote ("your Oura ring and Apple Watch").
+        var sources: [WearableKind] = []
 
         // Pro depth layer
         var balanceWeek: StrainRecoveryBalance
@@ -425,7 +431,9 @@ extension HealthSegmentView {
             var tempHist: [(day: Date, value: Double)] = []
             var walkHist: [(day: Date, value: Double)] = []
             var rawNights: [SleepNight] = []
+            var sources: [WearableKind] = []
             if let concrete {
+                sources = await concrete.signalSources()
                 hrvHist = await concrete.hrvDailyHistory(days: HealthBaselines.Window.hrv)
                 rhrHist = await concrete.dailyHistory(.restingHeartRate, unit: bpm,
                                                       days: HealthBaselines.Window.restingHR)
@@ -674,6 +682,7 @@ extension HealthSegmentView {
                          readout: readout,
                          acwr: acwr,
                          healthAuthorized: health.isAuthorized,
+                         sources: sources,
                          balanceWeek: balanceWeek,
                          balanceMonth: balanceMonth,
                          ghostBars: ghostBars,

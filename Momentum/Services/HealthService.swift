@@ -288,6 +288,49 @@ final class HealthService: HealthServing {
         }
     }
 
+    /// Which wearables are actually feeding the recovery signals — for the provenance line, so it
+    /// can say "your Oura ring" instead of "your connected wearable" (owner ask 2026-08-15).
+    ///
+    /// Samples the recent signal types (HRV, resting HR, sleep, respiratory rate — the reads the
+    /// hub actually consumes), collects each sample's `sourceRevision.source`, and maps through
+    /// the pure `WearableKind.identify`. Ordered by contribution (most samples first) so the
+    /// device doing the real work leads the sentence. Sources we can't name — the iPhone itself,
+    /// unrecognized apps — simply don't appear, and the footnote keeps its generic wording.
+    /// Reads metadata only: no values leave this function, just "which device wrote them".
+    func signalSources(days: Int = 14) async -> [WearableKind] {
+        #if DEBUG
+        // Screenshot recipe: the demo recovery scenarios show a believable two-device setup.
+        if Self.demoRecoveryScenario != nil { return [.appleWatch, .oura] }
+        #endif
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        let since = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        let types: [HKSampleType] = [
+            HKQuantityType(.heartRateVariabilitySDNN),
+            HKQuantityType(.restingHeartRate),
+            HKQuantityType(.respiratoryRate),
+            HKCategoryType(.sleepAnalysis),
+        ]
+        var counts: [WearableKind: Int] = [:]
+        for type in types {
+            let samples: [HKSample] = await withCheckedContinuation { continuation in
+                let predicate = HKQuery.predicateForSamples(withStart: since, end: nil)
+                let query = HKSampleQuery(sampleType: type, predicate: predicate,
+                                          limit: 400, sortDescriptors: nil) { _, samples, _ in
+                    continuation.resume(returning: samples ?? [])
+                }
+                store.execute(query)
+            }
+            for s in samples {
+                let source = s.sourceRevision.source
+                if let kind = WearableKind.identify(bundleID: source.bundleIdentifier, name: source.name) {
+                    counts[kind, default: 0] += 1
+                }
+            }
+        }
+        return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .map(\.key)
+    }
+
     // MARK: Recovery hub history (day-bucketed reads — RECOVERY-HUB-PLAN §3, §9 P1)
 
     /// How a day's samples collapse into its one honest value.

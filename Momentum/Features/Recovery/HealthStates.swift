@@ -153,19 +153,40 @@ extension View {
 struct WearableFootnote: View {
     /// True once sleep or any vital is actually arriving through Apple Health.
     var receivingData: Bool = false
+    /// The devices actually feeding those signals, most-contributing first. Named when known
+    /// ("your Oura ring and Apple Watch"), generic when not — an unrecognized source must never
+    /// degrade to a wrong brand, only to the wording this line always had.
+    var sources: [WearableKind] = []
 
     private var text: String {
-        receivingData
-            ? "Sleep and vitals arrive through Apple Health from your connected wearable. Readiness also reads your training load and daily check-ins."
-            : "Sleep and vitals need a wearable — Apple Watch, Garmin, Oura, or Whoop — connected to Apple Health. Without one, readiness still works from your training load and daily check-ins."
+        guard receivingData else {
+            return "Sleep and vitals need a wearable — Apple Watch, Garmin, Oura, or Whoop — connected to Apple Health. Without one, readiness still works from your training load and daily check-ins."
+        }
+        let from = WearableKind.phrase(for: sources) ?? "your connected wearable"
+        return "Sleep and vitals arrive through Apple Health from \(from). Readiness also reads your training load and daily check-ins."
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Space.sm) {
-            Text(text)
-                .font(.rounded(Theme.FontSize.label, weight: .medium))
-                .foregroundStyle(Theme.inkTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                // The device row, above the words: one small form-factor glyph per named source.
+                // Subtle by design — inkTertiary like the text, never brand marks, and absent
+                // entirely until a recognized device is actually contributing.
+                if receivingData && !sources.isEmpty {
+                    HStack(spacing: Theme.Space.xs) {
+                        ForEach(sources) { kind in
+                            Image(systemName: kind.icon)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                    }
+                    .foregroundStyle(Theme.inkTertiary)
+                    .accessibilityHidden(true)   // the sentence already names the devices
+                }
+                Text(text)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Spacer(minLength: Theme.Space.sm)
             MetricInfoButton(explainer: MetricExplainers.whereDataComesFrom)
         }
