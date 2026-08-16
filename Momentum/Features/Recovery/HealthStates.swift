@@ -173,9 +173,14 @@ struct WearableFootnote: View {
                 // Subtle by design — inkTertiary like the text, never brand marks, and absent
                 // entirely until a recognized device is actually contributing.
                 if receivingData && !sources.isEmpty {
+                    // One glyph per FORM FACTOR, deduped in order — a Garmin + COROS athlete gets
+                    // one watch, not two identical watches; the sentence still names both brands.
+                    let glyphs = sources.map(\.icon).reduce(into: [String]()) {
+                        if !$0.contains($1) { $0.append($1) }
+                    }
                     HStack(spacing: Theme.Space.xs) {
-                        ForEach(sources) { kind in
-                            Image(systemName: kind.icon)
+                        ForEach(glyphs, id: \.self) { glyph in
+                            Image(systemName: glyph)
                                 .font(.system(size: 11, weight: .medium))
                         }
                     }
