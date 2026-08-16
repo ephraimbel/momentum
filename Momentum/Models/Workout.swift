@@ -12,6 +12,10 @@ final class Workout {
     var elapsedS: Double = 0
     var calories: Double?
     var perceivedEffort: Int?       // 1–10 RPE, optional one-tap
+    /// How the session compared to its prescription — one tap on the save screen, only offered when
+    /// the workout credited a planned session ("vs. plan: harder / about right / easier"). The most
+    /// direct evidence the subjective adaptation loop gets. Additive + optional (schema rule).
+    var planFitRaw: String?
     var title: String = ""          // user-given activity name (Strava-style)
     var note: String = ""           // user description
     var privacy: WorkoutPrivacy = WorkoutPrivacy.private
@@ -56,6 +60,24 @@ final class Workout {
     var heroPhotoData: Data? {
         if let first = photos.min(by: { $0.order < $1.order }) { return first.data }
         return photoData
+    }
+
+    var planFit: PlanFit? {
+        get { planFitRaw.flatMap(PlanFit.init(rawValue:)) }
+        set { planFitRaw = newValue?.rawValue }
+    }
+}
+
+/// The save screen's one-tap "vs. plan" answer — how the session compared to its prescription.
+enum PlanFit: String, Codable, Sendable, CaseIterable {
+    case harder, expected, easier
+
+    var label: String {
+        switch self {
+        case .harder: "Harder"
+        case .expected: "About right"
+        case .easier: "Easier"
+        }
     }
 }
 

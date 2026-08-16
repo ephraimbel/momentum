@@ -20,6 +20,21 @@ struct EffortAdaptationTests {
         #expect(EffortAdaptation.judge(rpe: 6, runType: nil) == .none)
     }
 
+    @Test func planFitAnswerIsFirstClassEvidence() {
+        // "Harder" IS the mismatch, stated outright — adapts even when RPE alone wouldn't.
+        #expect(EffortAdaptation.judge(rpe: 6, runType: .easy, planFit: .harder) == .ease)
+        #expect(EffortAdaptation.judge(rpe: nil, runType: .tempo, planFit: .harder) == .ease)
+        // "Harder" on a low-effort day that also rated brutal escalates to a recovery day.
+        #expect(EffortAdaptation.judge(rpe: 8, runType: .easy, planFit: .harder) == .recover)
+        // "Easier" on a hard-prescribed day is headroom; on an easy day it means nothing.
+        #expect(EffortAdaptation.judge(rpe: 5, runType: .intervals, planFit: .easier) == .headroom)
+        #expect(EffortAdaptation.judge(rpe: 3, runType: .easy, planFit: .easier) == .none)
+        // "About right" means the prescription fit — never adapt off the RPE arithmetic then.
+        #expect(EffortAdaptation.judge(rpe: 8, runType: .easy, planFit: .expected) == .none)
+        // No answer → the original RPE inference stands.
+        #expect(EffortAdaptation.judge(rpe: 8, runType: .easy, planFit: nil) == .recover)
+    }
+
     @Test func onlyEaseAndRecoverNarrate() {
         #expect(EffortAdaptation.note(for: .ease) != nil)
         #expect(EffortAdaptation.note(for: .recover) != nil)

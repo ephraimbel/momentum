@@ -23,9 +23,29 @@ enum EffortAdaptation {
         }
     }
 
-    /// Judge a finished run's effort. Needs both an RPE and a prescribed run type.
-    static func judge(rpe: Int?, runType: RunType?) -> Outcome {
-        guard let rpe, rpe > 0, let type = runType else { return .none }
+    /// Judge a finished run's effort against its prescription. Two independent signals, most
+    /// direct first:
+    ///  • `planFit` — the save screen's explicit "vs. plan" answer. "Harder" IS the mismatch,
+    ///    stated outright, so it adapts without needing the RPE arithmetic to agree (an easy day
+    ///    that felt brutal — harder + RPE ≥8 — still escalates to a recovery day). "Easier" on a
+    ///    hard-prescribed day reads as headroom. "About right" is a healthy plan — never adapt off
+    ///    the RPE alone when the athlete just said the prescription fit.
+    ///  • RPE vs the type's expected effort — the original inference, for athletes who rate the
+    ///    effort but skip the question.
+    static func judge(rpe: Int?, runType: RunType?, planFit: PlanFit? = nil) -> Outcome {
+        guard let type = runType else { return .none }
+        switch planFit {
+        case .harder:
+            if !type.isQuality, (rpe ?? 0) >= 8 { return .recover }
+            return .ease
+        case .easier:
+            return type.isQuality ? .headroom : .none
+        case .expected:
+            return .none
+        case nil:
+            break
+        }
+        guard let rpe, rpe > 0 else { return .none }
         let expected = expectedRPE(type)
         // A low-effort day (easy / recovery / long) that felt brutal is the clearest fatigue signal.
         if !type.isQuality, rpe >= 8 { return .recover }

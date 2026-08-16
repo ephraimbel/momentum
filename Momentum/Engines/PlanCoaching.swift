@@ -583,7 +583,9 @@ enum PlanCoaching {
     static func adaptToEffort(_ workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                               in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
         guard let plan, !plan.isSelfCoached, workout.type.discipline == .running else { return nil }
-        let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort, runType: workout.plannedSession?.runType)
+        let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort,
+                                             runType: workout.plannedSession?.runType,
+                                             planFit: workout.planFit)
         let rec: ProgressInsights.Recommendation
         switch outcome {
         case .ease: rec = .ease
@@ -634,6 +636,45 @@ enum PlanCoaching {
                         headline: "You've earned more",
                         detail: "Your load's been light and well-absorbed — bump next week about 10%?",
                         sessionsAffected: future.count)
+    }
+
+    /// "Swamped this week" (the check-in's life-happens door): soften the next 7 days — targets to
+    /// ~85%, hard quality work to easy — without touching anything beyond the week. User-initiated,
+    /// so it does NOT check the weekly gate (the athlete's word bypasses the throttle, exactly like
+    /// an injury report) — but it still ARMS it, so an auto-ease can't stack on top. Race day and
+    /// injury-converted sessions stay untouched, self-coached plans are never rewritten, and the
+    /// receipt (one `.ease` coaching event) carries delivery. Returns sessions changed.
+    @discardableResult
+    static func easeWeek(_ plan: TrainingPlan?, from today: Date, in context: ModelContext,
+                         calendar: Calendar = .current) -> Int {
+        guard let plan, !plan.isSelfCoached else { return 0 }
+        let todayStart = calendar.startOfDay(for: today)
+        guard let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) else { return 0 }
+        let unit = displayUnit(in: context)
+        let week = plan.sessions.filter {
+            isOpen($0) && $0.runType != .race
+            && !($0.rationale?.hasPrefix(InjuryResponse.marker) ?? false)
+            && calendar.startOfDay(for: $0.date) >= todayStart && $0.date < horizon
+        }
+        guard !week.isEmpty else { return 0 }
+        for s in week {
+            if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.85, unit: unit) }
+            if let dur = s.targetDurationS { s.targetDurationS = (dur * 0.85).rounded() }
+            if let rt = s.runType, rt.isQuality {
+                s.runType = .easy
+                s.intervals = nil
+                s.targetPaceSPerKm = RunRounding.snapPace(
+                    sPerKm: PlanEngine.pace(.easy, p5k: plan.p5kSPerKm), unit: unit, type: .easy)
+            }
+            for pe in s.strengthTargets { pe.targetSets = max(2, pe.targetSets - 1) }
+            s.rationale = "Eased for a busy week — showing up small still counts."
+        }
+        plan.lastAdaptedAt = today
+        CoachingEvent.record(kind: .ease, headline: "Busy week — load eased",
+                             detail: "This week's sessions came down about 15% and hard work softened to easy. Next week picks back up as planned.",
+                             on: today, in: context, calendar: calendar)
+        try? context.save()
+        return week.count
     }
 
     /// Pause the plan (travel, illness, life): shift every future, still-planned session forward by

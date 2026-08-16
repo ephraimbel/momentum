@@ -415,6 +415,57 @@ struct PlanCoachingTests {
         #expect(events.first?.kind == .ease)
     }
 
+    // MARK: "Swamped this week" — the check-in's user-initiated week ease
+
+    @Test func easeWeekSoftensThisWeekOnlyAndBypassesTheGate() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let near = futureRun(in: ctx, distanceM: 6000)                       // in 2 days
+        let far = futureRun(in: ctx, distanceM: 8000)
+        far.date = Calendar.current.date(byAdding: .day, value: 10, to: Date())!
+        let plan = makePlan(in: ctx, sessions: [near, far])
+        // The athlete's word bypasses the weekly throttle — an auto-ease yesterday doesn't block it.
+        plan.lastAdaptedAt = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+
+        let changed = PlanCoaching.easeWeek(plan, from: Date(), in: ctx)
+
+        #expect(changed == 1)                                                // the week, not the plan
+        #expect(near.targetDistanceM! < 6000)
+        #expect(far.targetDistanceM == 8000)                                 // beyond the week: untouched
+        #expect(Calendar.current.isDateInToday(plan.lastAdaptedAt!))         // still ARMS the gate
+
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.contains { $0.kind == .ease && $0.headline.contains("Busy week") })
+    }
+
+    @Test func easeWeekSoftensQualityButNeverTheRace() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let tempo = futureRun(in: ctx, distanceM: 8000)
+        tempo.runType = .tempo
+        let race = futureRun(in: ctx, distanceM: 10000)
+        race.date = Calendar.current.date(byAdding: .day, value: 3, to: Date())!
+        race.runType = .race
+        let plan = makePlan(in: ctx, sessions: [tempo, race])
+
+        _ = PlanCoaching.easeWeek(plan, from: Date(), in: ctx)
+
+        #expect(tempo.runType == .easy)                                      // hard work softens
+        #expect(race.runType == .race)                                       // race day is untouchable
+        #expect(race.targetDistanceM == 10000)
+    }
+
+    @Test func easeWeekNeverRewritesASelfCoachedPlan() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let run = futureRun(in: ctx, distanceM: 6000)
+        let plan = makePlan(in: ctx, sessions: [run])
+        plan.isSelfCoached = true
+
+        #expect(PlanCoaching.easeWeek(plan, from: Date(), in: ctx) == 0)
+        #expect(run.targetDistanceM == 6000)
+    }
+
     // MARK: Opt-in load increase (P5 — AI proposes / engine computes / user confirms)
 
     /// Solid chronic load with a deliberately light last week ⇒ ACWR < 0.8 ⇒ "increase".

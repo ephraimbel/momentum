@@ -89,6 +89,7 @@ struct TodayView: View {
     @State private var logActivityDraft: String?
     @State private var showInjuryReport = false
     @State private var showCheckin = false
+    @State private var showLifeHappens = false
     /// The morning readout for the deck's utility line — one honest 0–100, computed off-render.
     @State private var morningReadiness: MorningReadiness?
     /// Throttles the appear-time orchestration — `onAppear` re-fires on every tab switch.
@@ -412,11 +413,15 @@ struct TodayView: View {
         .sheet(item: $manualPrefill) { LogWorkoutView(prefill: $0) }
         .sheet(isPresented: $showInjuryReport) { InjuryReportSheet(profile: profiles.first) }
         .sheet(isPresented: $showCheckin) {
-            CheckinSheet(profile: profiles.first) {
+            CheckinSheet(profile: profiles.first, onPain: {
                 // "Something hurts" routes straight into the injury loop.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showInjuryReport = true }
-            }
+            }, onLife: {
+                // "Life's in the way" routes into the pause/ease sheet.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showLifeHappens = true }
+            })
         }
+        .sheet(isPresented: $showLifeHappens) { LifeHappensSheet(profile: profiles.first) }
         .confirmationDialog("Feeling better?", isPresented: $confirmResume, titleVisibility: .visible) {
             Button("Yes — ease me back in") {
                 if let profile = profiles.first {

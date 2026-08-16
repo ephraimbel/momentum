@@ -8,6 +8,9 @@ struct CheckinSheet: View {
     let profile: UserProfile?
     /// Called when the athlete says something hurts — the caller opens the injury report.
     var onPain: () -> Void
+    /// Called when life's in the way (sick / travel / swamped) — the caller opens the
+    /// life-happens sheet. Nil (and the door hidden) when there's no plan to adjust.
+    var onLife: (() -> Void)?
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -65,6 +68,33 @@ struct CheckinSheet: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+
+                    // Life in the way is a door too — sick, travel, or a swamped week reshapes
+                    // the plan honestly instead of decaying into missed sessions. Quiet
+                    // monochrome (purple stays the injury door's).
+                    if let onLife, profile?.plan != nil {
+                        Button {
+                            Haptics.light()
+                            save()
+                            dismiss()
+                            onLife()
+                        } label: {
+                            HStack(spacing: Theme.Space.sm) {
+                                Image(systemName: "calendar.badge.exclamationmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                                Text("Life's in the way").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                            }
+                            .padding(Theme.Space.md)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+                                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Life's in the way — pause or ease your plan")
+                    }
                 }
                 .padding(Theme.Space.lg)
             }
@@ -83,10 +113,10 @@ struct CheckinSheet: View {
                 .background(Theme.background)
             }
         }
-        // Tall enough that ENERGY, LEGS, "Something hurts", AND Done are all visible without
-        // scrolling — at .medium the pain button hid below the fold, and a door you can't see is a
-        // door that doesn't exist.
-        .presentationDetents([.height(560), .large])
+        // Tall enough that ENERGY, LEGS, "Something hurts", "Life's in the way", AND Done are all
+        // visible without scrolling — at .medium the pain button hid below the fold, and a door
+        // you can't see is a door that doesn't exist. (Raised 560 → 630 when the life door landed.)
+        .presentationDetents([.height(630), .large])
     }
 
     private func sectionLabel(_ text: String) -> some View {

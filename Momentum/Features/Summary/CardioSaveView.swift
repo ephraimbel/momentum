@@ -36,6 +36,7 @@ struct CardioSaveView: View {
     @State private var desc = ""
     @State private var sportType: WorkoutType = .run
     @State private var effort: Int?
+    @State private var planFit: PlanFit?
     /// Who sees this activity on the community wall — the share moment (docs/SOCIAL-LAYER.md).
     /// Seeded from the athlete's default; only rendered/committed when `CommunityAccess.enabled`,
     /// so the solo app keeps every workout private exactly as before.
@@ -167,6 +168,7 @@ struct CardioSaveView: View {
                 desc = workout.note
                 sportType = workout.type
                 effort = workout.perceivedEffort
+                planFit = workout.planFit
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
                 // Stored distance, NOT the samples relationship — filtering `samples` faulted
@@ -246,6 +248,10 @@ struct CardioSaveView: View {
             }
             Divider().overlay(Theme.hairline)
             effortRow
+            if plannedRunType != nil {
+                Divider().overlay(Theme.hairline)
+                planFitRow
+            }
             if CommunityAccess.enabled {
                 Divider().overlay(Theme.hairline)
                 ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
@@ -345,6 +351,44 @@ struct CardioSaveView: View {
         }
     }
 
+    /// The prescribed run type of the credited session, if this workout has one — the gate for
+    /// asking "vs. plan" at all (a free run has no prescription to compare against).
+    private var plannedRunType: RunType? {
+        reader?.workout?.plannedSession?.runType
+    }
+
+    /// One tap: how the session compared to its prescription. The most direct evidence the
+    /// subjective loop gets — "Harder" can ease the block on its own. Optional; tap again to clear.
+    private var planFitRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("Vs. plan").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+            HStack(spacing: Theme.Space.sm) {
+                ForEach(PlanFit.allCases, id: \.self) { fit in
+                    let on = planFit == fit
+                    Button {
+                        Haptics.selection()
+                        withAnimation(.easeOut(duration: 0.15)) { planFit = (on ? nil : fit) }
+                    } label: {
+                        Text(fit.label)
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .frame(maxWidth: .infinity).frame(height: 36)
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
+                                    .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous).stroke(Theme.hairline) }
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(fit == .expected ? "About right, as planned" : "\(fit.label) than planned")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+        }
+    }
+
     private var effortLabel: String {
         guard let e = effort else { return "Tap to rate" }
         switch e {
@@ -368,6 +412,7 @@ struct CardioSaveView: View {
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.type = sportType
             $0.perceivedEffort = effort
+            $0.planFitRaw = planFit?.rawValue
             $0.gps?.mapStyleRaw = mapStyle.rawValue
             // The chosen audience — community builds only; the solo app never touches privacy,
             // so a previously-shared workout can't be silently downgraded by a flagless build.
