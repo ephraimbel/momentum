@@ -83,6 +83,26 @@ struct CoachPushBudgetTests {
     }
 }
 
+/// The readiness refresh fires at the next 6:30 — same-day when it's still ahead, else tomorrow.
+@MainActor
+struct MorningReadinessRefreshTests {
+
+    @Test func nextMorningIsTheComingSixThirty() {
+        let cal = Calendar.current
+        let fiveAM = cal.date(bySettingHour: 5, minute: 0, second: 0, of: Date())!
+        let next = MorningReadinessRefresh.nextMorning(after: fiveAM, calendar: cal)
+        #expect(cal.component(.hour, from: next) == 6)
+        #expect(cal.component(.minute, from: next) == 30)
+        #expect(cal.isDate(next, inSameDayAs: fiveAM))       // 6:30 still ahead → today
+
+        let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        let tomorrow = MorningReadinessRefresh.nextMorning(after: noon, calendar: cal)
+        #expect(tomorrow > noon)
+        #expect(!cal.isDate(tomorrow, inSameDayAs: noon))    // this morning's has passed → tomorrow
+        #expect(cal.component(.hour, from: tomorrow) == 6)
+    }
+}
+
 /// The prefs storage contract: absent keys read as ON (opt-out per type), and the custom reminder
 /// time round-trips only when the mode is actually "custom" with sane values.
 struct NotificationPrefsTests {

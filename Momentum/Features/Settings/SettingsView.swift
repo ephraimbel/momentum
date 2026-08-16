@@ -45,6 +45,7 @@ struct SettingsView: View {
     @State private var notifyCoaching = NotificationPrefs.coachingEnabled()
     @State private var notifyStreak = NotificationPrefs.streakEnabled()
     @State private var notifyWeekly = NotificationPrefs.weeklyEnabled()
+    @State private var notifyMorning = NotificationPrefs.morningReadinessEnabled()
     @State private var reminderCustom = NotificationPrefs.customReminderTime() != nil
     @State private var reminderDate = Date()   // seeded from the resolved time in .onAppear
 
@@ -338,6 +339,8 @@ struct SettingsView: View {
                 reminderTimeRow
             }
             inset
+            prefToggle("Morning readiness", icon: "sunrise", isOn: $notifyMorning)
+            inset
             prefToggle("Coaching updates", icon: "figure.run.motion", isOn: $notifyCoaching)
             inset
             prefToggle("Streak check-ins", icon: "flame", isOn: $notifyStreak)
@@ -351,6 +354,11 @@ struct SettingsView: View {
         }
         .onChange(of: notifyCoaching) { _, on in
             NotificationPrefs.set(NotificationPrefs.coachingKey, to: on)
+        }
+        .onChange(of: notifyMorning) { _, on in
+            NotificationPrefs.set(NotificationPrefs.morningKey, to: on)
+            if !on { UNUserNotificationCenter.current()
+                .removeDeliveredNotifications(withIdentifiers: [MorningReadinessRefresh.notificationID]) }
         }
         .onChange(of: notifyStreak) { _, on in
             NotificationPrefs.set(NotificationPrefs.streakKey, to: on)

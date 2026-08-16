@@ -84,6 +84,10 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
           - location
+          - fetch                               # morning readiness BGAppRefresh (MorningReadinessRefresh)
+        # BGTaskScheduler ids the app may submit — must match MorningReadinessRefresh.taskID.
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.ephraimbel.momentum.app.readiness
         NSLocationWhenInUseUsageDescription: "momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed."
         NSMotionUsageDescription: "momentum uses motion data to measure cadence and steps."
         NSBluetoothAlwaysUsageDescription: "momentum connects to a Bluetooth heart-rate monitor to show your live heart rate and zones during a run."

@@ -88,6 +88,9 @@ struct MomentumApp: App {
         // Wrist sync (Watch Slice 4): the health handle must be wired before any watch message can
         // arrive, but activation itself rides the deferred block below.
         PhoneWatchSync.shared.health = services.health
+        // BGTask handlers must register before launch completes — scheduling itself rides the
+        // deferred block (`runDeferredLaunchWork`).
+        MorningReadinessRefresh.register(health: services.health)
     }
 
     /// Everything the first frame does NOT need, run once shortly after it is on screen. Each of
@@ -120,6 +123,8 @@ struct MomentumApp: App {
         // Warm the anatomy geometry off the main thread: `BodyAnatomy`'s statics parse ~131 KB of
         // SVG path data on first touch, which used to land inside Progress's first frame.
         Task.detached(priority: .utility) { BodyAnatomy.warm() }
+        // Arm tomorrow's ~6:30 readiness refresh (re-armed on every launch and every run).
+        MorningReadinessRefresh.schedule()
     }
 
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
