@@ -160,6 +160,9 @@ enum PlanCoaching {
         var movedCount = 0
         // The first landed move, kept for the coaching headline ("Tuesday's run moved to Thursday").
         var firstMove: (from: String, to: String, word: String)?
+        // Slips are counted by ORIGINAL weekday here, at the only moment it still exists — the
+        // Athlete Model's avoid-day evidence (a recompute after the move sees only the new date).
+        let athlete = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.athlete
 
         for session in plan.sessions
             where session.status == .planned
@@ -167,6 +170,10 @@ enum PlanCoaching {
             && session.runType != .race        // a missed race never auto-reschedules — that's the athlete's call
             && calendar.startOfDay(for: session.date) < todayStart {
 
+            let originalWeekday = calendar.component(.weekday, from: session.date) - 1
+            if let athlete, athlete.missedWeekdayHistogram.indices.contains(originalWeekday) {
+                athlete.missedWeekdayHistogram[originalWeekday] += 1
+            }
             var moved = false
             for delta in 0..<7 {
                 guard let cand = calendar.date(byAdding: .day, value: delta, to: todayStart) else { continue }

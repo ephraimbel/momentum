@@ -216,6 +216,15 @@ enum PlanService {
         // Map preferred weekdays (1 = Sun … 7 = Sat) to in-week offsets from the plan's start day.
         let anchorWeekday = calendar.component(.weekday, from: calendar.startOfDay(for: startDate))
         let offsets = p.preferredDays.map { ((($0 - anchorWeekday) % 7) + 7) % 7 }
+        // No explicit day choice → let the Athlete Model's slip evidence steer the auto-spread
+        // away from the weekdays this athlete demonstrably can't make (avoidWeekdays returns
+        // 0-based weekday indices; +1 back to 1…7 before the same offset mapping).
+        let avoidOffsets: [Int] = p.preferredDays.isEmpty
+            ? AthleteModelEngine.avoidWeekdays(
+                missed: p.athlete?.missedWeekdayHistogram ?? [],
+                completed: p.athlete?.weekdayHistogram ?? [])
+                .map { (((($0 + 1) - anchorWeekday) % 7) + 7) % 7 }
+            : []
         return PlanInputs(
             disciplines: disciplines.isEmpty ? [.running] : disciplines,
             goal: p.goal, daysPerWeek: p.daysPerWeek, equipment: p.equipment,
@@ -227,6 +236,7 @@ enum PlanService {
             hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets,
+            avoidDayOffsets: avoidOffsets,
             intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
             injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
             age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) },

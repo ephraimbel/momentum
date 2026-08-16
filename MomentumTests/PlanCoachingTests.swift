@@ -370,6 +370,29 @@ struct PlanCoachingTests {
         #expect(events.first?.headline.contains("run moved to") == true)
     }
 
+    @Test func slipsCountAgainstTheirOriginalWeekday() throws {
+        // The Athlete Model's avoid-day evidence: the slip is bucketed by the weekday the session
+        // was PLANNED on, captured at the only moment it still exists (the move erases the date).
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: Date()))!
+        let session = PlannedSession()
+        session.date = yesterday
+        session.discipline = .running
+        session.status = .planned
+        let plan = makePlan(in: ctx, sessions: [session])
+        let athlete = AthleteModel()
+        ctx.insert(athlete)
+        (try? ctx.fetch(FetchDescriptor<UserProfile>()))?.first?.athlete = athlete
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+
+        let expected = cal.component(.weekday, from: yesterday) - 1
+        #expect(athlete.missedWeekdayHistogram[expected] == 1)
+        #expect(athlete.missedWeekdayHistogram.reduce(0, +) == 1)
+    }
+
     @Test func multipleMovesRecordOneSummaryEventNotRebuild() throws {
         // Two misses: below the rebuild-week threshold (3), so the plan reflows untouched and the
         // receipt is the count summary, not per-session noise and not an `.ease`.

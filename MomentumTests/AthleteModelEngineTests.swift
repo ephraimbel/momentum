@@ -135,6 +135,21 @@ struct AthleteModelEngineTests {
         #expect(AthleteModelEngine.confidence(.rhythm, count: 8) == .confident)
     }
 
+    @Test func avoidWeekdaysNeedRealEvidence() {
+        var missed = Array(repeating: 0, count: 7)
+        var completed = Array(repeating: 0, count: 7)
+        // Tuesday (index 2): 4 slips vs 1 completion → 80% slip rate on ≥3 slips → avoid.
+        missed[2] = 4; completed[2] = 1
+        // Thursday (index 4): 2 slips — under the ≥3 evidence bar, however bad the ratio.
+        missed[4] = 2; completed[4] = 0
+        // Saturday (index 6): 3 slips vs 5 completions → 37% — a day they usually make.
+        missed[6] = 3; completed[6] = 5
+        #expect(AthleteModelEngine.avoidWeekdays(missed: missed, completed: completed) == [2])
+        // Malformed histograms never avoid anything.
+        #expect(AthleteModelEngine.avoidWeekdays(missed: [], completed: completed).isEmpty)
+        #expect(AthleteModelEngine.avoidWeekdays(missed: missed, completed: Array(repeating: 0, count: 3)).isEmpty)
+    }
+
     @Test func numericHelpers() {
         #expect(AthleteModelEngine.median([3, 1, 2]) == 2)
         #expect(AthleteModelEngine.median([4, 1, 2, 3]) == 2.5)

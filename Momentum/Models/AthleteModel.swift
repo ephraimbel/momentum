@@ -26,6 +26,12 @@ final class AthleteModel {
     // Adherence
     var planAdherence28d: Double = 0           // completed / (completed + missed), trailing 28d
     var movedSessionRate28d: Double = 0
+    /// Slips by ORIGINAL planned weekday (index = weekday−1, Sun…Sat) — incremented by
+    /// `PlanCoaching.reconcileMissed` at the moment a session rolls, because the move erases the
+    /// original date and no later recompute can recover it. Cumulative (all-time), unlike the
+    /// recomputed facts above; feeds `AthleteModelEngine.avoidWeekdays` so the auto-spread stops
+    /// planning the days this athlete demonstrably can't make. Additive + defaulted (schema rule).
+    var missedWeekdayHistogram: [Int] = Array(repeating: 0, count: 7)
 
     // Discipline mix
     var disciplineShare: [String: Double] = [:]   // WorkoutType.raw -> fraction, trailing 56d

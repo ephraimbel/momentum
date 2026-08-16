@@ -22,6 +22,8 @@ enum CoachProactive {
                              in: context, calendar: calendar) { return }
         if seedEarnedBump(profile: profile, workouts: workouts, messages: messages,
                           today: today, in: context, calendar: calendar) { return }
+        if seedPlanTruth(profile: profile, messages: messages, today: today,
+                         in: context, calendar: calendar) { return }
         seedWeekRecap(profile: profile, workouts: workouts, messages: messages,
                       today: today, in: context, calendar: calendar)
     }
@@ -124,6 +126,59 @@ enum CoachProactive {
         AppNotification.post(kind: .coaching, title: proposal.headline,
                              body: "Your coach has a proposal waiting. It's your call.",
                              on: today, in: context, dedupeToken: "coach-proactive-bump")
+        return true
+    }
+
+    // MARK: - Plan truth (enterprise pass 2026-08-15 — the Athlete Model talks back to the plan)
+
+    /// When the Athlete Model's evidence says the plan's SHAPE doesn't fit the athlete's real life,
+    /// the coach says so — once, gently, with a real Apply-able proposal card (the same
+    /// propose → preview → Apply grammar as every other change; nothing auto-applies).
+    /// Two truths, strongest first:
+    ///  • adherence: landing under 60% of planned sessions over 28 days on a ≥4-day week is a fit
+    ///    problem, not a willpower problem — propose one fewer day (`.changeDays`);
+    ///  • session length: completed sessions habitually diverging ≥25% from the plan's assumed
+    ///    minutes (≥8 sessions of evidence) — propose right-sizing (`.changeSessionLength`).
+    /// Deduped to one plan-truth conversation per 28 days — reshaping is a considered ask.
+    @discardableResult
+    static func seedPlanTruth(profile: UserProfile, messages: [ChatMessage], today: Date,
+                              in context: ModelContext, calendar: Calendar) -> Bool {
+        guard let plan = profile.plan, !plan.isSelfCoached,
+              let athlete = profile.athlete else { return false }
+        let truthKinds: Set<CoachCardPayload.Kind> = [.changeDays, .changeSessionLength]
+        let existing = messages.filter { ($0.card?.kind).map(truthKinds.contains) ?? false }
+        guard !existing.contains(where: { $0.cardState == .proposed }),
+              !existing.contains(where: {
+                  (calendar.dateComponents([.day], from: calendar.startOfDay(for: $0.createdAt),
+                                           to: calendar.startOfDay(for: today)).day ?? .max) < 28
+              })
+        else { return false }
+
+        let sessions = athlete.trainingHourHistogram.reduce(0, +)
+        if athlete.planAdherence28d > 0, athlete.planAdherence28d < 0.6, profile.daysPerWeek >= 4 {
+            let fewer = profile.daysPerWeek - 1
+            let pct = Int((athlete.planAdherence28d * 100).rounded())
+            var card = CoachCardPayload(kind: .changeDays, label: "Drop to \(fewer) days")
+            card.daysPerWeek = fewer
+            context.insert(ChatMessage(role: .coach,
+                text: CoachResponder.deDash("You've landed about \(pct)% of your planned sessions this month. That's a fit problem, not a willpower problem: a \(fewer)-day week you hit beats a \(profile.daysPerWeek)-day week you don't. Want me to reshape it?"),
+                createdAt: today, card: card))
+        } else if sessions >= 8, athlete.preferredSessionMinutes > 0, profile.sessionMinutes > 0,
+                  abs(athlete.preferredSessionMinutes - Double(profile.sessionMinutes))
+                      / Double(profile.sessionMinutes) >= 0.25 {
+            let actual = min(120, max(20, Int(athlete.preferredSessionMinutes)))
+            var card = CoachCardPayload(kind: .changeSessionLength, label: "Right-size to \(actual) min")
+            card.sessionMinutes = actual
+            context.insert(ChatMessage(role: .coach,
+                text: CoachResponder.deDash("Your sessions actually run about \(actual) minutes; the plan assumes \(profile.sessionMinutes). Want me to build around your real \(actual)?"),
+                createdAt: today, card: card))
+        } else {
+            return false
+        }
+        try? context.save()
+        AppNotification.post(kind: .coaching, title: "Your plan could fit you better",
+                             body: "Your coach noticed a pattern. The reshape is your call.",
+                             on: today, in: context, dedupeToken: "coach-proactive-plan-truth")
         return true
     }
 

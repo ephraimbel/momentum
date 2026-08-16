@@ -211,7 +211,9 @@ enum PlanEngine {
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
                                    catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus))
                 : []
-            var scheduled = schedule(runs: runs, lifts: lifts, preferredDayOffsets: profile.preferredDayOffsets)
+            var scheduled = schedule(runs: runs, lifts: lifts,
+                                     preferredDayOffsets: profile.preferredDayOffsets,
+                                     avoidDayOffsets: profile.avoidDayOffsets)
             // Podium's rest-day shakeout: on training weeks (never deload/taper/lead-in), one of
             // the remaining rest days — the day after the long run when it's free — carries an
             // OPTIONAL 3 km jog. "Rest days will just be a slow mile or two" is the tier's promise;
@@ -871,15 +873,25 @@ enum PlanEngine {
     /// Lifts are spread first; hard runs take the remaining non-adjacent days, downgrading to easy
     /// only if forced. Also tags rationale.
     static func schedule(runs: [GeneratedSession], lifts: [GeneratedSession],
-                         preferredDayOffsets: [Int] = []) -> [GeneratedSession] {
+                         preferredDayOffsets: [Int] = [],
+                         avoidDayOffsets: [Int] = []) -> [GeneratedSession] {
         var lifts = lifts, runs = runs
         let total = lifts.count + runs.count
         guard total > 0 else { return [] }
 
         // Use the athlete's preferred days as the candidate pool when they gave enough of them;
-        // otherwise fall back to an even spread across the whole week.
+        // otherwise the auto-spread schedules around any LEARNED avoid-days (the Athlete Model's
+        // slip evidence) — falling back to the whole week when avoiding would leave too few days.
+        // An explicit preference always beats the inference (avoid-days are ignored beside it).
         let cleanedPref = Array(Set(preferredDayOffsets.filter { (0..<7).contains($0) })).sorted()
-        let pool = cleanedPref.count >= total ? cleanedPref : Array(0..<7)
+        let pool: [Int]
+        if cleanedPref.count >= total {
+            pool = cleanedPref
+        } else {
+            let avoid = Set(avoidDayOffsets)
+            let open = (0..<7).filter { !avoid.contains($0) }
+            pool = open.count >= total ? open : Array(0..<7)
+        }
 
         let liftDayList = pickSpread(from: pool, count: lifts.count)
         for i in lifts.indices { lifts[i].dayOffset = liftDayList[i] }
@@ -1036,6 +1048,10 @@ struct PlanInputs: Sendable {
     var muscleFocus: [MuscleGroup] = []
     /// Preferred in-week day offsets (0…6 from the plan's start day). Empty → even auto-spread.
     var preferredDayOffsets: [Int] = []
+    /// Day offsets the Athlete Model has learned this athlete can't make (derived from slips —
+    /// `AthleteModelEngine.avoidWeekdays`). Consulted ONLY when `preferredDayOffsets` is empty:
+    /// an explicit choice always beats an inference. The auto-spread schedules around these.
+    var avoidDayOffsets: [Int] = []
     /// How hard to push — sets the weekly volume ramp + down-week cadence. Defaults to balanced.
     var intensity: PlanIntensity = .balanced
     /// Past injury areas from onboarding — caps the ramp at balanced and steers quality selection

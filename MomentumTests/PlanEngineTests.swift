@@ -465,6 +465,37 @@ struct PlanEngineTests {
         #expect(offsets.isSubset(of: [1, 3, 5]))
     }
 
+    @Test func learnedAvoidDaysSteerTheAutoSpread() {
+        // No preferred days + the Athlete Model's slip evidence → the auto-spread schedules
+        // around the avoid-days.
+        var inp = inputs(disciplines: [.strength], goal: .buildMuscle, days: 3)
+        inp.avoidDayOffsets = [2, 4]
+        let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let offsets = Set(plan.weeks[0].sessions.map(\.dayOffset))
+        #expect(offsets.isDisjoint(with: [2, 4]))
+    }
+
+    @Test func explicitPreferredDaysBeatLearnedAvoidance() {
+        // The athlete's own choice always wins over the inference — even when they collide.
+        var inp = inputs(disciplines: [.strength], goal: .buildMuscle, days: 3)
+        inp.preferredDayOffsets = [1, 3, 5]
+        inp.avoidDayOffsets = [3]
+        let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        let offsets = Set(plan.weeks[0].sessions.map(\.dayOffset))
+        #expect(offsets.isSubset(of: [1, 3, 5]))
+    }
+
+    @Test func avoidingTooManyDaysFallsBackToTheWholeWeek() {
+        // 6 avoid-days can't host a 3-day week — the schedule must not starve.
+        var inp = inputs(disciplines: [.strength], goal: .buildMuscle, days: 3)
+        inp.avoidDayOffsets = [0, 1, 2, 3, 4, 5]
+        let plan = PlanEngine.generate(profile: inp, catalog: catalog,
+                                       startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(Set(plan.weeks[0].sessions.map(\.dayOffset)).count == 3)
+    }
+
     @Test func unifiedPlanFillsRequestedDays() {
         let plan = PlanEngine.generate(profile: inputs(disciplines: [.running, .strength], goal: .raceDistance, days: 6),
                                        catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))

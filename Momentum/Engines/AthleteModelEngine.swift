@@ -287,6 +287,19 @@ struct AthleteModelEngine {
 
     // MARK: - Pure numeric helpers
 
+    /// Weekdays this athlete demonstrably can't make (0=Sun…6=Sat) — the plan's auto-spread stops
+    /// scheduling them (consulted only when the athlete hasn't chosen preferred days; an explicit
+    /// choice always wins). Evidence bar: at least 3 slips on that weekday AND slips are ≥60% of
+    /// that day's outcomes (`missed / (missed + completed)`) — a day they usually make but slipped
+    /// twice on a bad month is not a pattern. Pure over the two histograms.
+    static func avoidWeekdays(missed: [Int], completed: [Int]) -> [Int] {
+        guard missed.count == 7, completed.count == 7 else { return [] }
+        return (0..<7).filter { d in
+            missed[d] >= 3
+            && Double(missed[d]) / Double(missed[d] + completed[d]) >= 0.6
+        }
+    }
+
     static func median(_ values: [Double]) -> Double {
         guard !values.isEmpty else { return 0 }
         let s = values.sorted()

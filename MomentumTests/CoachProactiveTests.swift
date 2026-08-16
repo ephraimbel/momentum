@@ -91,6 +91,69 @@ struct CoachProactiveTests {
         #expect(seeded.count == 1)
     }
 
+    // MARK: Plan truth (the Athlete Model talks back to the plan's shape)
+
+    private func athleteModel(for profile: UserProfile, in ctx: ModelContext) -> AthleteModel {
+        let m = AthleteModel()
+        ctx.insert(m)
+        profile.athlete = m
+        return m
+    }
+
+    @Test func lowAdherenceProposesOneFewerDay() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeProfile(in: ctx)
+        profile.daysPerWeek = 5
+        let m = athleteModel(for: profile, in: ctx)
+        m.planAdherence28d = 0.4
+
+        #expect(CoachProactive.seedPlanTruth(profile: profile, messages: [], today: today,
+                                             in: ctx, calendar: cal))
+        let msgs = (try? ctx.fetch(FetchDescriptor<ChatMessage>())) ?? []
+        #expect(msgs.count == 1)
+        #expect(msgs.first?.card?.kind == .changeDays)
+        #expect(msgs.first?.card?.daysPerWeek == 4)      // one fewer, never a cliff
+    }
+
+    @Test func divergentSessionLengthProposesRightSizing() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeProfile(in: ctx)
+        profile.sessionMinutes = 60
+        profile.daysPerWeek = 3                          // adherence branch stays out of the way
+        let m = athleteModel(for: profile, in: ctx)
+        m.planAdherence28d = 0.9
+        m.preferredSessionMinutes = 40                   // ≥25% under the plan's assumption
+        m.trainingHourHistogram[18] = 10                 // ≥8 sessions of evidence
+
+        #expect(CoachProactive.seedPlanTruth(profile: profile, messages: [], today: today,
+                                             in: ctx, calendar: cal))
+        let msgs = (try? ctx.fetch(FetchDescriptor<ChatMessage>())) ?? []
+        #expect(msgs.first?.card?.kind == .changeSessionLength)
+        #expect(msgs.first?.card?.sessionMinutes == 40)
+    }
+
+    @Test func planTruthNeverNagsAndNeedsEvidence() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeProfile(in: ctx)
+        profile.daysPerWeek = 5
+        let m = athleteModel(for: profile, in: ctx)
+
+        // No evidence at all → quiet.
+        #expect(!CoachProactive.seedPlanTruth(profile: profile, messages: [], today: today,
+                                              in: ctx, calendar: cal))
+        m.planAdherence28d = 0.4
+        #expect(CoachProactive.seedPlanTruth(profile: profile, messages: [], today: today,
+                                             in: ctx, calendar: cal))
+        // The unanswered proposal (and the 28-day window) blocks a repeat.
+        let msgs = (try? ctx.fetch(FetchDescriptor<ChatMessage>())) ?? []
+        #expect(!CoachProactive.seedPlanTruth(profile: profile, messages: msgs, today: today,
+                                              in: ctx, calendar: cal))
+        #expect(msgs.count == 1)
+    }
+
     @Test func seedsMondayRecapAfterARealWeek() throws {
         let container = try makeContainer()
         let ctx = container.mainContext
