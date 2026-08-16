@@ -2,19 +2,28 @@ import Foundation
 import SwiftData
 import UserNotifications
 
-/// Local notifications (PRD §24) — the "updates" half of the adaptive coach. Two kinds:
+/// Local notifications (PRD §24) — the "updates" half of the adaptive coach.
 ///  • **Next-workout reminders** on session days, one per upcoming planned session. The body is the
 ///    deterministic `PlanCoaching.brief`, so a reminder always carries the *current* prescription —
 ///    including paces the coach has recalibrated (P1). This is how plan changes reach the next workout.
-///  • **"Plan updated" nudges** — an immediate, encouraging note when the coach adapts (e.g. faster
-///    paces after a strong run). Shown even in the foreground.
+///  • Coaching decisions ("plan updated") now travel through `CoachingEvent.record` → `CoachSurface`
+///    (foreground toast, or one budgeted background push per day) — not through this service.
 /// No remote push; everything is local and reconstructable from the plan.
 @MainActor
 final class NotificationService: NSObject, NotificationServing, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     private let sessionPrefix = "momentum.session."
-    private let reminderHour = 7
-    private let reminderMinute = 30
+
+    /// Session reminders ride the athlete's own training rhythm (enterprise pass 2026-08-15):
+    /// a custom time from Settings wins, else `ReminderTiming` reads the Athlete Model's
+    /// hour-of-day histogram, else everyone's 7:30 default. Read fresh on every resync, so a
+    /// Settings change or a shifted habit takes effect at the very next reschedule.
+    private var reminderTime: (hour: Int, minute: Int) {
+        let histogram = (try? PersistenceController.shared.container.mainContext
+            .fetch(FetchDescriptor<UserProfile>()))?.first?.athlete?.trainingHourHistogram ?? []
+        return ReminderTiming.reminderTime(histogram: histogram,
+                                           custom: NotificationPrefs.customReminderTime())
+    }
 
     /// Siri meal receipts: the category carries the Undo action (see `SiriMealLogger.postReceipt`).
     /// nonisolated: referenced from the nonisolated delegate callback.
@@ -89,7 +98,12 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     func schedulePlannedReminders(_ plan: TrainingPlan?) {
         // Never prompts — scheduling while unauthorized is harmless (iOS won't deliver); the ASK
         // happens only at explicit consent moments (onboarding's reminders step, the bell).
-        let payloads = plan.map { Self.reminderPayloads(for: $0, hour: reminderHour, minute: reminderMinute) } ?? []
+        // Reminders off in Settings → schedule nothing AND clear what's pending (the stale-sweep
+        // below runs either way), so the toggle takes effect immediately.
+        let time = reminderTime
+        let payloads = NotificationPrefs.sessionRemindersEnabled()
+            ? plan.map { Self.reminderPayloads(for: $0, hour: time.hour, minute: time.minute) } ?? []
+            : []
         let prefix = sessionPrefix
         UNUserNotificationCenter.current().getPendingNotificationRequests { pending in
             let center = UNUserNotificationCenter.current()
@@ -104,18 +118,6 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
                 center.add(UNNotificationRequest(identifier: p.id, content: content, trigger: trigger))
             }
         }
-    }
-
-    /// An immediate, encouraging nudge when the coach adapts the plan. A short delay lets it land
-    /// just after the post-workout celebration rather than on top of it.
-    func notifyPlanUpdated(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)
-        center.add(UNNotificationRequest(identifier: "momentum.update.\(UUID().uuidString)",
-                                         content: content, trigger: trigger))
     }
 
     // MARK: Rest-timer completion (PRD §24) — static so it schedules to the shared notification
@@ -169,6 +171,10 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     // MARK: Sunday check-in (PRD §24) — a weekly recap nudge; the Progress tab is the recap.
 
     func scheduleWeeklyCheckIn() {
+        guard NotificationPrefs.weeklyEnabled() else {
+            center.removePendingNotificationRequests(withIdentifiers: ["momentum.weekly"])
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = "Your week in review"
         content.body = "See how this week stacked up — and what's next."
@@ -184,7 +190,8 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
 
     func scheduleStreakNudge(streak: Int, isPlannedDayToday: Bool, hasWorkedOutToday: Bool) {
         center.removePendingNotificationRequests(withIdentifiers: ["momentum.streak"])
-        guard StreakNudge.shouldNudge(streak: streak, isPlannedDay: isPlannedDayToday, hasWorkedOutToday: hasWorkedOutToday)
+        guard NotificationPrefs.streakEnabled(),
+              StreakNudge.shouldNudge(streak: streak, isPlannedDay: isPlannedDayToday, hasWorkedOutToday: hasWorkedOutToday)
         else { return }
         let now = Date()
         var comps = Calendar.current.dateComponents([.year, .month, .day], from: now)

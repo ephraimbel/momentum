@@ -23,10 +23,6 @@ struct WorkoutRunner: ViewModifier {
     /// while the workout is still in hand, so the celebration can draw something true on its very
     /// first frame (the summary's own reader hasn't loaded by then).
     @State private var weekRing: WeekRing.Reading?
-    /// The one-line "Logged" receipt, shown as a transient toast on the destination screen once
-    /// the cover resolves — the quiet confirmation that the activity is in the book.
-    @State private var receipt: String?
-    @State private var receiptDismiss: Task<Void, Never>?
 
     private var plan: TrainingPlan? { profiles.first?.plan }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto }
@@ -43,6 +39,9 @@ struct WorkoutRunner: ViewModifier {
                 let saved = summary
                 summary = nil
                 afterCoverResolved(saved)
+                // Released AFTER the receipt is enqueued (front) — the save receipt leads any
+                // coaching line that queued up while the workout owned the screen.
+                ToastCenter.shared.release("workout")
             }) { launch in
                 ZStack {
                     if let presented = summary {
@@ -69,10 +68,10 @@ struct WorkoutRunner: ViewModifier {
                     onDismiss: { showRatingPrompt = false })
                 .presentationBackground(.clear)
             }
-            // The "Logged" receipt — a brief capsule at the top of the destination screen (Today
-            // or Plan), auto-dismissing; tap to dismiss early.
-            .overlay(alignment: .top) {
-                if let receipt { receiptToast(receipt) }
+            // While the live/save cover owns the screen, hold the app toast center — an adaptation
+            // toast recorded mid-save must wait for the destination screen, not play under the cover.
+            .onChange(of: launch != nil) { _, up in
+                if up { ToastCenter.shared.hold("workout") }
             }
             #if DEBUG
             // `--rating-prompt`: raise the soft-ask straight away for sim verification (the real
@@ -115,13 +114,9 @@ struct WorkoutRunner: ViewModifier {
     private func afterCoverResolved(_ saved: PresentedWorkout?) {
         guard let saved else { return }   // live-screen discard: nothing reached the save flow
         if let line = Self.receiptLine(for: saved.id, container: context.container, unit: distanceUnit) {
-            withAnimation(.easeOut(duration: 0.3)) { receipt = line }
-            receiptDismiss?.cancel()
-            receiptDismiss = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(3.2))
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeIn(duration: 0.3)) { receipt = nil }
-            }
+            // Through the shared center (front of the queue): the receipt leads, and any coaching
+            // toast the adaptive pass queued mid-save follows it in the same capsule voice.
+            ToastCenter.shared.show(icon: "checkmark.circle.fill", line: line, front: true)
         }
         guard AppReview.shouldRequestReview() else { return }
         Task { @MainActor in
@@ -154,35 +149,6 @@ struct WorkoutRunner: ViewModifier {
         if w.type.isStrengthStyle { return "\(name) logged" }
         let minutes = max(1, Int((w.durationS / 60).rounded()))
         return "\(name) logged · \(minutes) min"
-    }
-
-    /// The receipt capsule — the app's toast grammar (surface fill, hairline stroke), with the
-    /// checkmark carrying the "it's saved" claim.
-    private func receiptToast(_ line: String) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            Text(line)
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.85)
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, 10)
-        .background(Capsule().fill(Theme.surface))
-        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.top, Theme.Space.sm)
-        .transition(.move(edge: .top).combined(with: .opacity))
-        .onTapGesture {
-            receiptDismiss?.cancel()
-            withAnimation(.easeIn(duration: 0.2)) { receipt = nil }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(line)
-        .accessibilityAddTraits(.isStaticText)
     }
 
     @ViewBuilder
@@ -286,23 +252,15 @@ enum WorkoutCompletion {
         // Protective adaptation first (ACWR-driven, ≤1×/week, never auto-increases load) —
         // then pace recalibration only when the plan was NOT just eased. The old order could
         // announce "paces got faster" and ease those same sessions in one save.
+        // Each path records its own CoachingEvent, which now carries delivery (toast or budgeted
+        // push via CoachSurface) — no separate notify call, so a decision can never announce twice.
         let recent = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-        if let rec = PlanCoaching.autoAdapt(plan, workouts: recent, in: context) {
-            services.notifications.notifyPlanUpdated(
-                title: rec == .rest ? "Recovery banked" : "Eased your upcoming sessions",
-                body: rec == .rest
-                    ? "Your load's been climbing. I pulled the next sessions back so it lands. No streak lost."
-                    : "Your load's been climbing, so I eased the next sessions about 15%. Still on track.")
-        } else if workout.type.discipline == .running,
-                  let rec = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context),
-                  rec.sessionsUpdated > 0 {
-            let easy = PlanEngine.pace(.easy, p5k: rec.newP5kSPerKm)
-            services.notifications.notifyPlanUpdated(
-                title: "Your paces just got faster",
-                body: "That run moved your numbers, so I updated the plan. Easy runs are now \(Formatters.pace(secPerKm: easy, unit: unit)).")
-        } else if workout.type.isStrengthStyle,
-                  let note = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context) {
-            services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
+        if PlanCoaching.autoAdapt(plan, workouts: recent, in: context) != nil {
+            // eased or rested — recorded inside autoAdapt
+        } else if workout.type.discipline == .running {
+            _ = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context)
+        } else if workout.type.isStrengthStyle {
+            _ = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context)
         }
         // Let the Athlete Model learn from this session (local, never blocks the summary).
         if let profile {

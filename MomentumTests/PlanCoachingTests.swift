@@ -362,6 +362,57 @@ struct PlanCoachingTests {
         #expect(session.status == .moved)                         // never a red miss
         #expect(session.rationale != nil)
         #expect(cal.startOfDay(for: session.date) >= cal.startOfDay(for: Date()))
+
+        // The reflow keeps a receipt: one `.moved` coaching event, named after the single move.
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .moved)
+        #expect(events.first?.headline.contains("run moved to") == true)
+    }
+
+    @Test func multipleMovesRecordOneSummaryEventNotRebuild() throws {
+        // Two misses: below the rebuild-week threshold (3), so the plan reflows untouched and the
+        // receipt is the count summary, not per-session noise and not an `.ease`.
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let sessions = [-2, -1].map { offset -> PlannedSession in
+            let s = PlannedSession()
+            s.date = cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: Date()))!
+            s.discipline = .running
+            s.status = .planned
+            return s
+        }
+        let plan = makePlan(in: ctx, sessions: sessions)
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .moved)
+        #expect(events.first?.headline == "2 sessions moved forward")
+    }
+
+    @Test func rebuildWeekRecordsEaseNotMoved() throws {
+        // A real absence (≥3 misses) triggers the rebuild week — that story is the `.ease` event
+        // alone; stacking a `.moved` receipt on top would announce the same reflow twice.
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let sessions = [-4, -3, -2].map { offset -> PlannedSession in
+            let s = PlannedSession()
+            s.date = cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: Date()))!
+            s.discipline = .running
+            s.status = .planned
+            return s
+        }
+        let plan = makePlan(in: ctx, sessions: sessions)
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .ease)
     }
 
     // MARK: Opt-in load increase (P5 — AI proposes / engine computes / user confirms)

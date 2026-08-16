@@ -11,12 +11,14 @@ final class CoachingEvent {
         case ease          // block eased (subjective RPE or objective load)
         case recover       // next session turned into a recovery day
         case recalibrate   // paces got faster off a strong run
+        case moved         // missed session shifted forward, week still intact
 
         var systemImage: String {
             switch self {
             case .ease: "arrow.down.right.circle"
             case .recover: "moon.zzz"
             case .recalibrate: "gauge.with.dots.needle.67percent"
+            case .moved: "arrow.uturn.forward.circle"
             }
         }
     }
@@ -52,5 +54,10 @@ final class CoachingEvent {
         context.insert(CoachingEvent(kind: kind, headline: headline, detail: detail, date: date))
         // A coaching decision is also a notification the athlete gets — mirror it into the bell inbox.
         AppNotification.post(kind: .coaching, title: headline, body: detail, on: date, in: context)
+        // And surface it live: a toast in the foreground, a (budgeted) push in the background.
+        // Record sites run on engines and view models alike, so hop rather than assume an actor.
+        Task { @MainActor in
+            CoachSurface.deliver(kind: kind, headline: headline, detail: detail)
+        }
     }
 }

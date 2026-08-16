@@ -93,6 +93,12 @@ struct RootView: View {
         #endif
     }
 
+    /// A root fullScreenCover owns the screen — pause under-cover overlays (awards, toasts).
+    private var rootCoverOwnsScreen: Bool {
+        paywall.presentedFeature != nil || coach.isPresented
+            || showOnboarding || showRecoveryPrompt || recoverySave != nil
+    }
+
     private var mainBody: some View {
         @Bindable var paywall = paywall
         @Bindable var coach = coach
@@ -124,8 +130,16 @@ struct RootView: View {
                 // once at the root rather than on each surface. Paused while a root cover owns the
                 // screen (the overlay renders UNDER covers — presenting then would play the whole
                 // celebration invisibly behind them).
-                .awardUnlocks(paused: paywall.presentedFeature != nil || coach.isPresented
-                              || showOnboarding || showRecoveryPrompt || recoverySave != nil)
+                .awardUnlocks(paused: rootCoverOwnsScreen)
+                // The app-wide toast capsule (enterprise pass 2026-08-15) — one host, over the tab
+                // shell. Same under-covers reality as awards: while a root cover owns the screen the
+                // center is held, so a coaching toast waits for the athlete instead of expiring
+                // invisibly behind onboarding or the paywall.
+                .overlay(alignment: .top) { ToastHost() }
+                .onChange(of: rootCoverOwnsScreen, initial: true) { _, covered in
+                    if covered { ToastCenter.shared.hold("root-cover") }
+                    else { ToastCenter.shared.release("root-cover") }
+                }
                 // Any locked feature anywhere routes through here (PRD §10 — contextual gates).
                 // Full screen (not a sheet): the paywall is a considered, premium moment — it owns
                 // the whole canvas, like onboarding.

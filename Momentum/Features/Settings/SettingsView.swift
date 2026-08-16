@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AuthenticationServices
+import UserNotifications
 
 /// Settings (PRD §10 honesty bar: status, plain renewal terms, cancel in ≤2 taps, restore).
 /// One quiet row grammar throughout: 28pt icon chips, slim rows, inset hairlines, and explainer
@@ -37,6 +38,16 @@ struct SettingsView: View {
     @State private var deleteAccountFailed = false
     @State private var offerDeviceErase = false   // post-account-deletion: offer the local wipe
 
+    // Notification choices (enterprise pass 2026-08-15) — mirrors of `NotificationPrefs`, kept in
+    // view state so the toggles animate; every write lands in UserDefaults AND resyncs the
+    // schedulers, so a flip takes effect immediately (off also clears what's pending).
+    @State private var notifySessions = NotificationPrefs.sessionRemindersEnabled()
+    @State private var notifyCoaching = NotificationPrefs.coachingEnabled()
+    @State private var notifyStreak = NotificationPrefs.streakEnabled()
+    @State private var notifyWeekly = NotificationPrefs.weeklyEnabled()
+    @State private var reminderCustom = NotificationPrefs.customReminderTime() != nil
+    @State private var reminderDate = Date()   // seeded from the resolved time in .onAppear
+
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
     /// Persisted mute for the run voice coach — the live service reads this same key, so flipping it
     /// takes effect on the very next cue, mid-run included.
@@ -51,6 +62,7 @@ struct SettingsView: View {
                 identityHeader
                 section("MEMBERSHIP", footer: membershipFooter) { membershipCard }
                 section("PREFERENCES", footer: preferencesFooter) { preferencesCard }
+                section("NOTIFICATIONS", footer: notificationsFooter) { notificationsCard }
                 section("APPLE HEALTH", footer: healthFooter) { healthCard }
                 section("DATA & PRIVACY") { dataCard }
                 section("ACCOUNT", footer: accountFooter) { accountCard }
@@ -314,6 +326,115 @@ struct SettingsView: View {
         services.paywall.isEntitled(to: .voiceCoach)
             ? "The voice coach speaks splits, step changes, and pace cues on guided runs."
             : nil
+    }
+
+    // MARK: Notifications (enterprise pass 2026-08-15)
+
+    private var notificationsCard: some View {
+        card {
+            prefToggle("Session reminders", icon: "bell", isOn: $notifySessions)
+            if notifySessions {
+                inset
+                reminderTimeRow
+            }
+            inset
+            prefToggle("Coaching updates", icon: "figure.run.motion", isOn: $notifyCoaching)
+            inset
+            prefToggle("Streak check-ins", icon: "flame", isOn: $notifyStreak)
+            inset
+            prefToggle("Week in review", icon: "calendar", isOn: $notifyWeekly)
+        }
+        .onAppear { reminderDate = resolvedReminderDate }
+        .onChange(of: notifySessions) { _, on in
+            NotificationPrefs.set(NotificationPrefs.sessionKey, to: on)
+            services.notifications.schedulePlannedReminders(profiles.first?.plan)
+        }
+        .onChange(of: notifyCoaching) { _, on in
+            NotificationPrefs.set(NotificationPrefs.coachingKey, to: on)
+        }
+        .onChange(of: notifyStreak) { _, on in
+            NotificationPrefs.set(NotificationPrefs.streakKey, to: on)
+            if !on { UNUserNotificationCenter.current()
+                .removePendingNotificationRequests(withIdentifiers: ["momentum.streak"]) }
+        }
+        .onChange(of: notifyWeekly) { _, on in
+            NotificationPrefs.set(NotificationPrefs.weeklyKey, to: on)
+            services.notifications.scheduleWeeklyCheckIn()
+        }
+        .onChange(of: reminderCustom) { _, custom in
+            if custom {
+                persistCustomReminderTime()
+            } else {
+                NotificationPrefs.clearCustomReminderTime()
+                reminderDate = resolvedReminderDate
+                services.notifications.schedulePlannedReminders(profiles.first?.plan)
+            }
+        }
+        .onChange(of: reminderDate) { _, _ in
+            guard reminderCustom else { return }
+            persistCustomReminderTime()
+        }
+    }
+
+    private var notificationsFooter: String? {
+        var lines = ["Everything the coach decides also lands in your inbox, so nothing here can lose you an update."]
+        if notifySessions && !reminderCustom {
+            lines.insert("Reminders ride your own rhythm — momentum learns when you usually train and knocks a little ahead of it.", at: 0)
+        }
+        if notifyCoaching {
+            lines.insert("Coaching updates are capped at one notification a day.", at: lines.count - 1)
+        }
+        return lines.joined(separator: " ")
+    }
+
+    /// Learned vs. custom reminder time. On Learned, the picker is replaced by the resolved time,
+    /// quietly showing what the rhythm currently works out to.
+    private var reminderTimeRow: some View {
+        HStack(spacing: Theme.Space.md) {
+            iconChip("clock")
+            Text("Remind me").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                .lineLimit(1).fixedSize()
+            Spacer(minLength: Theme.Space.sm)
+            if reminderCustom {
+                DatePicker("Reminder time", selection: $reminderDate, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            } else {
+                Text(resolvedReminderDate.formatted(date: .omitted, time: .shortened))
+                    .font(.rounded(Theme.FontSize.body, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+            unitPicker([("learned", "Learned"), ("custom", "Custom")],
+                       selected: reminderCustom ? "custom" : "learned",
+                       a11yNoun: "reminder time") { reminderCustom = ($0 == "custom") }
+        }
+        .padding(.vertical, 9)
+    }
+
+    /// The reminder time the scheduler would use right now (custom if set, else learned/7:30).
+    private var resolvedReminderDate: Date {
+        let t = ReminderTiming.reminderTime(
+            histogram: profiles.first?.athlete?.trainingHourHistogram ?? [],
+            custom: NotificationPrefs.customReminderTime())
+        return Calendar.current.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: Date()) ?? Date()
+    }
+
+    private func persistCustomReminderTime() {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+        NotificationPrefs.setCustomReminderTime(hour: comps.hour ?? 7, minute: comps.minute ?? 30)
+        services.notifications.schedulePlannedReminders(profiles.first?.plan)
+    }
+
+    /// A labelled toggle row in the card grammar (the voice-coach row's shape, generalized).
+    private func prefToggle(_ label: String, icon: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: Theme.Space.md) {
+            iconChip(icon)
+            Toggle(isOn: isOn) {
+                Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+            }
+            .tint(Theme.ink)
+        }
+        .padding(.vertical, 9)
+        .accessibilityLabel(label)
     }
 
     /// A compact monochrome segmented control — System · Light · Dark. One tap, app-wide.

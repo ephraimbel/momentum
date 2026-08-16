@@ -158,6 +158,8 @@ enum PlanCoaching {
         var occupied = Set(plan.sessions.map { calendar.startOfDay(for: $0.date) })
         var changed = false
         var movedCount = 0
+        // The first landed move, kept for the coaching headline ("Tuesday's run moved to Thursday").
+        var firstMove: (from: String, to: String, word: String)?
 
         for session in plan.sessions
             where session.status == .planned
@@ -170,6 +172,11 @@ enum PlanCoaching {
                 guard let cand = calendar.date(byAdding: .day, value: delta, to: todayStart) else { continue }
                 if !occupied.contains(cand) {
                     occupied.remove(calendar.startOfDay(for: session.date))
+                    if firstMove == nil {
+                        firstMove = (from: session.date.formatted(.dateTime.weekday(.wide)),
+                                     to: cand.formatted(.dateTime.weekday(.wide)),
+                                     word: sessionWord(session.discipline))
+                    }
                     session.date = cand
                     session.status = .moved
                     session.rationale = "Shifted to \(cand.formatted(.dateTime.weekday(.wide))) — still on track."
@@ -228,8 +235,30 @@ enum PlanCoaching {
             CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
                                  detail: "You were away a bit, so this week restarts at about 70% and your paces ease a touch. One good session earns them right back.",
                                  on: today, in: context, calendar: calendar)
+        } else if movedCount > 0 {
+            // No rebuild — just the quiet reflow. One receipt covers however many sessions slid,
+            // so a three-day trip lands one line, not three.
+            let headline: String
+            if movedCount == 1, let move = firstMove {
+                headline = "\(move.from)'s \(move.word) moved to \(move.to)"
+            } else {
+                headline = "\(movedCount) sessions moved forward"
+            }
+            CoachingEvent.record(kind: .moved, headline: headline,
+                                 detail: "Nothing was lost — your week reflowed around the days you missed, and every session kept its purpose.",
+                                 on: today, in: context, calendar: calendar)
         }
         if changed { try? context.save() }
+    }
+
+    /// The session noun for coaching lines ("Tuesday's run moved to Thursday").
+    private static func sessionWord(_ d: Discipline) -> String {
+        switch d {
+        case .running: "run"
+        case .cycling: "ride"
+        case .walking: "walk"
+        case .strength: "lift"
+        }
     }
 
     /// An open (adaptable) session: still ahead of the athlete, whether it sat where planned or was

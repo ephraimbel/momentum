@@ -163,8 +163,6 @@ protocol NotificationServing: AnyObject {
     func requestAuthorization(completion: (() -> Void)?)
     /// Resync next-workout reminders to the plan's upcoming sessions (each carries its prescription).
     func schedulePlannedReminders(_ plan: TrainingPlan?)
-    /// An immediate, encouraging nudge when the coach adapts the plan.
-    func notifyPlanUpdated(title: String, body: String)
     /// The repeating Sunday week-in-review nudge (PRD §24).
     func scheduleWeeklyCheckIn()
     /// A gentle, ≤1/day streak-protection nudge when a real streak is at risk on a planned day (§24).

@@ -420,8 +420,9 @@ struct CardioSaveView: View {
             guard booksCompletion else { return }
             // Subjective adaptation: how it *felt* nudges the plan (no-shame, ≤1/week, protective
             // only). Plan mutations go through the main context; only scalars are read off `workout`.
-            if let note = PlanCoaching.adaptToEffort(workout, plan: plan, in: context) {
-                services.notifications.notifyPlanUpdated(title: note.headline, body: note.detail)
+            // The easing records its own CoachingEvent, which carries delivery (toast/push) —
+            // here we only refresh reminders so they match the eased sessions.
+            if PlanCoaching.adaptToEffort(workout, plan: plan, in: context) != nil {
                 services.notifications.schedulePlannedReminders(plan)
             }
             // Records, detected on a background context (the scan replays the whole history);
