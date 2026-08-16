@@ -33,9 +33,9 @@ struct LifeHappensSheet: View {
         }
         var subtitle: String {
             switch self {
-            case .sick: "Pause 3 days — everything shifts forward, nothing is lost."
-            case .traveling: "Pause while you're away; sessions wait for you."
-            case .swamped: "Ease this week ~15% — showing up small still counts."
+            case .sick: "Pause 3 days. Everything shifts forward, nothing is lost."
+            case .traveling: "Pause while you're away. Your sessions wait for you."
+            case .swamped: "Ease this week about 15%. Showing up small still counts."
             }
         }
     }
@@ -85,7 +85,7 @@ struct LifeHappensSheet: View {
                 }
             }
         }
-        .presentationDetents([.height(520), .large])
+        .presentationDetents([.height(560), .large])
     }
 
     private var confirmTitle: String {
@@ -171,7 +171,7 @@ struct LifeHappensSheet: View {
             Button {
                 Haptics.success()
                 PlanCoaching.resume(plan, from: Date(), in: context)
-                CoachingEvent.record(kind: .moved, headline: "Back early — plan resumed",
+                CoachingEvent.record(kind: .moved, headline: "Plan resumed early",
                                      detail: "Your sessions moved back up to meet you. Ease into the first one.",
                                      on: Date(), in: context)
                 services.notifications.schedulePlannedReminders(plan)
@@ -200,13 +200,13 @@ struct LifeHappensSheet: View {
         switch situation {
         case .sick:
             PlanCoaching.pause(plan, days: 3, from: today, in: context)
-            CoachingEvent.record(kind: .recover, headline: "Paused 3 days — get well",
-                                 detail: "Every session shifted forward and your race date stays put. Come back when you're ready — nothing is lost.",
+            CoachingEvent.record(kind: .recover, headline: "Paused 3 days to get well",
+                                 detail: "Every session shifted forward and your race date stays put. Come back when you're ready. Nothing is lost.",
                                  on: today, in: context)
         case .traveling:
             PlanCoaching.pause(plan, days: travelDays, from: today, in: context)
             CoachingEvent.record(kind: .moved, headline: "Paused \(travelDays) days for travel",
-                                 detail: "Your sessions shifted to meet you when you're back. Safe travels — the plan waits.",
+                                 detail: "Your sessions shifted to meet you when you're back. Safe travels. The plan waits.",
                                  on: today, in: context)
         case .swamped:
             // Records its own .ease receipt inside.

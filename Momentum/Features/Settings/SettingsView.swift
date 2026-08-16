@@ -74,8 +74,11 @@ struct SettingsView: View {
         }
         .background(Theme.background)
         #if DEBUG
-        // Screenshot verification: open pre-scrolled to the page's end (colophon).
-        .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--settings-bottom") ? .bottom : .top)
+        // Screenshot verification: open pre-scrolled to the page's end (colophon), or roughly to
+        // the NOTIFICATIONS section (--settings-notifications).
+        .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("--settings-bottom") ? .bottom
+                             : ProcessInfo.processInfo.arguments.contains("--settings-notifications")
+                               ? UnitPoint(x: 0.5, y: 0.34) : .top)
         #endif
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
@@ -341,7 +344,7 @@ struct SettingsView: View {
             inset
             prefToggle("Morning readiness", icon: "sunrise", isOn: $notifyMorning)
             inset
-            prefToggle("Coaching updates", icon: "figure.run.motion", isOn: $notifyCoaching)
+            prefToggle("Coaching updates", icon: "figure.run", isOn: $notifyCoaching)
             inset
             prefToggle("Streak check-ins", icon: "flame", isOn: $notifyStreak)
             inset
@@ -395,25 +398,31 @@ struct SettingsView: View {
         return lines.joined(separator: " ")
     }
 
-    /// Learned vs. custom reminder time. On Learned, the picker is replaced by the resolved time,
-    /// quietly showing what the rhythm currently works out to.
+    /// Learned vs. custom reminder time — two lines so the mode pills never fight the time for
+    /// width. Learned shows what the rhythm currently works out to; Custom swaps in the wheel.
     private var reminderTimeRow: some View {
-        HStack(spacing: Theme.Space.md) {
-            iconChip("clock")
-            Text("Remind me").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
-                .lineLimit(1).fixedSize()
-            Spacer(minLength: Theme.Space.sm)
-            if reminderCustom {
-                DatePicker("Reminder time", selection: $reminderDate, displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-            } else {
-                Text(resolvedReminderDate.formatted(date: .omitted, time: .shortened))
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).monospacedDigit()
-                    .foregroundStyle(Theme.inkSecondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: Theme.Space.md) {
+                iconChip("clock")
+                Text("Time").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).fixedSize()
+                Spacer(minLength: Theme.Space.sm)
+                unitPicker([("learned", "Learned"), ("custom", "Custom")],
+                           selected: reminderCustom ? "custom" : "learned",
+                           a11yNoun: "reminder time") { reminderCustom = ($0 == "custom") }
             }
-            unitPicker([("learned", "Learned"), ("custom", "Custom")],
-                       selected: reminderCustom ? "custom" : "learned",
-                       a11yNoun: "reminder time") { reminderCustom = ($0 == "custom") }
+            HStack {
+                Spacer(minLength: 28 + Theme.Space.md)   // clear the icon chip column
+                if reminderCustom {
+                    DatePicker("Reminder time", selection: $reminderDate, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                } else {
+                    Text("Arrives about \(resolvedReminderDate.formatted(date: .omitted, time: .shortened)), from when you usually train.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(Theme.inkSecondary)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
         }
         .padding(.vertical, 9)
     }

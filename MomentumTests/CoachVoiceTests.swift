@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SwiftData
 @testable import Momentum
 
 /// The coach's voice, enforced.
@@ -178,6 +179,40 @@ struct CoachVoiceTests {
 
     /// `deDash` is the runtime net under everything the model writes, so it has to hold even when
     /// the model ignores the prompt entirely.
+    @Test func everyCoachingEventSpeaksLikeACoach() throws {
+        // Coaching events are coach speech on three surfaces at once (toast, push, inbox) —
+        // run the engines that author them and hold every stored line to the voice bar.
+        let schema = Schema(PersistenceController.models)
+        let container = try ModelContainer(
+            for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let ctx = container.mainContext
+        let cal = Calendar.current
+        let profile = UserProfile()
+        let plan = TrainingPlan()
+        ctx.insert(profile); ctx.insert(plan)
+        profile.plan = plan
+        let missed = PlannedSession()
+        missed.date = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: Date()))!
+        missed.discipline = .running; missed.status = .planned
+        let upcoming = PlannedSession()
+        upcoming.date = cal.date(byAdding: .day, value: 2, to: Date())!
+        upcoming.discipline = .running; upcoming.runType = .easy; upcoming.status = .planned
+        upcoming.targetDistanceM = 6000
+        ctx.insert(missed); ctx.insert(upcoming)
+        plan.sessions = [missed, upcoming]
+        try? ctx.save()
+
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)     // → the .moved receipt
+        _ = PlanCoaching.easeWeek(plan, from: Date(), in: ctx)         // → the busy-week .ease
+
+        let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        #expect(events.count >= 2)
+        for e in events {
+            Self.assertCoachVoice(e.headline, "CoachingEvent(\(e.kindRaw)) headline")
+            Self.assertCoachVoice(e.detail, "CoachingEvent(\(e.kindRaw)) detail")
+        }
+    }
+
     @Test func deDashTurnsModelDashesIntoSentences() {
         #expect(WorkoutReadTemplates.deDash("Strong run — the second half was quicker")
                 == "Strong run. The second half was quicker")

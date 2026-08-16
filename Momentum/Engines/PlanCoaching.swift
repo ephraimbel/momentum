@@ -252,7 +252,7 @@ enum PlanCoaching {
                 headline = "\(movedCount) sessions moved forward"
             }
             CoachingEvent.record(kind: .moved, headline: headline,
-                                 detail: "Nothing was lost — your week reflowed around the days you missed, and every session kept its purpose.",
+                                 detail: "Nothing was lost. Your week reflowed around the days you missed, and every session kept its purpose.",
                                  on: today, in: context, calendar: calendar)
         }
         if changed { try? context.save() }
@@ -677,7 +677,7 @@ enum PlanCoaching {
             s.rationale = "Eased for a busy week — showing up small still counts."
         }
         plan.lastAdaptedAt = today
-        CoachingEvent.record(kind: .ease, headline: "Busy week — load eased",
+        CoachingEvent.record(kind: .ease, headline: "Eased for your busy week",
                              detail: "This week's sessions came down about 15% and hard work softened to easy. Next week picks back up as planned.",
                              on: today, in: context, calendar: calendar)
         try? context.save()

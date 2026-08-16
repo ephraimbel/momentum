@@ -458,7 +458,7 @@ struct PlanCoachingTests {
         #expect(Calendar.current.isDateInToday(plan.lastAdaptedAt!))         // still ARMS the gate
 
         let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
-        #expect(events.contains { $0.kind == .ease && $0.headline.contains("Busy week") })
+        #expect(events.contains { $0.kind == .ease && $0.headline.contains("busy week") })
     }
 
     @Test func easeWeekSoftensQualityButNeverTheRace() throws {

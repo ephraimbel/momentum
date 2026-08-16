@@ -582,6 +582,11 @@ struct TodayView: View {
         if ProcessInfo.processInfo.arguments.contains("--checkin") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showCheckin = true }
         }
+        // --life-happens: straight to the pause/ease sheet (normally reached through the check-in's
+        // "Life's in the way" door) — deterministic screenshot without choreographing the door tap.
+        if ProcessInfo.processInfo.arguments.contains("--life-happens") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showLifeHappens = true }
+        }
         // --plan-confirm: open the confirm sheet for the next strength session (else today's
         // pending) — verifies the full-workout preview without tapping the plan row.
         if ProcessInfo.processInfo.arguments.contains("--plan-confirm") {
