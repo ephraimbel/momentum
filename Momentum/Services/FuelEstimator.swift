@@ -74,8 +74,17 @@ struct FuelEstimator {
 
     /// The server capped today's estimates (429 — generous daily limit, abuse guard only). Remember
     /// until local midnight and skip the network: retries would be futile, and every meal still
-    /// logs fine with manual numbers. Resets itself the moment the day turns.
-    private static var estimateLimitedUntil: Date?
+    /// logs fine with manual numbers. Resets itself the moment the day turns. PERSISTED
+    /// (2026-08-20): the latch was process-static, so a relaunch on a capped day re-fired doomed
+    /// calls — one per pending meal — before rediscovering the cap.
+    private static let limitedUntilKey = "com.momentum.fuel.estimateLimitedUntil"
+    private static var estimateLimitedUntil: Date? {
+        get { UserDefaults.standard.object(forKey: limitedUntilKey) as? Date }
+        set {
+            if let newValue { UserDefaults.standard.set(newValue, forKey: limitedUntilKey) }
+            else { UserDefaults.standard.removeObject(forKey: limitedUntilKey) }
+        }
+    }
 
     init(session: URLSession = .shared) { self.session = session }
 

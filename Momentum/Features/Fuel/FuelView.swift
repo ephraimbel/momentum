@@ -691,7 +691,7 @@ struct FuelView: View {
                     .padding(.leading, 4)
                     .padding(.vertical, 8)
             } else {
-                TextField("What did you eat?", text: $draft, axis: .vertical)
+                TextField(composerPrompt, text: $draft, axis: .vertical)
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                     .lineLimit(1...4)
                     .focused($composing)
@@ -1171,6 +1171,58 @@ struct FuelView: View {
         reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
     }
 
+    /// The composer greets the hour ("full tracker" pass 2026-08-20) — same question, meal-shaped.
+    /// Keyed off `minuteTick`'s refresh like everything time-shaped on this page.
+    private var composerPrompt: String {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 5..<11: "What was breakfast?"
+        case 11..<15: "What was lunch?"
+        case 17..<22: "What was dinner?"
+        default: "What did you eat?"
+        }
+    }
+
+    /// The day in meal-time chapters — reverse-chronological like the flat list it replaces
+    /// (newest logged stays on top), each chapter carrying its own quiet kcal sum. This is the
+    /// one-page-tracker read: breakfast/lunch/dinner structure without ever asking the athlete
+    /// to file anything (the clock does the filing).
+    private struct Daypart: Identifiable {
+        let label: String
+        let kcal: Int
+        let meals: [Meal]
+        var id: String { label }
+    }
+
+    private func dayparts(_ rows: [Meal]) -> [Daypart] {
+        let cal = Calendar.current
+        func label(_ meal: Meal) -> String {
+            switch cal.component(.hour, from: meal.eatenAt) {
+            case 5..<11: "MORNING"
+            case 11..<16: "MIDDAY"
+            case 16..<22: "EVENING"
+            default: "LATE"
+            }
+        }
+        var parts: [Daypart] = []
+        var current: (label: String, meals: [Meal])?
+        for meal in rows {   // rows are newest-first; contiguous runs share a chapter
+            let l = label(meal)
+            if current?.label == l { current?.meals.append(meal) }
+            else {
+                if let c = current { parts.append(part(from: c)) }
+                current = (l, [meal])
+            }
+        }
+        if let c = current { parts.append(part(from: c)) }
+        return parts
+    }
+
+    private func part(from run: (label: String, meals: [Meal])) -> Daypart {
+        Daypart(label: run.label,
+                kcal: run.meals.compactMap(\.kcal).reduce(0, +),
+                meals: run.meals)
+    }
+
     @ViewBuilder
     private var todaysMeals: some View {
         let rows = todayMeals
@@ -1180,11 +1232,15 @@ struct FuelView: View {
                 Text("TODAY").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
                     .foregroundStyle(Theme.inkTertiary)
                 VStack(spacing: 0) {
-                    ForEach(rows) { meal in
-                        mealRow(meal, cacheValid: rowsCacheValid)
-                            .transition(rowTransition)
-                        if meal.id != rows.last?.id {
-                            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                    let parts = dayparts(rows)
+                    ForEach(parts) { part in
+                        daypartHeader(part)
+                        ForEach(part.meals) { meal in
+                            mealRow(meal, cacheValid: rowsCacheValid)
+                                .transition(rowTransition)
+                            if meal.id != rows.last?.id {
+                                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                            }
                         }
                     }
                 }
@@ -1193,6 +1249,28 @@ struct FuelView: View {
             }
             .animation(Motion.standard, value: rows.map(\.id))
         }
+    }
+
+    /// One chapter head inside the journal card: MORNING / MIDDAY / EVENING / LATE with the
+    /// chapter's kcal sum trailing. A quiet filing strip, not a competing section — the card
+    /// stays ONE surface.
+    private func daypartHeader(_ part: Daypart) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text(part.label)
+                .font(.rounded(10, weight: .bold)).tracking(1.4)
+                .foregroundStyle(Theme.inkTertiary)
+            Spacer(minLength: 0)
+            if part.kcal > 0 {
+                Text("≈\(part.kcal.formatted()) kcal")
+                    .font(.rounded(10, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(part.label.capitalized)\(part.kcal > 0 ? ", about \(part.kcal) kilocalories" : "")")
     }
 
     private func mealRow(_ meal: Meal, cacheValid: Bool) -> some View {
@@ -1279,6 +1357,23 @@ struct FuelView: View {
                     meal.estimateAttempts = 0
                     estimate(meal, sessionLabel: readout.drivingSession)
                 } label: { Label("Estimate again", systemImage: "sparkles") }
+            }
+            // "Again": the second helping / the repeat coffee — a fresh now-stamped copy through
+            // the same shared numbers path History's "Log again today" uses. No AI call, no
+            // gating (it spends nothing and copies the athlete's own data).
+            if !isEstimating, meal.carbsG != nil || meal.kcal != nil {
+                Button {
+                    let copy = Meal()
+                    copy.text = meal.text
+                    copy.eatenAt = Date()
+                    FuelLocalResolver.copyNumbers(from: meal, to: copy)
+                    withAnimation(Motion.standard) {
+                        context.insert(copy)
+                        try? context.save()
+                        refreshDerived()
+                    }
+                    Haptics.success()
+                } label: { Label("Log it again", systemImage: "plus.circle") }
             }
             Button(role: .destructive) {
                 // Cancel FIRST: an in-flight estimate must never come back to a deleted model.
@@ -1741,6 +1836,14 @@ struct MealDetailSheet: View {
     @State private var fat = ""
     @State private var sodium = ""
 
+    /// The add-an-item lane ("oh — I also had a coke", full-tracker pass 2026-08-20). Resolves
+    /// through the offline staples rung ONLY: instant, free, and the numbers are label-grade.
+    /// A phrase the pantry doesn't know gets an honest nudge to log it as its own meal (where
+    /// the AI sizes it) — never a fabricated zero-calorie item.
+    @State private var addItemText = ""
+    @State private var addItemMiss = false
+    @FocusState private var addingItem: Bool
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -1956,11 +2059,58 @@ struct MealDetailSheet: View {
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .leading)))
                 Rectangle().fill(Theme.hairline).frame(height: 0.5)
             }
+            addItemRow
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
             totalsFooter
         }
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .animation(Motion.standard, value: items.map(\.id))
+    }
+
+    /// A quiet last row: "＋ add an item" grows the meal from the offline pantry, live-rolling
+    /// the Σ footer and the score gauge like every stepper does.
+    private var addItemRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.inkTertiary)
+                TextField("Add an item — banana, 2 eggs…", text: $addItemText)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.ink)
+                    .focused($addingItem)
+                    .submitLabel(.done)
+                    .onSubmit(addItem)
+                    .onChange(of: addItemText) { addItemMiss = false }
+                    // Typing needs the tall sheet, same as the totals fields (the detent rule).
+                    .onChange(of: addingItem) { _, focused in if focused { detent = .large } }
+            }
+            if addItemMiss {
+                Text("Not in the offline pantry — log it as its own meal and the AI will size it.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, 10)
+        .animation(Motion.standard, value: addItemMiss)
+        .accessibilityLabel("Add an item")
+    }
+
+    private func addItem() {
+        let text = addItemText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard let newItems = FuelLocalResolver.composeItems(text) else {
+            addItemMiss = true
+            Haptics.light()
+            return
+        }
+        numbersDirty = true
+        withAnimation(Motion.standard) { items.append(contentsOf: newItems) }
+        addItemText = ""
+        Haptics.success()
     }
 
     private func itemRow(_ item: MealItem) -> some View {

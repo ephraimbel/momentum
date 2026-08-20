@@ -25,6 +25,35 @@ final class NutritionReportUITests: XCTestCase {
         return element.exists
     }
 
+    /// The one-page-tracker pass (2026-08-20): the journal files itself into meal-time chapters,
+    /// and a logged meal can grow an item from the offline pantry — instant, free, and the Σ
+    /// footer + score roll live.
+    func testDaypartsAndAddItem() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-fuel", "--seed-demo", "--seed-fuel-today",
+                               "--debug-pro", "--fuel", "--meal-detail"]
+        app.launch()
+
+        // The detail sheet opens on the newest seeded meal (an evening one) — add a pantry item.
+        let addField = app.textFields["Add an item — banana, 2 eggs…"]
+        XCTAssertTrue(addField.waitForExistence(timeout: 20), "Add-an-item field missing from the sheet.")
+        addField.tap()
+        addField.typeText("banana\n")
+        XCTAssertTrue(app.staticTexts["Banana"].waitForExistence(timeout: 4),
+                      "The pantry item didn't join the meal's item list.")
+        attach(app, "6-item-added")
+        app.buttons["Save"].tap()
+
+        // Back on the page: the journal reads in meal-time chapters with kcal sums.
+        XCTAssertTrue(app.staticTexts["TODAY"].waitForExistence(timeout: 8), "Journal missing.")
+        let chapters = ["MORNING", "MIDDAY", "EVENING"]
+        var found = 0
+        for label in chapters where app.staticTexts[label].exists { found += 1 }
+        if found < 2 { app.swipeUp(); for label in chapters where app.staticTexts[label].exists { found += 1 } }
+        XCTAssertTrue(found >= 2, "Daypart chapters missing — the seeded day spans morning to evening.")
+        attach(app, "7-dayparts")
+    }
+
     func testMonthReportSectionsRender() {
         let app = XCUIApplication()
         // --reset-fuel first: earlier containers carry pre-NOVA seeds; the wipe lets the seeds

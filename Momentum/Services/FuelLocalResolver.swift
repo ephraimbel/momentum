@@ -119,8 +119,20 @@ enum FuelLocalResolver {
     /// `source ==` check for an analytics nicety. And like a local hit, no `note` — nobody wrote
     /// coach narration for this meal, and the app never fabricates coaching.
     static func applyStaples(to meal: Meal, text: String) -> Bool {
-        guard let items = FoodStaples.compose(text) else { return false }
-        meal.items = items.map {
+        guard let items = composeItems(text) else { return false }
+        meal.items = items
+        meal.source = "ai"
+        meal.confidence = FoodStaples.confidence
+        return true
+    }
+
+    /// The staples table's answer as ready `MealItem`s — the ONE `FoodStaples.Item → MealItem`
+    /// conversion, shared by the composer rung above and the detail sheet's add-an-item row
+    /// (2026-08-20): a food added to an existing meal must carry exactly the numbers the same
+    /// words would have carried as a fresh log.
+    static func composeItems(_ text: String) -> [MealItem]? {
+        guard let items = FoodStaples.compose(text) else { return nil }
+        return items.map {
             MealItem(name: $0.name, qty: $0.qty, unit: $0.unit, kcal: $0.kcal,
                      carbsG: $0.carbsG, proteinG: $0.proteinG, fatG: $0.fatG,
                      sodiumMg: $0.sodiumMg, fluidsMl: $0.fluidsMl,
@@ -128,8 +140,5 @@ enum FuelLocalResolver {
                      ironMg: $0.ironMg, calciumMg: $0.calciumMg,
                      fiberG: $0.fiberG, sugarG: $0.sugarG, satFatG: $0.satFatG, nova: $0.nova)
         }
-        meal.source = "ai"
-        meal.confidence = FoodStaples.confidence
-        return true
     }
 }
