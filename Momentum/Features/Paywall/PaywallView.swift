@@ -225,19 +225,19 @@ struct PaywallView: View {
 
 // MARK: - The film, looping
 
-/// The brand film (`WelcomeVideo.mov`), reframed for the paywall: muted, half speed, and looping
-/// only its first 13 seconds — the closing title card (at ~13.5s) never appears, so the film's
-/// wordmark never collides with the paywall's own headline. Reduce Motion: a single still from
-/// the golden-hour climb (11s), no playback. The welcome's own film view plays once WITH sound;
-/// this one is atmosphere, so it must never touch the audio session.
+/// The paywall's own film (`PaywallVideo.mp4`, owner-delivered 2026-08-20): muted, half speed,
+/// looping only its first 11.8 seconds — the closing title card fades in ~12.2s and never enters
+/// the cycle, so the film's wordmark never collides with the paywall's own headline. Reduce
+/// Motion: a single golden-hour still (11.5s), no playback. The welcome's film view plays once
+/// WITH sound; this one is atmosphere, so it must never touch the audio session.
 private struct PaywallFilmBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
-            // The poster holds the opening frame until the player attaches (or forever, if the
+            // The film's own opening frame holds until the player attaches (or forever, if the
             // asset is missing) — the paywall never flashes black.
-            Image("WelcomePoster")
+            Image("PaywallPoster")
                 .resizable().scaledToFill()
             FilmLoopView(reduceMotion: reduceMotion)
         }
@@ -259,7 +259,7 @@ private struct FilmLoopView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PlayerView {
         let view = PlayerView()
-        guard let url = Bundle.main.url(forResource: "WelcomeVideo", withExtension: "mov") else { return view }
+        guard let url = Bundle.main.url(forResource: "PaywallVideo", withExtension: "mp4") else { return view }
         view.playerLayer.videoGravity = .resizeAspectFill
         let reduceMotion = reduceMotion
         // Deferred one runloop turn, same as the welcome: AVFoundation setup must not sit on the
@@ -273,11 +273,11 @@ private struct FilmLoopView: UIViewRepresentable {
             view.playerLayer.player = player
             if reduceMotion {
                 player.insert(item, after: nil)
-                player.seek(to: CMTime(seconds: 11, preferredTimescale: 600))
+                player.seek(to: CMTime(seconds: 11.5, preferredTimescale: 600))
             } else {
-                // Loop 0–13s: the closing card starts ~13.5s and never enters the cycle.
+                // Loop 0–11.8s: the closing card fades in ~12.2s and never enters the cycle.
                 let range = CMTimeRange(start: .zero,
-                                        duration: CMTime(seconds: 13, preferredTimescale: 600))
+                                        duration: CMTime(seconds: 11.8, preferredTimescale: 600))
                 view.looper = AVPlayerLooper(player: player, templateItem: item, timeRange: range)
                 player.play()
                 player.rate = 0.5
