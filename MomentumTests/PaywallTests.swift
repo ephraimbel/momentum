@@ -72,10 +72,14 @@ struct PaywallTests {
         #expect(Feature.programs.placement == "full_plan")
     }
 
-    @Test func annualAloneCarriesTheTrial() {
+    @Test func noPlanCarriesATrial() {
         let offering = PaywallOffering.standard
-        #expect(offering.annual.trialDays == 7)
-        #expect(offering.monthly.trialDays == 0)   // trial is the ANNUAL's nudge (owner call 2026-07-30)
+        // Trial retired entirely (owner call 2026-08-20, supersedes the 07-30 annual-only nudge):
+        // the soft paywall is the trial, and the yearly sells on the savings badge. The store's
+        // intro offers were deleted in every territory; the placeholder must agree so DEBUG and
+        // production tell the same story.
+        #expect(offering.annual.trialDays == 0)
+        #expect(offering.monthly.trialDays == 0)
         #expect(offering.annualSavingsPercent == 50)   // 49.96% ($59.99 vs 12 × $9.99), rounded to nearest 5%
     }
 
