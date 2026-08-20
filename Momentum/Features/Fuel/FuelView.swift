@@ -1078,8 +1078,11 @@ struct FuelView: View {
     private var usualsRow: some View {
         let list = usuals
         let chipsCacheValid = isCacheValid   // once per section, not twice per chip
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.Space.xs) {
+        // Wrapped, not horizontally scrolled (owner call 2026-08-20, "we are only a vertical
+        // app"): the old ScrollView let a vertical scroll that began on a chip drift the row
+        // sideways. Wrapping shows every chip with no horizontal motion; the 250pt chip cap
+        // keeps a long meal name from claiming a whole line.
+        FlowLayout(spacing: Theme.Space.xs) {
                 if list.isEmpty {
                     // Day one, before any usuals exist: the staples starters. These are quick-log
                     // AFFORDANCES, not sample data — nothing logs until tapped — and they carry
@@ -1112,7 +1115,6 @@ struct FuelView: View {
                     }
                 }
             }
-        }
     }
 
     /// One chip, one look — a personal usual and a staples starter are the same affordance, so
