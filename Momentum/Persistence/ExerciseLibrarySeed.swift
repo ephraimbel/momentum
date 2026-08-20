@@ -101,6 +101,14 @@ enum ExerciseLibrarySeed {
                      secondaryMuscles: [.back, .core, .forearms], equipment: .barbell,
                      category: .compound, defaultRestS: 180,
                      instructions: "Neutral spine, push the floor away, lock out tall."),
+            // The glutes-primary lift the split-era leg day needed (trainer audit 2026-08-20):
+            // Deadlift owns both hamstrings AND glutes primaries, so once it filled the
+            // hamstring slot the glute slot starved and leg day shipped three moves. Reaches
+            // existing installs via `topUp` like every curated addition.
+            Exercise(name: "Barbell Hip Thrust", primaryMuscles: [.glutes],
+                     secondaryMuscles: [.hamstrings, .core], equipment: .barbell,
+                     category: .compound, defaultRestS: 120,
+                     instructions: "Shoulders on the bench, drive hips to a full squeeze at the top."),
             Exercise(name: "Barbell Bench Press", primaryMuscles: [.chest],
                      secondaryMuscles: [.triceps, .shoulders], equipment: .barbell,
                      category: .compound, defaultRestS: 150,
@@ -114,6 +122,28 @@ enum ExerciseLibrarySeed {
             Exercise(name: "Pull-Up", primaryMuscles: [.back],
                      secondaryMuscles: [.biceps, .forearms], equipment: .bodyweight,
                      category: .compound, trackingMode: .repsOnly, defaultRestS: 120),
+            // The bodyweight staples (trainer audit 2026-08-20): the bodyweight equipment tier
+            // had NO pressing or squatting movement at all — a bodyweight athlete's Push day
+            // generated EMPTY and leg day was knee raises. These six are the calisthenics canon,
+            // all rep-countable, and they reach existing installs via `topUp`.
+            Exercise(name: "Push-Up", primaryMuscles: [.chest],
+                     secondaryMuscles: [.triceps, .shoulders, .core], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90),
+            Exercise(name: "Pike Push-Up", primaryMuscles: [.shoulders],
+                     secondaryMuscles: [.triceps], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90),
+            Exercise(name: "Bodyweight Squat", primaryMuscles: [.quads],
+                     secondaryMuscles: [.glutes, .hamstrings], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90),
+            Exercise(name: "Walking Lunge", primaryMuscles: [.quads],
+                     secondaryMuscles: [.glutes, .hamstrings], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90),
+            Exercise(name: "Glute Bridge", primaryMuscles: [.glutes],
+                     secondaryMuscles: [.hamstrings, .core], equipment: .bodyweight,
+                     category: .isolation, trackingMode: .repsOnly, defaultRestS: 60),
+            Exercise(name: "Single-Leg Calf Raise", primaryMuscles: [.calves],
+                     secondaryMuscles: [], equipment: .bodyweight,
+                     category: .isolation, trackingMode: .repsOnly, defaultRestS: 60),
             Exercise(name: "Incline Dumbbell Press", primaryMuscles: [.chest],
                      secondaryMuscles: [.shoulders, .triceps], equipment: .dumbbell,
                      category: .compound, defaultRestS: 120),

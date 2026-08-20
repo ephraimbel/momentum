@@ -210,7 +210,7 @@ enum PlanEngine {
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
                                    catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus),
-                                   split: profile.strengthSplit, weekIndex: w)
+                                   split: profile.strengthSplit, weekIndex: w, phase: phase)
                 : []
             var scheduled = schedule(runs: runs, lifts: lifts,
                                      preferredDayOffsets: profile.preferredDayOffsets,
@@ -768,7 +768,8 @@ enum PlanEngine {
     static func strengthSessions(liftDays: Int, goal: Goal, level: ExperienceLevel, equipment: Equipment,
                                  sessionMinutes: Int, catalog: [ExerciseCatalogItem], isDeload: Bool,
                                  muscleFocus: Set<MuscleGroup> = [],
-                                 split: StrengthSplitStyle = .coach, weekIndex: Int = 0) -> [GeneratedSession] {
+                                 split: StrengthSplitStyle = .coach, weekIndex: Int = 0,
+                                 phase: PlanPhase = .build) -> [GeneratedSession] {
         guard liftDays > 0 else { return [] }
         let labels = splitLabels(liftDays: liftDays, split: split, weekIndex: weekIndex)
         let allowed = allowedEquipment(equipment)
@@ -779,21 +780,33 @@ enum PlanEngine {
             s.strengthLabel = label
             s.isHardLowerLift = ["Lower", "Legs", "Full Body"].contains(label)
             var used = Set<String>()
-            var targets: [GeneratedExercise] = []
-            // Emphasized muscles in this day's slots come first so focus work survives the count cap.
-            let slots = muscleSlots(for: label).sorted { a, b in
-                muscleFocus.contains(a.muscle) && !muscleFocus.contains(b.muscle)
-            }
+            var compounds: [GeneratedExercise] = []
+            var isolations: [GeneratedExercise] = []
+            // Emphasized muscles in this day's slots come first so focus work survives the count
+            // cap. A STABLE partition, not `sorted` — with no focus the old all-false comparator
+            // let the sort shuffle the designed slot order, which is how a compound could land
+            // after an isolation move (trainer audit, 2026-08-20).
+            let raw = muscleSlots(for: label)
+            let slots = muscleFocus.isEmpty ? raw
+                : raw.filter { muscleFocus.contains($0.muscle) } + raw.filter { !muscleFocus.contains($0.muscle) }
             for slot in slots.prefix(exerciseCount) {
                 guard let pick = selectExercise(muscle: slot.muscle, preferCompound: slot.compound,
                                                 allowed: allowed, catalog: catalog, used: used) else { continue }
                 used.insert(pick.name)
                 var ge = scheme(for: pick, goal: goal, level: level, isDeload: isDeload)
+                // Base weeks accumulate: one set fewer than the build prescription, so the block
+                // ramps 3→4 sets into the build phase the way a coach periodizes it — instead of
+                // week 1 opening at the block's full volume (trainer audit, 2026-08-20).
+                if phase == .base, !isDeload { ge.targetSets = max(2, ge.targetSets - 1) }
                 // Earned extra volume on the muscles the athlete chose to grow.
                 if muscleFocus.contains(slot.muscle), !isDeload { ge.targetSets = min(6, ge.targetSets + 1) }
-                targets.append(ge)
+                // The day reads heavy-first: every compound before any isolation, each in slot
+                // order — the isolation-slot FALLBACK can legitimately pick a compound (no chest
+                // isolation ships, so Push's 4th slot becomes Incline Press), and it belongs up
+                // with the other presses, not after the pushdowns.
+                if pick.category == .compound { compounds.append(ge) } else { isolations.append(ge) }
             }
-            s.strengthTargets = targets
+            s.strengthTargets = compounds + isolations
             return s
         }
     }
@@ -838,8 +851,13 @@ enum PlanEngine {
         case "Upper": return [(.chest, true), (.back, true), (.shoulders, true), (.triceps, false), (.biceps, false)]
         case "Lower": return [(.quads, true), (.hamstrings, true), (.glutes, true), (.calves, false), (.core, false)]
         case "Push": return [(.chest, true), (.shoulders, true), (.triceps, false), (.chest, false)]
-        case "Pull": return [(.back, true), (.back, false), (.biceps, false), (.forearms, false)]
-        case "Legs": return [(.quads, true), (.hamstrings, true), (.glutes, true), (.calves, false)]
+        // Pull's 4th slot is core, not forearms (trainer audit 2026-08-20): grip comes free with
+        // every row and pulldown, while a PPL week previously shipped ZERO trunk work — the one
+        // thing a runner's strength block exists to build. Wrist curls stay library-only.
+        case "Pull": return [(.back, true), (.back, false), (.biceps, false), (.core, false)]
+        // Legs closes with core for the same reason — every split style now trains the trunk
+        // somewhere each rotation, and any 2-day PPL week includes Pull or Legs (or both).
+        case "Legs": return [(.quads, true), (.hamstrings, true), (.glutes, true), (.calves, false), (.core, false)]
         default: return [(.fullBody, true)]
         }
     }

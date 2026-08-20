@@ -230,9 +230,17 @@ struct PlanEngineTests {
     @Test func strengthDeloadReducesSets() {
         let plan = PlanEngine.generate(profile: inputs(disciplines: [.strength], goal: .buildMuscle, days: 3),
                                        catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
-        let buildSets = plan.weeks[0].sessions.first?.strengthTargets.first?.targetSets ?? 0
-        let deloadSets = plan.weeks[3].sessions.first?.strengthTargets.first?.targetSets ?? 0
+        // Compare against a BUILD week — base weeks open one set lighter by design (the block
+        // accumulates 3 → 4 into the build phase, trainer audit 2026-08-20), so week 0 is no
+        // longer the block's full prescription.
+        let buildWeek = plan.weeks.first { $0.phase == .build && !$0.isDeload }
+        let deloadWeek = plan.weeks.first { $0.isDeload }
+        let buildSets = buildWeek?.sessions.first?.strengthTargets.first?.targetSets ?? 0
+        let deloadSets = deloadWeek?.sessions.first?.strengthTargets.first?.targetSets ?? 0
         #expect(deloadSets < buildSets)
+        // And the base → build ramp itself: week 1 opens lighter than the build prescription.
+        let baseSets = plan.weeks.first { $0.phase == .base }?.sessions.first?.strengthTargets.first?.targetSets ?? 0
+        #expect(baseSets < buildSets)
     }
 
     // MARK: Auto-prescribed exercises must be loggable — you cannot do 10–15 reps of a plank
@@ -528,8 +536,10 @@ struct PlanEngineTests {
         inp.muscleFocus = [.chest]
         let plan = PlanEngine.generate(profile: inp, catalog: catalog,
                                        startDate: Date(timeIntervalSinceReferenceDate: 0))
-        // The chest exercise in an Upper day gets an extra working set vs the base scheme (4 → 5).
-        let chestSets = plan.weeks[0].sessions
+        // The chest exercise in an Upper day gets an extra working set vs the build scheme
+        // (4 → 5). Measured on a BUILD week — base weeks run one set lighter across the board.
+        let buildWeek = plan.weeks.first { $0.phase == .build && !$0.isDeload } ?? plan.weeks[0]
+        let chestSets = buildWeek.sessions
             .flatMap(\.strengthTargets)
             .filter { $0.exerciseName == "Barbell Bench Press" }
             .map(\.targetSets).max() ?? 0
