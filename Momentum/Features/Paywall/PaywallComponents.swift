@@ -522,14 +522,23 @@ struct PaywallCheckout: View {
                 if paywall.isPro { finishEntitled() }
             }
         } label: {
-            Text(ctaTitle)
-                .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                .frame(maxWidth: .infinity).frame(height: 48)
-                .foregroundStyle(Theme.background)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+            // The working state crossfades to a spinner instead of dimming a sentence — the
+            // button holds its shape and weight while the store round-trip runs.
+            ZStack {
+                Text(ctaTitle)
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .opacity(working ? 0 : 1)
+                ProgressView()
+                    .tint(Theme.background)
+                    .opacity(working ? 1 : 0)
+            }
+            .frame(maxWidth: .infinity).frame(height: 50)
+            .foregroundStyle(Theme.background)
+            .background(Capsule().fill(Theme.ink))
+            .contentShape(Capsule())
+            .animation(.easeOut(duration: 0.18), value: working)
         }
-        .buttonStyle(.plain)
-        .opacity(working ? 0.4 : 1)
+        .buttonStyle(PressableScaleStyle(scale: 0.98))
         .disabled(working)
     }
 

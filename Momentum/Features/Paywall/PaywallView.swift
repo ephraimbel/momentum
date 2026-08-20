@@ -28,6 +28,7 @@ struct PaywallView: View {
     @State private var selected: PaywallProduct.Period = .annual
     @State private var revealed = false
     @State private var showFeatures = false
+    @Namespace private var planThumb
 
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
@@ -59,19 +60,26 @@ struct PaywallView: View {
                 timeline(s)
                     .padding(.top, Theme.Space.sm * s)
                     .reveal(revealed, delay: 0.2, reduceMotion: reduceMotion)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: selected)
 
                 planRow(s)
                     .padding(.top, Theme.Space.sm * s)
                     .reveal(revealed, delay: 0.28, reduceMotion: reduceMotion)
 
                 Button { showFeatures = true } label: {
-                    Text("Everything in Pro")
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.72))
-                        .underline()
+                    HStack(spacing: 5) {
+                        Text("Everything in Pro")
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .opacity(0.7)
+                    }
+                    .foregroundStyle(.white.opacity(0.72))
+                    .padding(.vertical, 6).padding(.horizontal, 10)
+                    .contentShape(Capsule())
                 }
+                .buttonStyle(PressableScaleStyle(scale: 0.96))
                 .frame(maxWidth: .infinity)
-                .padding(.top, 2)
                 .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
                 .accessibilityHint("Shows the full list of Pro features")
             }
@@ -179,43 +187,59 @@ struct PaywallView: View {
     // MARK: The plan pair — two quiet capsules, yearly staged to win
 
     private func planRow(_ s: CGFloat) -> some View {
-        HStack(spacing: Theme.Space.sm) {
-            planPill(offering.annual, s: s)
-            planPill(offering.monthly, s: s)
+        // ONE glass track, one gliding thumb (the app's SegmentedCapsule grammar, tuned for the
+        // film): the white thumb springs between the two plans instead of two pills trading
+        // fills — motion carries the selection, nothing blinks.
+        HStack(spacing: 0) {
+            planSegment(offering.annual, s: s)
+            planSegment(offering.monthly, s: s)
+        }
+        .padding(4)
+        .background(Capsule().fill(Color.black.opacity(0.28)))
+        .overlay(Capsule().stroke(.white.opacity(0.22)))
+        .overlay(alignment: .topLeading) {
+            // The trial tag rides the track's edge over the yearly side — a detail, not a shout.
+            if offering.annual.trialDays > 0, paywall.pricingIsLive {
+                Text("\(offering.annual.trialDays) DAYS FREE")
+                    .font(.rounded(8, weight: .heavy)).tracking(0.8)
+                    .foregroundStyle(Theme.inkOnFixedLight)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.proLavender))
+                    .offset(x: 14, y: -9)
+            }
         }
     }
 
-    private func planPill(_ p: PaywallProduct, s: CGFloat) -> some View {
+    private func planSegment(_ p: PaywallProduct, s: CGFloat) -> some View {
         let isSelected = p.period == selected
         return Button {
+            guard !isSelected else { return }
             selected = p.period
             Haptics.selection()
         } label: {
             VStack(spacing: 1) {
-                HStack(spacing: 5) {
-                    Text(p.isAnnual ? "Yearly" : "Monthly")
-                        .font(.rounded(Theme.FontSize.caption * s, weight: .bold))
-                    if p.isAnnual, p.trialDays > 0, paywall.pricingIsLive {
-                        Text("\(p.trialDays) DAYS FREE")
-                            .font(.rounded(8, weight: .heavy)).tracking(0.6)
-                            .foregroundStyle(Theme.inkOnFixedLight)
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Capsule().fill(Theme.proLavender))
-                    }
-                }
+                Text(p.isAnnual ? "Yearly" : "Monthly")
+                    .font(.rounded(Theme.FontSize.caption * s, weight: .bold))
                 if paywall.pricingIsLive {
                     Text(p.isAnnual ? "\(p.priceText)/yr" : "\(p.priceText)/mo")
                         .font(.rounded((Theme.FontSize.label + 1) * s, weight: .medium))
-                        .opacity(0.7)
+                        .opacity(isSelected ? 0.66 : 0.55)
                 }
             }
-            .foregroundStyle(isSelected ? Theme.inkOnFixedLight : .white)
+            .foregroundStyle(isSelected ? Theme.inkOnFixedLight : .white.opacity(0.9))
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10 * s)
-            .background(Capsule().fill(isSelected ? Color.white : Color.black.opacity(0.28)))
-            .overlay(Capsule().stroke(.white.opacity(isSelected ? 0 : 0.28)))
+            .padding(.vertical, 9 * s)
+            .background {
+                if isSelected {
+                    Capsule().fill(.white)
+                        .matchedGeometryEffect(id: "planThumb", in: planThumb)
+                }
+            }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86),
+                   value: selected)
         .accessibilityLabel(
             p.isAnnual ? "Yearly plan, \(p.priceText) per year"
                        : "Monthly plan, \(p.priceText) per month")
@@ -242,11 +266,12 @@ struct PaywallView: View {
 
     private var closeButton: some View {
         Button { dismiss() } label: {
-            Image(systemName: "xmark").font(.system(size: 14, weight: .bold))
+            Image(systemName: "xmark").font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
                 .frame(width: 34, height: 34)
                 .background(.ultraThinMaterial, in: Circle())
         }
+        .buttonStyle(PressableScaleStyle(scale: 0.92))
         .padding(.trailing, Theme.Space.md)
         .accessibilityLabel("Close")
     }
@@ -333,8 +358,9 @@ struct PaywallReveal: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 14)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.55).delay(delay), value: shown)
+            .offset(y: shown || reduceMotion ? 0 : 10)
+            .animation(reduceMotion ? nil : .spring(response: 0.7, dampingFraction: 0.92).delay(delay),
+                       value: shown)
     }
 }
 
