@@ -119,21 +119,26 @@ struct PaywallView: View {
                     // so solid meets solid there and no seam can exist — same look, zero cost.
                     PaywallFilmBackground()
                         .frame(height: geo.size.height * 0.62)
-                        .overlay(alignment: .bottom) {
-                            LinearGradient(stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: charcoal.opacity(0.05), location: 0.08),
-                                .init(color: charcoal.opacity(0.18), location: 0.18),
-                                .init(color: charcoal.opacity(0.42), location: 0.30),
-                                .init(color: charcoal.opacity(0.68), location: 0.44),
-                                .init(color: charcoal.opacity(0.88), location: 0.58),
-                                .init(color: charcoal.opacity(0.98), location: 0.72),
-                                .init(color: charcoal, location: 0.84),
-                                .init(color: charcoal, location: 1),
-                            ], startPoint: .top, endPoint: .bottom)
-                            .frame(height: geo.size.height * 0.4)
-                            .allowsHitTesting(false)
-                        }
+                    // The dissolve is its own layer, NOT an overlay measured against the film's
+                    // frame: ramp from 24% to 58% of the page, then GUARANTEED solid charcoal to
+                    // the bottom — the solid section overlaps the film's last visible band with
+                    // margin, so no frame math can ever reopen a seam (owner report: a hard band
+                    // mid-fade). 24 smootherstep samples keep the ramp itself kink-free.
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: geo.size.height * 0.16)
+                        // A LONG ramp (44% of the page) so no section changes fast enough to read
+                        // as an edge over bright footage; smoothstep with a 0.85 gamma opens the
+                        // shadow end, spreading the darkening the eye is most sensitive to.
+                        LinearGradient(stops: (0...29).map { i in
+                            let t = Double(i) / 29
+                            let r = min(1, t / 0.92)
+                            let e = pow(r * r * (3 - 2 * r), 0.85)
+                            return .init(color: charcoal.opacity(e), location: t)
+                        }, startPoint: .top, endPoint: .bottom)
+                        .frame(height: geo.size.height * 0.44)
+                        charcoal
+                    }
+                    .allowsHitTesting(false)
                     LinearGradient(colors: [.black.opacity(0.28), .clear],
                                    startPoint: .top, endPoint: .bottom)
                         .frame(height: 130)
@@ -297,21 +302,23 @@ struct PaywallView: View {
                 .transition(.opacity)
                 .accessibilityLabel("Dismiss")
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                HStack {
-                    Text("Everything in Pro")
-                        .font(.serif(22, weight: .semibold)).foregroundStyle(.white)
-                    Spacer()
-                    Button { dismissFeatures() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.75))
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(.white.opacity(0.1)))
+                // Title CENTERED on the card (owner call); the close chip overlays the trailing
+                // edge so the title's centering is true, not pushed off-axis by the X.
+                Text("Everything in Pro")
+                    .font(.serif(22, weight: .semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .trailing) {
+                        Button { dismissFeatures() } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(.white.opacity(0.1)))
+                        }
+                        .buttonStyle(PressableScaleStyle(scale: 0.92))
+                        .accessibilityLabel("Close")
                     }
-                    .buttonStyle(PressableScaleStyle(scale: 0.92))
-                    .accessibilityLabel("Close")
-                }
-                .padding(.bottom, 2)
+                    .padding(.bottom, 2)
                 PaywallFeatureList(pop: true)
             }
             .padding(Theme.Space.lg)
