@@ -30,25 +30,28 @@ struct NotificationsView: View {
         .onAppear(perform: markAllRead)   // seeing the inbox clears the badge
     }
 
-    // MARK: Masthead — the sheet grammar (display face + X circle), not a stock nav bar
+    // MARK: Masthead — the app's page grammar (owner call 2026-08-20): the lowercase title
+    // CENTERED in the display face, accessories flanking — exactly how progress and fuel read.
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("Notifications")
-                .font(.display(30, weight: .black))
+        ZStack {
+            Text("notifications")
+                .font(.display(20, weight: .bold))
                 .foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
-            Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Theme.surface))
-                    .contentShape(Circle())
+            HStack {
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Theme.surface))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.lg)
