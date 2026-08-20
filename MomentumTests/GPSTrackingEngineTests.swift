@@ -37,6 +37,51 @@ struct GPSTrackingEngineTests {
         #expect(await engine.snapshot().state == .autoPaused)
     }
 
+    /// A signal dropout while STANDING STILL must not trap the engine in `.gpsLost`: healthy
+    /// stationary fixes satisfy neither the movement-resume branch nor (pre-fix) the auto-pause
+    /// branch, so the chip said "Searching…" forever while the clock counted standing time. The
+    /// recovery fix now lands in `.autoPaused`, and movement auto-resumes as normal.
+    @Test func gpsLostWhileStationaryExitsIntoAutoPause() async {
+        let engine = GPSTrackingEngine(type: .run)
+        let t0 = Date(timeIntervalSince1970: 3_000_000)
+        await engine.begin(now: t0)
+        func ingest(_ dt: Double, speed: Double, lat: Double) async {
+            await engine.ingest(fix(t0, dt, speed: speed, lat: lat), now: t0.addingTimeInterval(dt))
+        }
+        // Slow to a stop right as the signal drops (arms the below-speed window)…
+        await ingest(0, speed: 3, lat: 37.0)
+        await ingest(1, speed: 0, lat: 37.0)
+        await engine.markGPSLost()
+        #expect(await engine.snapshot().state == .gpsLost)
+        // …signal returns while still standing: the engine must leave `.gpsLost`, not stay
+        // "Searching" over healthy fixes.
+        await ingest(10, speed: 0, lat: 37.0)
+        #expect(await engine.snapshot().state == .autoPaused)
+        // Moving again auto-resumes.
+        await ingest(12, speed: 3, lat: 37.001)
+        #expect(await engine.snapshot().state == .tracking)
+    }
+
+    /// Running through a tunnel: moving time must accrue across the dropout (the athlete kept
+    /// running — `RouteReplay` counts that span, and the live checkpoints must agree).
+    @Test func movingTimeAccruesAcrossASignalDropout() async {
+        let engine = GPSTrackingEngine(type: .run)
+        let t0 = Date(timeIntervalSince1970: 4_000_000)
+        await engine.begin(now: t0)
+        func ingest(_ dt: Double, speed: Double, lat: Double) async {
+            await engine.ingest(fix(t0, dt, speed: speed, lat: lat), now: t0.addingTimeInterval(dt))
+        }
+        await ingest(0, speed: 3, lat: 37.0)
+        await ingest(5, speed: 3, lat: 37.0002)
+        await engine.markGPSLost()
+        // 20 s of tunnel, then the first recovery fix — still moving, and the position jump
+        // (~55 m) is consistent with the reported 3 m/s so the Doppler-first gate accepts it.
+        await ingest(25, speed: 3, lat: 37.0007)
+        #expect(await engine.snapshot().state == .tracking)
+        let moving = await engine.snapshot().movingTimeS
+        #expect(moving > 24, "the 20 s dropout span must count as moving time, got \(moving)")
+    }
+
     @Test func manualPauseStaysStickyThroughMovingFixes() async {
         let engine = GPSTrackingEngine(type: .run)
         let t0 = Date(timeIntervalSince1970: 2_000_000)

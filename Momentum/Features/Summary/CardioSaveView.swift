@@ -97,7 +97,25 @@ struct CardioSaveView: View {
                         Button("Close") { onDone() }
                     }
                 } else {
-                    ProgressView().padding(.top, Theme.Space.xxl)
+                    // Never a bare spinner here: the finish crossfade dissolves INTO this state, so
+                    // a blank page reads as a white flash between the recorder and the summary
+                    // (caught on video review 2026-08-20). Sketch the page's own anatomy — a hero
+                    // block where the map lands, bars where the title and stats sit — and the real
+                    // content replaces it in place.
+                    VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                        RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                            .fill(Theme.surface)
+                            .frame(height: 280)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Theme.surface)
+                            .frame(width: 180, height: 22)
+                            .padding(.horizontal, Theme.Space.md)
+                        RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                            .fill(Theme.surface)
+                            .frame(height: 72)
+                            .padding(.horizontal, Theme.Space.md)
+                        Spacer(minLength: 0)
+                    }
                 }
             }
             #if DEBUG
@@ -409,6 +427,10 @@ struct CardioSaveView: View {
     }
 
     private func save() {
+        // Two Done taps inside a frame (or a two-finger tap) ran the whole commit twice before the
+        // celebration overlay mounted — doubling the review counter, the funnel event, and the
+        // Health mirror. Finish has had this latch all along; Done was the one unguarded button.
+        guard !celebrating else { return }
         focus = nil
         // Never celebrate a write that didn't land. Title, notes, sport, effort and map style exist
         // only in these fields until the commit succeeds — this used to fall straight through to the

@@ -91,6 +91,7 @@ struct CardioTrackingView: View {
     @State private var mapReady = false
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(Services.self) private var services
 
     /// Off-route hysteresis: flag once past `offRouteM`, clear only back under `onRouteM` — so a fix
@@ -150,7 +151,7 @@ struct CardioTrackingView: View {
             case .tracking:
                 if let vm {
                     trackingPanel(vm)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
@@ -165,9 +166,18 @@ struct CardioTrackingView: View {
                 vm = model
             }
         }
-        // Leave the acquiring gate the instant we have a usable lock (Strava's "GPS Signal Acquired").
+        // Leave the acquiring gate the instant we have a usable lock (Strava's "GPS Signal Acquired")
+        // — unless the app is BACKGROUNDED. Fixes keep flowing back there (the location session
+        // opens at acquiring), so a lock landing after the athlete pocketed the phone
+        // mid-"Searching…" would run the countdown and arm a recording nobody started. Only
+        // `.background` holds: `.inactive` is the launch transition / a system alert / control
+        // center — the athlete is still looking at the phone, and gating on it stalled the gate
+        // whenever the lock arrived under an alert (no later phase CHANGE ever re-fired it).
         .onChange(of: vm?.hasGPSLock ?? false) { _, locked in
-            if locked, phase == .acquiring { proceedToCountdown() }
+            if locked, phase == .acquiring, scenePhase != .background { proceedToCountdown() }
+        }
+        .onChange(of: scenePhase) { _, p in
+            if p == .active, phase == .acquiring, vm?.hasGPSLock == true { proceedToCountdown() }
         }
         // Each new fix: re-evaluate the off-route cue and, while locked on, slide the camera to keep
         // the athlete centered at the tight running zoom.
@@ -219,7 +229,10 @@ struct CardioTrackingView: View {
             if lastKnownCoordinate == nil { lastKnownCoordinate = computeLastKnownCoordinate() }
             if case .idle = viewport {
                 let liveFix = CLLocationManager().location?.coordinate
-                viewport = (liveFix ?? lastKnownCoordinate).map { .camera(center: $0, zoom: 15) }
+                // Match Today's `flyIntoRecordingFrame` zoom exactly (16 run/walk, 15 ride) — the
+                // crossfade hands off between two maps, and a one-level zoom step is visible.
+                let zoom: CGFloat = type.discipline == .cycling ? 15 : 16
+                viewport = (liveFix ?? lastKnownCoordinate).map { .camera(center: $0, zoom: zoom) }
                     ?? followViewport
             }
             Haptics.warm()   // the countdown's ticks are seconds away — wake the Taptic Engine now
@@ -488,7 +501,8 @@ struct CardioTrackingView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Off the loop").font(.rounded(Theme.FontSize.caption, weight: .bold))
                 Text("\(Int(deviationM)) m — head this way to rejoin")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(Theme.inkSecondary)
             }
             Spacer(minLength: 0)
         }
@@ -596,7 +610,8 @@ struct CardioTrackingView: View {
             Color.black.opacity(0.2).ignoresSafeArea()
             Text(countdown > 0 ? "\(countdown)" : "GO")
                 .font(.display(96, weight: .black)).foregroundStyle(.white)
-                .id(countdown).transition(.scale.combined(with: .opacity))
+                .id(countdown)
+                .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
         }
         // Purely visual — the dimmer must not eat taps, or the X behind it can't abort the
         // countdown and an accidental start arms no matter what the athlete does.
@@ -841,8 +856,15 @@ struct CardioTrackingView: View {
             withAnimation(Motion.lively) { countdown = 0 }
             try? await Task.sleep(for: .seconds(0.15))   // GO lands, then the panel rises through it
             // The user can tap X mid-countdown; arming after that teardown would create an orphan
-            // workout (and re-set the recovery marker) with nothing on screen to finish it.
+            // workout (and re-set the recovery marker) with nothing on screen to finish it. Same
+            // for a countdown that outlived the foreground: never arm in the pocket — fall back to
+            // the gate, and the scenePhase observer restarts the countdown when they return.
             guard !dismissed else { return }
+            guard scenePhase != .background else {
+                phase = .acquiring
+                countdown = 3
+                return
+            }
             await vm?.arm()
             Haptics.success()
             withAnimation(Motion.standard) { phase = .tracking }

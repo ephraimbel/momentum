@@ -41,4 +41,10 @@ final class AppRouter {
     /// it here is what lets the recorder present as a crossfade overlay above the tab bar instead
     /// of a modal slide with its own presentation context.
     var workoutLaunch: TodayLaunch?
+
+    /// The "Enjoying momentum?" soft-ask is on screen (`WorkoutRunner` owns the cover). Surfaced
+    /// here so `RootView` can hold the award presenter: both fire after the same first save, and
+    /// the award choreography used to play out invisibly UNDER the rating cover's dimmed backdrop —
+    /// spent before the athlete could see it.
+    var ratingPromptVisible = false
 }

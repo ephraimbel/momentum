@@ -146,7 +146,8 @@ struct RootView: View {
                 // save moment, and with the recorder now an overlay (not a cover) the presenter
                 // could otherwise draw a medallion OVER the live run. They present the moment the
                 // recorder fades out — exactly the old "as the save cover clears" beat.
-                .awardUnlocks(paused: rootCoverOwnsScreen || router.workoutLaunch != nil)
+                .awardUnlocks(paused: rootCoverOwnsScreen || router.workoutLaunch != nil
+                                      || router.ratingPromptVisible)
                 // The app-wide toast capsule (enterprise pass 2026-08-15) — one host, over the tab
                 // shell. Same under-covers reality as awards: while a root cover owns the screen the
                 // center is held, so a coaching toast waits for the athlete instead of expiring

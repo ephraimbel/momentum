@@ -144,8 +144,12 @@ actor GPSTrackingEngine {
         // `pausedSpan` keeps the record honest without destroying it (mark, don't destroy).
         await sink.persistSample(fix, accepted: accepted && !paused, pausedSpan: paused)
 
-        // Moving-time accounting only while actively tracking.
-        if state == .tracking, let mark = lastMovingMark {
+        // Moving-time accounting while actively tracking — including the recovery fix after a
+        // signal dropout: the athlete kept running through the tunnel, and `RouteReplay` counts
+        // that span too. Only counting `.tracking` here made the live checkpoints (the crash-
+        // recovery source of truth) undercount every dropout by 8s minimum, so a recovered run's
+        // pace read fast.
+        if state == .tracking || state == .gpsLost, let mark = lastMovingMark {
             movingTimeS += now.timeIntervalSince(mark)
         }
         lastMovingMark = now
@@ -166,8 +170,12 @@ actor GPSTrackingEngine {
                 autoPauseSuppressed = false
                 if state == .autoPaused { state = .tracking }
                 else if state == .gpsLost, accepted { state = .tracking }
-            } else if state == .tracking, !autoPauseSuppressed {
-                // Stationary and not manually overridden → auto-pause.
+            } else if state == .tracking || (state == .gpsLost && accepted), !autoPauseSuppressed {
+                // Stationary and not manually overridden → auto-pause. Also the exit from a signal
+                // dropout for an athlete standing still: healthy fixes with ~0 speed used to satisfy
+                // neither branch (resume needs movement, this one needed `.tracking`), trapping the
+                // engine in `.gpsLost` — chip saying "Searching…" while the clock counted standing
+                // time that auto-pause exists to freeze.
                 state = .autoPaused
             }
             // else: stationary but the athlete manually resumed → stay tracking (Resume always wins).

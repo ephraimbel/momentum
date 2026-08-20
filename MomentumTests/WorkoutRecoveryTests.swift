@@ -61,6 +61,48 @@ struct WorkoutRecoveryTests {
         #expect(ActiveWorkoutMarker.pendingID == nil)
     }
 
+    /// The coffee-stop crash: 10 min of running, a 5 min manual pause (persisted as `pausedSpan`
+    /// rows), 5 min more running, then the app dies. Finalize must reconstruct ~15 min of MOVING
+    /// time — the wall span to the last fix (~20 min) counts the pause back in and dilutes the
+    /// pace, which is exactly the bug this pins (2026-08-20 run-flow audit). Elapsed keeps the
+    /// honest wall span.
+    @Test func finalizeExcludesPausedSpanFromRecoveredDuration() throws {
+        let container = try makeContainer()
+        let ctx = ModelContext(container)
+        let start = Date(timeIntervalSinceNow: -7_200)
+        let w = Workout()
+        w.type = .run
+        w.startedAt = start
+        let gps = GPSDetail()
+        gps.distanceM = 3_600   // checkpointed aggregate (unused by the duration math)
+        w.gps = gps
+        // 4 m/s northward at 5 s cadence ≈ 6:58/km — comfortably past every accept/stationary gate.
+        func sample(_ offset: Double, paused: Bool) {
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(offset)
+            s.lat = 37.33 + 0.000180 * (offset / 5)
+            s.lon = -122.03
+            s.accuracyM = 5
+            s.speedMS = paused ? 0 : 4
+            s.accepted = !paused
+            s.pausedSpan = paused
+            gps.samples.append(s)
+        }
+        for i in 0...120 { sample(Double(i) * 5, paused: false) }              // 0–600 s moving
+        for i in 1...60 { sample(600 + Double(i) * 5, paused: true) }          // 600–900 s paused
+        for i in 1...60 { sample(900 + Double(i) * 5, paused: false) }         // 900–1200 s moving
+        ctx.insert(w)
+        try ctx.save()
+        ActiveWorkoutMarker.set(w.id)
+
+        WorkoutRecovery.finalizePending(in: ctx)
+        #expect(w.durationS > 840 && w.durationS < 960,
+                "moving time should be ~900 s, got \(w.durationS)")
+        #expect(w.elapsedS > 1_140 && w.elapsedS <= 1_260,
+                "elapsed should be the ~1200 s wall span, got \(w.elapsedS)")
+        #expect(ActiveWorkoutMarker.pendingID == nil)
+    }
+
     @Test func emptyHuskIsSweptSilently() throws {
         let container = try makeContainer()
         let ctx = ModelContext(container)

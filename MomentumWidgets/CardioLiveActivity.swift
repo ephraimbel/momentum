@@ -29,26 +29,34 @@ struct CardioLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     clock(context)
                         .font(.custom("SpaceGrotesk-Bold", size: 22)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.6)
                         .frame(maxWidth: 92, alignment: .trailing)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
+                    // Inset from the island's rounded corners — flush-left, the DISTANCE label's
+                    // first letter clips behind the curve (caught by the lock-screen probe).
                     HStack(alignment: .lastTextBaseline) {
                         metric(context.state.distanceText, "Distance")
                         Spacer()
-                        if context.state.paused { chip("PAUSED") }
+                        if context.isStale { chip("OPEN MOMENTUM") }
+                        else if context.state.paused { chip("PAUSED") }
                         else if context.state.gpsLost { chip("GPS LOST") }
                         Spacer()
                         metric(context.state.paceText, context.state.paceLabel)
                     }
+                    .padding(.horizontal, 10)
                 }
             } compactLeading: {
-                Image(systemName: context.attributes.symbol)
+                // Paused flips the glyph — without it the frozen compact clock reads as a stuck
+                // timer, the island's only way to carry state at this size.
+                Image(systemName: context.state.paused ? "pause.fill" : context.attributes.symbol)
             } compactTrailing: {
                 clock(context)
-                    .font(.system(.body, design: .rounded).weight(.semibold)).monospacedDigit()
+                    .font(.custom("SpaceGrotesk-Medium", size: 16)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(maxWidth: 54)
             } minimal: {
-                Image(systemName: context.attributes.symbol)
+                Image(systemName: context.state.paused ? "pause.fill" : context.attributes.symbol)
             }
             .keylineTint(Ink.accent)
         }
@@ -77,7 +85,8 @@ struct CardioLiveActivity: Widget {
                     .foregroundStyle(Ink.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                if context.state.paused { chip("PAUSED") }
+                if context.isStale { chip("OPEN MOMENTUM") }
+                else if context.state.paused { chip("PAUSED") }
                 else if context.state.gpsLost { chip("GPS LOST") }
             }
             HStack(alignment: .center, spacing: 16) {
@@ -89,6 +98,9 @@ struct CardioLiveActivity: Widget {
                     HStack(alignment: .top, spacing: 22) {
                         lockMetric(context.state.distanceText, "Distance")
                         lockMetric(context.state.paceText, context.state.paceLabel)
+                        if let bpm = context.state.bpm {
+                            lockMetric("\(bpm)", context.state.zoneText ?? "BPM")
+                        }
                     }
                 }
                 Spacer(minLength: 0)
@@ -103,6 +115,8 @@ struct CardioLiveActivity: Widget {
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 14)
+        // Stale numbers dim as one unit — the card visibly steps back from "live" without a redesign.
+        .opacity(context.isStale ? 0.55 : 1)
     }
 
     /// The route so far — the run's shape, not a map. White trace, green start, violet tip (the
@@ -138,13 +152,15 @@ struct CardioLiveActivity: Widget {
             .lineLimit(1).fixedSize()
     }
 
-    /// The elapsed clock: native count-up while running, frozen pre-formatted text when paused.
+    /// The elapsed clock: native count-up while running, frozen pre-formatted text when paused —
+    /// and when the app stops reporting (`isStale`, e.g. killed mid-run): a confident ticking clock
+    /// over minutes-dead numbers is the one dishonest thing this card could do.
     @ViewBuilder
     private func clock(_ context: ActivityViewContext<CardioActivityAttributes>) -> some View {
-        if context.state.paused {
+        if context.state.paused || context.isStale {
             Text(context.state.elapsedText)
         } else {
-            Text(timerInterval: context.state.timerStart...context.state.timerStart.addingTimeInterval(86_400),
+            Text(timerInterval: context.state.timerStart...context.state.timerStart.addingTimeInterval(172_800),
                  countsDown: false, showsHours: true)
         }
     }

@@ -51,10 +51,17 @@ enum WorkoutRecovery {
         guard let workout = pendingWorkout(in: context) else { ActiveWorkoutMarker.clear(); return }
 
         if let gps = workout.gps {
-            let accepted = gps.samples.filter(\.accepted).sorted { $0.t < $1.t }
-            if let last = accepted.last {
-                let span = last.t.timeIntervalSince(workout.startedAt)
-                if span > 0 { workout.durationS = max(workout.durationS, span) }
+            // MOVING time, from the canonical reducer — the wall span to the last sample counts any
+            // mid-run pause (a 15-minute coffee stop) back into the duration and dilutes the pace.
+            // `routePoints` replays the persisted fixes with the pause clock frozen, exactly like
+            // the live engine's checkpoints; between the two honest values, keep the later.
+            if let movingS = gps.routePoints(type: workout.type).last?.t, movingS > 0 {
+                workout.durationS = max(workout.durationS, movingS)
+            }
+            // The wall span to the last accepted fix is the honest ELAPSED time (pauses included).
+            if let last = gps.samples.filter(\.accepted).map(\.t).max() {
+                let span = last.timeIntervalSince(workout.startedAt)
+                if span > 0 { workout.elapsedS = max(workout.elapsedS, span) }
             }
             // Distance/elevation were checkpointed every 5s while live; derive the average from
             // what actually stuck so the summary math is self-consistent.

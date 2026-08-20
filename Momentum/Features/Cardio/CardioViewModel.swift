@@ -362,7 +362,7 @@ final class CardioViewModel {
     private func pushLiveActivityIfDue() {
         let paused = isPaused
         let lost = gpsLost
-        let step = structured == nil ? nil : stepTitle
+        let step = liveActivityStepText
         guard paused != lastActivityPaused || lost != lastActivityGPSLost || step != lastActivityStep
             || Date().timeIntervalSince(lastActivityPush) >= GPSTrackingEngine.Const.liveActivityUpdateS
         else { return }
@@ -558,7 +558,14 @@ final class CardioViewModel {
     var structuredComplete: Bool { tracker?.isComplete ?? false }
 
     /// Banner title: "Rep 3 / 6" for reps, else the kind ("Warm up", "Recovery", "Cool down").
+    /// Empty (post-completion) collapses to "" so in-app callers can hide it — but the Live
+    /// Activity must receive nil then, not "": the widget's `stepText ?? title` fallback takes a
+    /// non-nil empty string and renders a blank header after the last guided step.
     var stepTitle: String { currentStep.map(Self.stepLabel) ?? "" }
+    private var liveActivityStepText: String? {
+        guard structured != nil, !stepTitle.isEmpty else { return nil }
+        return stepTitle
+    }
 
     /// The current step's remaining amount as a big value + caption ("240" / "M LEFT", "1:30" / "LEFT").
     var stepRemaining: (value: String, caption: String) {
@@ -646,7 +653,9 @@ final class CardioViewModel {
             paceText: pace.value,
             paceLabel: pace.label,
             goalFraction: goalMeters.map { $0 > 0 ? max(0, min(1, distanceM / $0)) : 0 },
-            stepText: structured == nil ? nil : stepTitle,
+            bpm: bpm,
+            zoneText: hrZone.map { "BPM · \($0)" },
+            stepText: liveActivityStepText,
             route: liveRouteSample())
     }
 

@@ -25,6 +25,10 @@ struct CardioActivityAttributes: ActivityAttributes {
         var paceLabel: String
         /// Goal progress 0…1 when the session has a distance goal; nil otherwise.
         var goalFraction: Double?
+        /// Live heart rate + zone label ("ZONE 3") when a monitor is connected; nil hides the column.
+        /// The lock screen should show everything the athlete's wrist knows (owner call 2026-08-20).
+        var bpm: Int?
+        var zoneText: String?
         /// The guided step in progress ("Rep 3 of 6", "Tempo", …) for a structured run; nil on a
         /// free session. Pushed immediately on step transitions so the lock screen tracks the plan.
         var stepText: String?

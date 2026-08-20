@@ -11,6 +11,7 @@ struct WorkoutRunner: ViewModifier {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(AppRouter.self) private var router
     /// The native App Store rating prompt. Reached ONLY through the styled "Enjoying momentum?"
     /// pre-prompt below, at the finished-workout moment after a genuine save (`AppReview`) — never
     /// during onboarding, which is what got the app rejected under guideline 5.6.3.
@@ -27,6 +28,23 @@ struct WorkoutRunner: ViewModifier {
     /// The dismissal beat in flight (fade out → receipts → release) — cancelled if a new workout
     /// starts inside the fade, so a stale beat can't clear the fresh journey's state.
     @State private var dismissWork: Task<Void, Never>?
+    /// The adaptive pass owed for a finished workout, captured at finish time (the `@Query` wrappers
+    /// can't be reached reliably from a detached task later). It RUNS only after the overlay fully
+    /// resolves: running it 1.2s after the save screen appeared meant a Discard could never undo it —
+    /// the plan kept pace recalibration learned from a deleted run — and its full-history fetch
+    /// janked the title editor. Post-dismissal, a kept workout still exists and a discarded one
+    /// doesn't, so the fetch-by-id inside the pass is the honesty gate.
+    @State private var pendingAdapt: (id: UUID, plan: TrainingPlan?, profile: UserProfile?, unit: DistanceUnit)?
+    /// The post-dismissal beat (rating soft-ask, then the adaptive pass) — cancelled if a new
+    /// workout starts, so the rating cover can never present over a fresh live recorder.
+    @State private var postDismissWork: Task<Void, Never>?
+    /// Keeps the live recorder mounted UNDER the save screen while the finish crossfade plays.
+    /// The Mapbox map is a UIView — SwiftUI's exit fade can't hold its pixels, so removing the
+    /// live screen at fade start dropped the map instantly and the "crossfade" dissolved through
+    /// the bare background: a visible white dip on every finish (video review 2026-08-20). The
+    /// save screen fades in over the still-mounted recorder, then the underlay unmounts without
+    /// animation behind the now-opaque page.
+    @State private var liveUnderlay = false
 
     private var plan: TrainingPlan? { profiles.first?.plan }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto }
@@ -69,9 +87,19 @@ struct WorkoutRunner: ViewModifier {
             // under the recorder. On close, the receipts wait out the fade (the old cover's
             // onDismiss beat): `summary` must survive until the last fading frame so the overlay
             // never snaps back to the live recorder mid-dissolve.
+            // Award unlocks queue behind this cover (RootView pauses the presenter on it) — without
+            // the hold, the first save's award choreography played invisibly UNDER the rating card's
+            // dimmed backdrop and was spent before the athlete ever saw it.
+            .onChange(of: showRatingPrompt) { _, visible in router.ratingPromptVisible = visible }
             .onChange(of: launch != nil) { _, up in
                 if up {
                     dismissWork?.cancel()   // re-opened inside a fade — the hold below still stands
+                    // A scheduled rating ask must not cover the fresh recorder; and if the previous
+                    // journey's adaptive pass hasn't run yet, settle that debt now, before the new
+                    // session can pile onto it.
+                    postDismissWork?.cancel()
+                    runPendingAdapt()
+                    liveUnderlay = false
                     // A cancelled fade never ran its cleanup: a stale summary here would open the
                     // NEW workout on the OLD save screen.
                     summary = nil
@@ -111,10 +139,16 @@ struct WorkoutRunner: ViewModifier {
             if let launch {
                 ZStack {
                     Theme.background.ignoresSafeArea()
-                    if let presented = summary {
-                        saveScreen(presented).transition(.opacity)
-                    } else {
+                    if summary == nil || liveUnderlay {
                         liveScreen(launch)
+                    }
+                    if let presented = summary {
+                        // The explicit background travels WITH the fade: the save page's own
+                        // surfaces are transparent (they normally read the ZStack base), and
+                        // without it the underlaid map would grin through every light area.
+                        saveScreen(presented)
+                            .background(Theme.background.ignoresSafeArea())
+                            .transition(.opacity)
                     }
                 }
                 .animation(.easeOut(duration: 0.28), value: summary != nil)
@@ -163,11 +197,24 @@ struct WorkoutRunner: ViewModifier {
             // toast the adaptive pass queued mid-save follows it in the same capsule voice.
             ToastCenter.shared.show(icon: "checkmark.circle.fill", line: line, front: true)
         }
-        guard AppReview.shouldRequestReview() else { return }
-        Task { @MainActor in
+        postDismissWork = Task { @MainActor in
             try? await Task.sleep(for: .seconds(0.6))
-            showRatingPrompt = true
+            guard !Task.isCancelled else { return }
+            if AppReview.shouldRequestReview() { showRatingPrompt = true }
+            // The adaptive pass runs last — it's heavy main-actor SwiftData work, and the light
+            // rating card should already be on screen (or skipped) before it lands.
+            try? await Task.sleep(for: .seconds(0.6))
+            guard !Task.isCancelled else { return }
+            runPendingAdapt()
         }
+    }
+
+    /// Consume the owed adaptive pass, if any. Fetch-by-id inside `adaptAfterFinish` makes this a
+    /// silent no-op for a discarded workout — the row is gone, so nothing is learned from it.
+    private func runPendingAdapt() {
+        guard let owed = pendingAdapt else { return }
+        pendingAdapt = nil
+        adaptAfterFinish(owed.id, plan: owed.plan, profile: owed.profile, unit: owed.unit)
     }
 
     /// One honest line about what was just logged. Cardio speaks distance + pace (speed for
@@ -232,21 +279,20 @@ struct WorkoutRunner: ViewModifier {
         }
         // Swap the cover's CONTENT to the save screen — the cover itself stays up, so the athlete
         // crossfades from the live recorder straight to their summary instead of paying a full
-        // dismiss animation followed by a full present. Everything below faults the whole workout
-        // history and rewrites the plan; running it here used to stall the app at the exact moment
-        // the athlete crossed their finish line, so it waits out the transition.
+        // dismiss animation followed by a full present. The recorder stays mounted beneath for
+        // the fade (see `liveUnderlay`), then unmounts unseen behind the opaque page.
+        liveUnderlay = true
         summary = PresentedWorkout(id: id, type: type)
-        // Captured HERE, while we're still inside a view update. `plan`/`profiles` read through
-        // `@Query`, and reaching for a property wrapper from a detached Task a second later is not
-        // reliable — a nil profile would have meant `schedulePlannedReminders(nil)`, quietly wiping
-        // the athlete's reminders. SwiftData models are references, so holding them is safe.
-        let capturedPlan = plan
-        let capturedProfile = profiles.first
-        let capturedUnit = distanceUnit
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.2))
-            adaptAfterFinish(id, plan: capturedPlan, profile: capturedProfile, unit: capturedUnit)
+            try? await Task.sleep(for: .seconds(0.5))
+            liveUnderlay = false
         }
+        // The adaptive pass is only CAPTURED here — while we're still inside a view update, because
+        // `plan`/`profiles` read through `@Query` and reaching a property wrapper from a detached
+        // task later is not reliable (a nil profile would have meant `schedulePlannedReminders(nil)`,
+        // quietly wiping the athlete's reminders; SwiftData models are references, so holding them
+        // is safe). It RUNS after the overlay resolves — see `pendingAdapt`.
+        pendingAdapt = (id: id, plan: plan, profile: profiles.first, unit: distanceUnit)
     }
 
     /// The adaptive pass: protective load easing, pace recalibration, athlete-model ingest and
