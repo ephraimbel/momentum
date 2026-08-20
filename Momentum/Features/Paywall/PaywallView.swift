@@ -143,31 +143,46 @@ struct PaywallView: View {
 
     @ViewBuilder
     private func timeline(_ s: CGFloat) -> some View {
-        if paywall.pricingIsLive, selected == .annual, product.trialDays > 0 {
-            // A REAL timeline (the Opal confidence pattern, drawn properly): a hairline rail
-            // joins the three beats, and only the live one glows lavender. The rail lives in the
-            // VStack's BACKGROUND so it adopts the rows' height — as a ZStack sibling its
-            // unconstrained height blew the whole stack open to fill the screen.
-            VStack(alignment: .leading, spacing: 8 * s) {
-                timelineRow("Today, every feature unlocks", live: true, s: s)
-                timelineRow("Days 1 to \(product.trialDays), train free. Cancel anytime", live: false, s: s)
-                timelineRow("Day \(product.trialDays), \(product.priceText)/year begins. Under $5 a month",
-                            live: false, s: s)
+        if paywall.pricingIsLive {
+            // BOTH plan states render inside one fixed-footprint ZStack and only crossfade
+            // (owner call 2026-08-20: switching plans must never move the buttons below —
+            // content that changes animates in place, the geometry holds still). The ZStack
+            // sizes to the taller three-row annual timeline, so the monthly line simply fades
+            // in over reserved space.
+            ZStack(alignment: .topLeading) {
+                annualTimeline(s)
+                    .opacity(selected == .annual ? 1 : 0)
+                    .accessibilityHidden(selected != .annual)
+                timelineRow("Billed monthly at \(offering.monthly.priceText). No trial, cancel anytime",
+                            live: true, s: s)
+                    .opacity(selected == .monthly ? 1 : 0)
+                    .accessibilityHidden(selected != .monthly)
             }
-            .background(alignment: .topLeading) {
-                Rectangle()
-                    .fill(.white.opacity(0.18))
-                    .frame(width: 1.5)
-                    .offset(x: 2.75)
-                    .padding(.vertical, 9 * s)
-            }
-            .accessibilityElement(children: .combine)
-        } else if paywall.pricingIsLive, selected == .monthly {
-            timelineRow("Billed monthly at \(product.priceText). No trial, cancel anytime", live: true, s: s)
         } else {
             // Store prices not yet loaded — promise nothing numeric (pricing honesty rule).
             timelineRow("Every feature unlocks today", live: true, s: s)
         }
+    }
+
+    /// The three honest beats with the hairline rail. The rail lives in the VStack's BACKGROUND
+    /// so it adopts the rows' height — as a ZStack sibling its unconstrained height blew the
+    /// whole stack open to fill the screen.
+    private func annualTimeline(_ s: CGFloat) -> some View {
+        let annual = offering.annual
+        return VStack(alignment: .leading, spacing: 8 * s) {
+            timelineRow("Today, every feature unlocks", live: true, s: s)
+            timelineRow("Days 1 to \(annual.trialDays), train free. Cancel anytime", live: false, s: s)
+            timelineRow("Day \(annual.trialDays), \(annual.priceText)/year begins. Under $5 a month",
+                        live: false, s: s)
+        }
+        .background(alignment: .topLeading) {
+            Rectangle()
+                .fill(.white.opacity(0.18))
+                .frame(width: 1.5)
+                .offset(x: 2.75)
+                .padding(.vertical, 9 * s)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func timelineRow(_ text: String, live: Bool, s: CGFloat) -> some View {
