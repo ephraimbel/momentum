@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.4.0"      # 2026-08-20: 1.3.0 (build 27) went READY_FOR_SALE — this sweep ships as 1.4.0. Must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version. (1.4.0 record creation needs the owner or an approved ASC write.)
-    CURRENT_PROJECT_VERSION: "28"   # build 28 (v1.4.0) — builds 1-27 consumed (27 shipped as 1.3.0, READY_FOR_SALE 2026-08-20). 28 = the 2026-08-19/20 sweep: continuous run-start (recorder overlay + camera handoff + faster countdown), TrendAxis chart labeling across Progress, Lavender Glass completion, Fuel one-page tracker (dayparts, add-an-item, log-again) + the Nutrition month report, hydration/FuelWeek/readout pass, perf audit + readiness BGTask plist keys. ⚠️ Meta-ATT note carried: privacy answers precedent set by 1.3.0 shipping as-is.
+    CURRENT_PROJECT_VERSION: "29"   # build 29 (v1.4.0) — builds 1-28 consumed (28 archived but never uploaded; superseded same-day). 29 = build 28's sweep (continuous run-start, TrendAxis charts, Lavender Glass completion, Fuel one-page tracker + Nutrition month report, strength splits) PLUS the 2026-08-20 run-flow audit (recovery pause math, isStale lock screen + live HR, liveUnderlay finish crossfade, background arming gate) and the peer's paywall Film/splash pass. ⚠️ Meta-ATT note carried: privacy answers precedent set by 1.3.0 shipping as-is.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
