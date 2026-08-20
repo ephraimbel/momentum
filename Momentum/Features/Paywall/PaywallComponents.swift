@@ -57,6 +57,9 @@ struct PaywallFeatureList: View {
     var scale: CGFloat = 1
     /// The main paywall's card staging; default is the flow's on-canvas staging.
     var boxed = false
+    /// The film paywall's popup-card staging (2026-08-20): dark ground, lavender glyph discs,
+    /// white rows, quiet hairlines.
+    var pop = false
 
     private static let features: [(String, String)] = [
         ("figure.run", "Your full adaptive training plan"),
@@ -70,7 +73,33 @@ struct PaywallFeatureList: View {
     ]
 
     var body: some View {
-        if boxed { boxedList } else { openList }
+        if pop { popList } else if boxed { boxedList } else { openList }
+    }
+
+    /// Popup staging: each feature in a lavender-lit disc row on the dark card.
+    private var popList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(Self.features.enumerated()), id: \.offset) { i, item in
+                if i > 0 { Rectangle().fill(.white.opacity(0.08)).frame(height: 0.5) }
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: item.0)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.proLavender)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(.white.opacity(0.07)))
+                    Text(item.1)
+                        .font(.rounded(14.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1).minimumScaleFactor(0.85)
+                    Spacer(minLength: Theme.Space.xs)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(Theme.purple)
+                }
+                .padding(.vertical, 10)
+                .accessibilityElement(children: .combine)
+            }
+        }
     }
 
     /// On-canvas staging: purple glyph + one line of ink, generous air, nothing else.

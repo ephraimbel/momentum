@@ -30,6 +30,9 @@ struct PaywallView: View {
     @State private var showFeatures = false
     @Namespace private var planThumb
 
+    /// The page's ground — one hex, shared by the ground fill and the film's dissolve ramp.
+    private let charcoal = Color(hex: "141210")
+
     private var offering: PaywallOffering { paywall.offering }
     private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
 
@@ -49,17 +52,17 @@ struct PaywallView: View {
                     .lineSpacing(1)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                    .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
+                    .reveal(revealed, delay: 0.03, reduceMotion: reduceMotion)
                 // Two plain sentences, no dash — the owner's voice rule (2026-07-30).
                 Text("Plans built by runners, for runners.\nAround your body, your goal, your life.")
                     .font(.serif((Theme.FontSize.caption + 3) * s, weight: .medium))
                     .foregroundStyle(.white.opacity(0.74))
                     .fixedSize(horizontal: false, vertical: true)
-                    .reveal(revealed, delay: 0.12, reduceMotion: reduceMotion)
+                    .reveal(revealed, delay: 0.07, reduceMotion: reduceMotion)
 
                 timeline(s)
                     .padding(.top, (Theme.Space.md - 2) * s)
-                    .reveal(revealed, delay: 0.2, reduceMotion: reduceMotion)
+                    .reveal(revealed, delay: 0.12, reduceMotion: reduceMotion)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: selected)
 
                 // The tag overhangs the track's top edge by ~9pt, so the visual gap under the
@@ -67,24 +70,30 @@ struct PaywallView: View {
                 // (owner note 2026-08-20: the rows felt cramped against the buttons).
                 planRow(s)
                     .padding(.top, (Theme.Space.lg - 2) * s)
-                    .reveal(revealed, delay: 0.28, reduceMotion: reduceMotion)
+                    .reveal(revealed, delay: 0.17, reduceMotion: reduceMotion)
 
-                Button { showFeatures = true } label: {
-                    HStack(spacing: 5) {
+                Button {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86)) {
+                        showFeatures = true
+                    }
+                } label: {
+                    HStack(spacing: 6) {
                         Text("Everything in Pro")
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                        Image(systemName: "chevron.right")
+                        Image(systemName: "chevron.up")
                             .font(.system(size: 9, weight: .bold))
                             .opacity(0.7)
                     }
-                    .foregroundStyle(.white.opacity(0.72))
-                    .padding(.vertical, 6).padding(.horizontal, 10)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.vertical, 8).padding(.horizontal, 14)
+                    .background(Capsule().fill(.white.opacity(0.1)))
+                    .overlay(Capsule().stroke(.white.opacity(0.18)))
                     .contentShape(Capsule())
                 }
                 .buttonStyle(PressableScaleStyle(scale: 0.96))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4 * s)
-                .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
+                .reveal(revealed, delay: 0.21, reduceMotion: reduceMotion)
                 .accessibilityHint("Shows the full list of Pro features")
             }
             .padding(.horizontal, Theme.Space.xl)
@@ -93,7 +102,7 @@ struct PaywallView: View {
             PaywallCheckout(product: product, hard: hard, onEntitled: onEntitled)
                 .padding(.horizontal, Theme.Space.xl)
                 .padding(.top, Theme.Space.md)
-                .reveal(revealed, delay: 0.36, reduceMotion: reduceMotion)
+                .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
         }
         .background {
             // Half-and-half (owner call 2026-08-20): the film owns the TOP of the page and
@@ -103,24 +112,27 @@ struct PaywallView: View {
             GeometryReader { geo in
                 ZStack(alignment: .top) {
                     Color(hex: "141210")
-                    // The film dissolves via its own alpha MASK, not an overlay painted on top:
-                    // a covering scrim leaves a visible edge where the film's frame ends, a
-                    // continuous mask cannot. The stops mirror SoftScrim's easing — silent
-                    // shoulder, swift middle, flat landing.
+                    // The film dissolves under a plain OVERLAY gradient, not an alpha mask: a
+                    // SwiftUI mask over an AVPlayerLayer forces an offscreen compositing pass on
+                    // every video frame (the "glitchy" hitch, owner report 2026-08-20). The ramp
+                    // reaches FULL charcoal a comfortable margin BEFORE the film's bottom edge,
+                    // so solid meets solid there and no seam can exist — same look, zero cost.
                     PaywallFilmBackground()
                         .frame(height: geo.size.height * 0.62)
-                        .mask {
+                        .overlay(alignment: .bottom) {
                             LinearGradient(stops: [
-                                .init(color: .black, location: 0),
-                                .init(color: .black, location: 0.52),
-                                .init(color: .black.opacity(0.95), location: 0.62),
-                                .init(color: .black.opacity(0.82), location: 0.70),
-                                .init(color: .black.opacity(0.6), location: 0.78),
-                                .init(color: .black.opacity(0.36), location: 0.85),
-                                .init(color: .black.opacity(0.16), location: 0.92),
-                                .init(color: .black.opacity(0.04), location: 0.97),
-                                .init(color: .clear, location: 1),
+                                .init(color: .clear, location: 0),
+                                .init(color: charcoal.opacity(0.05), location: 0.08),
+                                .init(color: charcoal.opacity(0.18), location: 0.18),
+                                .init(color: charcoal.opacity(0.42), location: 0.30),
+                                .init(color: charcoal.opacity(0.68), location: 0.44),
+                                .init(color: charcoal.opacity(0.88), location: 0.58),
+                                .init(color: charcoal.opacity(0.98), location: 0.72),
+                                .init(color: charcoal, location: 0.84),
+                                .init(color: charcoal, location: 1),
                             ], startPoint: .top, endPoint: .bottom)
+                            .frame(height: geo.size.height * 0.4)
+                            .allowsHitTesting(false)
                         }
                     LinearGradient(colors: [.black.opacity(0.28), .clear],
                                    startPoint: .top, endPoint: .bottom)
@@ -135,11 +147,15 @@ struct PaywallView: View {
         // The paywall is a dark moment regardless of appearance. `.environment(\.colorScheme)`,
         // NOT `.preferredColorScheme` — the latter leaks the forced scheme to the presenter.
         .environment(\.colorScheme, .dark)
-        .sheet(isPresented: $showFeatures) { featureSheet }
+        .overlay { if showFeatures { featurePopup } }
         .onAppear {
             services.analytics.log(.paywallView(placement: feature.placement))
             SKANConversion.record(.paywallSeen)
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
+            #if DEBUG
+            // --paywall-features: open the popup deterministically for screenshots.
+            if ProcessInfo.processInfo.arguments.contains("--paywall-features") { showFeatures = true }
+            #endif
         }
     }
 
@@ -265,22 +281,49 @@ struct PaywallView: View {
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
-    // MARK: The detail sheet — the full feature list, off the wall
+    // MARK: The feature popup — a floating card that springs up over the film
 
-    private var featureSheet: some View {
-        VStack(spacing: Theme.Space.md) {
-            Text("Everything in Pro")
-                .font(.serif(24, weight: .semibold)).foregroundStyle(Theme.ink)
-                .padding(.top, Theme.Space.xl)
-            PaywallFeatureList(scale: 1, boxed: true)
-                .padding(.horizontal, Theme.Space.xl)
-            Spacer(minLength: 0)
+    private func dismissFeatures() {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.9)) {
+            showFeatures = false
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background)
-        .environment(\.colorScheme, .dark)
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+    }
+
+    private var featurePopup: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture { dismissFeatures() }
+                .transition(.opacity)
+                .accessibilityLabel("Dismiss")
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack {
+                    Text("Everything in Pro")
+                        .font(.serif(22, weight: .semibold)).foregroundStyle(.white)
+                    Spacer()
+                    Button { dismissFeatures() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(.white.opacity(0.1)))
+                    }
+                    .buttonStyle(PressableScaleStyle(scale: 0.92))
+                    .accessibilityLabel("Close")
+                }
+                .padding(.bottom, 2)
+                PaywallFeatureList(pop: true)
+            }
+            .padding(Theme.Space.lg)
+            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Color(hex: "232120")))
+            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(.white.opacity(0.14)))
+            .shadow(color: Theme.purple.opacity(0.22), radius: 30, y: 14)
+            .shadow(color: .black.opacity(0.4), radius: 16, y: 8)
+            .padding(.horizontal, Theme.Space.lg)
+            .transition(.scale(scale: 0.94, anchor: .bottom)
+                .combined(with: .opacity)
+                .combined(with: .offset(y: 28)))
+        }
     }
 
     private var closeButton: some View {
@@ -378,7 +421,7 @@ struct PaywallReveal: ViewModifier {
         content
             .opacity(shown || reduceMotion ? 1 : 0)
             .offset(y: shown || reduceMotion ? 0 : 10)
-            .animation(reduceMotion ? nil : .spring(response: 0.7, dampingFraction: 0.92).delay(delay),
+            .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.9).delay(delay),
                        value: shown)
     }
 }
