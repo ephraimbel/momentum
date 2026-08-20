@@ -15,7 +15,13 @@ final class PaywallUITests: XCTestCase {
 
         let headline = app.staticTexts["Run smarter.\nRace faster."]
         XCTAssertTrue(headline.waitForExistence(timeout: 15), "Paywall didn't present.")
-        XCTAssertTrue(app.buttons["Start my 7-day free trial"].exists, "Trial CTA missing.")
+        // Trial retired (owner call 2026-08-20): the CTA quotes the yearly price outright and the
+        // yearly's badge carries the savings. A trial CTA reappearing means a store-side intro
+        // offer (or the placeholder catalog) grew a trial back — that's a regression, not a bonus.
+        XCTAssertTrue(app.buttons["Continue · $59.99/year"].exists, "Trial-less yearly CTA missing.")
+        XCTAssertFalse(app.buttons["Start my 7-day free trial"].exists,
+                       "The free trial is retired — no trial CTA may render.")
+        XCTAssertTrue(app.staticTexts["SAVE 50%"].exists, "Yearly savings badge missing.")
         // The Film redesign (2026-08-20): plans are Yearly/Monthly capsules (combined a11y
         // "Yearly plan, $59.99 per year"), and the feature list lives behind "Everything in Pro".
         // One-screen contract: both capsules, the detail door, and the CTA — no scrolling.

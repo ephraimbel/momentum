@@ -2,8 +2,10 @@ import SwiftUI
 import AVFoundation
 
 /// The Pro paywall (PRD §10) — "The Film" (owner pick 2026-08-20, from the paywall study): the
-/// brand film plays as a muted loop behind one serif statement, an honest trial
-/// timeline, and the checkout. No feature grid on the wall — the film sells the feeling, a quiet
+/// brand film plays as a muted loop behind one serif statement, an honest plan
+/// timeline, and the checkout. Trial-less since 2026-08-20 (owner call: the soft paywall IS the
+/// trial; the yearly sells on savings) — but every trial branch stays data-driven off the
+/// store's intro offer, so a future offer simply lights the old copy back up. No feature grid on the wall — the film sells the feeling, a quiet
 /// "Everything in Pro" sheet answers the detail question, and the loop is trimmed to end BEFORE
 /// the film's closing title card so its wordmark never fights the headline. **Trust stays a
 /// feature:** both plans one tap apart, plain renewal terms before purchase, one-tap restore.
@@ -13,8 +15,8 @@ struct PaywallView: View {
     /// The locked feature that brought the user here — logged, and frames nothing visually: the
     /// film is the same story for every door.
     var feature: Feature = .aiCoach
-    /// Hard placement: no close affordance, no swipe-away — the only ways forward are starting
-    /// the trial, subscribing, or restoring. Contextual gates elsewhere stay dismissible; trust
+    /// Hard placement: no close affordance, no swipe-away — the only ways forward are
+    /// subscribing or restoring. Contextual gates elsewhere stay dismissible; trust
     /// copy (plain renewal terms, one-tap restore) is identical in both modes.
     var hard: Bool = false
     /// Called INSTEAD of dismissing when the athlete becomes entitled — see PaywallCheckout.
@@ -173,7 +175,7 @@ struct PaywallView: View {
         }
     }
 
-    // MARK: The trial timeline — the honest three beats (Opal's confidence pattern)
+    // MARK: The plan timeline — the honest three beats (Opal's confidence pattern)
 
     @ViewBuilder
     private func timeline(_ s: CGFloat) -> some View {
@@ -187,7 +189,11 @@ struct PaywallView: View {
                 annualTimeline(s)
                     .opacity(selected == .annual ? 1 : 0)
                     .accessibilityHidden(selected != .annual)
-                timelineRow("Billed monthly at \(offering.monthly.priceText). No trial, cancel anytime",
+                // "No trial" is a contrast line — it only earns its place while the yearly
+                // actually carries one.
+                timelineRow(offering.annual.trialDays > 0
+                            ? "Billed monthly at \(offering.monthly.priceText). No trial, cancel anytime"
+                            : "Billed monthly at \(offering.monthly.priceText). Cancel anytime",
                             live: true, s: s)
                     .opacity(selected == .monthly ? 1 : 0)
                     .accessibilityHidden(selected != .monthly)
@@ -200,14 +206,22 @@ struct PaywallView: View {
 
     /// The three honest beats with the hairline rail. The rail lives in the VStack's BACKGROUND
     /// so it adopts the rows' height — as a ZStack sibling its unconstrained height blew the
-    /// whole stack open to fill the screen.
+    /// whole stack open to fill the screen. Trial-less (owner call 2026-08-20), the beats tell
+    /// the one-payment story instead; a store-side trial returning brings its beats back.
     private func annualTimeline(_ s: CGFloat) -> some View {
         let annual = offering.annual
         return VStack(alignment: .leading, spacing: 8 * s) {
-            timelineRow("Today, every feature unlocks", live: true, s: s)
-            timelineRow("Days 1 to \(annual.trialDays), train free. Cancel anytime", live: false, s: s)
-            timelineRow("Day \(annual.trialDays), \(annual.priceText)/year begins. Under $5 a month",
-                        live: false, s: s)
+            if annual.trialDays > 0 {
+                timelineRow("Today, every feature unlocks", live: true, s: s)
+                timelineRow("Days 1 to \(annual.trialDays), train free. Cancel anytime", live: false, s: s)
+                timelineRow("Day \(annual.trialDays), \(annual.priceText)/year begins. Under $5 a month",
+                            live: false, s: s)
+            } else {
+                timelineRow("Today, every feature unlocks", live: true, s: s)
+                timelineRow("One payment, \(annual.priceText) for the whole year. Under $5 a month",
+                            live: false, s: s)
+                timelineRow("Renews yearly. Cancel anytime in Settings", live: false, s: s)
+            }
         }
         .background(alignment: .topLeading) {
             Rectangle()
@@ -247,9 +261,13 @@ struct PaywallView: View {
         .background(Capsule().fill(Color.black.opacity(0.28)))
         .overlay(Capsule().stroke(.white.opacity(0.22)))
         .overlay(alignment: .topLeading) {
-            // The trial tag rides the track's edge over the yearly side — a detail, not a shout.
-            if offering.annual.trialDays > 0, paywall.pricingIsLive {
-                Text("\(offering.annual.trialDays) DAYS FREE")
+            // The yearly's tag rides the track's edge — a detail, not a shout. With the trial
+            // retired (owner call 2026-08-20) it carries the savings instead; if a store-side
+            // trial ever returns, the store's number wins again.
+            if paywall.pricingIsLive {
+                Text(offering.annual.trialDays > 0
+                     ? "\(offering.annual.trialDays) DAYS FREE"
+                     : "SAVE \(offering.annualSavingsPercent)%")
                     .font(.rounded(8, weight: .heavy)).tracking(0.8)
                     .foregroundStyle(Theme.inkOnFixedLight)
                     .padding(.horizontal, 7).padding(.vertical, 3)

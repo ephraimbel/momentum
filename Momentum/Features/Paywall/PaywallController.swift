@@ -53,7 +53,10 @@ struct PaywallOffering: Sendable, Equatable {
                        priceText: money(monthlyPrice), perMonthText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
                       priceText: money(annualPrice),
-                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 7))
+                      // No trial (owner call 2026-08-20: trial retired — the soft paywall IS the
+                      // trial; the yearly sells on the savings badge instead). The live path still
+                      // reads the store's intro offer, so this stays honest either way.
+                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 0))
 
     /// Percent saved by paying yearly instead of 12× monthly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices

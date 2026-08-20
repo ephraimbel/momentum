@@ -338,10 +338,11 @@ struct PaywallShowcase: View {
 // MARK: - Plan pair — Monthly beside Yearly, and Yearly wins
 
 /// The two plans side by side, staged so the annual is the obvious choice (owner call 2026-08-05,
-/// after the Cal AI reference): the trial badge rides the yearly card's top edge, its sub-line
-/// spells out the per-month equivalence and the savings, and the monthly card's own sub-line
-/// plainly says what it lacks. Trust rules unchanged: placeholder pricing is never shown as a
-/// price, and the badge is suppressed until the store's trial length is real.
+/// after the Cal AI reference): the savings badge rides the yearly card's top edge (a trial badge
+/// when the store carries one — none since 2026-08-20), its sub-line spells out the per-month
+/// equivalence and the savings, and the monthly card's own sub-line sells its flexibility. Trust
+/// rules unchanged: placeholder pricing is never shown as a price, and the badge is suppressed
+/// until the store's numbers are real.
 struct PlanPairPicker: View {
     let offering: PaywallOffering
     let pricingIsLive: Bool
@@ -400,11 +401,13 @@ struct PlanPairPicker: View {
                 shape.strokeBorder(isSelected ? Theme.purple : Theme.hairline,
                                    lineWidth: isSelected ? 1.5 : 1)
             }
-            // The trial badge overhangs the yearly card's top edge, Cal AI-style — data-driven,
-            // never promised off placeholder pricing.
+            // The yearly's badge overhangs the card's top edge, Cal AI-style — data-driven,
+            // never promised off placeholder pricing. Trial retired 2026-08-20: it carries the
+            // savings now; a store-side trial returning takes the slot back automatically.
             .overlay(alignment: .top) {
-                if p.isAnnual, p.trialDays > 0, pricingIsLive {
-                    Text("\(p.trialDays) DAYS FREE")
+                if p.isAnnual, pricingIsLive {
+                    Text(p.trialDays > 0 ? "\(p.trialDays) DAYS FREE"
+                                         : "SAVE \(offering.annualSavingsPercent)%")
                         .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Theme.inkOnFixedLight)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Capsule().fill(Theme.proLavender))
@@ -424,7 +427,9 @@ struct PlanPairPicker: View {
             let perMonth = p.perMonthText ?? PaywallOffering.standard.annual.perMonthText ?? ""
             return "\(perMonth) · save \(offering.annualSavingsPercent)%"
         }
-        return "No trial"
+        // "No trial" was a contrast line against the yearly's trial badge; with no trial anywhere
+        // it read as a random confession. Monthly's honest sell is its flexibility.
+        return offering.annual.trialDays > 0 ? "No trial" : "Cancel anytime"
     }
 
     private func selector(on: Bool) -> some View {
