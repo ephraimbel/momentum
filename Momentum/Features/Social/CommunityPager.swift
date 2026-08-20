@@ -238,11 +238,11 @@ private struct CommunityPostPage: View {
                 CommunityPageMedia(item: item)
             }
 
-            // Soft light scrims keep ink legible over any media. Eased (SoftScrim), not two-stop:
-            // over a dark basemap a linear fade "ends in a line" (owner report 2026-07-29).
+            // ONE soft light scrim, bottom only (owner call 2026-08-20: "scrap the fade from the
+            // top" — the media runs clean to the top edge; the bottom fade stays for the text
+            // stack). Eased (SoftScrim), not two-stop: over a dark basemap a linear fade "ends
+            // in a line" (owner report 2026-07-29).
             VStack(spacing: 0) {
-                SoftScrim.top(Theme.background)
-                    .frame(height: topInset + 150)
                 Spacer(minLength: 0)
                 // Taller than the profile pager's: this overlay stacks byline + title + caption +
                 // stats, and a busy basemap's POI labels bled through the byline at 320.
