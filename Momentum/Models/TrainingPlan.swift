@@ -74,6 +74,11 @@ final class PlannedSession {
     var status: SessionStatus = SessionStatus.planned
     var rationale: String?
     var completedWorkout: Workout?
+    /// The engine's split label for a strength day ("Push", "Pull", "Legs", "Upper", "Lower",
+    /// "Full Body") — persisted since 2026-08-20 so every surface can name the day honestly
+    /// ("Push day — 4 exercises"). nil on cardio sessions and on plans built before the field
+    /// existed (surfaces fall back to the old count heuristic).
+    var strengthLabel: String?
 
     init() {}
 }

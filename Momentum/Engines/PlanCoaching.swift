@@ -740,7 +740,10 @@ enum PlanCoaching {
     static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto,
                       dropLeadingType: Bool = false) -> String {
         if session.discipline == .strength {
-            let label = session.strengthTargets.count >= 5 ? "Full body" : "Strength"
+            // The persisted split label names the day ("Push day — 4 exercises"); plans built
+            // before the label existed fall back to the old count heuristic.
+            let label = StrengthSplit.dayTitle(forLabel: session.strengthLabel)
+                ?? (session.strengthTargets.count >= 5 ? "Full body" : "Strength")
             let n = session.strengthTargets.count
             return n > 0 ? "\(label) — \(n) exercise\(n == 1 ? "" : "s")" : "Strength session"
         }

@@ -221,6 +221,15 @@ enum DemoSeed {
             profile.raceDistanceM = RaceDistance.half.meters
             profile.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 7, to: Date())
         }
+        // --seed-split-ppl / --seed-split-upper: the demo athlete chose a strength split — the
+        // hybrid week's 2 lift days rotate through it (PPL continues its cycle ACROSS weeks), so
+        // the Plan board and Today deck render "Push day"/"Upper body" sessions for verification.
+        if ProcessInfo.processInfo.arguments.contains("--seed-split-ppl") {
+            profile.strengthSplit = StrengthSplitStyle.pushPullLegs.rawValue
+        }
+        if ProcessInfo.processInfo.arguments.contains("--seed-split-upper") {
+            profile.strengthSplit = StrengthSplitStyle.upperLower.rawValue
+        }
         PlanService.regenerate(for: profile, in: context)
         // --plan-renewal: regenerate the rolling block starting ~6 weeks back so "today" lands at the
         // end of the block, surfacing the Plan page's block-renewal checkpoint card for verification.

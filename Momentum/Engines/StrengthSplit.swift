@@ -47,6 +47,22 @@ enum StrengthSplit {
         return title(forSetsByMuscle: StrengthMath.weeklySetsByMuscle(entries))
     }
 
+    /// Sentence-case day title for an engine split label ("Push" → "Push day") — the ONE
+    /// label→display mapping, used by every surface that names a planned strength session
+    /// (Today's brief, the plan board, the confirm sheet). nil for unknown/cardio labels so
+    /// callers can fall back to their old heuristics on pre-label plans.
+    static func dayTitle(forLabel label: String?) -> String? {
+        switch label {
+        case "Push": "Push day"
+        case "Pull": "Pull day"
+        case "Legs": "Leg day"
+        case "Upper": "Upper body"
+        case "Lower": "Lower body"
+        case "Full Body": "Full body"
+        default: nil
+        }
+    }
+
     /// The intended split for a planned session (from its prescribed targets) — used so a
     /// half-finished "Push Day" still names itself after the plan.
     @MainActor

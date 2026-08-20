@@ -9,7 +9,18 @@ one of them the same day.*
 **Inputs** (`PlanInputs`, built by `PlanService.planInputs`): disciplines, goal, daysPerWeek,
 race distance/date + goal time, experience, current weekly volume + longest run, intensity tier,
 injury history, age (masters deload only — sex/weight are collected in onboarding but do NOT reach
-the engine), session minutes, equipment, hybrid priority, preferred days, distance unit.
+the engine), session minutes, equipment, hybrid priority, strength split, preferred days,
+distance unit.
+
+**Strength composition** (2026-08-20): each lift day gets a split label → muscle slots → one
+rep-countable exercise per slot (equipment-gated, compounds preferred). The label comes from the
+athlete's `strengthSplit` choice — `coach` (default) keys the split to lift-day count (full body
+≤3 days, upper/lower at 4, push/pull/legs at 5+); explicit `fullBody`/`upperLower`/`pushPullLegs`
+override at any day count, ROTATING across weeks so 2 PPL days still cycle through legs. Under 2
+lift days every split collapses to full body (one weekly "push day" would orphan legs). The label
+persists on `PlannedSession.strengthLabel` and names the day on every surface ("Push day — 4
+exercises"). Chosen in onboarding (lifters) and in plan settings (structural — changing it
+rebuilds upcoming weeks). Bro split deliberately not offered.
 
 **Pipeline**: fitness seed (recent run via Riegel → entered time → experience default, as a 5K
 pace) → day allocation (hybrid split) → macrocycle sizing from the race date (base ≈ 25% → build →

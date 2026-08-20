@@ -22,6 +22,10 @@ final class UserProfile {
     /// Hybrid (run + lift) emphasis — biases the run/lift day split. `HybridPriority` raw value; nil →
     /// inferred from the goal.
     var hybridPriority: String?
+    /// How strength days compose (`StrengthSplitStyle` raw value): coach's day-count default, or
+    /// the athlete's explicit full-body / upper-lower / push-pull-legs choice. Defaulted so every
+    /// existing profile migrates as "coach" — behavior unchanged until they choose.
+    var strengthSplit: String = "coach"
     /// Target race finish time in seconds (race goals) — the athlete's aim, surfaced on the reveal and
     /// compared against the race predictor. nil → no explicit target.
     var goalFinishTimeS: Double?

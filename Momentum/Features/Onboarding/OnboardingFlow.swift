@@ -175,6 +175,7 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-preferreddays") { vm.activities = [.run]; vm.daysPerWeek = 4; vm.step = .preferredDays }
             if args.contains("--onboarding-session") { vm.activities = [.strength]; vm.step = .session }
             if args.contains("--onboarding-equipment") { vm.activities = [.strength]; vm.step = .equipment }
+            if args.contains("--onboarding-split") { vm.activities = [.strength]; vm.step = .strengthSplit }
             if args.contains("--onboarding-why") { vm.activities = [.run]; vm.step = .why }
             if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
             #endif
@@ -321,6 +322,7 @@ struct OnboardingFlow: View {
         case .preferredDays: preferredDaysStep
         case .session: sessionStep
         case .equipment: equipmentStep
+        case .strengthSplit: strengthSplitStep
         case .hybridFocus: hybridFocusStep
         case .metrics: metricsStep
         case .why: whyStep
@@ -1319,6 +1321,26 @@ struct OnboardingFlow: View {
 
     /// Hybrid athletes: where the week's emphasis sits (biases the run/lift day split) — the question
     /// that makes momentum understand a run-*and*-lift athlete instead of guessing from the goal.
+    /// How the lifting week composes (2026-08-20) — same card grammar as the focus step. The
+    /// coach's pick leads: most athletes should let the day count decide, and the explicit splits
+    /// are there for the ones who know exactly how they like to train.
+    private var strengthSplitStep: some View {
+        let opts: [(StrengthSplitStyle, String, String, String)] = [
+            (.coach, "Coach's pick", "Full body, splitting as your lift days grow", "wand.and.stars"),
+            (.fullBody, "Full body", "Every lift day trains everything", "figure.strengthtraining.traditional"),
+            (.upperLower, "Upper · Lower", "Alternating upper and lower days", "figure.arms.open"),
+            (.pushPullLegs, "Push · Pull · Legs", "The classic three-day rotation", "dumbbell.fill")]
+        return questionScaffold("How do you like to split your lifting?",
+                                subtitle: "Change it anytime from your plan settings.") {
+            ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
+                SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.strengthSplit == o.0) {
+                    pick { vm.strengthSplit = o.0 }
+                }
+                .reveal(cascade(i))
+            }
+        }
+    }
+
     private var hybridFocusStep: some View {
         let opts: [(HybridPriority, String, String, String)] = [
             (.running, "Running comes first", "Lift to support the miles", "figure.run"),

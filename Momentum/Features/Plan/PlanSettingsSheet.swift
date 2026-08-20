@@ -29,6 +29,7 @@ struct PlanSettingsSheet: View {
     @State private var goalMinutes: Int
     @State private var intensity: PlanIntensity
     @State private var hybridPriority: HybridPriority
+    @State private var strengthSplit: StrengthSplitStyle
     @State private var days: Int
     @State private var minutes: Int
     @State private var equipment: Equipment
@@ -52,6 +53,7 @@ struct PlanSettingsSheet: View {
         _goalMinutes = State(initialValue: goalS.map { (Int($0) % 3600) / 60 } ?? 0)
         _intensity = State(initialValue: profile.planIntensity.flatMap(PlanIntensity.init(rawValue:)) ?? .balanced)
         _hybridPriority = State(initialValue: profile.hybridPriority.flatMap(HybridPriority.init(rawValue:)) ?? .balanced)
+        _strengthSplit = State(initialValue: StrengthSplitStyle(rawValue: profile.strengthSplit) ?? .coach)
         _days = State(initialValue: profile.daysPerWeek)
         _minutes = State(initialValue: profile.sessionMinutes)
         _equipment = State(initialValue: profile.equipment)
@@ -78,6 +80,7 @@ struct PlanSettingsSheet: View {
             || newGoalFinishTimeS != profile.goalFinishTimeS
             || intensity.rawValue != (profile.planIntensity ?? PlanIntensity.balanced.rawValue)
             || (hybrid && hybridPriority.rawValue != (profile.hybridPriority ?? HybridPriority.balanced.rawValue))
+            || (lifting && strengthSplit.rawValue != profile.strengthSplit)
     }
 
     private var newRaceDistanceM: Double? { racing ? raceDistance?.meters : nil }
@@ -119,6 +122,7 @@ struct PlanSettingsSheet: View {
                     intensitySection
                     daysSection
                     sessionSection
+                    if lifting { splitSection }
                     if lifting { equipmentSection }
                     Text(footerNote)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -321,6 +325,35 @@ struct PlanSettingsSheet: View {
     /// Run & lift balance — the same three-way emphasis the onboarding offers, so a hybrid athlete
     /// can re-weight the week (run-first / even / lift-first) anytime. Drives the day split in the
     /// engine (`HybridPriority.liftFraction`); only shown when the athlete both runs and lifts.
+    /// The athlete's strength split (2026-08-20, user call): coach's pick by default, or an
+    /// explicit full-body / upper-lower / push-pull-legs week. Structural — changing it rebuilds
+    /// the upcoming strength days with the new day templates.
+    private var splitSection: some View {
+        let opts: [(StrengthSplitStyle, String, String, String)] = [
+            (.coach, "Coach's pick", "Full body, splitting as your lift days grow", "wand.and.stars"),
+            (.fullBody, "Full body", "Every lift day trains everything", "figure.strengthtraining.traditional"),
+            (.upperLower, "Upper · Lower", "Alternating upper-body and lower-body days", "figure.arms.open"),
+            (.pushPullLegs, "Push · Pull · Legs", "The classic three-day rotation", "dumbbell.fill")]
+        return section("STRENGTH SPLIT") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(opts, id: \.0) { o in
+                    SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
+                                  isSelected: strengthSplit == o.0) {
+                        withAnimation(Motion.standard) { strengthSplit = o.0 }
+                    }
+                }
+                if strengthSplit != .coach && strengthSplit != .fullBody {
+                    Text("A split needs at least two lift days a week — with fewer, sessions stay full body.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+
     private var balanceSection: some View {
         let opts: [(HybridPriority, String, String, String)] = [
             (.running, "Running comes first", "Lift to support the miles", "figure.run"),
@@ -450,6 +483,7 @@ struct PlanSettingsSheet: View {
         profile.goalFinishTimeS = newGoalFinishTimeS
         profile.planIntensity = intensity.rawValue
         if hybrid { profile.hybridPriority = hybridPriority.rawValue }
+        if lifting { profile.strengthSplit = strengthSplit.rawValue }
         if rebuild {
             PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
         }

@@ -16,6 +16,16 @@ enum HybridPriority: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// How the plan composes strength days (2026-08-20, user call: athletes want their split, not
+/// just full body). `.coach` keeps the engine's day-count default — full body up to 3 lift days,
+/// upper/lower at 4, push/pull/legs at 5+ — bit-identical to every plan built before the choice
+/// existed. The explicit styles override that table at ANY day count; with fewer than 2 lift
+/// days a split honestly collapses to full body (one "push day" a week would mean legs never
+/// train). Bro split deliberately not offered (owner call — parked).
+enum StrengthSplitStyle: String, Codable, Sendable, CaseIterable {
+    case coach, fullBody, upperLower, pushPullLegs
+}
+
 enum WorkoutType: String, Codable, Sendable, CaseIterable {
     // Foot (GPS)
     case run, trailRun, walk, hike

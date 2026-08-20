@@ -53,6 +53,8 @@ final class OnboardingViewModel {
 
     // Hybrid emphasis (run + lift athletes) — biases the run/lift day split.
     var hybridPriority: HybridPriority = .balanced
+    // How the lifting week composes — coach's pick, full body, upper/lower, or push/pull/legs.
+    var strengthSplit: StrengthSplitStyle = .coach
     // How hard to push toward the goal (Take your time / Balanced / Aggressive). Pre-set to the honest
     // recommendation when the intensity step appears; the athlete can override.
     var intensity: PlanIntensity = .balanced
@@ -171,7 +173,8 @@ final class OnboardingViewModel {
         // is a deliberate, informed decision by the owner — if a submission is rejected, this step is
         // the first thing to pull (delete the case; the flow closes over it with no other changes).
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
-             muscleFocus, runVolume, days, preferredDays, session, equipment, hybridFocus, why,
+             muscleFocus, runVolume, days, preferredDays, session, equipment, strengthSplit,
+             hybridFocus, why,
              health, intensity, building, reveal, notifications, primers, rateUs, account
     }
 
@@ -212,6 +215,8 @@ final class OnboardingViewModel {
             // prescribed by distance under a time cap, so it means nothing to a pure runner. Show it
             // only where it changes the plan (2026-07-24).
             case .session:     return lifting
+            // How to split the lifting week — only meaningful to athletes who lift (2026-08-20).
+            case .strengthSplit: return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
             // Anything to train around — endurance athletes only (drives the protective ramp).
             case .injuries:    return running
@@ -410,6 +415,7 @@ final class OnboardingViewModel {
             profile.longestRunM = longestRunM
         }
         if hybrid { profile.hybridPriority = hybridPriority.rawValue }
+        if lifting { profile.strengthSplit = strengthSplit.rawValue }
         if running { profile.planIntensity = intensity.rawValue }
         profile.injuryHistory = injuryAreas.map(\.rawValue).sorted()
         if goal == .raceDistance { profile.goalFinishTimeS = goalFinishTimeS }

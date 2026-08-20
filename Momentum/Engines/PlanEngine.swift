@@ -209,7 +209,8 @@ enum PlanEngine {
             let lifts = hasLift
                 ? strengthSessions(liftDays: liftDays, goal: profile.goal, level: profile.liftingExperience,
                                    equipment: profile.equipment, sessionMinutes: profile.sessionMinutes,
-                                   catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus))
+                                   catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus),
+                                   split: profile.strengthSplit, weekIndex: w)
                 : []
             var scheduled = schedule(runs: runs, lifts: lifts,
                                      preferredDayOffsets: profile.preferredDayOffsets,
@@ -766,9 +767,10 @@ enum PlanEngine {
 
     static func strengthSessions(liftDays: Int, goal: Goal, level: ExperienceLevel, equipment: Equipment,
                                  sessionMinutes: Int, catalog: [ExerciseCatalogItem], isDeload: Bool,
-                                 muscleFocus: Set<MuscleGroup> = []) -> [GeneratedSession] {
+                                 muscleFocus: Set<MuscleGroup> = [],
+                                 split: StrengthSplitStyle = .coach, weekIndex: Int = 0) -> [GeneratedSession] {
         guard liftDays > 0 else { return [] }
-        let labels = splitLabels(liftDays: liftDays)
+        let labels = splitLabels(liftDays: liftDays, split: split, weekIndex: weekIndex)
         let allowed = allowedEquipment(equipment)
         let exerciseCount = max(3, min(6, sessionMinutes / 10))
 
@@ -796,13 +798,38 @@ enum PlanEngine {
         }
     }
 
-    static func splitLabels(liftDays: Int) -> [String] {
-        switch liftDays {
-        case 1, 2, 3: return Array(repeating: "Full Body", count: liftDays)
-        case 4: return ["Upper", "Lower", "Upper", "Lower"]
-        case 5: return ["Push", "Pull", "Legs", "Upper", "Lower"]
-        default: return ["Push", "Pull", "Legs", "Push", "Pull", "Legs"]
+    /// The week's strength-day labels. `.coach` keeps the original day-count table, bit-identical
+    /// for every plan built before splits were choosable. Explicit styles override it at any day
+    /// count — and ROTATE across weeks (`weekIndex`), so 2 push-pull-legs days a week still cycle
+    /// through legs (P,Pu → L,P → Pu,L…) instead of never reaching them. Fewer than 2 lift days →
+    /// full body regardless: a split needs at least two days to be a split.
+    static func splitLabels(liftDays: Int, split: StrengthSplitStyle = .coach,
+                            weekIndex: Int = 0) -> [String] {
+        guard liftDays > 0 else { return [] }
+        switch split {
+        case .coach:
+            switch liftDays {
+            case 1, 2, 3: return Array(repeating: "Full Body", count: liftDays)
+            case 4: return ["Upper", "Lower", "Upper", "Lower"]
+            case 5: return ["Push", "Pull", "Legs", "Upper", "Lower"]
+            default: return ["Push", "Pull", "Legs", "Push", "Pull", "Legs"]
+            }
+        case .fullBody:
+            return Array(repeating: "Full Body", count: liftDays)
+        case .upperLower:
+            guard liftDays >= 2 else { return ["Full Body"] }
+            return rotatingLabels(["Upper", "Lower"], count: liftDays, weekIndex: weekIndex)
+        case .pushPullLegs:
+            guard liftDays >= 2 else { return ["Full Body"] }
+            return rotatingLabels(["Push", "Pull", "Legs"], count: liftDays, weekIndex: weekIndex)
         }
+    }
+
+    /// `count` labels drawn from `cycle`, continuing across weeks — deterministic (a pure function
+    /// of the week index, per the deterministic-engine rule), never restarting mid-cycle.
+    private static func rotatingLabels(_ cycle: [String], count: Int, weekIndex: Int) -> [String] {
+        let start = (weekIndex * count) % cycle.count
+        return (0..<count).map { cycle[(start + $0) % cycle.count] }
     }
 
     private static func muscleSlots(for label: String) -> [(muscle: MuscleGroup, compound: Bool)] {
@@ -1044,6 +1071,8 @@ struct PlanInputs: Sendable {
     var longestRunM: Double? = nil
     /// Hybrid emphasis — biases the run/lift day split. nil → inferred from the goal.
     var hybridPriority: HybridPriority? = nil
+    /// How strength days compose — the athlete's split choice. `.coach` = the day-count default.
+    var strengthSplit: StrengthSplitStyle = .coach
     /// Muscles to emphasize — adds a working set to matching strength exercises.
     var muscleFocus: [MuscleGroup] = []
     /// Preferred in-week day offsets (0…6 from the plan's start day). Empty → even auto-spread.

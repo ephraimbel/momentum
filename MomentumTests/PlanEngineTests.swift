@@ -145,6 +145,88 @@ struct PlanEngineTests {
         #expect(plan.weeks[0].sessions.allSatisfy { !$0.strengthTargets.isEmpty })
     }
 
+    func inputs(disciplines: [Discipline], goal: Goal, days: Int, split: StrengthSplitStyle,
+                liftExp: ExperienceLevel = .some) -> PlanInputs {
+        var p = inputs(disciplines: disciplines, goal: goal, days: days, liftExp: liftExp)
+        p.strengthSplit = split
+        return p
+    }
+
+    /// The athlete's chosen split overrides the day-count default at ANY day count (2026-08-20):
+    /// 4 lift days + full body stays full body; 3 days + push/pull/legs runs the classic trio.
+    @Test func chosenSplitOverridesDayCount() {
+        let fullBody = PlanEngine.generate(
+            profile: inputs(disciplines: [.strength], goal: .buildMuscle, days: 4, split: .fullBody),
+            catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(Set(fullBody.weeks[0].sessions.compactMap(\.strengthLabel)) == ["Full Body"])
+
+        let ppl = PlanEngine.generate(
+            profile: inputs(disciplines: [.strength], goal: .buildMuscle, days: 3, split: .pushPullLegs),
+            catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(ppl.weeks[0].sessions.compactMap(\.strengthLabel) == ["Push", "Pull", "Legs"])
+        #expect(ppl.weeks[0].sessions.allSatisfy { !$0.strengthTargets.isEmpty })
+
+        let ul = PlanEngine.generate(
+            profile: inputs(disciplines: [.strength], goal: .buildMuscle, days: 2, split: .upperLower),
+            catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        #expect(ul.weeks[0].sessions.compactMap(\.strengthLabel) == ["Upper", "Lower"])
+    }
+
+    /// With fewer split days than the cycle, the rotation CONTINUES across weeks — 2 weekly
+    /// push/pull/legs days still reach legs (P,Pu → L,P → Pu,L), never stuck on push+pull forever.
+    @Test func splitRotationContinuesAcrossWeeks() {
+        #expect(PlanEngine.splitLabels(liftDays: 2, split: .pushPullLegs, weekIndex: 0) == ["Push", "Pull"])
+        #expect(PlanEngine.splitLabels(liftDays: 2, split: .pushPullLegs, weekIndex: 1) == ["Legs", "Push"])
+        #expect(PlanEngine.splitLabels(liftDays: 2, split: .pushPullLegs, weekIndex: 2) == ["Pull", "Legs"])
+        // Every label appears equally often over a full cycle of weeks.
+        var counts: [String: Int] = [:]
+        for w in 0..<3 {
+            for l in PlanEngine.splitLabels(liftDays: 2, split: .pushPullLegs, weekIndex: w) {
+                counts[l, default: 0] += 1
+            }
+        }
+        #expect(counts == ["Push": 2, "Pull": 2, "Legs": 2])
+        // Upper/lower with an odd day count alternates its start week to week.
+        #expect(PlanEngine.splitLabels(liftDays: 3, split: .upperLower, weekIndex: 0) == ["Upper", "Lower", "Upper"])
+        #expect(PlanEngine.splitLabels(liftDays: 3, split: .upperLower, weekIndex: 1) == ["Lower", "Upper", "Lower"])
+    }
+
+    /// One lift day cannot be a split — a weekly "push day" would mean legs never train. Any
+    /// explicit split honestly collapses to full body below 2 days.
+    @Test func splitCollapsesToFullBodyUnderTwoDays() {
+        #expect(PlanEngine.splitLabels(liftDays: 1, split: .pushPullLegs) == ["Full Body"])
+        #expect(PlanEngine.splitLabels(liftDays: 1, split: .upperLower) == ["Full Body"])
+        #expect(PlanEngine.splitLabels(liftDays: 1, split: .fullBody) == ["Full Body"])
+    }
+
+    /// The default is bit-identical to the pre-choice engine: `.coach` at every day count matches
+    /// the original day-count table, so existing plans regenerate unchanged.
+    @Test func coachSplitKeepsTheOriginalTable() {
+        #expect(PlanEngine.splitLabels(liftDays: 2, split: .coach) == ["Full Body", "Full Body"])
+        #expect(PlanEngine.splitLabels(liftDays: 4, split: .coach) == ["Upper", "Lower", "Upper", "Lower"])
+        #expect(PlanEngine.splitLabels(liftDays: 5, split: .coach) == ["Push", "Pull", "Legs", "Upper", "Lower"])
+        // And the parameterless call (the old signature) is the coach table too.
+        #expect(PlanEngine.splitLabels(liftDays: 4) == ["Upper", "Lower", "Upper", "Lower"])
+    }
+
+    /// Split days respect every standing prescription rule: rep-countable only, and the hard-run
+    /// recovery invariant still holds with leg days in the mix.
+    @Test func splitDaysHonorRecoveryAndCountability() {
+        let plan = PlanEngine.generate(
+            profile: inputs(disciplines: [.running, .strength], goal: .buildMuscle, days: 5, split: .pushPullLegs),
+            catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
+        for week in plan.weeks {
+            #expect(PlanEngine.scheduleSatisfiesRecovery(week.sessions))
+            for s in week.sessions where s.discipline == .strength {
+                #expect(s.strengthLabel != nil)
+                for ex in s.strengthTargets {
+                    let cat = catalog.first { $0.name == ex.exerciseName }
+                    #expect(cat?.trackingMode == .weightReps || cat?.trackingMode == .repsOnly)
+                }
+            }
+        }
+    }
+
     @Test func strengthDeloadReducesSets() {
         let plan = PlanEngine.generate(profile: inputs(disciplines: [.strength], goal: .buildMuscle, days: 3),
                                        catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))

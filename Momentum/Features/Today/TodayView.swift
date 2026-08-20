@@ -804,7 +804,11 @@ struct TodayView: View {
         if let wt = s.workoutType {
             return wt == .run ? "\(s.runType?.rawValue.capitalized ?? "Easy") Run" : wt.title
         }
-        if s.discipline == .strength { return s.strengthTargets.count >= 5 ? "Full Body" : "Strength" }
+        if s.discipline == .strength {
+            // The split label wins ("Push Day"); pre-label plans keep the count heuristic.
+            if let day = StrengthSplit.dayTitle(forLabel: s.strengthLabel) { return day.capitalized }
+            return s.strengthTargets.count >= 5 ? "Full Body" : "Strength"
+        }
         switch s.discipline {
         case .running: return "\(s.runType?.rawValue.capitalized ?? "Easy") Run"
         case .cycling: return "Ride"

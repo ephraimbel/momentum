@@ -234,6 +234,7 @@ enum PlanService {
             raceDistanceM: p.raceDistanceM,
             currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
             hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
+            strengthSplit: StrengthSplitStyle(rawValue: p.strengthSplit) ?? .coach,
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets,
             avoidDayOffsets: avoidOffsets,
@@ -308,6 +309,7 @@ enum PlanService {
                 ps.targetPaceSPerKm = gen.targetPaceSPerKm
                 ps.intervals = gen.intervals
                 ps.rationale = gen.rationale
+                ps.strengthLabel = gen.strengthLabel   // "Push"/"Upper"/… — names the day on every surface
                 ps.strengthTargets = gen.strengthTargets.enumerated().map { idx, ge in
                     let pe = PlannedExercise()
                     pe.order = idx
