@@ -453,11 +453,14 @@ struct PaywallCheckout: View {
         VStack(spacing: Theme.Space.sm) {
             // The Cal AI-style trust line: when the selected plan starts with a free trial, say
             // out loud that today costs nothing. Suppressed with placeholder pricing (the trial
-            // length is a promise too) and for the trial-less monthly.
-            if product.trialDays > 0, paywall.pricingIsLive {
-                Label("No payment due now", systemImage: "checkmark")
-                    .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-            }
+            // length is a promise too) and for the trial-less monthly — but its SLOT is always
+            // reserved (owner call 2026-08-20): removing the row shrank the checkout and nudged
+            // every control above it when switching plans. Geometry holds; only opacity moves.
+            Label("No payment due now", systemImage: "checkmark")
+                .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                .opacity(product.trialDays > 0 && paywall.pricingIsLive ? 1 : 0)
+                .animation(.easeOut(duration: 0.18), value: product.id)
+                .accessibilityHidden(!(product.trialDays > 0 && paywall.pricingIsLive))
             cta
             if storeUnreachable { storeUnreachableEscape }
             fineprint
