@@ -157,8 +157,14 @@ struct RootView: View {
                 // cover for the "gate on send" moment. Both binding to `presentedFeature` fired the
                 // paywall TWICE (root + coach) with a dark flash in between; gating on
                 // `coach.isPresented` leaves exactly one host live at a time.
+                // Also stands down while a workout save context owns the screen: CardioSaveView
+                // hosts its OWN paywall cover (a save screen can itself sit inside a cover — the
+                // crash-recovery save, the --save-screen harness — where this root cover cannot
+                // present on top). One live host per context, never two bound to one item (the
+                // double-present bug).
                 .fullScreenCover(item: Binding(
-                    get: { coach.isPresented ? nil : paywall.presentedFeature },
+                    get: { coach.isPresented || router.workoutLaunch != nil || recoverySave != nil
+                        ? nil : paywall.presentedFeature },
                     set: { paywall.presentedFeature = $0 })) { feature in
                     PaywallView(feature: feature)
                 }

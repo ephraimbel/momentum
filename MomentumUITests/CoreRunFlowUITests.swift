@@ -166,6 +166,10 @@ final class CoreRunFlowUITests: XCTestCase {
         app.tabBars.buttons["Profile"].tap()
         sleep(2)
         attach("9-profile")
+        // The Grid/Highlights pane PERSISTS (@AppStorage com.momentum.profile.gridTab) — a prior
+        // test on the same container can leave the profile on Highlights, where no tile exists.
+        // Select the grid pane explicitly instead of assuming the default (found 2026-08-20).
+        if app.buttons["Grid"].waitForExistence(timeout: 4) { app.buttons["Grid"].tap(); sleep(1) }
         let runTile = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Run,")).firstMatch
         XCTAssertTrue(runTile.waitForExistence(timeout: 12), "The run tile did not appear on the Profile grid.")
 

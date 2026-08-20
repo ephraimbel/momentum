@@ -63,7 +63,8 @@ struct CardioSaveView: View {
     private static let cardioTypes = WorkoutType.allCases.filter(\.isGPS)
 
     var body: some View {
-        NavigationStack {
+        @Bindable var paywall = paywall
+        return NavigationStack {
             ScrollView {
                 if let workout {
                     // The scene leads (user call 2026-08-14): the route runs edge-to-edge from the
@@ -157,10 +158,15 @@ struct CardioSaveView: View {
         } message: {
             Text("It's still in your history. Nothing was deleted.")
         }
-        // No paywall host here any more: the recorder became a shell OVERLAY (2026-08-19), so
-        // RootView's app-level paywall cover presents fine over this screen — and a second cover
-        // bound to the same `presentedFeature` is the documented double-present bug
-        // (paywall-cover gotchas): both hosts fired with a dark flash between them.
+        // This screen hosts its OWN paywall cover: a save screen can sit inside a fullScreenCover
+        // (crash-recovery save, the --save-screen harness), where RootView's root host cannot
+        // present on top. The root host STANDS DOWN whenever a workout save context owns the
+        // screen (same arrangement as the coach chat), so exactly one host is ever live — never
+        // two bound to one item (the documented double-present bug). Briefly removed 2026-08-20;
+        // CardioSaveMapStyleUITests caught the covered-context gap same day.
+        .fullScreenCover(item: $paywall.presentedFeature) { feature in
+            PaywallView(feature: feature)
+        }
         .task {
             guard reader == nil else { return }
             let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)
