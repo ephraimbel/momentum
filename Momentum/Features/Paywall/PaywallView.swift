@@ -28,6 +28,11 @@ struct PaywallView: View {
     @State private var selected: PaywallProduct.Period = .annual
     @State private var revealed = false
     @State private var showFeatures = false
+    /// Set the instant a dismissal begins: the film unmounts FIRST, so the cover's slide-down
+    /// animates a plain charcoal page instead of a live AVPlayerLayer — the player compositing
+    /// under the transition was the end-of-exit stutter, and safe-area-ignoring video re-laying
+    /// out mid-flight was the strip of film left at the bottom (owner report 2026-08-20).
+    @State private var dismissing = false
     @Namespace private var planThumb
 
     /// The page's ground — one hex, shared by the ground fill and the film's dissolve ramp.
@@ -99,7 +104,8 @@ struct PaywallView: View {
             .padding(.horizontal, Theme.Space.xl)
         }
         .safeAreaInset(edge: .bottom) {
-            PaywallCheckout(product: product, hard: hard, onEntitled: onEntitled)
+            PaywallCheckout(product: product, hard: hard,
+                            onEntitled: onEntitled ?? { exitPaywall() })
                 .padding(.horizontal, Theme.Space.xl)
                 .padding(.top, Theme.Space.md)
                 .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
@@ -117,8 +123,11 @@ struct PaywallView: View {
                     // every video frame (the "glitchy" hitch, owner report 2026-08-20). The ramp
                     // reaches FULL charcoal a comfortable margin BEFORE the film's bottom edge,
                     // so solid meets solid there and no seam can exist — same look, zero cost.
-                    PaywallFilmBackground()
-                        .frame(height: geo.size.height * 0.62)
+                    if !dismissing {
+                        PaywallFilmBackground()
+                            .frame(height: geo.size.height * 0.62)
+                            .transition(.opacity)
+                    }
                     // The dissolve is its own layer, NOT an overlay measured against the film's
                     // frame: ramp from 24% to 58% of the page, then GUARANTEED solid charcoal to
                     // the bottom — the solid section overlaps the film's last visible band with
@@ -333,8 +342,15 @@ struct PaywallView: View {
         }
     }
 
+    /// Drop the film, then dismiss on the next runloop tick — by the time the cover starts
+    /// moving, the page is solid charcoal and the slide-down is cheap and clean.
+    private func exitPaywall() {
+        withAnimation(.easeOut(duration: 0.1)) { dismissing = true }
+        DispatchQueue.main.async { dismiss() }
+    }
+
     private var closeButton: some View {
-        Button { dismiss() } label: {
+        Button { exitPaywall() } label: {
             Image(systemName: "xmark").font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
                 .frame(width: 34, height: 34)
