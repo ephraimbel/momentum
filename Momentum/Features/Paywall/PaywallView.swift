@@ -67,7 +67,7 @@ struct PaywallView: View {
                 Button { showFeatures = true } label: {
                     Text("Everything in Pro")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.62))
+                        .foregroundStyle(.white.opacity(0.72))
                         .underline()
                 }
                 .frame(maxWidth: .infinity)
@@ -84,22 +84,38 @@ struct PaywallView: View {
                 .reveal(revealed, delay: 0.36, reduceMotion: reduceMotion)
         }
         .background {
-            ZStack {
-                PaywallFilmBackground()
-                // The film grades itself into the brand: an eased charcoal fall from the hem (the
-                // app's own scrim curve, so no visible onset line) and one faint lavender pool
-                // breathing under the checkout — the only color on the page.
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    SoftScrim.bottom(Color(hex: "141210"), peak: 0.96)
-                        .frame(height: 560)
+            // Half-and-half (owner call 2026-08-20): the film owns the TOP of the page and
+            // dissolves into a solid warm-charcoal ground where the content lives — type on
+            // solid ground, film as the crown. The seam is the app's own eased scrim curve, so
+            // no visible line; one faint lavender pool breathes under the checkout.
+            GeometryReader { geo in
+                ZStack(alignment: .top) {
+                    Color(hex: "141210")
+                    // The film dissolves via its own alpha MASK, not an overlay painted on top:
+                    // a covering scrim leaves a visible edge where the film's frame ends, a
+                    // continuous mask cannot. The stops mirror SoftScrim's easing — silent
+                    // shoulder, swift middle, flat landing.
+                    PaywallFilmBackground()
+                        .frame(height: geo.size.height * 0.62)
+                        .mask {
+                            LinearGradient(stops: [
+                                .init(color: .black, location: 0),
+                                .init(color: .black, location: 0.52),
+                                .init(color: .black.opacity(0.95), location: 0.62),
+                                .init(color: .black.opacity(0.82), location: 0.70),
+                                .init(color: .black.opacity(0.6), location: 0.78),
+                                .init(color: .black.opacity(0.36), location: 0.85),
+                                .init(color: .black.opacity(0.16), location: 0.92),
+                                .init(color: .black.opacity(0.04), location: 0.97),
+                                .init(color: .clear, location: 1),
+                            ], startPoint: .top, endPoint: .bottom)
+                        }
+                    LinearGradient(colors: [.black.opacity(0.28), .clear],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 130)
+                    RadialGradient(colors: [Theme.purple.opacity(0.3), .clear],
+                                   center: .bottom, startRadius: 20, endRadius: 470)
                 }
-                LinearGradient(colors: [.black.opacity(0.28), .clear],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 130)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                RadialGradient(colors: [Theme.purple.opacity(0.24), .clear],
-                               center: .bottom, startRadius: 20, endRadius: 420)
             }
             .ignoresSafeArea()
         }
@@ -120,11 +136,22 @@ struct PaywallView: View {
     @ViewBuilder
     private func timeline(_ s: CGFloat) -> some View {
         if paywall.pricingIsLive, selected == .annual, product.trialDays > 0 {
-            VStack(alignment: .leading, spacing: 7 * s) {
+            // A REAL timeline (the Opal confidence pattern, drawn properly): a hairline rail
+            // joins the three beats, and only the live one glows lavender. The rail lives in the
+            // VStack's BACKGROUND so it adopts the rows' height — as a ZStack sibling its
+            // unconstrained height blew the whole stack open to fill the screen.
+            VStack(alignment: .leading, spacing: 8 * s) {
                 timelineRow("Today, every feature unlocks", live: true, s: s)
                 timelineRow("Days 1 to \(product.trialDays), train free. Cancel anytime", live: false, s: s)
                 timelineRow("Day \(product.trialDays), \(product.priceText)/year begins. Under $5 a month",
                             live: false, s: s)
+            }
+            .background(alignment: .topLeading) {
+                Rectangle()
+                    .fill(.white.opacity(0.18))
+                    .frame(width: 1.5)
+                    .offset(x: 2.75)
+                    .padding(.vertical, 9 * s)
             }
             .accessibilityElement(children: .combine)
         } else if paywall.pricingIsLive, selected == .monthly {
@@ -138,8 +165,10 @@ struct PaywallView: View {
     private func timelineRow(_ text: String, live: Bool, s: CGFloat) -> some View {
         HStack(spacing: 9 * s) {
             Circle()
-                .fill(live ? Theme.purple : .white.opacity(0.32))
+                .fill(live ? Theme.purple : .white.opacity(0.38))
                 .frame(width: 7, height: 7)
+                .background(Circle().fill(Color(hex: "141210")).frame(width: 11, height: 11))
+                .shadow(color: live ? Theme.purple.opacity(0.8) : .clear, radius: 5)
             Text(text)
                 .font(.rounded((Theme.FontSize.caption - 0.5) * s, weight: .medium))
                 .foregroundStyle(.white.opacity(live ? 0.9 : 0.72))
@@ -183,8 +212,8 @@ struct PaywallView: View {
             .foregroundStyle(isSelected ? Theme.inkOnFixedLight : .white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10 * s)
-            .background(Capsule().fill(isSelected ? .white : .white.opacity(0.12)))
-            .overlay(Capsule().stroke(.white.opacity(isSelected ? 0 : 0.25)))
+            .background(Capsule().fill(isSelected ? Color.white : Color.black.opacity(0.28)))
+            .overlay(Capsule().stroke(.white.opacity(isSelected ? 0 : 0.28)))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
