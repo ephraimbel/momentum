@@ -297,7 +297,7 @@ struct StepsCard: View {
         // only the trailing 7; wide ranges plot weekly averages so a year never becomes 365 slivers.
         let visible = isDaily ? Array(days.suffix(7)) : days
         let pts = visible.count <= 35 ? visible : TrendsEssentials.weeklyStepAverages(visible)
-        let unit: Calendar.Component = visible.count <= 35 ? .day : .weekOfYear
+        let granularity: TrendAxis.Granularity = visible.count <= 35 ? .daily : .weekly
         let maxV = pts.map(\.steps).max() ?? 0
         let last = pts.last?.date
         let width: CGFloat = switch pts.count {
@@ -308,7 +308,10 @@ struct StepsCard: View {
         }
         return Chart {
             ForEach(pts) { p in
-                BarMark(x: .value("Date", p.date, unit: unit),
+                // Unit-less x (TrendAxis law): the bar centers on its own date and the axis
+                // labels that same instant — the old band bars + `.automatic`/stride ticks sat
+                // half a bin apart.
+                BarMark(x: .value("Date", p.date),
                         y: .value("Steps", animate ? p.steps : 0),
                         width: .fixed(width))
                     .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
@@ -316,33 +319,17 @@ struct StepsCard: View {
                     .cornerRadius(2)
             }
             if let sel = scrub.pinned, let p = pts.first(where: { $0.date == sel }) {
-                TrendScrub.mark(at: sel, unit: unit,
+                TrendScrub.mark(at: sel,
                                 value: "\(Formatters.compact(p.steps)) steps",
-                                label: unit == .day ? TrendScrub.dayLabel(sel) : TrendScrub.weekLabel(sel))
+                                label: granularity == .daily ? TrendScrub.dayLabel(sel) : TrendScrub.weekLabel(sel))
             }
         }
         .chartXSelection(value: $scrub.selection(dates: pts.map(\.date)))
         // Steps read against a ~20k ceiling — an ordinary 8k day sits mid-chart instead of
         // towering to full height. The axis still grows past it whenever the data does.
         .chartYScale(domain: 0...max(20_000, maxV * 1.18))
-        .chartXAxis {
-            if unit == .day {
-                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-            } else {
-                // Weekly averages: month+day up to ~3 months, month-only beyond — month-only
-                // forces a ≥5-week stride (longer than any month), so no "Jun · Jun".
-                AxisMarks(values: .stride(by: .weekOfYear, count: max(pts.count > 14 ? 5 : 2, Int((Double(pts.count) / 5).rounded(.up))))) { _ in
-                    AxisValueLabel(format: pts.count > 14 ? .dateTime.month(.abbreviated)
-                                                          : .dateTime.month(.abbreviated).day())
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-            }
-        }
+        .chartXScale(domain: TrendAxis.domain(for: pts.map(\.date), granularity: granularity))
+        .chartXAxis { TrendAxis.marks(for: pts.map(\.date), granularity: granularity) }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                 let isZero = (value.as(Double.self) ?? 1) == 0
@@ -350,7 +337,7 @@ struct StepsCard: View {
                 AxisValueLabel {
                     if let v = value.as(Double.self) { Text(Formatters.compact(v)) }
                 }
-                .font(.system(size: 10, weight: .medium))
+                .font(TrendAxis.labelFont)
                 .foregroundStyle(Theme.inkTertiary)
             }
         }

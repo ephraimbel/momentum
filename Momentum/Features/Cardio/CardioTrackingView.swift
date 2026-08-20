@@ -82,6 +82,13 @@ struct CardioTrackingView: View {
     /// While true the camera stays locked on the athlete (zoomed in, north-up). A pan/pinch drops it;
     /// the recenter arrow re-engages it.
     @State private var followsUser = true
+    /// Re-engages the follow camera a few beats after the athlete stops touching the map — a
+    /// mid-run pan is a glance, not a decision to fly free forever (Strava's behavior). Rearmed on
+    /// every touch; recenter/finish cancels it.
+    @State private var refollowTask: Task<Void, Never>?
+    /// True once the basemap style has loaded — the map fades in over the app background instead
+    /// of flashing whatever half-loaded frame Mapbox paints first.
+    @State private var mapReady = false
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(Services.self) private var services
@@ -129,7 +136,13 @@ struct CardioTrackingView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            // The app background under the map: the cover presents faster than Mapbox paints its
+            // first styled frame, and a raw engine clear-color flash reads as a glitch. The map
+            // fades in over this the moment the style lands (usually instantly — Today's map has
+            // already warmed the style cache).
+            Theme.background.ignoresSafeArea()
             mapLayer
+                .opacity(mapReady ? 1 : 0)
             topBar
             switch phase {
             case .acquiring: acquiringOverlay
@@ -198,12 +211,18 @@ struct CardioTrackingView: View {
         .onAppear {
             if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
 
-            // Open over the athlete's last route's neighborhood until a live fix lands; once tracking
-            // begins we follow the location puck (see `recenterOnUser`).
+            // Open exactly where the athlete already is. First choice: the OS's cached live fix —
+            // the position Today's map was just showing — so the recorder's map continues the map
+            // they launched from instead of hopping to an older neighborhood and back (the seam
+            // audit's "three cameras" finding). Fall back to their last route's neighborhood; once
+            // tracking begins we follow the location puck (see `recenterOnUser`).
             if lastKnownCoordinate == nil { lastKnownCoordinate = computeLastKnownCoordinate() }
             if case .idle = viewport {
-                viewport = lastKnownCoordinate.map { .camera(center: $0, zoom: 15) } ?? followViewport
+                let liveFix = CLLocationManager().location?.coordinate
+                viewport = (liveFix ?? lastKnownCoordinate).map { .camera(center: $0, zoom: 15) }
+                    ?? followViewport
             }
+            Haptics.warm()   // the countdown's ticks are seconds away — wake the Taptic Engine now
         }
     }
 
@@ -227,7 +246,9 @@ struct CardioTrackingView: View {
             .onStyleLoaded { _ in
                 BrandPuck.apply(to: proxy)
                 puckFeed.attach(to: proxy)
+                belowPuckPosition = nil                  // fresh style → re-resolve the puck layer
                 syncRouteLayers(proxy.map, delta: nil)   // style reload wiped sources → full rebuild
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { mapReady = true }
             }
             // Incremental: feed only the new points to the smoother; append the newly-frozen chunks
             // and replace the short live tail. No full re-smooth, no full re-upload — per-fix work
@@ -269,12 +290,32 @@ struct CardioTrackingView: View {
             }
             .ignoresSafeArea()
             // We keep the camera locked on the athlete (follows the puck) so we control the zoom. A
-            // manual pan or pinch drops the lock; the recenter arrow re-engages it.
-            .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsUser = false })
-            .simultaneousGesture(MagnifyGesture().onChanged { _ in followsUser = false })
+            // manual pan or pinch drops the lock; the recenter arrow — or a few seconds of not
+            // touching the map — re-engages it.
+            .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in dropFollow() })
+            .simultaneousGesture(MagnifyGesture().onChanged { _ in dropFollow() })
 
         }
     }
+
+    /// A touch broke the follow lock. Every touch also rearms a short idle timer that quietly
+    /// re-locks the camera onto the athlete — a mid-run glance at the route shouldn't leave the
+    /// map parked elsewhere until they remember the recenter arrow.
+    private func dropFollow() {
+        followsUser = false
+        refollowTask?.cancel()
+        refollowTask = Task {
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled, phase == .tracking, !followsUser else { return }
+            recenterOnUser()
+        }
+    }
+
+    /// Where to insert route layers so the puck stays on top — resolved ONCE per style load and
+    /// cached. The lookup scans every layer identifier in the style, and it used to run on every
+    /// single GPS fix for the whole session: a linear main-actor walk of a ~100-layer style at 1 Hz,
+    /// for nothing (the style's layer stack doesn't change mid-run).
+    @State private var belowPuckPosition: LayerPosition?
 
     /// Builds/updates the route layers: a dashed guide loop beneath the live trace (white casing +
     /// solid purple). The trace is solid, not a gradient — Mapbox's `line-gradient` crashes when its
@@ -292,8 +333,12 @@ struct CardioTrackingView: View {
         // Insert route layers *below* the location puck so the athlete's purple dot always sits on top
         // of the forming trace (rather than the growing line painting over "you"). The puck renders on
         // a `location-indicator` layer; find it by type so we don't depend on Mapbox's internal id.
-        let belowPuck = map.allLayerIdentifiers.first { $0.type == "location-indicator" }
-            .map { LayerPosition.below($0.id) }
+        // Cached per style load (see `belowPuckPosition`) — never re-scanned per fix.
+        if belowPuckPosition == nil {
+            belowPuckPosition = map.allLayerIdentifiers.first { $0.type == "location-indicator" }
+                .map { LayerPosition.below($0.id) }
+        }
+        let belowPuck = belowPuckPosition
 
         // Dashed guide loop (the static suggested route), under the trace.
         if guideRoute.count > 1 {
@@ -569,9 +614,13 @@ struct CardioTrackingView: View {
                 if vm.isPaused {
                     Text(vm.state == .autoPaused ? "Auto-paused" : "Paused")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
                 HeroMetric(value: distanceNumber(forMeters: vm.distanceM),
                            label: unitLabel == "mi" ? "Miles" : "Kilometers")
+                    // The numbers themselves say "held": dimmed while paused, back to full ink on
+                    // resume — the pause state reads at a glance, not just from a caption.
+                    .opacity(vm.isPaused ? 0.45 : 1)
                 TimelineView(.periodic(from: vm.startedAt, by: 1)) { ctx in
                     HStack(spacing: Theme.Space.xl) {
                         stat(Formatters.duration(s: vm.elapsed(at: ctx.date)), "Time")
@@ -594,12 +643,18 @@ struct CardioTrackingView: View {
             HStack(spacing: Theme.Space.md) {
                 OversizedButton(title: vm.isPaused ? "Resume" : "Pause",
                                 systemImage: vm.isPaused ? "play.fill" : "pause.fill", kind: .outline) {
-                    Task { vm.isPaused ? await vm.resume() : await vm.pause() }
+                    // A state change this big deserves its own weight, not the generic button tick:
+                    // pause lands a medium thud, resume answers with the soft success double-tap.
+                    Task {
+                        if vm.isPaused { await vm.resume(); Haptics.success() }
+                        else { await vm.pause(); Haptics.medium() }
+                    }
                 }
                 OversizedButton(title: "Finish", systemImage: "stop.fill") { confirmStop = true }
             }
         }
         .animation(Motion.standard, value: vm.stepTitle)
+        .animation(Motion.standard, value: vm.isPaused)
         .padding(Theme.Space.md)
         // Finishing is the goal, not a loss. A destructive role paints the primary action red and
         // frames crossing your own finish line as damage — the last thing the athlete should read
@@ -775,13 +830,16 @@ struct CardioTrackingView: View {
         services.analytics.log(.workoutStarted(type: type.rawValue))
         withAnimation(Motion.standard) { phase = .countdown }
         Task {
+            // 0.7 s ticks and no dead hold after GO — the old 0.8×3 + 0.5 shape put a fixed 2.9 s
+            // between the lock and the first recorded second. The ceremony stays; the wait doesn't
+            // (recording still arms exactly at GO, so no standing-around seconds ever count).
             for n in [3, 2, 1] {
                 withAnimation(Motion.lively) { countdown = n }
                 Haptics.light()
-                try? await Task.sleep(for: .seconds(0.8))
+                try? await Task.sleep(for: .seconds(0.7))
             }
             withAnimation(Motion.lively) { countdown = 0 }
-            try? await Task.sleep(for: .seconds(0.5))
+            try? await Task.sleep(for: .seconds(0.15))   // GO lands, then the panel rises through it
             // The user can tap X mid-countdown; arming after that teardown would create an orphan
             // workout (and re-set the recovery marker) with nothing on screen to finish it.
             guard !dismissed else { return }

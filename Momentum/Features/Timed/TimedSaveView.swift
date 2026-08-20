@@ -98,10 +98,13 @@ struct TimedSaveView: View {
         }
         .overlay {
             if celebrating {
-                // The beat is the exit: draws over the screen, then dismisses it.
+                // The beat is the exit: draws over the screen, then dismisses it. Fades in over
+                // the summary instead of appearing whole in one frame (same as CardioSaveView).
                 CompletionCelebration(title: "\(workout?.type.title ?? "Session") complete") { onDone() }
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.18), value: celebrating)
         .alert("Couldn't save your details", isPresented: $saveFailed) {
             Button("Try again") { save() }
             Button("Not now", role: .cancel) {}

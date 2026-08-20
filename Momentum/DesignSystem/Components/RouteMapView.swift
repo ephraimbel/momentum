@@ -35,6 +35,8 @@ struct RouteMapView: View {
     /// 2026-07-24). The `.overview` viewport STATE re-fits whenever the map's real size lands —
     /// the whole route, every time, on every surface.
     @State private var viewport: Viewport
+    /// True once the basemap + route layers are in — gates the fade-in (see `.opacity` below).
+    @State private var styleReady = false
 
     init(coordinates: [CLLocationCoordinate2D], style: MapStyleOption = .persisted,
          interactive: Bool = false, padding: CGFloat = 28,
@@ -68,7 +70,13 @@ struct RouteMapView: View {
                 // that ever competes with it for the frame. See `MapChrome.hidePointsOfInterest`.
                 MapChrome.hidePointsOfInterest(on: proxy.map)
                 addRouteLayers(proxy.map)
+                styleReady = true
             }
+            // Held on the quiet surface until the style (and the route layers) are actually in —
+            // an empty half-loaded basemap frame is never the first thing a summary shows.
+            .opacity(styleReady ? 1 : 0)
+            .background(Theme.surface)
+            .animation(.easeOut(duration: 0.25), value: styleReady)
             .allowsHitTesting(interactive)
             .onChange(of: viewport.isIdle) { _, idle in
                 // A gesture parks the viewport at .idle — that's the "explored" signal.

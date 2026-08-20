@@ -64,13 +64,12 @@ struct ScrubChartHost<ChartView: View>: View {
 
 enum TrendScrub {
     /// The scrub callout drawn inside a chart: a vertical hairline at the selected bucket, topped by
-    /// a value + date pill. Pass the same calendar `unit` the chart's marks plot with so the cursor
-    /// centers on the bar/point.
-    static func mark(at date: Date, unit: Calendar.Component? = nil,
-                     value: String, label: String) -> some ChartContent {
-        let x: PlottableValue<Date> = unit.map { .value("Selected", date, unit: $0) }
-            ?? .value("Selected", date)
-        return RuleMark(x: x)
+    /// a value + date pill. Plots unit-less at the exact date — the TrendAxis law (2026-08-19):
+    /// every chart's marks, labels, and this cursor share the same raw instants, so all three
+    /// agree by construction. (The old `unit:` parameter existed to chase band-binned bars;
+    /// no chart bins any more.)
+    static func mark(at date: Date, value: String, label: String) -> some ChartContent {
+        return RuleMark(x: .value("Selected", date))
             .foregroundStyle(Theme.inkSecondary.opacity(0.45))
             .lineStyle(StrokeStyle(lineWidth: 1))
             .annotation(position: .top, spacing: 4,

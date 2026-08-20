@@ -1467,24 +1467,27 @@ struct ProgressScreen: View {
                 ScrubChartHost(dates: paced.map(\.date), seed: demoScrubPace) { pinned in
                     Chart {
                         ForEach(paced) { p in
-                            LineMark(x: .value("Date", p.date, unit: trendUnit),
+                            // Unit-less x (TrendAxis law): points sit at the series' own instants
+                            // and the axis labels those same instants — rest weeks are dropped
+                            // from this series, and the old strided axis labeled the missing ones.
+                            LineMark(x: .value("Date", p.date),
                                      y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
                                 .foregroundStyle(MetricColor.pace).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                                 .interpolationMethod(.monotone)
-                            PointMark(x: .value("Date", p.date, unit: trendUnit),
+                            PointMark(x: .value("Date", p.date),
                                       y: .value("Pace", animateCharts ? p.avgPaceSPerKm : slowest))
                                 .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(MetricColor.pace))
                                 .symbolSize(p.date == last ? 90 : 22)
                         }
                         if let sel = pinned, let p = paced.first(where: { $0.date == sel }) {
-                            TrendScrub.mark(at: sel, unit: trendUnit,
+                            TrendScrub.mark(at: sel,
                                             value: "\(paceMMSS(p.avgPaceSPerKm)) /\(unit)", label: scrubDateLabel(sel))
                         }
                     }
-                    .chartXScale(domain: paddedDomain(paced.map(\.date)))
+                    .chartXScale(domain: TrendAxis.domain(for: paced.map(\.date), granularity: trendGranularity))
                     // Array domain, slowest first → the y-axis runs slow-at-bottom to fast-at-top.
                     .chartYScale(domain: [slowest * 1.07, fastest * 0.93])
-                    .chartXAxis { trendAxis(insights.weeks.count) }
+                    .chartXAxis { TrendAxis.marks(for: paced.map(\.date), granularity: trendGranularity) }
                     .chartYAxis { paceAxis }
                     .frame(height: 172)
                 }
@@ -1527,8 +1530,11 @@ struct ProgressScreen: View {
                     Chart {
                         ForEach(pts) { p in
                             // Bars read cleanly across rest weeks and rest days alike; widths slim
-                            // as the window widens so 26 weeks never collide.
-                            BarMark(x: .value("Date", p.date, unit: trendUnit),
+                            // as the window widens so 26 weeks never collide. Unit-less x
+                            // (TrendAxis law): the bar centers on its own date and the axis labels
+                            // that same instant — the old `unit:`-band bars centered mid-band
+                            // while stride ticks sat at the band edge, half a bar off.
+                            BarMark(x: .value("Date", p.date),
                                     y: .value("Distance", animateCharts ? disp(p.distanceM) : 0),
                                     width: .fixed(trendIsDaily ? 24 : loadBarWidth(pts.count)))
                                 .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
@@ -1536,14 +1542,14 @@ struct ProgressScreen: View {
                                 .cornerRadius(3)
                         }
                         if let sel = pinned, let p = pts.first(where: { $0.date == sel }) {
-                            TrendScrub.mark(at: sel, unit: trendUnit,
+                            TrendScrub.mark(at: sel,
                                             value: "\(short(disp(p.distanceM))) \(unit)",
                                             label: scrubDateLabel(sel))
                         }
                     }
-                    .chartXScale(domain: paddedDomain(pts.map(\.date)))
+                    .chartXScale(domain: TrendAxis.domain(for: pts.map(\.date), granularity: trendGranularity))
                     .chartYScale(domain: 0...max(1, maxDist * 1.18))
-                    .chartXAxis { trendAxis(pts.count) }
+                    .chartXAxis { TrendAxis.marks(for: pts.map(\.date), granularity: trendGranularity) }
                     .chartYAxis { valueAxis }
                     .frame(height: 172)
                 }
@@ -1564,17 +1570,13 @@ struct ProgressScreen: View {
         }
     }
 
-    /// X axis: a week/date timeline. Both density and granularity adapt to the range — 1M/3M label
-    /// every-few-weeks with month+day; at 6M+ the resolution drops to month-only (like Health when
-    /// zoomed out), which reads cleaner and stops the right-edge label clipping off ("Jun…").
-    private func weekAxis(_ weekCount: Int) -> some AxisContent {
-        let stride = max(2, Int((Double(weekCount) / 5).rounded(.up)))
-        let monthOnly = weekCount > 14
-        return AxisMarks(values: .stride(by: .weekOfYear, count: stride)) { _ in
-            AxisValueLabel(format: monthOnly ? .dateTime.month(.abbreviated)
-                                             : .dateTime.month(.abbreviated).day())
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.inkTertiary)
+    /// The season chart plots the whole history — extend the width ladder down for year+ spans.
+    private func seasonBarWidth(_ weekCount: Int) -> CGFloat {
+        switch weekCount {
+        case ...14: 10
+        case ...30: 6
+        case ...60: 4
+        default: 2.5
         }
     }
 
@@ -1597,7 +1599,7 @@ struct ProgressScreen: View {
     }
 
     private var trendIsDaily: Bool { trendRange.isDaily }
-    private var trendUnit: Calendar.Component { trendIsDaily ? .day : .weekOfYear }
+    private var trendGranularity: TrendAxis.Granularity { trendIsDaily ? .daily : .weekly }
 
     /// The points to plot for the current range — daily buckets for Week, weekly windows otherwise.
     private func trendPoints(_ insights: ProgressInsights) -> [TrendPoint] {
@@ -1606,34 +1608,14 @@ struct ProgressScreen: View {
             : insights.weeks.map { TrendPoint(date: $0.weekStart, load: $0.load, distanceM: $0.distanceM, avgPaceSPerKm: $0.avgPaceSPerKm) }
     }
 
-    /// X domain padded to the unit: half a day for daily, four days for weekly.
-    private func paddedDomain(_ dates: [Date]) -> ClosedRange<Date> {
-        guard let lo = dates.min(), let hi = dates.max(), lo <= hi else { return Date()...Date().addingTimeInterval(1) }
-        let pad: TimeInterval = trendIsDaily ? 12 * 3600 : 4 * 24 * 3600
-        return lo.addingTimeInterval(-pad)...hi.addingTimeInterval(pad)
-    }
-
-    /// X axis for the current granularity: single-letter weekday initials across the 7-day Week view,
-    /// else the existing week/month timeline.
-    @AxisContentBuilder private func trendAxis(_ count: Int) -> some AxisContent {
-        if trendIsDaily {
-            AxisMarks(values: .stride(by: .day)) { _ in
-                AxisValueLabel(format: .dateTime.weekday(.narrow))
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-            }
-        } else {
-            weekAxis(count)
-        }
-    }
-
     /// Y axis: faint hairline gridlines with muted numeric labels; the zero line is a touch stronger
-    /// so the chart sits on a clear baseline.
+    /// so the chart sits on a clear baseline. Label typography = `TrendAxis.labelFont` (the one rule).
     private var valueAxis: some AxisContent {
         AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
             let isZero = (value.as(Double.self) ?? 1) == 0
             AxisGridLine().foregroundStyle(isZero ? Theme.inkTertiary.opacity(0.35) : Theme.hairline)
             AxisValueLabel()
-                .font(.system(size: 10, weight: .medium))
+                .font(TrendAxis.labelFont)
                 .foregroundStyle(Theme.inkTertiary)
         }
     }
@@ -1644,7 +1626,7 @@ struct ProgressScreen: View {
             AxisGridLine().foregroundStyle(Theme.hairline)
             if let secPerKm = value.as(Double.self) {
                 AxisValueLabel { Text(paceMMSS(secPerKm)) }
-                    .font(.system(size: 10, weight: .medium))
+                    .font(TrendAxis.labelFont)
                     .foregroundStyle(Theme.inkTertiary)
             }
         }
@@ -1997,25 +1979,32 @@ struct ProgressScreen: View {
                 ScrubChartHost(dates: weeks.map(\.week)) { pinned in
                     Chart {
                         ForEach(weeks, id: \.week) { entry in
-                            BarMark(x: .value("Week", entry.week, unit: .weekOfYear),
-                                    y: .value("Distance", entry.meters / divisor))
+                            // Unit-less x + fixed width (TrendAxis law): this chart had BOTH old
+                            // sins — band-filling auto-width bars and `.automatic` ticks that
+                            // landed on instants no bar occupies — plus the tab's only unstyled
+                            // stock axis. All-time histories can run years, hence the extra slim
+                            // widths below `loadBarWidth`'s range.
+                            BarMark(x: .value("Week", entry.week),
+                                    y: .value("Distance", entry.meters / divisor),
+                                    width: .fixed(seasonBarWidth(weeks.count)))
                                 .foregroundStyle(Theme.ink.opacity(0.8))
                                 .cornerRadius(2)
                         }
                         ForEach(recordWeeks, id: \.week) { entry in
-                            PointMark(x: .value("Week", entry.week, unit: .weekOfYear),
+                            PointMark(x: .value("Week", entry.week),
                                       y: .value("Distance", entry.meters / divisor))
                                 .foregroundStyle(AnyShapeStyle(IridescentMaterial()))
                                 .symbolSize(70)
                         }
                         if let sel = pinned, let entry = weeks.first(where: { $0.week == sel }) {
-                            TrendScrub.mark(at: sel, unit: .weekOfYear,
+                            TrendScrub.mark(at: sel,
                                             value: Formatters.distance(meters: entry.meters, unit: distanceUnit),
                                             label: TrendScrub.weekLabel(sel))
                         }
                     }
-                    .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) }
-                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+                    .chartXScale(domain: TrendAxis.domain(for: weeks.map(\.week), granularity: .weekly))
+                    .chartXAxis { TrendAxis.marks(for: weeks.map(\.week), granularity: .weekly) }
+                    .chartYAxis { valueAxis }
                     .frame(height: 150)
                 }
             }

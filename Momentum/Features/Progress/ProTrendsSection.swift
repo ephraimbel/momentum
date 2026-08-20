@@ -250,16 +250,22 @@ struct FitnessFreshnessCard: View {
         }
         .chartXSelection(value: $scrub.selection(dates: pts.map(\.date)))
         .chartYScale(domain: floor...max(1, maxY * 1.12))
+        // Half a day's padding each side: the daily form bars are 1.5 pt slivers drawn at exact
+        // instants, and without a padded domain the first and last bar half-clipped at the frame.
+        // Month-boundary labels stay — this is the one continuous daily chart, and month starts
+        // are the honest ruler for a PMC curve (marks are unit-less, so tick and mark geometry
+        // agree by construction).
+        .chartXScale(domain: TrendAxis.domain(for: pts.map(\.date), granularity: .daily))
         .chartXAxis {
             AxisMarks(values: .stride(by: .month)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated))
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
             }
         }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
                 AxisGridLine().foregroundStyle(Theme.hairline)
-                AxisValueLabel().font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                AxisValueLabel().font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
             }
         }
         .frame(height: 190)
@@ -506,16 +512,15 @@ struct TrendChartCard: View {
         }
         .chartXSelection(value: $scrub.selection(dates: series.map(\.weekStart)))
         .chartYScale(domain: floor...(hi + pad))
-        .chartXAxis {
-            AxisMarks(values: .stride(by: .weekOfYear, count: max(2, series.count / 5))) { _ in
-                AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-            }
-        }
+        // TrendAxis law: these weekly series roll from "now" (an arbitrary weekday), and the old
+        // `.stride(by: .weekOfYear)` ticks landed on CALENDAR week starts — every label named a
+        // date with no bar on it, offset 0–6 days. Labels now sit on the bars' own dates.
+        .chartXScale(domain: TrendAxis.domain(for: series.map(\.weekStart), granularity: .weekly))
+        .chartXAxis { TrendAxis.marks(for: series.map(\.weekStart), granularity: .weekly) }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
                 AxisGridLine().foregroundStyle(Theme.hairline)
-                AxisValueLabel().font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                AxisValueLabel().font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
             }
         }
         .frame(height: 160)

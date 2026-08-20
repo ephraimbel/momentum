@@ -134,8 +134,12 @@ struct BalanceCard: View {
             if range == .week {
                 // Ghost bars extend the domain up to ~14 days — 14 single-letter labels cram
                 // (screenshot-verified). Past 8 days, label every other day.
+                // NOT `centered:` — this chart's marks plot at exact instants (no `unit:`
+                // banding), so centering pushed every weekday letter half a day RIGHT of its
+                // point (axis pass 2026-08-19). Centered labels are for band-binned marks only,
+                // and this codebase now has none.
                 AxisMarks(values: .stride(by: .day, count: ghostBars.isEmpty ? 1 : 2)) { _ in
-                    AxisValueLabel(format: .dateTime.weekday(.narrow), centered: true)
+                    AxisValueLabel(format: .dateTime.weekday(.narrow))
                         .font(Font.rounded(Theme.FontSize.label, weight: .medium).monospacedDigit())
                         .foregroundStyle(Theme.inkTertiary)
                 }

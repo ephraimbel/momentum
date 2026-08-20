@@ -137,10 +137,13 @@ struct StrengthSaveView: View {
         }
         .overlay {
             if celebrating {
-                // The beat is the exit: draws over the screen, then dismisses it.
+                // The beat is the exit: draws over the screen, then dismisses it. Fades in over
+                // the summary instead of appearing whole in one frame (same as CardioSaveView).
                 CompletionCelebration(title: "Workout complete") { onDone() }
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.18), value: celebrating)
         // The sets are already on disk — only the name and notes failed to write, so say exactly that
         // and keep the athlete on the screen with their text intact rather than dismissing over it.
         .alert("Couldn't save your notes", isPresented: $saveFailed) {

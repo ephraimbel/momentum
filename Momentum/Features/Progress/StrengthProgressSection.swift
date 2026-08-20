@@ -250,15 +250,18 @@ struct StrengthProgressSection: View {
                 .chartXSelection(value: $scrubE1RM.selection(dates: series.map(\.date)))
                 .chartYScale(domain: (lo - pad)...(hi + pad))
                 .chartXAxis {
+                    // Sessions land irregularly, so this step chart keeps a continuous time ruler
+                    // (calendar ticks, not per-session labels) — marks are unit-less, so tick and
+                    // step geometry agree. Typography joins the one TrendAxis rule.
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                         AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                            .font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            .font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
                     }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
                         AxisGridLine().foregroundStyle(Theme.hairline)
-                        AxisValueLabel().font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        AxisValueLabel().font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
                     }
                 }
                 .frame(height: 170)

@@ -188,11 +188,31 @@ enum MapStylePreviews {
     /// taller and crop the strip away — thumbnails are UI chrome, not a map.
     private static let attributionStripPt: CGFloat = 28
 
+    /// On-disk copies of the rendered previews (Caches — the system may prune, we just re-render).
+    /// The in-memory cache dies with the process, so every cold launch used to pay up to nine
+    /// Snapshotter renders on the first picker open; now only a style/area never seen before does.
+    private static var diskDir: URL? {
+        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        else { return nil }
+        let dir = base.appendingPathComponent("MapStylePreviews", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func diskURL(for key: String) -> URL? {
+        diskDir?.appendingPathComponent(key.replacingOccurrences(of: "|", with: "_") + ".jpg")
+    }
+
     static func snapshot(_ option: MapStyleOption, center: CLLocationCoordinate2D,
                          size: CGSize) async -> UIImage? {
         // Bucket the center (~2 km) so tiny GPS drift between opens doesn't defeat the cache.
         let key = "\(option.rawValue)|\(Int(center.latitude * 50))|\(Int(center.longitude * 50))"
         if let hit = cache[key] { return hit }
+        if let url = diskURL(for: key), let data = try? Data(contentsOf: url),
+           let image = UIImage(data: data, scale: UIScreen.main.scale) {
+            cache[key] = image
+            return image
+        }
 
         return await withCheckedContinuation { continuation in
             waiters[key, default: []].append(continuation)
@@ -212,7 +232,15 @@ enum MapStylePreviews {
                 }
                 snapshotter.start(overlayHandler: nil) { result in
                     let image = (try? result.get()).map { cropBottomStrip($0, to: size) }
-                    if let image { cache[key] = image }
+                    if let image {
+                        cache[key] = image
+                        // Persist off the main actor — the picker sheet is mid-scroll/animation.
+                        if let url = diskURL(for: key) {
+                            Task.detached(priority: .utility) { [data = image.jpegData(compressionQuality: 0.85)] in
+                                if let data { try? data.write(to: url) }
+                            }
+                        }
+                    }
                     (waiters.removeValue(forKey: key) ?? []).forEach { $0.resume(returning: image) }
                     active[key] = nil
                     tokens[key] = nil

@@ -199,7 +199,9 @@ struct TrendDetailSheet: View {
         let maxV = pts.map(\.value).max() ?? 0
         let plotted = detail.form == .line ? pts.filter { $0.value > 0 } : pts
         let daily = Self.isDaily(plotted)
-        let unit: Calendar.Component = daily ? .day : .weekOfYear
+        let granularity: TrendAxis.Granularity = daily ? .daily : .weekly
+        let dates = plotted.map(\.date)
+        let xDomain = TrendAxis.domain(for: dates, granularity: granularity)
         let last = plotted.last?.date
         let barWidth: CGFloat = switch plotted.count {
         case ...8: 18
@@ -207,15 +209,17 @@ struct TrendDetailSheet: View {
         case ...30: 7
         default: 4
         }
-        // Weekly axes stride like the page's `weekAxis`: month+day up to ~3 months, month-only
-        // beyond. Month-only forces a ≥5-week stride (longer than any month), so a month can
-        // never label twice ("Jun · Jun").
-        let monthOnly = plotted.count > 14
-        let axisStride = max(monthOnly ? 5 : 2, Int((Double(plotted.count) / 5).rounded(.up)))
+        // TrendAxis law (axis pass 2026-08-19): every mark plots unit-less at its own instant and
+        // the axis labels those same instants. This sheet's weekly payloads mix TWO week
+        // conventions (pace/strength roll from "now", distance/steps use calendar weeks) — the
+        // old `.weekOfYear` binning + strided ticks drew the rolling ones snapped to calendar
+        // bins while the scrub kept raw dates, so cursor, bar and label all disagreed.
         return Chart {
-            if let band = detail.band, let first = plotted.first?.date, let lastDate = last {
-                RectangleMark(xStart: .value("Date", first, unit: unit),
-                              xEnd: .value("Date", lastDate, unit: unit),
+            if let band = detail.band {
+                // The band spans the full padded plot, not first-to-last bin centre — the old
+                // `unit:`-bound rectangle under-covered the outer half-bars.
+                RectangleMark(xStart: .value("Date", xDomain.lowerBound),
+                              xEnd: .value("Date", xDomain.upperBound),
                               yStart: .value("Band low", band.lower),
                               yEnd: .value("Band high", band.upper))
                     .foregroundStyle((detail.bandTint ?? detail.tint ?? Theme.ink).opacity(0.2))
@@ -224,19 +228,19 @@ struct TrendDetailSheet: View {
             ForEach(plotted) { p in
                 switch detail.form {
                 case .bars:
-                    BarMark(x: .value("Date", p.date, unit: unit),
+                    BarMark(x: .value("Date", p.date),
                             y: .value(detail.title, drawn ? p.value : 0),
                             width: .fixed(barWidth))
                         .foregroundStyle(barStyle(isCurrent: p.date == last))
                         .cornerRadius(2)
                 case .line:
-                    LineMark(x: .value("Date", p.date, unit: unit),
+                    LineMark(x: .value("Date", p.date),
                              y: .value(detail.title, drawn ? p.value : maxV))
                         .foregroundStyle(detail.tint ?? Theme.ink)
                         .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                         .interpolationMethod(.monotone)
                     if p.date == last {
-                        PointMark(x: .value("Date", p.date, unit: unit),
+                        PointMark(x: .value("Date", p.date),
                                   y: .value(detail.title, drawn ? p.value : maxV))
                             .symbolSize(46)
                             .foregroundStyle(detail.tint.map(AnyShapeStyle.init)
@@ -245,37 +249,15 @@ struct TrendDetailSheet: View {
                 }
             }
             if let sel = scrub.pinned, let p = plotted.first(where: { $0.date == sel }) {
-                TrendScrub.mark(at: sel, unit: unit,
+                TrendScrub.mark(at: sel,
                                 value: "\(detail.format(p.value)) \(detail.unit)",
                                 label: daily ? TrendScrub.dayLabel(sel) : TrendScrub.weekLabel(sel))
             }
         }
-        .chartXSelection(value: $scrub.selection(dates: plotted.map(\.date)))
+        .chartXSelection(value: $scrub.selection(dates: dates))
         .chartYScale(domain: yDomain(plotted, maxV: maxV))
-        .chartXAxis {
-            if daily, plotted.count > 60 {
-                // Long daily series (a season of vitals, a year of nights): month labels on
-                // month starts — day-level labels at this width clip at the right edge.
-                AxisMarks(values: .stride(by: .month, count: plotted.count > 200 ? 3 : 1)) { _ in
-                    AxisValueLabel(format: .dateTime.month(.abbreviated))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-            } else if daily {
-                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-            } else {
-                AxisMarks(values: .stride(by: .weekOfYear, count: axisStride)) { _ in
-                    AxisValueLabel(format: monthOnly ? .dateTime.month(.abbreviated)
-                                                     : .dateTime.month(.abbreviated).day())
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-            }
-        }
+        .chartXScale(domain: xDomain)
+        .chartXAxis { TrendAxis.marks(for: dates, granularity: granularity) }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                 let isZero = (value.as(Double.self) ?? 1) == 0
@@ -283,7 +265,7 @@ struct TrendDetailSheet: View {
                 AxisValueLabel {
                     if let v = value.as(Double.self) { Text(detail.format(v)) }
                 }
-                .font(.system(size: 10, weight: .medium))
+                .font(TrendAxis.labelFont)
                 .foregroundStyle(Theme.inkTertiary)
             }
         }

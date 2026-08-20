@@ -46,6 +46,10 @@ struct HeatmapMapView: UIViewRepresentable {
         /// The cells the camera was last fitted to — a style switch re-applies the heat layers but
         /// must NOT snap the athlete's pan/zoom back to the fitted frame.
         private var fittedCells: [HeatCell] = []
+        /// The first fit frames the opening shot instantly; later cell changes (a new workout
+        /// landing while the card is on screen) EASE there — an un-animated `setCamera` mid-view
+        /// was the one raw camera jump left on the app's map surfaces.
+        private var hasFitted = false
 
         func apply(cells: [HeatCell], to map: MapView) {
             self.cells = cells
@@ -59,7 +63,12 @@ struct HeatmapMapView: UIViewRepresentable {
                     .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                 let camera = map.mapboxMap.camera(for: coords,
                     padding: UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40), bearing: 0, pitch: 0)
-                map.mapboxMap.setCamera(to: camera)
+                if hasFitted {
+                    map.camera.ease(to: camera, duration: 0.6, curve: .easeInOut, completion: nil)
+                } else {
+                    hasFitted = true
+                    map.mapboxMap.setCamera(to: camera)
+                }
             }
 
             let features = cells.map { cell -> Turf.Feature in

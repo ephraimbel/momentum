@@ -103,6 +103,7 @@ struct RootView: View {
         @Bindable var paywall = paywall
         @Bindable var coach = coach
         @Bindable var auth = auth
+        @Bindable var router = router
         return Group {
             if !auth.isSignedIn {
                 // The welcome (2026-07-27): brand only, no account. "Get started" enters setup
@@ -122,7 +123,11 @@ struct RootView: View {
                     if showOnboarding || holdTabsForOnboardingDismiss {
                         Theme.background.ignoresSafeArea()
                     } else {
-                        tabs
+                        // The ONE workout recorder, mounted over the whole shell (tab bar included)
+                        // so a run started from Today or Plan crossfades up over the map rather
+                        // than sliding a modal cover with a second presentation context
+                        // (shared-map pass 2026-08-19). Launch state lives on the router.
+                        tabs.workoutRunner(launch: $router.workoutLaunch)
                     }
                 }
                 // Award unlocks meet the athlete wherever they land — awards can arrive from any
@@ -130,7 +135,11 @@ struct RootView: View {
                 // once at the root rather than on each surface. Paused while a root cover owns the
                 // screen (the overlay renders UNDER covers — presenting then would play the whole
                 // celebration invisibly behind them).
-                .awardUnlocks(paused: rootCoverOwnsScreen)
+                // Also paused while the workout overlay owns the screen: awards are queued at the
+                // save moment, and with the recorder now an overlay (not a cover) the presenter
+                // could otherwise draw a medallion OVER the live run. They present the moment the
+                // recorder fades out — exactly the old "as the save cover clears" beat.
+                .awardUnlocks(paused: rootCoverOwnsScreen || router.workoutLaunch != nil)
                 // The app-wide toast capsule (enterprise pass 2026-08-15) — one host, over the tab
                 // shell. Same under-covers reality as awards: while a root cover owns the screen the
                 // center is held, so a coaching toast waits for the athlete instead of expiring

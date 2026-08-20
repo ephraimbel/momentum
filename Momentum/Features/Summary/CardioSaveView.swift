@@ -63,8 +63,7 @@ struct CardioSaveView: View {
     private static let cardioTypes = WorkoutType.allCases.filter(\.isGPS)
 
     var body: some View {
-        @Bindable var paywall = paywall
-        return NavigationStack {
+        NavigationStack {
             ScrollView {
                 if let workout {
                     // The scene leads (user call 2026-08-14): the route runs edge-to-edge from the
@@ -138,8 +137,12 @@ struct CardioSaveView: View {
                 CompletionCelebration(title: "\(sportType.title) complete",
                                       ring: weekRing.map { (from: $0.from, to: $0.to) },
                                       caption: weekCaption) { onDone() }
+                    // Fades in over the summary instead of appearing whole in one frame — the
+                    // only hard cut left in the finish choreography (audit 2026-08-19).
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.18), value: celebrating)
         // The recording itself is already on disk — only these edits failed to write. Say that
         // plainly and keep the athlete here with their text, rather than dismissing over the loss.
         .alert("Couldn't save your details", isPresented: $saveFailed) {
@@ -154,11 +157,10 @@ struct CardioSaveView: View {
         } message: {
             Text("It's still in your history. Nothing was deleted.")
         }
-        // The save screen is itself a fullScreenCover — RootView's app-level paywall cover cannot
-        // present on top of it, so the Pro map-style gate needs its own host here.
-        .fullScreenCover(item: $paywall.presentedFeature) { feature in
-            PaywallView(feature: feature)
-        }
+        // No paywall host here any more: the recorder became a shell OVERLAY (2026-08-19), so
+        // RootView's app-level paywall cover presents fine over this screen — and a second cover
+        // bound to the same `presentedFeature` is the documented double-present bug
+        // (paywall-cover gotchas): both hosts fired with a dark flash between them.
         .task {
             guard reader == nil else { return }
             let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)

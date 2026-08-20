@@ -136,6 +136,15 @@ final class CoreRunFlowUITests: XCTestCase {
         sleep(3)                          // completion celebration auto-dismisses (~1.4s) → back to app
         attach("8-after-save")
 
+        // 7d². The first-save soft-ask ("Enjoying momentum?") raises ~0.6s after the recorder
+        // clears on a fresh container. It owns the whole screen — left up, it silently swallowed
+        // the Profile tab tap below and failed the grid assertion (found 2026-08-19).
+        if app.staticTexts["Enjoying momentum?"].waitForExistence(timeout: 3) {
+            app.buttons["Maybe later"].tap()
+            sleep(1)
+            attach("8a-rating-prompt-dismissed")
+        }
+
         // 7e. Tap through any award unlocks the run earned. They present at the root the moment the
         // save cover clears, and they own the whole screen until dismissed — exactly what a real
         // athlete taps through, and what the rest of this test has to get past before it can see

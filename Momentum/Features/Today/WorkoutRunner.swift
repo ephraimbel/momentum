@@ -3,8 +3,9 @@ import SwiftData
 
 /// Presents the live recorder for a `TodayLaunch` and runs the full post-workout pipeline — calorie
 /// estimate, plan crediting, adaptive pace recalibration + load auto-adapt, athlete-model ingest,
-/// reminder rescheduling — then the save/summary sheet. Shared by Today and Plan so a workout started
-/// from either place behaves identically (PRD §9). Attach via `.workoutRunner(launch:)`.
+/// reminder rescheduling — then the save/summary sheet. Mounted ONCE over the whole tab shell in
+/// `RootView` (launch state lives on `AppRouter.workoutLaunch`), so a workout started from Today or
+/// Plan behaves identically (PRD §9). Attach via `.workoutRunner(launch:)`.
 struct WorkoutRunner: ViewModifier {
     @Binding var launch: TodayLaunch?
 
@@ -23,35 +24,30 @@ struct WorkoutRunner: ViewModifier {
     /// while the workout is still in hand, so the celebration can draw something true on its very
     /// first frame (the summary's own reader hasn't loaded by then).
     @State private var weekRing: WeekRing.Reading?
+    /// The dismissal beat in flight (fade out → receipts → release) — cancelled if a new workout
+    /// starts inside the fade, so a stale beat can't clear the fresh journey's state.
+    @State private var dismissWork: Task<Void, Never>?
 
     private var plan: TrainingPlan? { profiles.first?.plan }
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto }
 
     func body(content: Content) -> some View {
         content
-            // ONE cover carries the whole journey: live recorder → (content crossfade) → save
-            // screen → celebration → dismiss. It used to be two covers — dismiss the live one,
-            // present the summary — which serialized two full-screen animations back to back:
-            // most of the reported ~1s "pause" at the finish line, and a presentation SwiftUI can
-            // drop under load (the same lesson as the onboarding relaunch gate: swap a cover's
-            // content, never dismiss-and-re-present to chain beats).
-            .fullScreenCover(item: $launch, onDismiss: {
-                let saved = summary
-                summary = nil
-                afterCoverResolved(saved)
-                // Released AFTER the receipt is enqueued (front) — the save receipt leads any
-                // coaching line that queued up while the workout owned the screen.
-                ToastCenter.shared.release("workout")
-            }) { launch in
-                ZStack {
-                    if let presented = summary {
-                        saveScreen(presented).transition(.opacity)
-                    } else {
-                        liveScreen(launch)
-                    }
-                }
-                .animation(.easeOut(duration: 0.28), value: summary != nil)
-            }
+            // The shell is INERT to assistive tech while the recorder owns the screen — the
+            // overlay (unlike the old modal cover) doesn't trap VoiceOver focus by itself, and
+            // without this the rotor could wander onto Today's controls under the live run.
+            .accessibilityHidden(launch != nil)
+            // ONE overlay carries the whole journey: live recorder → (content crossfade) → save
+            // screen → celebration → crossfade out. It was a `.fullScreenCover` until 2026-08-19 —
+            // a modal slide that mounted a second full-screen context over the Today map and made
+            // Start read as "a panel opened" instead of "the map you're looking at starts
+            // recording". As an overlay above the tab shell, the launch beat is a straight
+            // dissolve: Today's camera is already flying to the follow framing (see `startFree`),
+            // the recorder's map seeds at the same fix, and the two maps hand off invisibly.
+            // (Earlier lesson kept from the cover era: the finish is a CONTENT swap inside one
+            // surface, never dismiss-and-re-present — that serialized two full-screen animations
+            // and stalled the finish line by ~1s.)
+            .overlay { runnerOverlay }
             // The one-time "Enjoying momentum?" soft-ask — a centered modal over a dimmed backdrop
             // (clear cover background; the card draws its own dim + centering). The positive branch
             // fires the native ask AFTER it closes (presenting the system prompt over a dismissing
@@ -68,10 +64,32 @@ struct WorkoutRunner: ViewModifier {
                     onDismiss: { showRatingPrompt = false })
                 .presentationBackground(.clear)
             }
-            // While the live/save cover owns the screen, hold the app toast center — an adaptation
-            // toast recorded mid-save must wait for the destination screen, not play under the cover.
+            // While the live/save overlay owns the screen, hold the app toast center — an
+            // adaptation toast recorded mid-save must wait for the destination screen, not play
+            // under the recorder. On close, the receipts wait out the fade (the old cover's
+            // onDismiss beat): `summary` must survive until the last fading frame so the overlay
+            // never snaps back to the live recorder mid-dissolve.
             .onChange(of: launch != nil) { _, up in
-                if up { ToastCenter.shared.hold("workout") }
+                if up {
+                    dismissWork?.cancel()   // re-opened inside a fade — the hold below still stands
+                    // A cancelled fade never ran its cleanup: a stale summary here would open the
+                    // NEW workout on the OLD save screen.
+                    summary = nil
+                    weekRing = nil
+                    ToastCenter.shared.hold("workout")
+                } else {
+                    let saved = summary
+                    dismissWork?.cancel()
+                    dismissWork = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.35))
+                        guard !Task.isCancelled else { return }
+                        summary = nil
+                        afterCoverResolved(saved)
+                        // Released AFTER the receipt is enqueued (front) — the save receipt leads
+                        // any coaching line that queued up while the workout owned the screen.
+                        ToastCenter.shared.release("workout")
+                    }
+                }
             }
             #if DEBUG
             // `--rating-prompt`: raise the soft-ask straight away for sim verification (the real
@@ -83,8 +101,35 @@ struct WorkoutRunner: ViewModifier {
             #endif
     }
 
+    /// The full-screen recorder surface, crossfaded above the tab shell. The opaque root
+    /// background is load-bearing twice over: the dissolve reads as one surface becoming another
+    /// (never a translucent sandwich of two live maps), and no touch can fall through to the
+    /// shell's controls while the recorder is up or mid-fade.
+    @ViewBuilder
+    private var runnerOverlay: some View {
+        ZStack {
+            if let launch {
+                ZStack {
+                    Theme.background.ignoresSafeArea()
+                    if let presented = summary {
+                        saveScreen(presented).transition(.opacity)
+                    } else {
+                        liveScreen(launch)
+                    }
+                }
+                .animation(.easeOut(duration: 0.28), value: summary != nil)
+                .transition(.opacity)
+                // Per-launch identity, matching the old `item:` cover semantics — a workout begun
+                // during the previous one's exit fade must build a FRESH recorder, never resume
+                // the fading one's @State.
+                .id(launch.id)
+            }
+        }
+        .animation(Motion.standard, value: launch != nil)
+    }
+
     /// Strava-style: name + describe the workout, Save → celebration → back. Rendered INSIDE the
-    /// launch cover (content swap), so finishing never chains two full-screen presentations.
+    /// launch overlay (content swap), so finishing never chains two full-screen presentations.
     @ViewBuilder
     private func saveScreen(_ presented: PresentedWorkout) -> some View {
         if presented.type.isStrengthStyle {
@@ -99,13 +144,13 @@ struct WorkoutRunner: ViewModifier {
         }
     }
 
-    /// Close the whole cover. `summary` deliberately stays set until `onDismiss` — clearing it here
-    /// would swap the content back to the live recorder for the length of the dismissal animation.
+    /// Close the whole overlay. `summary` deliberately stays set until the dismissal beat clears
+    /// it — clearing it here would swap the content back to the live recorder mid-fade.
     private func dismissSummary() {
         launch = nil
     }
 
-    /// The cover fully resolved. Show the "Logged" receipt for a KEPT workout (a discard deleted
+    /// The overlay fully faded out. Show the "Logged" receipt for a KEPT workout (a discard deleted
     /// the row, so its fetch quietly finds nothing), then — at the finished-workout moment, the
     /// app's positive peak — raise the "Enjoying momentum?" soft-ask if the athlete has now saved
     /// enough workouts to count as engaged. The save views count only KEPT workouts, so a discard

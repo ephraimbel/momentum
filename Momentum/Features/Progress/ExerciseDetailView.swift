@@ -80,7 +80,19 @@ struct ExerciseDetailView: View {
                     .symbolSize(36).foregroundStyle(Theme.ink)
             }
             .chartYScale(domain: yDomain)
-            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 3)) }
+            // Was the stock unstyled axis — the only chart on the tab ignoring the shared look.
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                        .font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                    AxisGridLine().foregroundStyle(Theme.hairline)
+                    AxisValueLabel().font(TrendAxis.labelFont).foregroundStyle(Theme.inkTertiary)
+                }
+            }
             .frame(height: 200)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

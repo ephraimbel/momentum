@@ -32,4 +32,13 @@ final class AppRouter {
     /// strings are consumed and ignored, never crash. Owner: `ProgressScreen` (nils it, then
     /// switches its segment).
     var pendingProgressSegment: String?
+
+    /// The live workout in flight (2026-08-19 shared-map pass). NOT a one-shot mailbox: this is
+    /// presentation state — non-nil for the whole recording → save → celebration journey. Writers
+    /// are Today's Start controls and the Plan tab's session sheet; the single owner is the ONE
+    /// `WorkoutRunner` mounted over the whole tab shell in `RootView`, which nils it when the
+    /// journey resolves. It used to be a per-tab `@State` feeding a `.fullScreenCover` — hoisting
+    /// it here is what lets the recorder present as a crossfade overlay above the tab bar instead
+    /// of a modal slide with its own presentation context.
+    var workoutLaunch: TodayLaunch?
 }

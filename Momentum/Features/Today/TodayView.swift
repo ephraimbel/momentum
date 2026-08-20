@@ -54,7 +54,6 @@ struct TodayView: View {
     @State private var goalKind: GoalKind = .open
     @State private var goalValue = 3.0
     @State private var viewport: Viewport = .idle
-    @State private var launch: TodayLaunch?
     @State private var locator = LocationService()
     /// Where the map opens for an athlete we haven't located yet — no stored fix, no permission.
     /// Deliberately NOT a city: this used to be hardcoded to San Francisco, so the first frame of the
@@ -97,6 +96,13 @@ struct TodayView: View {
     /// True once the map backdrop has been mounted — it then stays warm for the session (a
     /// strength-only athlete who never shows the map never pays for it).
     @State private var mapWasShown = false
+    /// True once the basemap style has actually loaded. Until then the map renders at opacity 0
+    /// over the app background — the first frames of a cold launch used to be whatever Mapbox
+    /// paints while the style downloads, with the glass chrome already floating on top of it.
+    @State private var mapStyleReady = false
+    /// Frame-morphs the Start control between the deck and the collapsed peek, so collapsing
+    /// reads as ONE button traveling rather than two buttons trading places.
+    @Namespace private var startMorph
     // The deck collapses so the map can have the whole screen. Remembered across launches: an
     // athlete who wants the map uninterrupted shouldn't have to say so every morning.
     @AppStorage("todayDeckCollapsed") private var deckCollapsed = false
@@ -279,8 +285,13 @@ struct TodayView: View {
             // location exists, the sport home leads; Start asks for location contextually and the
             // map takes over the moment it can center.
             let mapActive = (isCardio && canCenterMap) || worldMode || marketingHero
+            // Always something painted behind the map: it holds the first frames while the style
+            // loads (the map fades in over it via `mapStyleReady`) instead of a raw engine flash.
+            Theme.background.ignoresSafeArea()
             if mapActive || mapWasShown {
-                mapLayer.opacity(mapActive ? 1 : 0).allowsHitTesting(mapActive)
+                mapLayer.opacity(mapActive && mapStyleReady ? 1 : 0).allowsHitTesting(mapActive)
+                    .animation(Motion.standard, value: mapStyleReady)
+                    .animation(Motion.standard, value: mapActive)
             }
             if !mapActive { strengthHome }
             if worldMode {
@@ -384,7 +395,10 @@ struct TodayView: View {
                 withAnimation(Motion.standard) { viewport = target }
             }
         }
-        .workoutRunner(launch: $launch)
+        // The recorder itself is no longer attached here: launch state lives on
+        // `router.workoutLaunch` and the ONE `WorkoutRunner` overlay is mounted above the whole
+        // tab shell in `RootView` (shared-map pass 2026-08-19) — Today and Plan write the same
+        // mailbox and the run crossfades up over whatever tab started it.
         .sheet(item: $confirmingPlan, onDismiss: {
             if let session = pendingPlanStart { pendingPlanStart = nil; startPlanned(session) }
             // Ran it indoors → open the quick log pre-filled with today's prescription (reuses the
@@ -548,6 +562,13 @@ struct TodayView: View {
         // unlike --world (which pre-mounts the map at init), this exercises the never-mounted
         // path: `--ui-test-strength --enter-world` reproduces the strength-day glitch exactly
         // (sim taps can't reach the button reliably enough to verify a 2.4 s camera animation).
+        // --deck-cycle: collapse then re-expand the deck on a timer — the Start morph and the
+        // move/opacity swap are sub-second motions no sim tap can reliably frame; a scripted cycle
+        // makes them recordable (`simctl io recordVideo`) without XCUITest in the loop.
+        if ProcessInfo.processInfo.arguments.contains("--deck-cycle") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { setDeck(collapsed: true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { setDeck(collapsed: false) }
+        }
         if ProcessInfo.processInfo.arguments.contains("--enter-world") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { enterWorld() }
         }
@@ -613,14 +634,15 @@ struct TodayView: View {
             // sweeps, query invalidations) is silently dropped by SwiftUI — by 2 s Today has settled.
             // Only these launch deep-links race that window; a user's tap always lands after it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                launch = .cardio(type: .run, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+                router.workoutLaunch = .cardio(type: .run, goalMeters: session.targetDistanceM,
+                                               planned: session, guideRoute: [])
             }
         }
         // --live-run: straight into a free run (pair with --ui-test-route for a synthetic GPS feed) —
         // verifies the live screen and the lock-screen Live Activity without UI choreography.
         if ProcessInfo.processInfo.arguments.contains("--live-run") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                launch = .cardio(type: .run, goalMeters: nil, planned: nil, guideRoute: [])
+                router.workoutLaunch = .cardio(type: .run, goalMeters: nil, planned: nil, guideRoute: [])
             }
         }
         #endif
@@ -884,6 +906,7 @@ struct TodayView: View {
         // Enabling the puck activates Mapbox's location provider, which prompts for permission — so we
         // only turn it on once the athlete has actually granted location (never up front on arrival).
         .onStyleLoaded { _ in
+            mapStyleReady = true   // animated by the opacity binding in `body` — fade, don't pop
             #if DEBUG
             // The marathon hero owns the camera (frame the course) and shows no puck — a "you are
             // here" dot parked downtown only distracts from the course.
@@ -1263,7 +1286,9 @@ struct TodayView: View {
                     .padding(.horizontal, Theme.Space.md)
                     .padding(.bottom, Theme.Space.sm)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { peekHeight = $0 }
-                    .transition(.opacity)
+                    // Same edge as the deck's exit, so collapse/expand reads as one surface
+                    // condensing at the bottom of the screen — not two unrelated crossfades.
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 deck
                     .padding(.horizontal, Theme.Space.md)
@@ -1327,6 +1352,9 @@ struct TodayView: View {
                 .background(Capsule().fill(Theme.ink))
             }
             .buttonStyle(.plain)
+            // Exactly one live source per state (`isSource`), so the outgoing Start travels to the
+            // incoming one's frame — one button in motion, and no double-source ambiguity.
+            .matchedGeometryEffect(id: "todayStartCTA", in: startMorph, isSource: deckCollapsed)
             .accessibilityLabel(startTitle)
             // Same spoken label as the deck's Start (they are the same action), so tests need an
             // identifier to tell the two states apart.
@@ -1373,6 +1401,7 @@ struct TodayView: View {
                 HStack(spacing: Theme.Space.sm) {
                     logButton
                     OversizedButton(title: startTitle, systemImage: "play.fill") { startFree() }
+                        .matchedGeometryEffect(id: "todayStartCTA", in: startMorph, isSource: !deckCollapsed)
                         .accessibilityIdentifier("todayDeckStart")
                 }
                 utilityLine
@@ -1882,23 +1911,37 @@ struct TodayView: View {
     // MARK: Launch
 
     private func startFree() {
-        if activity.isStrengthStyle { launch = .strength(type: activity, planned: nil) }
-        else if activity.isTimed { launch = .timed(type: activity) }
+        if activity.isStrengthStyle { router.workoutLaunch = .strength(type: activity, planned: nil) }
+        else if activity.isTimed { router.workoutLaunch = .timed(type: activity) }
         else {
             locator.requestAuthorization()   // ask for GPS exactly when they Start — never up front
-            launch = .cardio(type: activity, goalMeters: goalMeters, planned: nil, guideRoute: [])
+            flyIntoRecordingFrame(for: activity)
+            router.workoutLaunch = .cardio(type: activity, goalMeters: goalMeters, planned: nil, guideRoute: [])
         }
     }
 
     private func startPlanned(_ session: PlannedSession) {
         // Use the session's precise sport (swim/yoga/row…) when set; fall back to the discipline bucket.
         let t = session.workoutType ?? workoutType(for: session.discipline)
-        if t.isStrengthStyle { launch = .strength(type: t, planned: session) }
-        else if t.isTimed { launch = .timed(type: t) }
+        if t.isStrengthStyle { router.workoutLaunch = .strength(type: t, planned: session) }
+        else if t.isTimed { router.workoutLaunch = .timed(type: t) }
         else {
             locator.requestAuthorization()
-            launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+            flyIntoRecordingFrame(for: t)
+            router.workoutLaunch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
         }
+    }
+
+    /// The launch beat's camera half (shared-map pass 2026-08-19): as the recorder crossfades up,
+    /// Today's own camera flies to the live screen's follow framing — so the visible motion at
+    /// Start is the athlete's map tightening onto them, and the recorder's map (seeded at the same
+    /// fix and zoom) takes over invisibly. Also means the run *ends* on a map already framing the
+    /// athlete. Only with permission — this viewport spins up Mapbox's location provider.
+    private func flyIntoRecordingFrame(for type: WorkoutType) {
+        guard locator.isAuthorized else { return }
+        let zoom: CGFloat = type.discipline == .cycling ? 15 : 16
+        if reduceMotion { viewport = .followPuck(zoom: zoom, pitch: 0) }
+        else { withViewportAnimation(.easeInOut(duration: 0.6)) { viewport = .followPuck(zoom: zoom, pitch: 0) } }
     }
 
     private func workoutType(for d: Discipline) -> WorkoutType {

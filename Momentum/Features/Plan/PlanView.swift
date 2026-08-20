@@ -9,6 +9,7 @@ struct PlanView: View {
     @Environment(\.modelContext) private var context
     @Environment(PaywallController.self) private var paywall
     @Environment(CoachPresenter.self) private var coach
+    @Environment(AppRouter.self) private var router   // workoutLaunch — the shell-level recorder
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
     /// Coach-button badge. Newest coach turn only — "any coach message newer than lastSeen" is
@@ -28,7 +29,6 @@ struct PlanView: View {
     @State private var addDay = Date()
     @State private var editing: EditingSession?
     @State private var adjusted = false
-    @State private var launch: TodayLaunch?
     @State private var pendingStart: PlannedSession?     // start after the detail sheet dismisses
     /// Created on first cardio start, not at init: this view is constructed on every RootView
     /// body pass (the TabView content builder runs eagerly), and a `CLLocationManager` per pass
@@ -200,7 +200,8 @@ struct PlanView: View {
                                onRemove: { delete(item.session) },
                                onStart: { pendingStart = $0 })
         }
-        .workoutRunner(launch: $launch)
+        // The recorder is no longer attached per-tab: `start(_:)` writes `router.workoutLaunch`
+        // and the ONE `WorkoutRunner` overlay in `RootView` presents it (shared-map pass 2026-08-19).
         .confirmationDialog("Plan it yourself?", isPresented: $confirmingSelfCoached, titleVisibility: .visible) {
             Button("Take over my plan") { goSelfCoached() }
             Button("Cancel", role: .cancel) {}
@@ -266,13 +267,13 @@ struct PlanView: View {
     /// Launch the right recorder for a planned session (uses its precise sport; requests GPS for cardio).
     private func start(_ session: PlannedSession) {
         let t = session.workoutType ?? workoutType(for: session.discipline)
-        if t.isStrengthStyle { launch = .strength(type: t, planned: session) }
-        else if t.isTimed { launch = .timed(type: t) }
+        if t.isStrengthStyle { router.workoutLaunch = .strength(type: t, planned: session) }
+        else if t.isTimed { router.workoutLaunch = .timed(type: t) }
         else {
             let loc = locator ?? LocationService()
             locator = loc
             loc.requestAuthorization()
-            launch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
+            router.workoutLaunch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
         }
     }
 
