@@ -672,10 +672,10 @@ struct OnboardingFlow: View {
                     } label: {
                         Text(area.label)
                             .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .foregroundStyle(on ? .white : Theme.ink)
                             .frame(maxWidth: .infinity).frame(height: 48)
                             .background {
-                                Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                                Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.surface))
                                 if !on { Capsule().stroke(Theme.hairline) }
                             }
                             .contentShape(Capsule())
@@ -901,9 +901,9 @@ struct OnboardingFlow: View {
                             Text(b.label).font(.rounded(Theme.FontSize.label, weight: .bold))
                                 .lineLimit(1).minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity).frame(height: 40)
-                                .foregroundStyle(on ? Theme.background : Theme.ink)
+                                .foregroundStyle(on ? .white : Theme.ink)
                                 .background {
-                                    Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                                    Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.background))
                                     if !on { Capsule().stroke(Theme.hairline) }
                                 }
                         }
@@ -1298,9 +1298,9 @@ struct OnboardingFlow: View {
                     Text(option)
                         .font(.rounded(10, weight: .bold))
                         .lineLimit(1).fixedSize()
-                        .foregroundStyle(on ? Theme.background : Theme.inkTertiary)
+                        .foregroundStyle(on ? .white : Theme.inkTertiary)
                         .padding(.horizontal, 7).padding(.vertical, 4)
-                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear)))
+                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(.clear)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)

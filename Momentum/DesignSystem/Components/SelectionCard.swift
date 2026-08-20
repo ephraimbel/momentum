@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// A tappable selection card (PRD §5.5) — used by the activity chooser and onboarding. Press uses
-/// the lively spring + selection haptic (§6.2); selected state shifts border/fill (monochrome).
+/// A tappable selection card (PRD §5.5) — used by onboarding, the sport picker, and settings
+/// sheets. Press uses the lively spring + selection haptic (§6.2); the selected state speaks the
+/// app's lavender selection language (rebrand 2026-08-16, extended to onboarding 2026-08-20) —
+/// EXCEPT the iridescent Podium card, whose committed state stays ink under its earned ring.
 struct SelectionCard: View {
     let title: String
     var subtitle: String? = nil
@@ -17,6 +19,10 @@ struct SelectionCard: View {
     var iridescent: Bool = false
     let action: () -> Void
 
+    /// Content color on the selected fill: white on the lavender card, the adaptive background
+    /// tone on Podium's ink card.
+    private var selectedContent: Color { iridescent ? Theme.background : .white }
+
     var body: some View {
         Button {
             Haptics.selection()
@@ -27,10 +33,7 @@ struct SelectionCard: View {
                     Image(systemName: systemImage)
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 40, height: 40)
-                        // Appearance-adapting: when selected, the card fills with `Theme.ink` (near
-                        // WHITE in dark mode), so a hardcoded white disc vanished. `Theme.background`
-                        // is the ink's counterpart in both palettes, so the disc reads either way.
-                        .background(Circle().fill(isSelected ? Theme.background.opacity(0.16) : Theme.background))
+                        .background(Circle().fill(isSelected ? selectedContent.opacity(0.16) : Theme.background))
                         .symbolEffect(.bounce, value: isSelected)
                 }
                 VStack(alignment: .leading, spacing: 2) {
@@ -39,7 +42,7 @@ struct SelectionCard: View {
                     if let subtitle {
                         Text(subtitle)
                             .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                            .foregroundStyle(isSelected ? Theme.background.opacity(0.7) : Theme.inkTertiary)
+                            .foregroundStyle(isSelected ? selectedContent.opacity(0.75) : Theme.inkTertiary)
                     }
                 }
                 Spacer(minLength: 0)
@@ -47,8 +50,8 @@ struct SelectionCard: View {
                     Button { Haptics.selection(); onToggleFavorite() } label: {
                         Image(systemName: isFavorite ? "star.fill" : "star")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(isFavorite ? Theme.purple
-                                             : (isSelected ? Theme.background.opacity(0.55) : Theme.inkTertiary))
+                            .foregroundStyle(isFavorite ? (isSelected ? selectedContent : Theme.purple)
+                                             : (isSelected ? selectedContent.opacity(0.55) : Theme.inkTertiary))
                             .frame(width: 34, height: 34)
                             .contentShape(Rectangle())
                             .symbolEffect(.bounce, value: isFavorite)
@@ -61,16 +64,17 @@ struct SelectionCard: View {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Theme.background)
+                        .foregroundStyle(selectedContent)
                         .transition(.scale(scale: 0.4).combined(with: .opacity))
                 }
             }
-            .foregroundStyle(isSelected ? Theme.background : Theme.ink)
+            .foregroundStyle(isSelected ? selectedContent : Theme.ink)
             .padding(Theme.Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card)
-                    .fill(isSelected ? Theme.ink : Theme.surface)
+                    .fill(isSelected ? (iridescent ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.purple))
+                                     : AnyShapeStyle(Theme.surface))
                 if iridescent {
                     // The glow stays through selection — the ink fill + iridescent ring reads as
                     // "committed", not a lost highlight. `.strokeBorder` (not `.stroke`) draws the
