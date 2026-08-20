@@ -54,6 +54,10 @@
 html {
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+  /* Hard-lock the horizontal axis: `hidden` alone on body still lets iOS Safari pan sideways
+     when anything overflows; `clip` on BOTH elements removes the axis entirely. */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
@@ -64,6 +68,8 @@ body {
   line-height: 1.55;
   letter-spacing: -0.011em;
   overflow-x: hidden;
+  overflow-x: clip;
+  overscroll-behavior-x: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
