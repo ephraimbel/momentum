@@ -58,12 +58,15 @@ struct PaywallView: View {
                     .reveal(revealed, delay: 0.12, reduceMotion: reduceMotion)
 
                 timeline(s)
-                    .padding(.top, Theme.Space.sm * s)
+                    .padding(.top, (Theme.Space.md - 2) * s)
                     .reveal(revealed, delay: 0.2, reduceMotion: reduceMotion)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: selected)
 
+                // The tag overhangs the track's top edge by ~9pt, so the visual gap under the
+                // timeline is this padding minus the overhang — lg keeps real air there
+                // (owner note 2026-08-20: the rows felt cramped against the buttons).
                 planRow(s)
-                    .padding(.top, Theme.Space.sm * s)
+                    .padding(.top, (Theme.Space.lg - 2) * s)
                     .reveal(revealed, delay: 0.28, reduceMotion: reduceMotion)
 
                 Button { showFeatures = true } label: {
@@ -80,6 +83,7 @@ struct PaywallView: View {
                 }
                 .buttonStyle(PressableScaleStyle(scale: 0.96))
                 .frame(maxWidth: .infinity)
+                .padding(.top, 4 * s)
                 .reveal(revealed, delay: 0.32, reduceMotion: reduceMotion)
                 .accessibilityHint("Shows the full list of Pro features")
             }
