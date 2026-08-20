@@ -253,15 +253,22 @@ final class FuelFlowUITests: XCTestCase {
             .firstMatch.waitForExistence(timeout: 8), "Meal rows didn't grow their score chips.")
         shot(app, "11-rows-with-scores")
 
-        // The masthead gauge opens the analysis page: hero verdict, drivers, ranked food, trend.
+        // The masthead gauge opens the analysis page: hero verdict, drivers, ranked food, and the
+        // month report (retitled "Nutrition" when the trends sections landed, 2026-08-20).
         app.buttons["Health score"].tap()
-        XCTAssertTrue(app.navigationBars["Health score"].waitForExistence(timeout: 6),
-                      "Health score page didn't open from the gauge.")
+        XCTAssertTrue(app.navigationBars["Nutrition"].waitForExistence(timeout: 6),
+                      "Nutrition page didn't open from the gauge.")
         XCTAssertTrue(app.staticTexts["WHAT SHAPED IT"].waitForExistence(timeout: 6),
                       "Drivers section missing from the health page.")
         XCTAssertTrue(app.staticTexts["TODAY'S FOOD, RANKED"].waitForExistence(timeout: 4),
                       "Ranked-food section missing from the health page.")
-        XCTAssertTrue(app.staticTexts["LAST 7 DAYS"].exists, "Trend section missing.")
+        // The 7-day capsule strip became the 30-day score chart when the page grew into the
+        // month report (2026-08-20) — NutritionReportUITests walks the full page; this smoke
+        // just confirms the trend chapter begins. Below the fold now (ranked rows precede it),
+        // and off-viewport rows leave the AX tree — swipe to it (the HealthDetail gotcha).
+        var swipes = 0
+        while !app.staticTexts["THE LAST 30 DAYS"].exists, swipes < 6 { app.swipeUp(); swipes += 1 }
+        XCTAssertTrue(app.staticTexts["THE LAST 30 DAYS"].exists, "Trend section missing.")
         shot(app, "11a-health-page")
     }
 

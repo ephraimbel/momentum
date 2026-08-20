@@ -75,8 +75,7 @@ enum TrendAxis {
         case .weekdayNarrow:
             return sorted   // a letter under every bar, Oura's week view
         case .monthDay:
-            let stride = max(1, Int((Double(sorted.count) / Double(target)).rounded(.up)))
-            return thinFromEnd(sorted, stride: stride)
+            return spacedFromEnd(sorted, target: target)
         case .monthOnly:
             // First point of each calendar month present, then thinned — labels land on real
             // marks AND no month repeats (the "Jun · Jun" rule, kept by construction).
@@ -99,6 +98,31 @@ enum TrendAxis {
         var i = dates.count - 1
         while i >= 0 { out.append(dates[i]); i -= stride }
         return out.reversed()
+    }
+
+    /// ~`target` labels with even CALENDAR spacing, newest always kept. Index striding chose
+    /// every k-th POINT — a series with unlogged gaps could put two chosen labels a breath apart
+    /// on the axis ("Aug 14Aug 19" collided on the nutrition charts, 2026-08-20). Two rules:
+    /// a base time gap makes spacing a property of the AXIS, not the sample density; and the
+    /// PAIRS TOUCHING THE EDGES need ~1.6× that gap, because the newest label trailing-anchors
+    /// (extends left, toward its neighbor) and the oldest leading-anchors (extends right) — the
+    /// nestling that saves them from clipping is exactly what eats their neighbor's air.
+    private static func spacedFromEnd(_ dates: [Date], target: Int) -> [Date] {
+        guard dates.count > 1, let newest = dates.last, let oldest = dates.first else { return dates }
+        let span = newest.timeIntervalSince(oldest)
+        guard span > 0 else { return [newest] }
+        let base = span / Double(target) * 0.85
+        var kept: [Date] = [newest]          // newest-first while building
+        for d in dates.dropLast().reversed() {
+            let required = kept.count == 1 ? base * 1.6 : base
+            if kept.last!.timeIntervalSince(d) >= required { kept.append(d) }
+        }
+        // Same air for the oldest pair — drop the neighbor, never the edge label.
+        while kept.count >= 2,
+              kept[kept.count - 2].timeIntervalSince(kept[kept.count - 1]) < base * 1.6 {
+            kept.remove(at: kept.count - 2)
+        }
+        return kept.reversed()
     }
 
     static func text(_ date: Date, form: LabelForm) -> String {

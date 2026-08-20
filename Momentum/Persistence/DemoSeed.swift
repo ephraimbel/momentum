@@ -14,35 +14,44 @@ enum DemoSeed {
     private static func seedFuelHistory(_ context: ModelContext) {
         let existing = (try? context.fetchCount(FetchDescriptor<Meal>())) ?? 0
         guard existing < 10 else { return }
-        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca, fiber, sugar, satFat)
-        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int, Int, Int, Int)] = [
-            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80, 7, 28, 2),
-            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90, 2, 3, 6),
-            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60, 4, 4, 3),
-            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90, 6, 8, 4),
-            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260, 4, 18, 4),
-            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120, 6, 18, 3),
-            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120, 7, 4, 5),
-            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20, 0, 56, 0),
-            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240, 12, 6, 9),
-            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220, 6, 28, 1),
-            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90, 8, 9, 8),
-            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180, 2, 42, 5),
+        // (text, kcal, carbs, protein, fat, sodium, K, Mg, Fe, Ca, fiber, sugar, satFat, nova)
+        // NOVA rides along (2026-08-20) so seeded history behaves like LIVE history — the
+        // estimator always itemizes with a processing class, and the Nutrition page's
+        // processed-share section gates on NOVA being sampled at all.
+        let foods: [(String, Int, Int, Int, Int, Int, Int, Int, Double, Int, Int, Int, Int, Int)] = [
+            ("oatmeal with banana and honey", 420, 82, 10, 6, 120, 620, 90, 2.1, 80, 7, 28, 2, 1),
+            ("2 eggs, toast, coffee", 350, 28, 18, 16, 480, 320, 40, 2.4, 90, 2, 3, 6, 3),
+            ("chicken rice bowl", 620, 78, 42, 12, 740, 680, 70, 2.2, 60, 4, 4, 3, 1),
+            ("big pasta dinner with chicken", 740, 96, 48, 14, 620, 720, 85, 3.4, 90, 6, 8, 4, 3),
+            ("greek yogurt with granola", 380, 46, 22, 10, 140, 420, 55, 1.2, 260, 4, 18, 4, 3),
+            ("turkey sandwich and a banana", 460, 58, 26, 9, 920, 760, 65, 2.6, 120, 6, 18, 3, 4),
+            ("salmon, potatoes, greens", 640, 52, 40, 22, 380, 1240, 110, 2.0, 120, 7, 4, 5, 1),
+            ("2 gels and a sports drink", 320, 74, 0, 0, 460, 140, 10, 0.2, 20, 0, 56, 0, 4),
+            ("burrito with rice and beans", 780, 92, 30, 26, 1150, 830, 95, 4.2, 240, 12, 6, 9, 3),
+            ("smoothie with berries and whey", 340, 44, 28, 5, 160, 540, 60, 1.4, 220, 6, 28, 1, 3),
+            ("steak, sweet potato, broccoli", 690, 46, 48, 24, 420, 1180, 105, 4.6, 90, 8, 9, 8, 1),
+            ("pancakes with maple syrup", 560, 94, 12, 12, 520, 280, 35, 2.2, 180, 2, 42, 5, 3),
         ]
         var rng = SeededRNG(20260716)
         let cal = Calendar.current
         for back in 1...120 {
             guard rng.int(0...6) < 5 else { continue }   // ~5 of 7 days logged
             guard let day = cal.date(byAdding: .day, value: -back, to: cal.startOfDay(for: Date())) else { continue }
-            for slot in 0..<(1 + rng.int(0...2)) {
+            // 2–4 meals a logged day (was 1–3): the old draw averaged ~1,100 kcal/day, which
+            // made every trend surface read like chronic under-fueling — real logged days
+            // carry breakfast + lunch + dinner (nutrition-report pass 2026-08-20).
+            for slot in 0..<(2 + rng.int(0...2)) {
                 let f = foods[rng.int(0...(foods.count - 1))]
                 let meal = Meal()
                 meal.text = f.0
                 meal.eatenAt = day.addingTimeInterval(Double(8 + slot * 5) * 3600 + Double(rng.int(0...50)) * 60)
-                meal.kcal = f.1; meal.carbsG = f.2; meal.proteinG = f.3; meal.fatG = f.4
-                meal.sodiumMg = f.5; meal.potassiumMg = f.6; meal.magnesiumMg = f.7
-                meal.ironMg = f.8; meal.calciumMg = f.9
-                meal.fiberG = f.10; meal.sugarG = f.11; meal.satFatG = f.12
+                // One itemized entry per meal (the live estimator always itemizes) — the items
+                // setter recomputes the scalar totals from the item, so numbers stay identical.
+                meal.items = [MealItem(name: f.0, qty: 1, unit: "serving", kcal: f.1,
+                                       carbsG: f.2, proteinG: f.3, fatG: f.4, sodiumMg: f.5,
+                                       fluidsMl: 0, potassiumMg: f.6, magnesiumMg: f.7,
+                                       ironMg: f.8, calciumMg: f.9, fiberG: f.10, sugarG: f.11,
+                                       satFatG: f.12, nova: f.13)]
                 meal.source = "ai"
                 meal.confidence = 0.8
                 context.insert(meal)
