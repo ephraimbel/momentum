@@ -4,17 +4,26 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { APP_STORE_URL } from "./appStore";
 
-/// Minimal by design (2026-08-14 rebuild): four destinations, nothing else. The bar is a fixed
-/// paper-frosted strip with a single bottom hairline — no scroll state to manage, because the
-/// page's first surface is paper too.
+/// Floating nav (Lavender Glass web, 2026-08-19): the glass-runner chip + lowercase wordmark on
+/// the left, four quiet links, one black pill. Transparent over the white hero; frosts in with a
+/// hairline once the page scrolls.
 const LINKS: [string, string][] = [
   ["#product", "Product"],
   ["#method", "Method"],
   ["#pricing", "Pricing"],
+  ["#faq", "FAQ"],
 ];
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   // Close the menu on Escape.
   useEffect(() => {
@@ -27,9 +36,12 @@ export default function Nav() {
   }, [open]);
 
   return (
-    <header className={`nav${open ? " open" : ""}`}>
+    <header className={`nav${open ? " open" : ""}${scrolled ? " scrolled" : ""}`}>
       <div className="wrap nav-inner">
-        <a href="#top" aria-label="momentum home" onClick={() => setOpen(false)}>
+        <a className="brand" href="#top" aria-label="momentum home" onClick={() => setOpen(false)}>
+          <span className="brand-chip">
+            <Image src="/brandicon.png" alt="" width={52} height={52} priority />
+          </span>
           <Image
             className="wordmark"
             src="/wordmark-black.png"
@@ -47,7 +59,7 @@ export default function Nav() {
               </a>
             ))}
             <a className="btn btn-ink btn-sm" href={APP_STORE_URL} target="_blank" rel="noopener">
-              Download <span className="arrow" aria-hidden>↗</span>
+              Get the app <span className="arrow" aria-hidden>↗</span>
             </a>
           </nav>
           <button

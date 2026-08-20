@@ -1,8 +1,7 @@
-import Image from "next/image";
 import PhoneFrame from "@/components/PhoneFrame";
 import Reveal from "@/components/Reveal";
 import Nav from "@/components/Nav";
-import { athleteBlur } from "@/components/athleteBlur";
+import InkReveal from "@/components/InkReveal";
 import { APP_STORE_URL, AppStoreBadge } from "@/components/appStore";
 
 /** Structured data for the product itself — the prices here mirror the live App Store offering. */
@@ -34,10 +33,12 @@ export default function Home() {
       <main id="top">
         <Hero />
         <Marquee />
-        <BrandMoment />
+        <Statement />
         <Training />
         <Intelligence />
+        <Fuel />
         <Method />
+        <RaceDay />
         <Pricing />
         <FAQ />
         <FinalCTA />
@@ -48,7 +49,7 @@ export default function Home() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   1 · Hero — the brand moment. One dominant device, one idea.
+   1 · Hero — two-tone statement, one dominant device, live dot.
    ———————————————————————————————————————————————————————————— */
 
 function Hero() {
@@ -57,25 +58,27 @@ function Hero() {
       <div className="wrap hero-grid">
         <div>
           <Reveal>
-            <p className="eyebrow">The running app</p>
+            <a className="live-pill" href={APP_STORE_URL} target="_blank" rel="noopener">
+              <span className="live-dot" aria-hidden />
+              Live on the App Store
+            </a>
           </Reveal>
           <Reveal>
             <h1>
-              keep
+              Training that adapts
               <br />
-              moving.
+              <span className="dim">to every run.</span>
             </h1>
           </Reveal>
           <Reveal>
             <p className="hero-copy">
-              Training built around the runner you are today. Adaptive plans, guided runs, and
-              coaching that changes as you do.
+              Adaptive plans, guided runs, and coaching built around the runner you are today —
+              from your first 5K to your first ultra.
             </p>
           </Reveal>
           <Reveal>
             <div className="hero-actions">
-              {/* iOS is the only place to get momentum today, so the primary CTA is Apple's own
-                  badge rather than a generic button — it says WHERE as well as what. */}
+              {/* iOS is the only place to get momentum, so the primary CTA is Apple's own badge. */}
               <a
                 className="appstore-badge"
                 href={APP_STORE_URL}
@@ -89,25 +92,25 @@ function Hero() {
                 See how it works
               </a>
             </div>
-            <p className="hero-micro">iPhone · Apple Watch · Garmin · Apple Health</p>
+            <p className="hero-micro">IPHONE · APPLE WATCH · APPLE HEALTH</p>
           </Reveal>
         </div>
 
         <div className="hero-stage">
-          {/* The page's signature accent — iridescence haloing the product, and nowhere else. */}
+          {/* The page's one decorative iridescence — a faint aurora haloing the product. */}
           <div className="hero-orbit" aria-hidden />
-          {/* Both chips read straight off the capture beside them — no invented numbers. */}
+          {/* Both chips quote the capture beside them — no invented numbers. */}
           <div className="stat-pill pill-1" aria-hidden>
-            <b>26.22 mi</b>
-            <small>Austin · 2:58:41</small>
+            <b>Easy 3.5 mi</b>
+            <small>Today&rsquo;s plan · 11:45 /mi</small>
           </div>
           <div className="stat-pill pill-2" aria-hidden>
-            <b>6:49 /mi</b>
-            <small>avg pace · 153 bpm</small>
+            <b>26.2 mi</b>
+            <small>Austin Marathon · traced</small>
           </div>
           <PhoneFrame
             src="/shots/hero-route.png"
-            alt="A finished marathon in Momentum: 26.22 miles, the Austin route traced on the map, and the coach's read of the run."
+            alt="Momentum's Today screen: the Austin Marathon course traced in lavender on a light map, with today's planned easy run ready to start."
             large
             priority
           />
@@ -138,58 +141,21 @@ function Marquee() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   3 · Dark cinematic transition — the emotional centre.
+   3 · The statement — words inking in as you scroll.
    ———————————————————————————————————————————————————————————— */
 
-function BrandMoment() {
+function Statement() {
   return (
-    <section className="brand-moment">
-      <div className="brand-media">
-        <Image
-          src="/athletes/cinema-pack.jpg"
-          alt="A pack of marathoners running through early-morning fog"
-          fill
-          sizes="100vw"
-          placeholder="blur"
-          blurDataURL={athleteBlur["cinema-pack.jpg"]}
-        />
-      </div>
-      <div className="brand-shade" aria-hidden />
-      {/* The app's own route motif, drawn over the photograph. */}
-      <svg className="route-line" viewBox="0 0 900 700" fill="none" aria-hidden>
-        <path
-          d="M80 580C149 489 204 563 261 461C330 338 232 264 344 174C450 90 514 254 619 203C703 162 700 75 814 87"
-          stroke="white"
-          strokeWidth="4"
-          strokeLinecap="round"
-          strokeDasharray="2 12"
-        />
-        <circle cx="80" cy="580" r="7" fill="white" />
-        <circle cx="814" cy="87" r="7" fill="white" />
-      </svg>
-      <div className="wrap brand-content">
-        <Reveal>
-          <h2>
-            built for
-            <br />
-            the miles
-            <br />
-            ahead.
-          </h2>
-        </Reveal>
-        <Reveal>
-          <p className="brand-meta">
-            <strong>06:14 AM · Austin, TX</strong>
-            No feeds. No guilt loops. Just the next run, the next week, the next starting line.
-          </p>
-        </Reveal>
+    <section className="statement">
+      <div className="wrap">
+        <InkReveal text="momentum is a coach, not a feed. It learns your body, reshapes your week around your recovery, and tells you the truth about your goal." />
       </div>
     </section>
   );
 }
 
 /* ————————————————————————————————————————————————————————————
-   4 · 01 · Training — two editorial product moments.
+   4 · 01 · Training — two stage cards, the product doing the talking.
    ———————————————————————————————————————————————————————————— */
 
 function Training() {
@@ -217,10 +183,11 @@ function Training() {
                 Base. Build. Peak. Taper. Every session has a reason, every pace has a purpose, and
                 missed days simply move.
               </p>
+              <p className="story-note">Week 1 · Base — laying the foundation</p>
               <div className="story-media">
                 <PhoneFrame
                   src="/shots/plan.png"
-                  alt="Momentum's weekly plan: a build week with strength days, a progression run, and an easy run, each with its target pace."
+                  alt="Momentum's weekly plan: a base week with an easy run and a strength day, each with its target."
                 />
               </div>
             </article>
@@ -231,12 +198,13 @@ function Training() {
               <h3>Run with guidance.</h3>
               <p>
                 Pace bands, rep countdowns, heart-rate zones, and voice cues are there when you want
-                them — then get out of the way.
+                them, then get out of the way.
               </p>
+              <p className="story-note">Rep 2 of 6 · recovery · 8:56 /mi</p>
               <div className="story-media">
                 <PhoneFrame
                   src="/shots/live-run.png"
-                  alt="A guided run in progress: the live route, the current interval, target pace, and heart-rate zone."
+                  alt="A guided run in progress: the live lavender route trace, the current recovery interval, distance, pace, and heart-rate zone."
                 />
               </div>
             </article>
@@ -248,7 +216,7 @@ function Training() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   5 · 02 · Intelligence — near-black, the coach as proof.
+   5 · 02 · Intelligence — warm charcoal, the coach as proof.
    ———————————————————————————————————————————————————————————— */
 
 function Intelligence() {
@@ -297,7 +265,7 @@ function Intelligence() {
               <div className="aurora" aria-hidden />
               <PhoneFrame
                 src="/shots/coach.png"
-                alt="The Momentum coach: a chat that opens with suggested questions about today's session, your trend, and what you could race."
+                alt="The Momentum coach: a chat that opens with suggested questions about today's session, your last workout, and what you could race."
               />
             </div>
           </Reveal>
@@ -308,7 +276,39 @@ function Intelligence() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   6 · 03 · The method — the philosophy, on paper.
+   6 · 03 · Fuel — the one vivid room, shown not told.
+   ———————————————————————————————————————————————————————————— */
+
+function Fuel() {
+  return (
+    <section className="section" id="fuel">
+      <div className="wrap duo">
+        <Reveal>
+          <div className="duo-media">
+            <PhoneFrame
+              src="/shots/fuel.png"
+              alt="Momentum's Fuel page: calories and carbs banked for tomorrow's session, macro rings, and meals logged in plain language."
+            />
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="duo-copy">
+            <p className="kicker">03 · Fuel</p>
+            <h3>Fuel the work. Never a diet.</h3>
+            <p>
+              Floors, not ceilings: enough carbs banked for tomorrow&rsquo;s session, enough sodium
+              for the heat, logged in plain language. Describe the meal in your own words and
+              momentum does the numbers.
+            </p>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ————————————————————————————————————————————————————————————
+   7 · 04 · The method — numbered hairline rows.
    ———————————————————————————————————————————————————————————— */
 
 function Method() {
@@ -316,40 +316,36 @@ function Method() {
     {
       n: "01",
       t: "Missed sessions move.",
-      d: "Life happens. The week reshapes itself instead of turning a missed run into failure.",
+      d: "Life happens. The week reshapes itself instead of turning a missed run into failure. There is no red 'failed' state anywhere in the product.",
     },
     {
       n: "02",
       t: "Numbers you can trust.",
-      d: "Paces, load, and zones come from bounded training logic, not generated guesswork.",
+      d: "Paces, load, and zones come from bounded, tested training logic. AI narrates the why; it never computes your numbers.",
     },
     {
       n: "03",
       t: "Your training stays yours.",
-      d: "Private by default. No public-performance pressure required to make progress.",
+      d: "Private by default, on your device first. No feeds, no kudos economy, no public-performance pressure required to make progress.",
     },
   ];
   return (
     <section className="method" id="method">
       <div className="wrap">
         <Reveal>
-          <p className="kicker">03 · The method</p>
-          <h2 className="display">
-            No red days.
-            <br />
-            No guilt loops.
-            <br />
-            Only momentum.
+          <p className="kicker">04 · The method</p>
+          <h2 className="display" style={{ marginTop: 16 }}>
+            No red days. <span className="dim">Only momentum.</span>
           </h2>
         </Reveal>
-        <div className="principles">
+        <div className="rows">
           {principles.map((p) => (
             <Reveal key={p.n}>
-              <article className="principle">
+              <div className="row">
                 <span className="num-label">{p.n}</span>
                 <h3>{p.t}</h3>
                 <p>{p.d}</p>
-              </article>
+              </div>
             </Reveal>
           ))}
         </div>
@@ -359,7 +355,52 @@ function Method() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   7 · 04 · Membership — one plan, stated plainly.
+   8 · Race day — the charcoal proof card. The numbers quote the capture.
+   ———————————————————————————————————————————————————————————— */
+
+function RaceDay() {
+  return (
+    <section className="race" id="raceday">
+      <div className="race-grid">
+        <Reveal>
+          <div>
+            <p className="kicker">Race day</p>
+            <h2>Bring a goal. momentum builds the road there.</h2>
+            <p>
+              Honest verdicts on what you can run today, projections that sharpen as you train, and
+              a taper that delivers you to the start line ready.
+            </p>
+            <div className="race-stats">
+              <div className="race-stat">
+                <b className="num">26.22 mi</b>
+                <small>Austin Marathon</small>
+              </div>
+              <div className="race-stat">
+                <b className="num">2:58:41</b>
+                <small>Finish · sub-3</small>
+              </div>
+              <div className="race-stat">
+                <b className="num">6:49 /mi</b>
+                <small>Avg pace</small>
+              </div>
+            </div>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="race-media">
+            <PhoneFrame
+              src="/shots/run-detail.png"
+              alt="A finished marathon in Momentum: the Austin course traced in lavender, 26.22 miles in 2:58:41 at 6:49 per mile."
+            />
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ————————————————————————————————————————————————————————————
+   9 · 05 · Membership — one plan, stated plainly.
    ———————————————————————————————————————————————————————————— */
 
 function Pricing() {
@@ -370,7 +411,7 @@ function Pricing() {
     "Post-run analysis",
     "Recovery-aware adjustments",
     "Race projections",
-    "Advanced history",
+    "Fueling floors",
     "Apple Watch + Garmin support",
   ];
   return (
@@ -378,11 +419,11 @@ function Pricing() {
       <div className="wrap pricing-grid">
         <Reveal>
           <div>
-            <p className="kicker">04 · Membership</p>
+            <p className="kicker">05 · Membership</p>
             <h2 className="display">
               One app.
               <br />
-              Every run.
+              <span className="dim">Every run.</span>
             </h2>
           </div>
         </Reveal>
@@ -419,8 +460,7 @@ function Pricing() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   8 · The questions runners actually ask — hairline rows, and the
-   FAQPage structured data that has been earning search results.
+   10 · The questions runners actually ask (+ FAQPage schema).
    ———————————————————————————————————————————————————————————— */
 
 function FAQ() {
@@ -465,7 +505,7 @@ function FAQ() {
       <div className="wrap faq-grid">
         <Reveal>
           <div>
-            <p className="kicker">05 · Questions</p>
+            <p className="kicker">06 · Questions</p>
             <h2 className="display">Before you start.</h2>
           </div>
         </Reveal>
@@ -485,51 +525,44 @@ function FAQ() {
 }
 
 /* ————————————————————————————————————————————————————————————
-   9 · The closer — dark, huge, and the cropped wordmark.
+   11 · The closer — one huge rounded charcoal card.
    ———————————————————————————————————————————————————————————— */
 
 function FinalCTA() {
   return (
-    <section className="final" id="download">
-      <div className="final-media">
-        <Image
-          src="/athletes/cinema-dusk.jpg"
-          alt="A lone runner on wet pavement at dusk"
-          fill
-          sizes="100vw"
-          placeholder="blur"
-          blurDataURL={athleteBlur["cinema-dusk.jpg"]}
-        />
-      </div>
-      <div className="final-shade" aria-hidden />
-      <div className="wrap final-inner">
+    <div className="final-outer">
+      <section className="final" id="download">
         <div className="final-top">
           <span>The running app</span>
           <span>From your first 5K to your first ultra</span>
         </div>
-        <Reveal>
-          <h2>
-            keep
-            <br />
-            moving.
-          </h2>
-        </Reveal>
-        <div className="final-bottom">
-          <a className="appstore-badge" href={APP_STORE_URL} target="_blank" rel="noopener">
-            <AppStoreBadge />
-          </a>
-          <p className="final-support">Bring a goal. Momentum will build the road there.</p>
+        <div className="final-mid">
+          <Reveal>
+            <h2>
+              keep
+              <br />
+              moving.
+            </h2>
+          </Reveal>
         </div>
-      </div>
-      <p className="bigword" aria-hidden>
-        momentum
-      </p>
-    </section>
+        <div>
+          <div className="final-bottom">
+            <a className="appstore-badge" href={APP_STORE_URL} target="_blank" rel="noopener">
+              <AppStoreBadge />
+            </a>
+            <p className="final-support">Bring a goal. Momentum will build the road there.</p>
+          </div>
+          <p className="bigword" aria-hidden>
+            momentum
+          </p>
+        </div>
+      </section>
+    </div>
   );
 }
 
 /* ————————————————————————————————————————————————————————————
-   10 · Footer — one quiet line.
+   12 · Footer — one quiet line.
    ———————————————————————————————————————————————————————————— */
 
 function Footer() {
