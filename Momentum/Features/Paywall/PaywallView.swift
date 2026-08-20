@@ -2,7 +2,7 @@ import SwiftUI
 import AVFoundation
 
 /// The Pro paywall (PRD §10) — "The Film" (owner pick 2026-08-20, from the paywall study): the
-/// brand film plays as a muted, half-speed loop behind one serif statement, an honest trial
+/// brand film plays as a muted loop behind one serif statement, an honest trial
 /// timeline, and the checkout. No feature grid on the wall — the film sells the feeling, a quiet
 /// "Everything in Pro" sheet answers the detail question, and the loop is trimmed to end BEFORE
 /// the film's closing title card so its wordmark never fights the headline. **Trust stays a
@@ -225,7 +225,7 @@ struct PaywallView: View {
 
 // MARK: - The film, looping
 
-/// The paywall's own film (`PaywallVideo.mp4`, owner-delivered 2026-08-20): muted, half speed,
+/// The paywall's own film (`PaywallVideo.mp4`, owner-delivered 2026-08-20): muted, at its natural pace,
 /// looping only its first 11.8 seconds — the closing title card fades in ~12.2s and never enters
 /// the cycle, so the film's wordmark never collides with the paywall's own headline. Reduce
 /// Motion: a single golden-hour still (11.5s), no playback. The welcome's film view plays once
@@ -280,13 +280,11 @@ private struct FilmLoopView: UIViewRepresentable {
                                         duration: CMTime(seconds: 11.8, preferredTimescale: 600))
                 view.looper = AVPlayerLooper(player: player, templateItem: item, timeRange: range)
                 player.play()
-                player.rate = 0.5
                 // A backgrounded AVPlayerLayer pauses; without this the film returns frozen.
                 view.resumeObserver = NotificationCenter.default.addObserver(
                     forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
                 ) { [weak player] _ in
                     player?.play()
-                    player?.rate = 0.5
                 }
             }
         }
