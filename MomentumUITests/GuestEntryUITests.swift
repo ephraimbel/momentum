@@ -71,11 +71,16 @@ final class GuestEntryUITests: XCTestCase {
         app.launchArguments = ["--onboarding", "--onboarding-guest", "--onboarding-rate", "--debug-free"]
         app.launch()
 
-        // The rating beat, the last step before the paywall.
-        let notNow = app.buttons["Not now"]
-        XCTAssertTrue(notNow.waitForExistence(timeout: 15), "should land on the rating beat")
+        // The rating beat, the last step before the paywall — the review ask auto-presents
+        // (2026-08-20), so the walker just continues past it.
+        let planReady = app.staticTexts["Your plan is ready"]
+        XCTAssertTrue(planReady.waitForExistence(timeout: 15), "should land on the rating beat")
         attach("beat-1-rate")
-        notNow.tap()
+        // The auto-presented review alert renders on simulators; dismiss it like a human would
+        // ("Not Now", capital N) before continuing past the beat.
+        let reviewNotNow = app.buttons["Not Now"]
+        if reviewNotNow.waitForExistence(timeout: 4) { reviewNotNow.tap() }
+        app.buttons["Continue"].tap()
 
         // The paywall — a two-page flow since 2026-08-05 (device tour, then checkout), SOFT since
         // 2026-08-06: the checkout page's X skips it (the tour carries no X). This test takes the
@@ -144,9 +149,9 @@ final class GuestEntryUITests: XCTestCase {
         attach("walk-1-name")
 
         // Walk generically as far as the PAYWALL: answer the one step that demands a pick, decline
-        // every opt-in, Continue through everything else. The loop has to stop here — the rating
-        // beat and the account beat both label their skip "Not now", so past this point that query
-        // is ambiguous and would skip the account beat mid-crossfade before it could be checked.
+        // every opt-in, Continue through everything else. The loop has to stop here — past the
+        // paywall the account beat's "Not now" would be skipped mid-crossfade before it could be
+        // checked. (The rating beat auto-presents its ask and continues like any other step now.)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         // The hard paywall's checkout CTA is the sentinel now that it renders no Close. It's also
         // safe as a loop guard: none of the generic taps below match "Start my …", so the walker
@@ -178,10 +183,15 @@ final class GuestEntryUITests: XCTestCase {
             let maybeLater = app.buttons["Maybe later"]
             let notNow = app.buttons["Not now"]
             let tryNow = app.buttons["Try now"]                             // paywall flow, the tour page
-            if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
+            // The rating beat auto-presents Apple's review alert (2026-08-20); its "Not Now"
+            // (capital N) must be dismissed FIRST or it blocks every control beneath it and the
+            // walk stalls out — exactly how this test died under host load.
+            let reviewNotNow = app.buttons["Not Now"]
+            if reviewNotNow.exists && reviewNotNow.isHittable { reviewNotNow.tap() }
+            else if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
             else if looksGreat.exists && looksGreat.isHittable { looksGreat.tap() }
             else if maybeLater.exists && maybeLater.isHittable { maybeLater.tap() }
-            else if notNow.exists && notNow.isHittable { notNow.tap() }     // rating beat
+            else if notNow.exists && notNow.isHittable { notNow.tap() }     // legacy skip labels
             else if tryNow.exists && tryNow.isHittable { tryNow.tap() }
             else { sleep(1) }                                               // building beat / animating in
         }

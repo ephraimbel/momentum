@@ -47,12 +47,21 @@ final class OnboardingNoRatingUITests: XCTestCase {
                        "The location step must not claim to end onboarding — three beats follow it.")
         locationContinue.tap()
 
-        // The rating beat — allowed to exist, required to be skippable.
-        let notNow = app.buttons["Not now"]
-        XCTAssertTrue(notNow.waitForExistence(timeout: 10), "Expected the rating beat after the location step.")
-        XCTAssertTrue(app.buttons["Rate momentum"].exists, "The rating beat should offer the ask itself.")
-        XCTAssertTrue(notNow.isHittable, "'Not now' must be a real, reachable control — never a required rating.")
-        notNow.tap()
+        // The rating beat — the ask auto-presents (owner call 2026-08-20), so the page carries
+        // NO rating button at all; its only control is Continue, which must always be reachable.
+        let planReady = app.staticTexts["Your plan is ready"]
+        XCTAssertTrue(planReady.waitForExistence(timeout: 10), "Expected the rating beat after the location step.")
+        XCTAssertFalse(app.buttons["Rate momentum"].exists,
+                       "The beat presents Apple's alert itself — no bespoke rating button.")
+        // The auto-presented StoreKit alert DOES render on simulators (observed 2026-08-20) and
+        // its dismiss button is "Not Now" (capital N — not our old skip's label). Dismiss it the
+        // way a human would, THEN the page's Continue must be reachable.
+        let reviewNotNow = app.buttons["Not Now"]
+        if reviewNotNow.waitForExistence(timeout: 4) { reviewNotNow.tap() }
+        let rateContinue = app.buttons["Continue"]
+        XCTAssertTrue(rateContinue.waitForExistence(timeout: 5), "Continue must exist on the rating beat.")
+        XCTAssertTrue(rateContinue.isHittable, "Continue must be reachable — never a required rating.")
+        rateContinue.tap()
 
         // Declining carries on into the app (this athlete is seeded Pro, so the wall stands down).
         XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20),

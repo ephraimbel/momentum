@@ -22,7 +22,7 @@ struct OnboardingFlow: View {
     /// Apple's native App Store rating alert — used by the `.rateUs` beat.
     @Environment(\.requestReview) private var requestReview
     @State private var rateStarsIn = false
-    @State private var rateWorking = false   // "Rate momentum" tapped; the 1.2s settle is underway
+    @State private var rateAsked = false     // one-shot: the auto-presented review ask fired
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     /// The curated look picked on the identity beat (ring in the strip); cleared by a photo pick.
     @State private var onboardingPreset: AvatarPreset?
@@ -1596,9 +1596,10 @@ struct OnboardingFlow: View {
     /// `.rateUs` case from `Step` and this view; `primersStep`'s button calls `finishOnboarding()`
     /// directly and nothing else changes (the paywall → `.account` hand-off is unaffected).
     ///
-    /// Skippable by design: "Not now" is a real, equally-reachable control, and the native alert is
-    /// Apple's own `requestReview` (the only sanctioned way to open it) — we never fake stars, never
-    /// gate anything behind rating, and never route unhappy athletes anywhere but onward.
+    /// Skippable by design: the system alert is dismissible and the page's Continue is always
+    /// reachable — nothing is gated behind rating. The alert is Apple's own `requestReview`
+    /// (auto-presented on arrival, owner call 2026-08-20); we never fake stars and never route
+    /// unhappy athletes anywhere but onward.
     private var rateUsStep: some View {
         VStack(spacing: Theme.Space.lg) {
             Spacer()
@@ -1639,42 +1640,28 @@ struct OnboardingFlow: View {
 
             Spacer()
 
-            VStack(spacing: Theme.Space.xs) {
-                OversizedButton(title: "Rate momentum") {
-                    // One-shot: during the 1.2s settle the button used to look simply dead when the
-                    // rate-limited system alert chose not to appear — dimming it acknowledges the
-                    // tap (and a second tap re-firing requestReview was pointless anyway).
-                    guard !rateWorking else { return }
-                    withAnimation(.easeOut(duration: 0.15)) { rateWorking = true }
-                    // Apple's own alert — the only sanctioned way to open it. It is rate-limited by
-                    // the system and may not appear; the flow must continue either way, so we never
-                    // wait on it or branch on whether it showed.
-                    requestReview()
-                    // Latch the once-ever guard so the post-first-save pre-prompt doesn't ask the
-                    // same athlete again a few days later.
-                    AppReview.markAsked()
-                    // Let the system alert settle before the paywall cover animates in over it —
-                    // two modals racing on the same frame is how you get a stuck screen.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finishOnboarding() }
-                }
-                .opacity(rateWorking ? 0.45 : 1)
-                .disabled(rateWorking)
-                Button {
-                    Haptics.light()
-                    finishOnboarding()
-                } label: {
-                    Text("Not now")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                        .frame(maxWidth: .infinity).frame(height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .reveal(0.3)
+            // The ask presents ITSELF (owner call 2026-08-20): Apple's alert rises over this
+            // page moments after it settles, so the page's only control is the way onward. The
+            // system alert is modally its own window — Continue can't race it, and if the
+            // rate-limited alert chooses not to appear the page still reads and flows.
+            OversizedButton(title: "Continue") { finishOnboarding() }
+                .reveal(0.3)
         }
         .onAppear {
             if reduceMotion { rateStarsIn = true }
             else { withAnimation { rateStarsIn = true } }
+            // Auto-present once per arrival at this beat: after the stars land (~0.55s) plus a
+            // breath, Apple's own requestReview rises — the only sanctioned way to open it; the
+            // system rate-limits it and may decline (it rarely renders in the simulator at all).
+            guard !rateAsked else { return }
+            rateAsked = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                guard vm.step == .rateUs else { return }   // they moved on before it fired
+                requestReview()
+                // Latch the once-ever guard so the post-first-save pre-prompt doesn't ask the
+                // same athlete again a few days later.
+                AppReview.markAsked()
+            }
         }
     }
 
