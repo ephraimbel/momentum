@@ -45,10 +45,15 @@ final class CoachingEvent {
     static func record(kind: Kind, headline: String, detail: String, on date: Date, in context: ModelContext,
                        calendar: Calendar = .current) {
         let dayStart = calendar.startOfDay(for: date)
-        let existing = (try? context.fetch(FetchDescriptor<CoachingEvent>())) ?? []
+        // The dedupe only ever compares against SAME-DAY events, so bound the fetch to the day —
+        // the unbounded version materialized every event ever recorded, growing with tenure
+        // (perf audit 2026-08-16).
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? date
+        let sameDay = FetchDescriptor<CoachingEvent>(
+            predicate: #Predicate { $0.date >= dayStart && $0.date < dayEnd })
+        let existing = (try? context.fetch(sameDay)) ?? []
         let dup = existing.contains {
             $0.kindRaw == kind.rawValue && $0.headline == headline
-            && calendar.isDate($0.date, inSameDayAs: dayStart)
         }
         guard !dup else { return }
         context.insert(CoachingEvent(kind: kind, headline: headline, detail: detail, date: date))

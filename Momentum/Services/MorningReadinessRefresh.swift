@@ -53,8 +53,15 @@ enum MorningReadinessRefresh {
             defer { task.setTaskCompleted(success: true) }
             guard NotificationPrefs.morningReadinessEnabled() else { return }
             let context = PersistenceController.shared.container.mainContext
-            let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-            let checkins = (try? context.fetch(FetchDescriptor<DailyCheckin>())) ?? []
+            // Readiness looks back weeks, not a career — bound both fetches so a long-tenured
+            // athlete's background wake doesn't walk the whole table against the BG task's
+            // expiration budget (90d comfortably covers every chronic window the model reads;
+            // perf audit 2026-08-16).
+            let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantPast
+            let workouts = (try? context.fetch(FetchDescriptor<Workout>(
+                predicate: #Predicate { $0.startedAt >= cutoff }))) ?? []
+            let checkins = (try? context.fetch(FetchDescriptor<DailyCheckin>(
+                predicate: #Predicate { $0.date >= cutoff }))) ?? []
             guard !workouts.isEmpty,   // a fresh install has no readiness story to tell yet
                   let readiness = await ReadinessToday.compute(health: health, workouts: workouts,
                                                                checkins: checkins),

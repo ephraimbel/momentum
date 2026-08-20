@@ -303,6 +303,13 @@ final class HealthService: HealthServing {
         if Self.demoRecoveryScenario != nil { return [.appleWatch, .oura] }
         #endif
         guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        // The set of paired wearables doesn't change between tab visits, but this sweep is four
+        // serial HKSampleQuerys (≤1,600 samples) at the head of the Health segment's rebuild
+        // chain — cache it for an hour so stale-model rebuilds skip straight to the vitals
+        // (perf audit 2026-08-16).
+        if let cached = Self.sourcesCache, Date().timeIntervalSince(cached.at) < 3600 {
+            return cached.kinds
+        }
         let since = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         let types: [HKSampleType] = [
             HKQuantityType(.heartRateVariabilitySDNN),
@@ -327,9 +334,14 @@ final class HealthService: HealthServing {
                 }
             }
         }
-        return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+        let kinds = counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             .map(\.key)
+        Self.sourcesCache = (kinds, Date())
+        return kinds
     }
+
+    /// One-hour memo for `signalSources` — see the note at its guard.
+    private static var sourcesCache: (kinds: [WearableKind], at: Date)?
 
     // MARK: Recovery hub history (day-bucketed reads — RECOVERY-HUB-PLAN §3, §9 P1)
 
