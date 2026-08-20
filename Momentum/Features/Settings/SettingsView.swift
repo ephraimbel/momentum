@@ -318,7 +318,6 @@ struct SettingsView: View {
                     Toggle(isOn: $voiceCoachEnabled) {
                         Text("Voice coach").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                     }
-                    .tint(Theme.ink)
                 }
                 .padding(.vertical, 9)
                 .accessibilityLabel("Voice coach")
@@ -417,7 +416,10 @@ struct SettingsView: View {
                     DatePicker("Reminder time", selection: $reminderDate, displayedComponents: .hourAndMinute)
                         .labelsHidden()
                 } else {
-                    Text("Arrives about \(resolvedReminderDate.formatted(date: .omitted, time: .shortened)), from when you usually train.")
+                    // Reads the @State seeded from `resolvedReminderDate` (onAppear + the
+                    // custom→learned reseed) — the resolved getter faults profile→athlete, which
+                    // is not a per-render cost this label should pay (perf audit 2026-08-16).
+                    Text("Arrives about \(reminderDate.formatted(date: .omitted, time: .shortened)), from when you usually train.")
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
                         .foregroundStyle(Theme.inkSecondary)
                         .multilineTextAlignment(.trailing)
@@ -448,7 +450,6 @@ struct SettingsView: View {
             Toggle(isOn: isOn) {
                 Text(label).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
             }
-            .tint(Theme.ink)
         }
         .padding(.vertical, 9)
         .accessibilityLabel(label)
@@ -466,9 +467,10 @@ struct SettingsView: View {
                     Text(option.label)
                         .font(.rounded(12, weight: .semibold))
                         .lineLimit(1).fixedSize()
-                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .foregroundStyle(on ? .white : Theme.inkSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background { if on { Capsule().fill(Theme.ink) } }
+                        // Lavender marks selected (rebrand 2026-08-16) — matches SegmentedCapsule.
+                        .background { if on { Capsule().fill(Theme.purple) } }
                         // The visible pill is ~24pt tall — well under the 44pt minimum. Extend the
                         // hit region vertically only (never horizontally — the segments sit 2pt
                         // apart), keeping the control's look exactly as shipped.
@@ -513,9 +515,10 @@ struct SettingsView: View {
                     Text(option.label)
                         .font(.rounded(12, weight: .semibold))
                         .lineLimit(1).fixedSize()
-                        .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                        .foregroundStyle(on ? .white : Theme.inkSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background { if on { Capsule().fill(Theme.ink) } }
+                        // Lavender marks selected (rebrand 2026-08-16) — matches SegmentedCapsule.
+                        .background { if on { Capsule().fill(Theme.purple) } }
                         .contentShape(VerticalHitPad(dy: 10))
                 }
                 .buttonStyle(.plain)

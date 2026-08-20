@@ -75,7 +75,6 @@ struct SetNewPasswordView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Not now") { dismiss() }
                         .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                        .tint(Theme.ink)
                 }
             }
             .onAppear { focused = true }

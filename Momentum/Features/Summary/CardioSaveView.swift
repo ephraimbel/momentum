@@ -316,11 +316,11 @@ struct CardioSaveView: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(option.label).font(.rounded(Theme.FontSize.caption, weight: .semibold))
             }
-            .foregroundStyle(selected ? Theme.background : Theme.ink)
+            .foregroundStyle(selected ? .white : Theme.ink)
             .padding(.horizontal, Theme.Space.md).padding(.vertical, 7)
-            .background(Capsule().fill(selected ? AnyShapeStyle(Theme.ink)
-                                       : (locked ? AnyShapeStyle(Theme.route.opacity(0.16)) : AnyShapeStyle(Theme.background))))
-            .overlay(Capsule().stroke(selected ? Color.clear : (locked ? Theme.route.opacity(0.45) : Theme.hairline)))
+            .background(Capsule().fill(selected ? AnyShapeStyle(Theme.purple)
+                                       : (locked ? AnyShapeStyle(Theme.proLavender.opacity(0.16)) : AnyShapeStyle(Theme.background))))
+            .overlay(Capsule().stroke(selected ? Color.clear : (locked ? Theme.proLavender.opacity(0.45) : Theme.hairline)))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(locked ? "\(option.label), Pro style" : option.label)
@@ -374,11 +374,11 @@ struct CardioSaveView: View {
                         Text(fit.label)
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                             .lineLimit(1).minimumScaleFactor(0.8)
-                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .foregroundStyle(on ? .white : Theme.ink)
                             .frame(maxWidth: .infinity).frame(height: 36)
                             .background {
                                 RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                                    .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                                    .fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.background))
                                 if !on { RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous).stroke(Theme.hairline) }
                             }
                             .contentShape(Rectangle())

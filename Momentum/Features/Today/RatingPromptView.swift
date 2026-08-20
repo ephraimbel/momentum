@@ -7,7 +7,7 @@ import SwiftUI
 /// `requestReview`). Never shown during onboarding or before real engagement (guideline 5.6.3).
 ///
 /// A centered modal over a dimmed backdrop — minimal, professional, one accent: the map-tracing
-/// lavender (`Theme.route`). No iridescence (that stays earned-for-progress).
+/// lavender (`Theme.proLavender`). No iridescence (that stays earned-for-progress).
 struct RatingPromptView: View {
     /// Positive branch — the caller triggers the native `requestReview` (after this closes).
     let onRate: () -> Void
@@ -84,7 +84,7 @@ struct RatingPromptView: View {
             ForEach(0..<5, id: \.self) { i in
                 Image(systemName: "star.fill")
                     .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(Theme.route)
+                    .foregroundStyle(Theme.proLavender)
                     .opacity(shown ? 1 : 0)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.3).delay(0.12 + Double(i) * 0.04),
                                value: shown)
@@ -103,7 +103,7 @@ struct RatingPromptView: View {
             Text("Rate momentum")
                 .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(onLavender)
                 .frame(maxWidth: .infinity).frame(height: 52)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.route))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.proLavender))
         }
         .buttonStyle(PressableScaleStyle())
     }

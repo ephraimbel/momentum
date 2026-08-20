@@ -55,9 +55,9 @@ private struct ProLockModifier: ViewModifier {
             VStack(spacing: Theme.Space.sm) {
                 Text("PRO")
                     .font(.rounded(10, weight: .heavy)).tracking(1.6)
-                    .foregroundStyle(Color(hex: "0E0E12"))     // fixed dark: the route badge is always light
+                    .foregroundStyle(Theme.inkOnFixedLight)     // fixed dark: the route badge is always light
                     .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(Capsule().fill(Theme.route))
+                    .background(Capsule().fill(Theme.proLavender))
 
                 Text(feature.lockTitle)
                     .font(.serif(20, weight: .semibold))

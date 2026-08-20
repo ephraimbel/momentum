@@ -1,37 +1,47 @@
 /* ————————————————————————————————————————————————————————————————
-   momentum — editorial rebuild (2026-08-14, MOMENTUM_CLAUDE_REBUILD brief)
-   Warm paper + near black. One neutral grotesk, set tight. Typography and
-   whitespace are the structure; iridescence appears only around product.
+   momentum — "Lavender Glass" web (2026-08-19)
+   Pure white + violet-biased ink, porcelain stages, ONE lavender accent.
+   The reference feel: giant two-tone grotesk, hairline rows, huge rounded
+   stage cards, product screenshots doing the talking. Iridescence is
+   EARNED — it only ever haloes a product moment.
    ———————————————————————————————————————————————————————————————— */
 
 :root {
-  --paper: #f5f3ee;
-  --paper2: #ece9e1;
-  --ink: #0d0d0c;
-  --dark: #10100f;
-  --muted: #77766f;
-  /* Body copy sits a step darker than --muted so paragraphs clear WCAG AA on paper
-     (#4c4b46 ≈ 8:1). --muted carries labels/metadata only, where it still clears 4.5:1. */
-  --ink-2: #4c4b46;
-  --line: rgba(13, 13, 12, 0.12);
-  --white: #ffffff;
-  /* On the dark sections. */
-  --dark-line: rgba(255, 255, 255, 0.14);
-  --dark-muted: #a4a39d;
+  --bg: #ffffff;
+  --paper: #fbfaf9; /* porcelain — frosted nav, quiet tints */
+  --stage: #f4f3f0; /* the app's own surface — rounded stage cards */
+  --ink: #16151a;
+  --ink-2: #5d5a66; /* muted body — AA on white and on --stage */
+  --ink-3: #9b98a6; /* the two-tone headline dim + decorative only, never small text */
+  --line: #eceae6;
+  --line-strong: rgba(22, 21, 26, 0.16);
 
-  /* The five brand pastels — unchanged from the app (Theme.iridescent). Iridescence is EARNED:
-     on this site it only ever haloes a product moment (the hero device, the coach panel). */
-  --iri-1: #b8c0ff;
-  --iri-2: #c8ffe0;
-  --iri-3: #ffd8c2;
-  --iri-4: #e6c2ff;
-  --iri-5: #c2f0ff;
+  /* The warm charcoal the app's dark mode wears — our dark cards match it exactly. */
+  --charcoal: #1e1d1b;
+  --charcoal-2: #2a2926;
+  --dark-line: rgba(255, 255, 255, 0.14);
+  --dark-muted: #b5b1ac;
+
+  /* The brand lavender — "tappable or happening now", never decoration. */
+  --lav: #7c63f0;
+  --lav-dark: #9d8bf5; /* brightened on charcoal, like the app's dark mode */
+  --lav-tint: #f1edfe;
+  --lav-deep: #5a43c7;
+
+  /* The lavender-led aurora (Theme.iridescent) — earned-only, soft, blurred. */
+  --iri-1: #c9bcf9;
+  --iri-2: #b8d4f7;
+  --iri-3: #f3cde4;
+  --iri-4: #cbbdf8;
+  --iri-5: #ebd9f4;
 
   --font-d: var(--font-display), "Inter Tight", -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-u: var(--font-ui), "Inter", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
 
-  --max: 1500px;
-  --gutter: 34px;
+  --max: 1440px;
+  --gutter: 32px;
+  --r-stage: 36px; /* the big rounded stages */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -47,7 +57,7 @@ html {
 }
 
 body {
-  background: var(--paper);
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--font-u);
   font-size: 16px;
@@ -69,11 +79,10 @@ a {
 }
 
 ::selection {
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--lav);
+  color: #fff;
 }
 
-/* Visible keyboard focus everywhere — currentColor reads on paper and on the dark sections. */
 :focus-visible {
   outline: 2px solid currentColor;
   outline-offset: 3px;
@@ -86,43 +95,37 @@ a {
   padding: 0 var(--gutter);
 }
 
-/* Anchor jumps must clear the fixed nav. */
 [id] {
   scroll-margin-top: 96px;
 }
 
 /* ——— type scale ——— */
 
-/* Every display size: the grotesk set tight, never heavier than ~550. Scale carries the weight. */
 .display {
   font-family: var(--font-d);
-  font-weight: 540;
-  letter-spacing: -0.055em;
-  line-height: 0.95;
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1;
   text-wrap: balance;
 }
 
-.eyebrow {
-  font-family: var(--font-u);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.19em;
-  text-transform: uppercase;
-  color: var(--ink);
+/* Two-tone statement: the second thought steps back to warm gray (decorative echo only). */
+.dim {
+  color: var(--ink-3);
 }
 
 .kicker {
-  font-family: var(--font-u);
+  font-family: var(--mono);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ink-2);
 }
 
 .lede {
-  font-size: 15px;
-  line-height: 1.55;
+  font-size: 15.5px;
+  line-height: 1.6;
   color: var(--ink-2);
   letter-spacing: -0.015em;
 }
@@ -133,7 +136,7 @@ a {
   font-feature-settings: "tnum";
 }
 
-/* ——— nav ——— */
+/* ——— nav — floating over the page, frosting in on scroll ——— */
 
 .nav {
   position: fixed;
@@ -141,33 +144,60 @@ a {
   left: 0;
   right: 0;
   z-index: 60;
-  background: rgba(245, 243, 238, 0.82);
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.nav.scrolled {
+  background: rgba(255, 255, 255, 0.84);
   backdrop-filter: saturate(150%) blur(16px);
   -webkit-backdrop-filter: saturate(150%) blur(16px);
-  border-bottom: 1px solid var(--line);
+  border-bottom-color: var(--line);
 }
 
 .nav-inner {
-  height: 82px;
+  height: 76px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
 }
 
-.wordmark {
-  height: 21px;
-  width: auto;
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.wordmark-footer {
-  height: 24px;
+/* The glass-runner app icon in a quiet white chip — the reference's circular mark. */
+.brand-chip {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 14px rgba(22, 21, 26, 0.07);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.brand-chip img {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.wordmark {
+  height: 19px;
   width: auto;
 }
 
 .nav-links {
   display: flex;
-  gap: 34px;
+  gap: 32px;
   align-items: center;
 }
 
@@ -176,7 +206,7 @@ a {
   font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--ink);
-  opacity: 0.62;
+  opacity: 0.6;
   transition: opacity 0.2s var(--ease);
 }
 
@@ -188,13 +218,10 @@ a {
   opacity: 1;
 }
 
-/* `.nav-links a` sets an ink colour at (0,1,1), which outranks `.btn-ink` (0,1,0) — without this
-   the download pill rendered ink-on-ink (invisible). Match the specificity, don't fight it. */
-.nav-links a.btn-ink {
-  color: var(--paper);
-}
+/* `.nav-links a` (0,1,1) outranks `.btn-ink` (0,1,0) — keep the pill's text white. */
+.nav-links a.btn-ink,
 .nav-links a.btn-ink:hover {
-  color: var(--paper);
+  color: #fff;
 }
 
 .nav-right {
@@ -203,7 +230,6 @@ a {
   gap: 14px;
 }
 
-/* Hamburger — mobile only. */
 .nav-burger {
   display: none;
   position: relative;
@@ -235,7 +261,7 @@ a {
   display: none;
 }
 
-/* ——— buttons ——— */
+/* ——— buttons — black pills, the reference's one CTA shape ——— */
 
 .btn {
   display: inline-flex;
@@ -243,10 +269,10 @@ a {
   justify-content: center;
   gap: 9px;
   font-family: var(--font-u);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  padding: 14px 20px;
+  padding: 15px 24px;
   border-radius: 999px;
   border: 1px solid var(--ink);
   background: transparent;
@@ -262,30 +288,32 @@ a {
 
 .btn-ink {
   background: var(--ink);
-  color: var(--paper);
+  color: #fff;
 }
 
 .btn-ink:hover {
-  background: #23231f;
+  background: #26242c;
+}
+
+.btn-ghost {
+  border-color: var(--line-strong);
 }
 
 .btn-ghost:hover {
-  background: rgba(13, 13, 12, 0.05);
+  background: rgba(22, 21, 26, 0.04);
 }
 
-/* On dark sections. */
 .btn-paper {
-  background: var(--paper);
-  border-color: var(--paper);
+  background: #fff;
+  border-color: #fff;
   color: var(--ink);
 }
 .btn-paper:hover {
   background: #fff;
-  border-color: #fff;
 }
 
 .btn-sm {
-  padding: 11px 17px;
+  padding: 11px 18px;
   font-size: 12.5px;
 }
 
@@ -311,50 +339,81 @@ a {
   height: 46px;
   width: auto;
 }
-.appstore-badge.sm svg {
-  height: 40px;
-}
-
-/* In the hero the badge IS the primary CTA, so it has to sit level with the ghost button beside
-   it (14px padding + 13px/1.55 text + 1px borders ≈ 50px). */
 .hero-actions .appstore-badge svg {
   height: 50px;
 }
 
-/* ——— hero ——— */
+/* ——— hero — white, two-tone statement, one dominant device ——— */
 
 .hero {
-  padding: calc(82px + 56px) 0 76px;
+  padding: calc(76px + 60px) 0 40px;
 }
 
 .hero-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.02fr 0.98fr;
   align-items: center;
-  gap: 60px;
-  min-height: min(calc(100vh - 200px), 740px);
+  gap: 48px;
+  min-height: min(calc(100vh - 190px), 720px);
+}
+
+/* "Live on the App Store" — the lavender dot is the page's "happening now". */
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 9px 16px;
+  box-shadow: 0 4px 16px rgba(22, 21, 26, 0.05);
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lav);
+  position: relative;
+}
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--lav);
+  opacity: 0;
+  animation: ping 2.4s ease-out infinite;
+}
+@keyframes ping {
+  0% { transform: scale(0.5); opacity: 0.8; }
+  70%, 100% { transform: scale(1.5); opacity: 0; }
 }
 
 .hero h1 {
   font-family: var(--font-d);
-  font-weight: 540;
-  font-size: clamp(78px, 9.4vw, 158px);
-  line-height: 0.8;
-  letter-spacing: -0.085em;
-  margin: 26px 0 34px;
+  font-weight: 500;
+  font-size: clamp(46px, 4.9vw, 82px);
+  line-height: 1.01;
+  letter-spacing: -0.05em;
+  margin: 26px 0 28px;
+  text-wrap: balance;
 }
 
 .hero-copy {
   max-width: 30rem;
-  font-size: 18.5px;
-  line-height: 1.5;
-  letter-spacing: -0.022em;
+  font-size: 17.5px;
+  line-height: 1.55;
+  letter-spacing: -0.02em;
   color: var(--ink-2);
 }
 
 .hero-actions {
   display: flex;
-  gap: 12px;
+  gap: 14px;
   margin-top: 34px;
   align-items: center;
   flex-wrap: wrap;
@@ -362,11 +421,13 @@ a {
 
 .hero-micro {
   margin-top: 22px;
-  font-size: 11.5px;
-  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
 }
 
-/* The product stage: one dominant device, haloed by the page's only decorative iridescence. */
+/* The product stage — the page's only decorative iridescence, faint behind the device. */
 .hero-stage {
   position: relative;
   display: flex;
@@ -377,73 +438,88 @@ a {
 
 .hero-orbit {
   position: absolute;
-  inset: 8% 6%;
+  inset: 10% 8%;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 30% 30%, rgba(184, 192, 255, 0.5), transparent 34%),
-    radial-gradient(circle at 72% 27%, rgba(255, 216, 194, 0.5), transparent 30%),
-    radial-gradient(circle at 67% 74%, rgba(230, 194, 255, 0.5), transparent 34%),
-    radial-gradient(circle at 31% 73%, rgba(200, 255, 224, 0.42), transparent 31%);
-  filter: blur(40px);
-  opacity: 0.85;
+    radial-gradient(circle at 32% 28%, rgba(201, 188, 249, 0.55), transparent 36%),
+    radial-gradient(circle at 72% 26%, rgba(184, 212, 247, 0.5), transparent 32%),
+    radial-gradient(circle at 68% 74%, rgba(243, 205, 228, 0.5), transparent 34%),
+    radial-gradient(circle at 30% 72%, rgba(235, 217, 244, 0.55), transparent 33%);
+  filter: blur(42px);
+  opacity: 0.9;
   pointer-events: none;
 }
 
-/* Two quiet chips naming what the capture shows. Hidden on small screens (the brief drops
-   decorative pills rather than crowding the device). */
+/* Glass chips quoting the capture beside them — no invented numbers. */
 .stat-pill {
   position: absolute;
   z-index: 4;
-  background: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  border-radius: 16px;
-  padding: 14px 16px;
-  box-shadow: 0 18px 44px rgba(13, 13, 12, 0.1);
-  min-width: 148px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 18px;
+  padding: 14px 17px;
+  box-shadow: 0 18px 44px rgba(22, 21, 26, 0.1);
+  min-width: 150px;
+  animation: drift 7s ease-in-out infinite;
 }
 .stat-pill b {
   display: block;
   font-family: var(--font-d);
   font-size: 21px;
   font-weight: 560;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
 }
 .stat-pill small {
-  font-size: 10.5px;
-  color: var(--muted);
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
-.pill-1 { left: -2%; top: 19%; }
-.pill-2 { right: -2%; bottom: 16%; }
+.pill-1 { left: -3%; top: 18%; }
+.pill-2 { right: -3%; bottom: 17%; animation-delay: -3.5s; }
 
-/* ——— phone frame (a real capture in a calm device) ———
-   Flat near-black bezel, one restrained shadow: device mockups supply the rounded geometry
-   without shadow/gloss theatrics. */
+@keyframes drift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+/* ——— phone frame — a real iPhone read: titanium band, black bezel, side buttons ——— */
 
 .phone {
   position: relative;
   width: 100%;
   max-width: 336px;
   margin: 0 auto;
-  border-radius: 52px;
-  padding: 9px;
-  background: #161615;
-  box-shadow: 0 36px 90px -30px rgba(13, 13, 12, 0.34);
+  border-radius: 54px;
+  padding: 4px;
+  /* The titanium band: brushed highlights top-left and bottom-right, like the real chassis. */
+  background: linear-gradient(145deg, #5a5a5e 0%, #2e2e31 22%, #232325 50%, #2e2e31 78%, #6a6a6f 100%);
+  box-shadow:
+    inset 0 0 1px 1px rgba(255, 255, 255, 0.22),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 36px 90px -30px rgba(22, 21, 26, 0.4);
   z-index: 2;
 }
 
+/* The black glass bezel between band and screen. */
 .phone-body {
-  border-radius: 44px;
-  background: #161615;
+  border-radius: 50px;
+  background: #060606;
+  padding: 8px;
   overflow: hidden;
 }
 
 .phone-screen {
   position: relative;
-  border-radius: 44px;
+  border-radius: 42px;
   overflow: hidden;
-  background: #0b0b0a;
+  background: #f4f3f0;
 }
 
 .phone-screen img {
@@ -454,59 +530,98 @@ a {
 
 .phone-island {
   position: absolute;
-  top: 9px;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  width: 31%;
-  height: 26px;
+  width: 30%;
+  height: 25px;
   border-radius: 18px;
-  background: #0b0b0a;
+  background: #060606;
+  box-shadow: inset 0 0 2px rgba(255, 255, 255, 0.08);
   z-index: 2;
 }
 
-/* Side buttons + gloss are deliberately gone (no glassmorphism); the classes stay so
-   PhoneFrame's existing markup keeps working. */
-.phone-btn,
+/* Side buttons — titanium nubs just proud of the band. */
+.phone-btn {
+  display: block;
+  position: absolute;
+  background: linear-gradient(90deg, #3c3c3f, #58585c);
+  z-index: 1;
+}
+.pb-action {
+  left: -2px;
+  top: 17%;
+  width: 3px;
+  height: 26px;
+  border-radius: 2px 0 0 2px;
+}
+.pb-volup {
+  left: -2px;
+  top: 25%;
+  width: 3px;
+  height: 48px;
+  border-radius: 2px 0 0 2px;
+}
+.pb-voldn {
+  left: -2px;
+  top: 33.5%;
+  width: 3px;
+  height: 48px;
+  border-radius: 2px 0 0 2px;
+}
+.pb-power {
+  right: -2px;
+  left: auto;
+  top: 27%;
+  width: 3px;
+  height: 74px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, #58585c, #3c3c3f);
+}
+
 .phone-gloss {
   display: none;
 }
 
 .phone-lg {
-  /* Height-aware: the captures are 820×1782, so width × 2.17 is the rendered height. Sizing off
-     vh keeps the hero (nav + copy + CTAs + device) inside the first viewport on a laptop. */
-  max-width: clamp(268px, 33vh, 336px);
+  max-width: clamp(268px, 34vh, 340px);
 }
 
 .phone-sm {
   max-width: 292px;
-  border-radius: 46px;
+  border-radius: 48px;
 }
-.phone-sm .phone-body,
+.phone-sm .phone-body {
+  border-radius: 44px;
+  padding: 7px;
+}
 .phone-sm .phone-screen {
-  border-radius: 38px;
+  border-radius: 37px;
 }
 .phone-sm .phone-island {
   height: 22px;
 }
 
-/* ——— running categories marquee ——— */
+/* ——— distance marquee — a thin editorial band ——— */
 
 .marquee {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   overflow: hidden;
   white-space: nowrap;
-  padding: 19px 0;
+  padding: 18px 0;
+  margin-top: 40px;
 }
 
 .marquee-track {
   display: inline-block;
-  animation: marquee-move 30s linear infinite;
-  font-size: 12px;
+  animation: marquee-move 32s linear infinite;
+  font-family: var(--mono);
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.16em;
-  color: var(--muted);
+  color: var(--ink-3);
 }
 
 .marquee-track span {
@@ -524,132 +639,76 @@ a {
   }
 }
 
-/* ——— dark cinematic brand moment ——— */
+/* ——— the scroll statement — words inking in as you read ——— */
 
-.brand-moment {
-  position: relative;
-  min-height: 86vh;
-  background: var(--dark);
-  color: #fff;
-  display: flex;
-  align-items: flex-end;
-  overflow: hidden;
+.statement {
+  padding: 150px 0 110px;
 }
 
-.brand-media {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-.brand-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  /* Editorial, not stock fitness: warm, desaturated, printed down. */
-  filter: saturate(0.55) contrast(1.06) brightness(0.62);
-}
-
-.brand-shade {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background:
-    linear-gradient(to bottom, rgba(16, 16, 15, 0.55), rgba(16, 16, 15, 0.2) 42%, rgba(16, 16, 15, 0.88)),
-    radial-gradient(80% 110% at 15% 80%, rgba(16, 16, 15, 0.6), transparent 62%);
-}
-
-/* The dotted route line — the app's own motif, drawn over the photograph. */
-.route-line {
-  position: absolute;
-  left: 8%;
-  top: 8%;
-  width: 62%;
-  height: 76%;
-  z-index: 1;
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.brand-content {
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  padding: 96px 0 86px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 48px;
-}
-
-.brand-content h2 {
+.statement p {
   font-family: var(--font-d);
   font-weight: 500;
-  font-size: clamp(66px, 8.4vw, 138px);
-  line-height: 0.85;
-  letter-spacing: -0.075em;
+  font-size: clamp(34px, 4.4vw, 66px);
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+  max-width: 22ch;
+  text-wrap: balance;
 }
 
-.brand-meta {
-  text-align: right;
-  max-width: 262px;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--dark-muted);
+.statement .w {
+  color: var(--ink-3);
+  transition: color 0.35s ease;
 }
 
-.brand-meta strong {
-  display: block;
-  color: #fff;
-  margin-bottom: 7px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  font-size: 11px;
-  text-transform: uppercase;
+.statement .w.on {
+  color: var(--ink);
 }
 
-/* ——— sections ——— */
+/* ——— numbered sections ——— */
 
 .section {
-  padding: 140px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 130px 0;
+}
+
+.section + .section {
+  border-top: 1px solid var(--line);
 }
 
 .section-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 40px;
-  margin-bottom: 76px;
+  margin-bottom: 64px;
 }
 
 .section-head h2 {
-  font-size: clamp(50px, 5.6vw, 92px);
-  line-height: 0.93;
-  letter-spacing: -0.068em;
+  font-size: clamp(42px, 4.6vw, 76px);
+  line-height: 1;
+  letter-spacing: -0.048em;
   margin-top: 18px;
-  max-width: 15ch;
+  max-width: 16ch;
 }
 
 .section-head .lede {
-  max-width: 27rem;
-  padding-top: 12px;
+  max-width: 26rem;
+  padding-bottom: 8px;
 }
 
-/* ——— 01 · training: two editorial product moments ——— */
+/* ——— stage cards — the big rounded surfaces the product lives in ——— */
 
 .story-grid {
   display: grid;
   grid-template-columns: 1.06fr 0.94fr;
-  gap: 26px;
+  gap: 24px;
   align-items: stretch;
 }
 
 .story-card {
   position: relative;
-  background: var(--paper2);
-  border-radius: 28px;
-  padding: 46px 46px 0;
+  background: var(--stage);
+  border-radius: var(--r-stage);
+  padding: 48px 48px 52px;
   min-height: 680px;
   overflow: hidden;
   display: flex;
@@ -657,49 +716,62 @@ a {
 }
 
 .story-card.dark {
-  background: #11110f;
+  background: var(--charcoal);
   color: #fff;
 }
 
 .story-card h3 {
   font-family: var(--font-d);
-  font-weight: 530;
-  font-size: clamp(32px, 3.1vw, 42px);
+  font-weight: 520;
+  font-size: clamp(30px, 3vw, 40px);
   line-height: 1;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.045em;
   margin-bottom: 14px;
 }
 
 .story-card p {
   font-size: 14.5px;
   line-height: 1.55;
-  color: var(--muted);
-  max-width: 38ch;
+  color: var(--ink-2);
+  max-width: 40ch;
 }
 
 .story-card.dark p {
   color: var(--dark-muted);
 }
 
-/* The device sits INTO the card and bleeds off its bottom edge. */
+/* A quiet mono caption naming what the capture shows. */
+.story-note {
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.story-card.dark .story-note {
+  color: rgba(255, 255, 255, 0.45);
+}
+
 .story-media {
   margin-top: auto;
   padding-top: 44px;
   display: flex;
   justify-content: center;
-  transform: translateY(58px);
 }
 
 .story-media .phone {
-  box-shadow: 0 30px 70px -26px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 30px 70px -26px rgba(0, 0, 0, 0.4);
 }
 
-/* ——— 02 · intelligence (dark) ——— */
+/* ——— the coach — warm charcoal, the second earned-iridescence moment ——— */
 
 .insight {
-  background: var(--dark);
+  background: var(--charcoal);
   color: #fff;
-  padding: 140px 0;
+  padding: 130px 0;
+  border-radius: var(--r-stage);
+  margin: 0 var(--gutter);
 }
 
 .insight .kicker,
@@ -707,19 +779,23 @@ a {
   color: var(--dark-muted);
 }
 
+.insight .wrap {
+  padding: 0 clamp(16px, 3vw, 48px);
+}
+
 .coach-wrap {
   display: grid;
-  grid-template-columns: 0.82fr 1.18fr;
-  gap: 72px;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 64px;
   align-items: center;
 }
 
 .coach-copy h3 {
   font-family: var(--font-d);
   font-weight: 500;
-  font-size: clamp(36px, 4vw, 56px);
-  line-height: 0.98;
-  letter-spacing: -0.06em;
+  font-size: clamp(34px, 3.8vw, 54px);
+  line-height: 1;
+  letter-spacing: -0.05em;
   margin-bottom: 22px;
 }
 
@@ -736,7 +812,7 @@ a {
 }
 
 .coach-note {
-  padding: 19px 0;
+  padding: 18px 0;
   border-bottom: 1px solid var(--dark-line);
   display: flex;
   justify-content: space-between;
@@ -746,113 +822,213 @@ a {
 }
 
 .coach-note span:last-child {
-  color: #6f6e69;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.38);
 }
 
-/* The coach proof panel — the second (and last) place iridescence appears. */
 .coach-stage {
   position: relative;
   border-radius: 30px;
-  background: #181817;
+  background: var(--charcoal-2);
   border: 1px solid var(--dark-line);
-  padding: 44px 30px 0;
+  padding: 44px 30px 48px;
   overflow: hidden;
   display: flex;
   justify-content: center;
-  min-height: 620px;
 }
 
 .aurora {
   position: absolute;
-  width: 340px;
-  height: 340px;
+  width: 360px;
+  height: 360px;
   border-radius: 50%;
-  right: 12%;
-  top: -4%;
+  right: 10%;
+  top: -6%;
   background: conic-gradient(
     from 20deg,
-    rgba(184, 192, 255, 0.44),
-    rgba(255, 216, 194, 0.32),
-    rgba(230, 194, 255, 0.44),
-    rgba(200, 255, 224, 0.34),
-    rgba(184, 192, 255, 0.44)
+    rgba(201, 188, 249, 0.5),
+    rgba(184, 212, 247, 0.36),
+    rgba(243, 205, 228, 0.42),
+    rgba(203, 189, 248, 0.46),
+    rgba(235, 217, 244, 0.4),
+    rgba(201, 188, 249, 0.5)
   );
   filter: blur(62px);
-  opacity: 0.62;
+  opacity: 0.55;
   pointer-events: none;
 }
 
 .coach-stage .phone {
   position: relative;
   z-index: 2;
-  transform: translateY(34px);
 }
 
-/* ——— 03 · the method ——— */
+/* ——— fuel — the light flip duo ——— */
+
+.duo {
+  display: grid;
+  grid-template-columns: 1fr 0.92fr;
+  gap: 64px;
+  align-items: center;
+}
+
+.duo-media {
+  background: var(--stage);
+  border-radius: var(--r-stage);
+  padding: 52px 40px 56px;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+}
+
+.duo-copy h3 {
+  font-family: var(--font-d);
+  font-weight: 520;
+  font-size: clamp(34px, 3.6vw, 52px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  margin: 16px 0 18px;
+}
+
+.duo-copy p {
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 28rem;
+}
+
+/* ——— the method — numbered hairline rows ——— */
 
 .method {
-  background: var(--paper2);
-  padding: 140px 0;
-}
-
-.method h2 {
-  font-size: clamp(60px, 7.6vw, 124px);
-  line-height: 0.85;
-  letter-spacing: -0.078em;
-  margin: 30px 0 72px;
-  font-weight: 510;
-  max-width: 16ch;
-}
-
-.principles {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  padding: 130px 0;
   border-top: 1px solid var(--line);
 }
 
-.principle {
-  padding: 30px 30px 0 0;
-  border-right: 1px solid var(--line);
-  min-height: 210px;
+.method h2 {
+  font-size: clamp(40px, 4.8vw, 78px);
+  line-height: 1;
 }
 
-.principle:not(:first-child) {
-  padding-left: 30px;
+.method-intro {
+  max-width: 30rem;
+  margin-top: 16px;
 }
 
-.principle:last-child {
-  border-right: 0;
+.rows {
+  margin-top: 64px;
+  border-top: 1px solid var(--line);
 }
 
-.principle .num-label {
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: var(--muted);
+.row {
+  display: grid;
+  grid-template-columns: 80px 1fr 0.9fr;
+  gap: 32px;
+  align-items: baseline;
+  padding: 44px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.row .num-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.row h3 {
+  font-family: var(--font-d);
+  font-weight: 520;
+  font-size: clamp(26px, 2.8vw, 38px);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.row p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 44ch;
+}
+
+/* ——— race day — the charcoal proof card ——— */
+
+.race {
+  margin: 0 var(--gutter);
+  background: var(--charcoal);
+  color: #fff;
+  border-radius: var(--r-stage);
+  overflow: hidden;
+}
+
+.race-grid {
+  display: grid;
+  grid-template-columns: 1fr 0.9fr;
+  gap: 56px;
+  align-items: center;
+  padding: 90px clamp(36px, 5vw, 84px);
+}
+
+.race h2 {
+  font-family: var(--font-d);
+  font-weight: 500;
+  font-size: clamp(44px, 4.8vw, 78px);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+  margin: 16px 0 20px;
+}
+
+.race .kicker {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.race p {
+  color: var(--dark-muted);
+  font-size: 15.5px;
+  line-height: 1.6;
+  max-width: 27rem;
+}
+
+.race-stats {
+  display: flex;
+  gap: 44px;
+  margin-top: 44px;
+  padding-top: 26px;
+  border-top: 1px solid var(--dark-line);
+}
+
+.race-stat b {
   display: block;
-  margin-bottom: 46px;
-}
-
-.principle h3 {
   font-family: var(--font-d);
   font-weight: 540;
-  font-size: 22px;
+  font-size: clamp(26px, 2.6vw, 38px);
   letter-spacing: -0.04em;
-  margin-bottom: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-.principle p {
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: var(--muted);
-  max-width: 32ch;
+.race-stat small {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
 }
 
-/* ——— 04 · membership ——— */
+.race-media {
+  display: flex;
+  justify-content: center;
+}
+
+.race-media .phone {
+  transform: rotate(2deg);
+  box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.6);
+}
+
+/* ——— membership ——— */
 
 .pricing {
   padding: 140px 0;
-  border-bottom: 1px solid var(--line);
 }
 
 .pricing-grid {
@@ -863,10 +1039,10 @@ a {
 }
 
 .pricing h2 {
-  font-size: clamp(56px, 6.6vw, 106px);
-  line-height: 0.87;
-  letter-spacing: -0.075em;
-  margin-top: 28px;
+  font-size: clamp(48px, 5.4vw, 88px);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  margin-top: 24px;
   font-weight: 510;
 }
 
@@ -880,7 +1056,7 @@ a {
   justify-content: space-between;
   align-items: flex-start;
   gap: 24px;
-  margin-bottom: 52px;
+  margin-bottom: 48px;
 }
 
 .price-row h3 {
@@ -894,7 +1070,7 @@ a {
   font-family: var(--font-d);
   font-size: clamp(38px, 4.4vw, 52px);
   font-weight: 540;
-  letter-spacing: -0.065em;
+  letter-spacing: -0.055em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -904,7 +1080,7 @@ a {
   font-family: var(--font-u);
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--muted);
+  color: var(--ink-2);
   letter-spacing: -0.01em;
 }
 
@@ -915,7 +1091,7 @@ a {
 }
 
 .feature {
-  padding: 17px 0;
+  padding: 16px 0;
   border-bottom: 1px solid var(--line);
   font-size: 13.5px;
   color: var(--ink-2);
@@ -936,14 +1112,14 @@ a {
 
 .price-note {
   font-size: 11.5px;
-  color: var(--muted);
+  color: var(--ink-2);
 }
 
-/* ——— FAQ (hairline rows — kept for the FAQPage schema + real purchase questions) ——— */
+/* ——— FAQ ——— */
 
 .faq {
-  padding: 128px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 120px 0;
+  border-top: 1px solid var(--line);
 }
 
 .faq-grid {
@@ -954,10 +1130,10 @@ a {
 }
 
 .faq h2 {
-  font-size: clamp(44px, 4.6vw, 72px);
-  line-height: 0.92;
-  letter-spacing: -0.07em;
-  margin-top: 28px;
+  font-size: clamp(40px, 4.4vw, 68px);
+  line-height: 0.96;
+  letter-spacing: -0.05em;
+  margin-top: 24px;
   font-weight: 520;
 }
 
@@ -980,7 +1156,7 @@ a {
   font-family: var(--font-d);
   font-size: 18px;
   font-weight: 530;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.03em;
 }
 
 .faq summary::-webkit-details-marker {
@@ -992,7 +1168,7 @@ a {
   font-family: var(--font-d);
   font-size: 20px;
   font-weight: 400;
-  color: var(--muted);
+  color: var(--ink-3);
   transition: transform 0.25s var(--ease);
   flex: none;
 }
@@ -1009,114 +1185,103 @@ a {
   max-width: 62ch;
 }
 
-/* ——— final brand CTA ——— */
+/* ——— the closer — one huge rounded charcoal card ——— */
+
+.final-outer {
+  padding: 0 var(--gutter) 26px;
+}
 
 .final {
   position: relative;
-  min-height: 88vh;
-  background: #0f0f0e;
+  background: var(--charcoal);
   color: #fff;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 46px 0 0;
+  border-radius: var(--r-stage);
   overflow: hidden;
-}
-
-.final-media {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-.final-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: saturate(0.5) contrast(1.05) brightness(0.52);
-}
-
-.final-shade {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: linear-gradient(
-    to bottom,
-    rgba(15, 15, 14, 0.72),
-    rgba(15, 15, 14, 0.42) 40%,
-    rgba(15, 15, 14, 0.92)
-  );
-}
-
-.final-inner {
-  position: relative;
-  z-index: 2;
-  /* `.wrap` brings `margin: 0 auto`, which cancels a flex item's cross-axis stretch — without an
-     explicit width this column shrank to its content and drifted to the middle. */
-  width: 100%;
-  flex: 1;
+  padding: 64px clamp(28px, 4vw, 64px) 0;
+  min-height: 78vh;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 56px;
+}
+
+/* One soft aurora pool behind the words — the moment is earned: the finish line. */
+.final::before {
+  content: "";
+  position: absolute;
+  width: 60%;
+  height: 50%;
+  left: 20%;
+  top: -18%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 40% 55%, rgba(201, 188, 249, 0.2), transparent 55%),
+    radial-gradient(circle at 65% 40%, rgba(243, 205, 228, 0.12), transparent 50%);
+  filter: blur(50px);
+  pointer-events: none;
 }
 
 .final-top {
+  position: relative;
   display: flex;
   justify-content: space-between;
   gap: 24px;
-  font-size: 11px;
-  letter-spacing: 0.16em;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #8e8d88;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.final-mid {
+  position: relative;
+  padding: 60px 0 46px;
 }
 
 .final h2 {
   font-family: var(--font-d);
   font-weight: 500;
-  font-size: clamp(84px, 14vw, 220px);
-  line-height: 0.75;
-  letter-spacing: -0.095em;
+  font-size: clamp(76px, 12.5vw, 200px);
+  line-height: 0.82;
+  letter-spacing: -0.07em;
 }
 
 .final-bottom {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: 32px;
   flex-wrap: wrap;
+  padding-bottom: 12px;
 }
 
 .final-support {
   font-size: 12.5px;
-  color: #8e8d88;
+  color: var(--dark-muted);
   max-width: 264px;
   line-height: 1.5;
 }
 
-/* The cropped wordmark that closes the page. */
 .bigword {
   position: relative;
-  z-index: 2;
-  padding-left: var(--gutter);
   font-family: var(--font-d);
-  font-size: clamp(110px, 17.5vw, 292px);
-  line-height: 0.7;
-  letter-spacing: -0.095em;
-  color: #f3f0e9;
+  font-size: clamp(100px, 16.5vw, 268px);
+  line-height: 0.72;
+  letter-spacing: -0.08em;
+  color: rgba(255, 255, 255, 0.1);
   font-weight: 540;
   white-space: nowrap;
-  transform: translateY(0.13em);
+  transform: translateY(0.16em);
   user-select: none;
+  pointer-events: none;
 }
 
-/* ——— footer ——— */
+/* ——— footer — one quiet white line ——— */
 
 .footerline {
-  background: #0f0f0e;
-  color: #7f7e79;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 22px 0;
+  background: var(--bg);
+  color: var(--ink-2);
+  padding: 26px 0 34px;
 }
 
 .footerline .wrap {
@@ -1139,10 +1304,10 @@ a {
 }
 
 .footer-links a:hover {
-  color: #fff;
+  color: var(--ink);
 }
 
-/* ——— scroll reveal (opacity/transform only, once) ——— */
+/* ——— scroll reveal ——— */
 
 .reveal {
   opacity: 0;
@@ -1155,7 +1320,7 @@ a {
   transform: none;
 }
 
-/* ——— legal pages (/privacy, /terms, /support) ——— */
+/* ——— legal pages ——— */
 
 .legal {
   max-width: 760px;
@@ -1167,14 +1332,14 @@ a {
   font-family: var(--font-d);
   font-weight: 540;
   font-size: clamp(38px, 4.6vw, 60px);
-  letter-spacing: -0.06em;
+  letter-spacing: -0.05em;
   line-height: 0.98;
   margin-bottom: 12px;
 }
 
 .legal .legal-date {
   font-size: 13.5px;
-  color: var(--muted);
+  color: var(--ink-3);
   margin-bottom: 44px;
 }
 
@@ -1210,6 +1375,8 @@ a {
   .hero-grid,
   .story-grid,
   .coach-wrap,
+  .duo,
+  .race-grid,
   .pricing-grid,
   .faq-grid {
     grid-template-columns: 1fr;
@@ -1217,7 +1384,8 @@ a {
   .hero-grid {
     gap: 46px;
   }
-  .coach-wrap {
+  .coach-wrap,
+  .duo {
     gap: 48px;
   }
   .pricing-grid,
@@ -1229,44 +1397,33 @@ a {
   }
   .section-head .lede {
     margin-top: 26px;
-    padding-top: 0;
+    padding-bottom: 0;
   }
-  .story-card {
-    min-height: 620px;
+  /* Flip duo: media renders first in source — put copy above it on one column. */
+  .duo .duo-copy {
+    order: -1;
   }
-  .principles {
-    grid-template-columns: 1fr;
+  .row {
+    grid-template-columns: 48px 1fr;
   }
-  .principle {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    padding: 26px 0 !important;
-    min-height: auto;
+  .row p {
+    grid-column: 2;
   }
-  .principle .num-label {
-    margin-bottom: 22px;
+  .race-grid {
+    padding-top: 64px;
   }
-  .brand-content {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 44px;
-  }
-  .brand-meta {
-    text-align: left;
-  }
-  .pricing h2,
-  .faq h2,
-  .method h2 {
-    margin-top: 20px;
+  .race-media .phone {
+    transform: none;
   }
 }
 
 @media (max-width: 760px) {
   :root {
-    --gutter: 22px;
+    --gutter: 20px;
+    --r-stage: 28px;
   }
   .nav-inner {
-    height: 70px;
+    height: 66px;
   }
   .nav-links a:not(.btn) {
     display: none;
@@ -1282,7 +1439,7 @@ a {
     overflow: hidden;
     opacity: 0;
     pointer-events: none;
-    background: rgba(245, 243, 238, 0.97);
+    background: rgba(255, 255, 255, 0.97);
     backdrop-filter: saturate(150%) blur(18px);
     -webkit-backdrop-filter: saturate(150%) blur(18px);
     border-bottom: 1px solid transparent;
@@ -1294,6 +1451,11 @@ a {
     opacity: 1;
     pointer-events: auto;
     padding: 4px var(--gutter) 16px;
+    border-bottom-color: var(--line);
+  }
+  /* The open menu needs an opaque bar behind it even at page top. */
+  .nav.open {
+    background: rgba(255, 255, 255, 0.97);
     border-bottom-color: var(--line);
   }
   .nav-menu a {
@@ -1309,17 +1471,17 @@ a {
   }
 
   .hero {
-    padding: calc(70px + 52px) 0 62px;
+    padding: calc(66px + 44px) 0 48px;
   }
   .hero-grid {
     min-height: 0;
   }
   .hero h1 {
-    font-size: clamp(64px, 21vw, 92px);
-    margin: 20px 0 26px;
+    font-size: clamp(44px, 12vw, 64px);
+    margin: 20px 0 22px;
   }
   .hero-copy {
-    font-size: 16.5px;
+    font-size: 16px;
   }
   .hero-actions {
     flex-direction: column;
@@ -1334,56 +1496,60 @@ a {
   .hero-actions .appstore-badge svg {
     height: 52px;
   }
-  /* Decorative pills would crowd the device at this width. */
   .stat-pill {
     display: none;
   }
   .phone,
   .phone-lg {
-    max-width: 264px;
+    max-width: 262px;
   }
 
-  .brand-moment {
-    min-height: 74vh;
-  }
-  .brand-content {
-    padding: 72px 0 60px;
-  }
-  .route-line {
-    width: 84%;
-    left: 6%;
+  .statement {
+    padding: 96px 0 84px;
   }
 
   .section,
-  .insight,
   .method,
   .pricing {
-    padding: 88px 0;
+    padding: 84px 0;
+  }
+  .insight {
+    padding: 84px 0;
+    margin: 0 12px;
+  }
+  .race {
+    margin: 0 12px;
   }
   .faq {
-    padding: 80px 0;
+    padding: 78px 0;
   }
   .section-head {
-    margin-bottom: 48px;
-  }
-  /* "Only momentum." must hold one line — at the desktop clamp it wrapped and orphaned "Only"
-     on a line of its own, which broke the three-beat rhythm of the statement. */
-  .method h2 {
-    font-size: clamp(44px, 13.5vw, 58px);
+    margin-bottom: 44px;
   }
   .story-card {
-    padding: 30px 26px 0;
-    min-height: 560px;
-    border-radius: 24px;
+    padding: 30px 26px 36px;
+    min-height: 0;
   }
   .story-media {
-    transform: translateY(42px);
     padding-top: 34px;
   }
   .coach-stage {
-    min-height: 520px;
-    padding: 30px 20px 0;
+    padding: 30px 20px 36px;
     border-radius: 24px;
+  }
+  .duo-media {
+    padding: 36px 24px 40px;
+  }
+  .rows {
+    margin-top: 40px;
+  }
+  .row {
+    padding: 30px 0;
+    gap: 16px;
+  }
+  .race-stats {
+    gap: 26px;
+    flex-wrap: wrap;
   }
   .features {
     grid-template-columns: 1fr;
@@ -1396,16 +1562,19 @@ a {
     margin-bottom: 34px;
   }
 
-  .final {
-    min-height: 78vh;
-    padding-top: 34px;
+  .final-outer {
+    padding: 0 12px 16px;
   }
-  .final-inner {
-    gap: 40px;
+  .final {
+    min-height: 72vh;
+    padding-top: 36px;
   }
   .final-top {
     flex-direction: column;
     gap: 8px;
+  }
+  .final-mid {
+    padding: 44px 0 36px;
   }
   .final-bottom {
     flex-direction: column;
@@ -1418,7 +1587,7 @@ a {
     gap: 12px;
   }
   .marquee-track {
-    font-size: 10.5px;
+    font-size: 10px;
   }
 }
 
@@ -1429,9 +1598,19 @@ a {
   .marquee-track {
     animation: none;
   }
+  .stat-pill {
+    animation: none;
+  }
+  .live-dot::after {
+    animation: none;
+  }
   .reveal {
     opacity: 1;
     transform: none;
+    transition: none;
+  }
+  .statement .w {
+    color: var(--ink);
     transition: none;
   }
   .btn,

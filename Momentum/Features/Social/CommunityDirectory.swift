@@ -37,6 +37,12 @@ enum CommunityDirectory {
 
     static func all(now: Date = Date()) -> [CommunityAthlete] { cached }
 
+    // Handle → athlete index, built once with the directory. `athlete(handle:)` was a linear scan
+    // over all ~950 athletes; follow lists resolve dozens of handles per render, which multiplied
+    // into tens of thousands of string compares (perf audit 2026-08-16).
+    private static let byHandle: [String: CommunityAthlete] =
+        Dictionary(cached.map { ($0.handle, $0) }, uniquingKeysWith: { first, _ in first })
+
     /// The hand-curated featured athletes (lead the feed; richer copy + globe spread).
     static func featured(now: Date = Date()) -> [CommunityAthlete] {
         func ago(_ h: Double) -> Date { now.addingTimeInterval(-h * 3600) }
@@ -113,7 +119,7 @@ enum CommunityDirectory {
     }
 
     static func athlete(handle: String, now: Date = Date()) -> CommunityAthlete? {
-        all(now: now).first { $0.handle == handle }
+        byHandle[handle]
     }
 
     /// The posts shown on a visited SAMPLE athlete's profile grid: their feed post(s) plus a

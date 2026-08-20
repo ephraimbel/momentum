@@ -1185,9 +1185,9 @@ struct ProgressScreen: View {
                             }
                             Spacer()
                             Text("PRO")
-                                .font(.rounded(10, weight: .heavy)).tracking(1.4).foregroundStyle(Color(hex: "0E0E12"))
+                                .font(.rounded(10, weight: .heavy)).tracking(1.4).foregroundStyle(Theme.inkOnFixedLight)
                                 .padding(.horizontal, 9).padding(.vertical, 4)
-                                .background(Capsule().fill(Theme.route))
+                                .background(Capsule().fill(Theme.proLavender))
                         }
                         .padding(Theme.Space.md)
                         .background(card)

@@ -139,13 +139,15 @@ struct RouteMapView: View {
         var line = LineLayer(id: "route-line", source: "route-src")
             .lineWidth(4).lineCap(.round).lineJoin(.round)
             .lineEmissiveStrength(1)
+        // One solid trace color on every map (owner call 2026-08-19) — the old lavender→lilac
+        // gradient end is gone; direction reads from the endpoint dots, not a color shift.
         line.lineGradient = .expression(Exp(.interpolate) {
             Exp(.linear)
             Exp(.lineProgress)
             0.0
             UIColor(Theme.route)
             1.0
-            UIColor(Theme.iridescent[3])
+            UIColor(Theme.route)
         })
         try? map.addLayer(line)
     }

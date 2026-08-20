@@ -631,7 +631,7 @@ struct PlanView: View {
                 // Width-capped inside a full-width tap column: short blocks would otherwise
                 // stretch each bar to ~46 pt slabs that read as a loading skeleton, not a chart.
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(selected ? AnyShapeStyle(Theme.ink)
+                    .fill(selected ? AnyShapeStyle(Theme.purple)
                                    : AnyShapeStyle(Theme.ink.opacity(isPast ? 0.28 : 0.15)))
                     .frame(maxWidth: 26)
                     .frame(height: h)
@@ -643,7 +643,7 @@ struct PlanView: View {
                     .font(.rounded(9, weight: selected || isCurrent ? .heavy : .semibold))
                     .monospacedDigit()
                     .foregroundStyle(isCurrent ? Theme.background
-                                     : (selected ? Theme.ink : Theme.inkTertiary))
+                                     : (selected ? Theme.purpleDeep : Theme.inkTertiary))
                     .frame(width: 15, height: 15)
                     .background {
                         if isCurrent { Circle().fill(Theme.ink) }
@@ -681,11 +681,11 @@ struct PlanView: View {
                 Text("WK").font(.rounded(8, weight: .black)).tracking(0.8)
                 Text("\(index + 1)").font(.display(15, weight: .heavy)).monospacedDigit()
             }
-            .foregroundStyle(selected ? Theme.background : (isPast ? Theme.inkTertiary : Theme.ink))
+            .foregroundStyle(selected ? .white : (isPast ? Theme.inkTertiary : Theme.ink))
             .frame(width: 44, height: 44)
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(selected ? Theme.ink : Theme.surface)
+                    .fill(selected ? Theme.purple : Theme.surface)
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(selected ? Color.clear : Theme.hairline)
             }
@@ -720,11 +720,13 @@ struct PlanView: View {
                     Text(phase.label.uppercased())
                         .font(.rounded(9, weight: .black)).tracking(1)
                         .fixedSize()
-                        .foregroundStyle(phase == .taper ? Theme.background : Theme.inkSecondary)
+                        // Phase chips wear the lavender tint (rebrand 2026-08-16, per the
+                        // application map); taper keeps the ink chip — it's the week that shouts.
+                        .foregroundStyle(phase == .taper ? Theme.background : Theme.purpleDeep)
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background {
-                            Capsule().fill(phase == .taper ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                            if phase != .taper { Capsule().stroke(Theme.hairline) }
+                            Capsule().fill(phase == .taper ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.purpleTint))
+                            if phase != .taper { Capsule().stroke(Theme.purple.opacity(0.25)) }
                         }
                 }
                 Spacer(minLength: 0)

@@ -192,9 +192,9 @@ struct EditProfileView: View {
                         Text(s.label)
                             .font(.rounded(Theme.FontSize.body, weight: .bold))
                             .frame(maxWidth: .infinity).frame(height: 44)
-                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .foregroundStyle(on ? .white : Theme.ink)
                             .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.background))
                                 if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
                             }
                     }

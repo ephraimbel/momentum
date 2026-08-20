@@ -69,7 +69,7 @@ private struct ShareRoute: View {
                             style: StrokeStyle(lineWidth: lineWidth * 1.9, lineCap: .round, lineJoin: .round))
             }
             RouteSilhouette(coords: coords)
-                .stroke(ink ? AnyShapeStyle(Theme.route)
+                .stroke(ink ? AnyShapeStyle(Theme.proLavender)
                             : AnyShapeStyle(LinearGradient(colors: Theme.iridescent,
                                                            startPoint: .topLeading, endPoint: .bottomTrailing)),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))

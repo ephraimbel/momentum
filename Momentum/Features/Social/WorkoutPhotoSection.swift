@@ -50,7 +50,6 @@ struct WorkoutPhotoSection: View {
                                 .foregroundStyle(Theme.inkTertiary)
                         }
                     }
-                    .tint(Theme.ink)
                     .onChange(of: workout.coverIsPhoto) {
                         markEdited()
                         try? context.save()

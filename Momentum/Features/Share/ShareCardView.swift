@@ -258,7 +258,6 @@ struct ShareCardView: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .accessibilityHidden(true)
                 Slider(value: $overlayScale, in: 0.7...1.3)
-                    .tint(Theme.ink)
                     .accessibilityLabel("Overlay size")
                     .accessibilityValue("\(Int(overlayScale * 100)) percent")
                 mediaMenu {
@@ -362,8 +361,8 @@ struct ShareCardView: View {
             }
             .foregroundStyle(style == s ? Theme.background : Theme.ink)
             .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(Capsule().fill(style == s ? Theme.ink : (locked ? Theme.route.opacity(0.16) : Theme.surface))
-                .overlay(Capsule().stroke(style == s ? Theme.ink : (locked ? Theme.route.opacity(0.45) : Theme.hairline))))
+            .background(Capsule().fill(style == s ? Theme.ink : (locked ? Theme.proLavender.opacity(0.16) : Theme.surface))
+                .overlay(Capsule().stroke(style == s ? Theme.ink : (locked ? Theme.proLavender.opacity(0.45) : Theme.hairline))))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(style == s ? .isSelected : [])
@@ -377,9 +376,9 @@ struct ShareCardView: View {
             Button { paywall.present(for: .allShareTemplates) } label: {
                 HStack(spacing: 7) {
                     Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.4)
-                        .foregroundStyle(Color(hex: "0E0E12"))
+                        .foregroundStyle(Theme.inkOnFixedLight)
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.route))
+                        .background(Capsule().fill(Theme.proLavender))
                     Text("Unlock every style").font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .foregroundStyle(Theme.background)
                 }

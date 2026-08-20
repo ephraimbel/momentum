@@ -79,7 +79,7 @@ struct PaywallFeatureList: View {
             ForEach(Array(Self.features.enumerated()), id: \.offset) { _, item in
                 HStack(spacing: Theme.Space.md) {
                     Image(systemName: item.0)
-                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.route)
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.proLavender)
                         .frame(width: 26)
                     rowText(item.1, size: 15)
                 }
@@ -100,7 +100,7 @@ struct PaywallFeatureList: View {
                     rowText(item.1, size: 14)
                     Spacer(minLength: Theme.Space.xs)
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.route)
+                        .font(.system(size: 11, weight: .black)).foregroundStyle(Theme.proLavender)
                 }
                 .padding(.vertical, (Theme.Space.sm + 1) * scale)
                 .accessibilityElement(children: .combine)
@@ -368,7 +368,7 @@ struct PlanPairPicker: View {
             .background {
                 let shape = RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 shape.fill(Theme.surface)
-                shape.strokeBorder(isSelected ? Theme.ink : Theme.hairline,
+                shape.strokeBorder(isSelected ? Theme.purple : Theme.hairline,
                                    lineWidth: isSelected ? 1.5 : 1)
             }
             // The trial badge overhangs the yearly card's top edge, Cal AI-style — data-driven,
@@ -376,9 +376,9 @@ struct PlanPairPicker: View {
             .overlay(alignment: .top) {
                 if p.isAnnual, p.trialDays > 0, pricingIsLive {
                     Text("\(p.trialDays) DAYS FREE")
-                        .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Color(hex: "0E0E12"))
+                        .font(.rounded(9, weight: .black)).tracking(1.2).foregroundStyle(Theme.inkOnFixedLight)
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.route))
+                        .background(Capsule().fill(Theme.proLavender))
                         .offset(y: -9)
                 }
             }

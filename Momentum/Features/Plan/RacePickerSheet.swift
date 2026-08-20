@@ -197,7 +197,7 @@ struct RacePickerSheet: View {
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(isSelected ? Theme.ink : Theme.hairline, lineWidth: isSelected ? 1.5 : 1)
+                    .stroke(isSelected ? Theme.purple : Theme.hairline, lineWidth: isSelected ? 1.5 : 1)
             }
         }
         .buttonStyle(.plain)
@@ -221,10 +221,10 @@ struct RacePickerSheet: View {
         } label: {
             Text(d.label)
                 .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                .foregroundStyle(on ? Theme.background : Theme.ink)
+                .foregroundStyle(on ? .white : Theme.ink)
                 .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
                 .background {
-                    Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.background))
+                    Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.background))
                     if !on { Capsule().stroke(Theme.hairline) }
                 }
         }

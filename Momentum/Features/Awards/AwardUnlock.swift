@@ -78,7 +78,7 @@ struct AwardUnlockView: View {
                         HStack(spacing: 6) {
                             ForEach(awards.indices, id: \.self) { i in
                                 Circle()
-                                    .fill(i == index ? Theme.ink : Theme.hairline)
+                                    .fill(i == index ? Theme.purple : Theme.hairline)
                                     .frame(width: 6, height: 6)
                             }
                         }

@@ -49,9 +49,9 @@ struct AIReadCard: View {
                 }
                 Spacer(minLength: 0)
                 Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.4)
-                    .foregroundStyle(Color(hex: "0E0E12"))
+                    .foregroundStyle(Theme.inkOnFixedLight)
                     .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(Capsule().fill(Theme.route))
+                    .background(Capsule().fill(Theme.proLavender))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md)

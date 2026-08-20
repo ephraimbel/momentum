@@ -10,16 +10,35 @@ enum Theme {
     static let surface = Color("surface")
     static let background = Color("background")
     static let hairline = Color("hairline")
-    static let route = Color("route")          // brightest live element
+    /// THE map trace — one color on every map, light or dark (owner call 2026-08-19): the brand
+    /// purple, so the line you're drawing is unmistakably "happening now". Asset-backed but the
+    /// same #7C63F0 in both appearances; snapshots, tiles, live maps and the puck all draw it.
+    static let route = Color("route")
+    /// The light Pro/marketing lavender the route color USED to be (#C9BCF9 / #D6CCFB) — PRO
+    /// badges, locked chips, the rating pill, paywall glyphs. Kept separate so the Pro-gating
+    /// look survives the trace going brand-purple; pairs with `inkOnFixedLight` text.
+    static let proLavender = Color("proLavender")
     static let success = Color(hex: "34C759")  // "done" affordance (logged set ✓) — the one green accent
-    static let purple = Color(hex: "7C63F0")   // brand violet — the Pro/marketing accent (paywall, PRO badge)
+    /// The brand lavender (rebrand "Lavender Glass", 2026-08-16) — promoted from Pro-only to THE
+    /// interactive accent: the global tint (links, toggles, pickers, selected tab icon), the
+    /// segmented selection pill, and still the Pro/marketing surface. Scarcity is the discipline:
+    /// if you can tap it or it's happening now, it may be lavender — decoration never is.
+    /// Asset-backed: #7C63F0 light, brightening to #9D8BF5 on the dark charcoal (the board's
+    /// continuity rule — labels on lavender fills stay white in both modes).
+    static let purple = Color("purple")
+    /// Lavender's quiet fill (asset-backed: #F1EDFE light / #332E4A dark) — selected fills and
+    /// brand chips (plan phase chips). Small fields only, never large washes.
+    static let purpleTint = Color("purpleTint")
+    /// Lavender at text strength (asset-backed: #5A43C7 light / #B4A6F8 dark) — labels sitting
+    /// on `purpleTint`, where the brand hex itself falls short of small-text contrast.
+    static let purpleDeep = Color("purpleDeep")
     static let like = Color(hex: "FF375F")     // warm rose — the social "like" heart (the one warm accent a feed earns)
     /// Ink for text drawn over a canvas that is deliberately LIGHT in **both** appearances — today
     /// that means route snapshots, which render on a clean light canvas whatever the athlete's
     /// appearance setting (decision 2026-07-24). `Theme.ink` there would flip to near-white in dark
     /// mode and disappear. Same value as light-mode `ink`; not a general-purpose token — reach for
     /// it only on fixed-appearance surfaces.
-    static let inkOnFixedLight = Color(hex: "0E0E12")
+    static let inkOnFixedLight = Color(hex: "16151A")
 
     // MARK: Spacing (base 4pt)
     enum Space {
@@ -30,7 +49,9 @@ enum Theme {
 
     // MARK: Radius
     enum Radius {
-        static let chip = 8.0, card = 14.0, sheet = 28.0
+        // The radius law (rebrand "Lavender Glass", 2026-08-16): pills are capsules, sheets 22,
+        // cards 14, small chips 8 — nothing in between.
+        static let chip = 8.0, card = 14.0, sheet = 22.0
     }
 
     // MARK: Type sizes (pt; hero/live numerals must use .monospacedDigit())
@@ -39,13 +60,15 @@ enum Theme {
         static let body = 17.0, caption = 13.0, label = 11.0
     }
 
-    // MARK: Iridescent stops (low-sat holographic) — used at ~0.3–0.6 opacity, soft/blurred
+    // MARK: Iridescent stops — the lavender-led AURORA (rebrand "Lavender Glass", 2026-08-16;
+    // retuned from the old holographic set: mint/peach out, the family now orbits the brand
+    // lavender). Same law as ever: earned-only, used at ~0.3–0.6 opacity, soft/blurred.
     static let iridescent: [Color] = [
-        Color(hex: "B8C0FF"), // periwinkle
-        Color(hex: "C8FFE0"), // mint
-        Color(hex: "FFD8C2"), // peach
-        Color(hex: "E6C2FF"), // lilac
-        Color(hex: "C2F0FF"), // ice
+        Color(hex: "C9BCF9"), // lavender — the lead
+        Color(hex: "B8D4F7"), // sky
+        Color(hex: "F3CDE4"), // rose
+        Color(hex: "CBBDF8"), // violet — the live-route accent ([3])
+        Color(hex: "EBD9F4"), // orchid ice
     ]
 
     // MARK: Iridescent opacity — the earned accent is soft; these name the levels that were
@@ -124,15 +147,17 @@ extension Theme {
         /// warm, never neon. Inks are unchanged between modes.
         static let darkWashOpacity = 0.16
 
-        // MARK: Readiness band ramp (hero ring, week dots, Trends strip) — deliberately
-        // BRIGHTER than `recoveryInk` (user call 2026-07-16: Bevel-class, "almost glowing";
-        // rings glow via a soft same-color shadow). Ring/dot MARKS only — numerals and band
-        // words stay monochrome ink (the bright hues fail text contrast on white) — and red
-        // never appears (no-shame): the low bands wear amber → orange → coral.
-        static let readinessReady    = Color(hex: "00E676")   // electric spring green
-        static let readinessModerate = Color(hex: "FFC53D")   // bright amber
-        static let readinessStrained = Color(hex: "FF9142")   // bright orange
-        static let readinessDepleted = Color(hex: "FF7A66")   // deep coral — orange family, never alarm red
+        // MARK: Readiness band ramp (hero ring, week dots, Trends strip) — softened to the
+        // Oura-grade semantic trio in the rebrand ("Lavender Glass", 2026-08-16; supersedes the
+        // 2026-07-16 electric "almost glowing" set — rings still glow via the same-color shadow,
+        // the hue itself now speaks calmly). Ring/dot MARKS only — numerals and band words stay
+        // monochrome ink — and red never appears (no-shame): the low bands stay warm, never alarm.
+        // Asset-backed: each band lifts in dark mode per the board (5CBA85 / E0A63C / DB9363 /
+        // E07A6C) so marks stay legible on the charcoal without turning neon.
+        static let readinessReady    = Color("readinessReady")     // ready — settled sage
+        static let readinessModerate = Color("readinessModerate")  // watch — quiet amber
+        static let readinessStrained = Color("readinessStrained")  // ease — warm sienna
+        static let readinessDepleted = Color("readinessDepleted")  // hold — soft coral, never alarm red
 
         /// The bright mark color for a readiness band. Primed maps to the electric green too —
         /// its ring fill stays the earned iridescent mesh (§6); this colors its glow and dots.

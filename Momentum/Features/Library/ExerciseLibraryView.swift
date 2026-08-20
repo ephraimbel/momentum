@@ -144,7 +144,7 @@ private struct ExerciseRowLabel: View {
             Spacer(minLength: 0)
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 22))
-                .foregroundStyle(isSelected ? Theme.ink : Theme.hairline)
+                .foregroundStyle(isSelected ? Theme.purple : Theme.hairline)
                 .symbolEffect(.bounce, value: isSelected)
         }
         .padding(.vertical, 4)
@@ -173,11 +173,11 @@ private struct FilterChipLabel: View {
             }
         }
         .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-        .foregroundStyle(isActive ? Theme.background : Theme.ink)
+        .foregroundStyle(isActive ? .white : Theme.ink)
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 8)
         .background {
-            Capsule().fill(isActive ? Theme.ink : Theme.surface)
+            Capsule().fill(isActive ? Theme.purple : Theme.surface)
             Capsule().stroke(Theme.hairline, lineWidth: 1)
         }
         .clipShape(Capsule())

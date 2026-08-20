@@ -63,7 +63,7 @@ struct ConsistencyHeatmap: View {
     /// A real purple ramp (GitHub uses swatches, not opacity — white-blended tints go washy).
     /// Light lavender → mid violet → the full brand purple.
     static let levelColors: [Color] = [
-        Color(hex: "C9BEF9"), Color(hex: "A18BF5"), Color(hex: "7C63F0"),
+        Color(hex: "C9BEF9"), Color(hex: "A18BF5"), Theme.purple,
     ]
 
     // MARK: Axes

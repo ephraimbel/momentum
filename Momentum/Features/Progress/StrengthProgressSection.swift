@@ -175,11 +175,11 @@ struct StrengthProgressSection: View {
         } label: {
             Text(name)
                 .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                .foregroundStyle(on ? Theme.background : Theme.ink)
+                .foregroundStyle(on ? .white : Theme.ink)
                 .lineLimit(1)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(Capsule().fill(on ? Theme.ink : Theme.surface)
-                    .overlay(Capsule().stroke(on ? Theme.ink : Theme.hairline)))
+                .background(Capsule().fill(on ? Theme.purple : Theme.surface)
+                    .overlay(Capsule().stroke(on ? Theme.purple : Theme.hairline)))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])

@@ -67,7 +67,7 @@ struct SegmentedCapsule<Value: Hashable>: View {
             Text(title(item))
                 .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
                 .lineLimit(1).fixedSize(horizontal: scale == .compact, vertical: false)
-                .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                .foregroundStyle(on ? .white : Theme.inkSecondary)
                 .padding(.horizontal, scale.horizontalPadding)
                 .padding(.vertical, scale.verticalPadding)
                 .frame(maxWidth: scale.fills ? .infinity : nil)
@@ -76,7 +76,10 @@ struct SegmentedCapsule<Value: Hashable>: View {
                     // One pill, carried between segments — the selected cell owns it and the
                     // namespace slides it. Every other cell draws nothing.
                     if on {
-                        Capsule().fill(Theme.ink)
+                        // Lavender marks selected (rebrand 2026-08-16) — ink pills act, the
+                        // brand color says "you are here". White label holds 4.3:1 on #7C63F0
+                        // in both appearances (the hex doesn't re-anodize in dark).
+                        Capsule().fill(Theme.purple)
                             .matchedGeometryEffect(id: "segmented.pill", in: pill)
                     }
                 }

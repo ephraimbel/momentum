@@ -185,9 +185,9 @@ struct AthletePanel: View {
             Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold))
             Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.2)
         }
-        .foregroundStyle(Color(hex: "0E0E12"))     // fixed dark: the route badge is always light
+        .foregroundStyle(Theme.inkOnFixedLight)     // fixed dark: the route badge is always light
         .padding(.horizontal, 11).padding(.vertical, 7)
-        .background(Capsule().fill(Theme.route))
+        .background(Capsule().fill(Theme.proLavender))
         .contentShape(Rectangle())
         .onTapGesture { Haptics.light(); onLockedTap() }
         .accessibilityElement()

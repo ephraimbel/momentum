@@ -29,7 +29,9 @@ struct ProfileGridTabBar: View {
                             Color.clear.frame(height: 2)
                             if tab == t {
                                 Capsule()
-                                    .fill(t == .highlights ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
+                                    // Selected-tab underline in lavender (rebrand 2026-08-16);
+                                    // highlights keeps the earned iridescent exception.
+                                    .fill(t == .highlights ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.purple))
                                     .frame(height: 2)
                                     .matchedGeometryEffect(id: "profileGridUnderline", in: underline)
                             }

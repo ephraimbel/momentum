@@ -84,7 +84,7 @@ struct TimedTrackingView: View {
                 .contentTransition(.numericText())
             HStack(spacing: 7) {
                 Circle()
-                    .fill(vm.isPaused ? Theme.inkTertiary : Theme.route)
+                    .fill(vm.isPaused ? Theme.inkTertiary : Theme.purple)
                     .frame(width: 8, height: 8)
                     .opacity(vm.isPaused ? 1 : (pulse ? 0.4 : 1))
                 Text(vm.isPaused ? "PAUSED" : "RECORDING")

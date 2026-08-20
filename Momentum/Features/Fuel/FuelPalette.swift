@@ -8,28 +8,33 @@ import SwiftUI
 /// journal numbers wear their metric's ink too, binding the rows to the rings above.
 extension Theme {
     enum Fuel {
-        static let carbs = Color(hex: "D5A017")     // honey gold
-        static let protein = Color(hex: "2E8CE8")    // bright azure
-        static let fat = Color(hex: "C96F3B")        // peach
-        static let sodium = Color(hex: "9A5BD6")     // lilac
+        // The fruit palette (rebrand direction "Lavender Glass", 2026-08-16): Fuel is the one
+        // vivid room in the porcelain house — each metric wears a named fruit tone, higher-chroma
+        // than the old honey/azure set but still INK-grade (every hex re-validated for lightness
+        // band, CVD separation, and ≥ 3:1 contrast on BOTH white and the dark charcoal #2A2926).
+        // Sodium moved off lilac deliberately: lavender is the brand color and never enters Fuel.
+        static let carbs = Color(hex: "D07408")     // citrus
+        static let protein = Color(hex: "5B84F5")    // blueberry
+        static let fat = Color(hex: "E0517F")        // raspberry
+        static let sodium = Color(hex: "1E9BA8")     // lagoon
         // Micros get no daily RINGS (user call 2026-07-16: slow-moving markers don't belong on
         // the dashboard) — but since 2026-07-22 they display in the Today card's MICROS grid
         // against sex-aware floors, and are estimated again (briefly cut 2026-07-21 while
         // nothing rendered them). Inks reserved for the day they earn color: the card's cells
-        // deliberately stay monochrome for now.
-        static let iron = Color(hex: "C4586B")       // garnet rose
-        static let calcium = Color(hex: "2FA96C")    // spring mint
+        // deliberately stay monochrome for now. (Potassium's reserved fruit is açaí #BA5FCC.)
+        static let iron = Color(hex: "CF6A22")       // rooibos
+        static let calcium = Color(hex: "7BA02C")    // kiwi
 
         /// The health-score band inks (2026-08-15) — same INK-grade discipline as the metric
-        /// colors above, and deliberately drawn from the same validated family: mint for whole,
-        /// honey for solid, peach for mixed, garnet for processed. Garnet is a rose, not an
-        /// alarm — no red "failed" state, ever (house rule).
+        /// colors above, and deliberately drawn from the same validated family: kiwi for whole,
+        /// citrus for solid, rooibos for mixed, raspberry for processed. Raspberry is a rose,
+        /// not an alarm — no red "failed" state, ever (house rule).
         static func score(_ band: HealthScore.Band) -> Color {
             switch band {
-            case .whole: return Color(hex: "2FA96C")
-            case .solid: return Color(hex: "D5A017")
-            case .mixed: return Color(hex: "C96F3B")
-            case .processed: return Color(hex: "C4586B")
+            case .whole: return Color(hex: "7BA02C")
+            case .solid: return Color(hex: "D07408")
+            case .mixed: return Color(hex: "CF6A22")
+            case .processed: return Color(hex: "E0517F")
             }
         }
     }

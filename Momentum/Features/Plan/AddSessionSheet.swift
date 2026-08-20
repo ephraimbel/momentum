@@ -198,10 +198,10 @@ struct AddSessionSheet: View {
                 Text(day.formatted(.dateTime.day()))
                     .font(.display(20, weight: .heavy)).monospacedDigit()
             }
-            .foregroundStyle(on ? Theme.background : Theme.ink)
+            .foregroundStyle(on ? .white : Theme.ink)
             .frame(width: 54, height: 66)
             .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.purple : Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline)
             }
             .scaleEffect(on ? 1.04 : 1)
@@ -244,10 +244,10 @@ struct AddSessionSheet: View {
                 Text(chipTitle(t)).font(.rounded(Theme.FontSize.body, weight: .semibold))
                     .lineLimit(1).minimumScaleFactor(0.75)
             }
-            .foregroundStyle(on ? Theme.background : Theme.ink)
+            .foregroundStyle(on ? .white : Theme.ink)
             .frame(maxWidth: .infinity).frame(height: 44)
             .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.purple : Theme.surface)
                 if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
             }
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))

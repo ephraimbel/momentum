@@ -240,7 +240,6 @@ struct PlanSettingsSheet: View {
                     Text("I have a race date")
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                 }
-                .tint(Theme.ink)
                 .padding(Theme.Space.md)
                 .background(cardBackground)
 
@@ -248,7 +247,6 @@ struct PlanSettingsSheet: View {
                     DatePicker("Race day", selection: $raceDate,
                                in: Date()..., displayedComponents: .date)
                         .datePickerStyle(.graphical)
-                        .tint(Theme.ink)
                         .padding(Theme.Space.sm)
                         .background(cardBackground)
                 }
@@ -257,7 +255,6 @@ struct PlanSettingsSheet: View {
                     Text("Target finish time")
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                 }
-                .tint(Theme.ink)
                 .padding(Theme.Space.md)
                 .background(cardBackground)
 

@@ -891,13 +891,13 @@ struct TodayView: View {
             // under the brand-purple line, exactly the app's route styling — for the website header.
             if marketingHero, heroRouteCoordinates.count > 1 {
                 // Explicit RGB, not UIColor(Theme.route): Mapbox's StyleColor doesn't resolve a
-                // dynamic asset colour and renders it near-black on the dark basemap. Bright
-                // periwinkle (route dark-variant #D0D6FF) over a crisp white casing pops on any style.
+                // dynamic asset colour and renders it near-black on the dark basemap. The brand
+                // trace purple #7C63F0 over a crisp white casing pops on any style.
                 PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
                     .lineColor(StyleColor(UIColor.white))
                     .lineWidth(13).lineJoin(.round)
                 PolylineAnnotation(lineCoordinates: heroRouteCoordinates)
-                    .lineColor(StyleColor(UIColor(red: 0.816, green: 0.839, blue: 1.0, alpha: 1)))
+                    .lineColor(StyleColor(UIColor(red: 0.486, green: 0.388, blue: 0.941, alpha: 1)))
                     .lineWidth(7).lineJoin(.round)
             }
         }
@@ -1545,7 +1545,10 @@ struct TodayView: View {
            let area = InjuryArea(rawValue: areaRaw) {
             Button { Haptics.light(); confirmResume = true } label: {
                 HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "bandage.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.purple)
+                    // Injury wears calm monochrome, not the brand lavender (rebrand 2026-08-16):
+                    // lavender now means interactive/brand, and an injury banner is neither a
+                    // celebration nor a highlight — ink keeps it quiet, no-shame style.
+                    Image(systemName: "bandage.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Training around your \(area.label.lowercased())")
                             .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
@@ -1557,8 +1560,8 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
                 .background {
-                    Capsule().fill(Theme.purple.opacity(0.08))
-                    Capsule().stroke(Theme.purple.opacity(0.25))
+                    Capsule().fill(Theme.surface)
+                    Capsule().stroke(Theme.hairline)
                 }
                 .contentShape(Capsule())
             }
@@ -1625,7 +1628,7 @@ struct TodayView: View {
                     if let fuel = planFuelLine(session) {
                         HStack(spacing: 4) {
                             Image(systemName: "bolt.fill")
-                                .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.purple)
+                                .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.Fuel.carbs)
                             Text(fuel).font(.rounded(Theme.FontSize.label, weight: .semibold))
                                 .foregroundStyle(Theme.inkSecondary).lineLimit(1)
                         }

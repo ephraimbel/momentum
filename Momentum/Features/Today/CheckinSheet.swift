@@ -55,15 +55,16 @@ struct CheckinSheet: View {
                         onPain()
                     } label: {
                         HStack(spacing: Theme.Space.sm) {
-                            Image(systemName: "bandage.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.purple)
+                            // Calm monochrome, not brand lavender — see TodayView.injuryBanner.
+                            Image(systemName: "bandage.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                             Text("Something hurts").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             Spacer(minLength: 0)
                             Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                         }
                         .padding(Theme.Space.md)
                         .background {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.purple.opacity(0.08))
-                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.purple.opacity(0.25))
+                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
                         }
                         .contentShape(Rectangle())
                     }
@@ -130,11 +131,11 @@ struct CheckinSheet: View {
                 Text(title).font(.rounded(Theme.FontSize.caption, weight: .semibold))
                     .lineLimit(1).minimumScaleFactor(0.75)
             }
-            .foregroundStyle(on ? Theme.background : Theme.ink)
+            .foregroundStyle(on ? .white : Theme.ink)
             .frame(maxWidth: .infinity).frame(height: icon == nil ? 44 : 58)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                    .fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.surface))
                 if !on { RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous).stroke(Theme.hairline) }
             }
             .contentShape(Rectangle())

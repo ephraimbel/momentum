@@ -366,7 +366,8 @@ struct CommunityScopeTabs: View {
                 ZStack {
                     Color.clear.frame(width: 26, height: 2)
                     if on {
-                        Capsule().fill(Theme.ink)
+                        // Lavender marks selected (rebrand 2026-08-16).
+                        Capsule().fill(Theme.purple)
                             .frame(width: 26, height: 2)
                             .matchedGeometryEffect(id: "communityScopeUnderline", in: underline)
                     }

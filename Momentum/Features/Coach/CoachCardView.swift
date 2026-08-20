@@ -344,7 +344,6 @@ struct CoachCardView: View {
             DatePicker("Race day", selection: $raceDay, in: raceDayRange, displayedComponents: .date)
                 .datePickerStyle(.compact)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                .tint(Theme.ink)
             Button {
                 Haptics.light()
                 var filled = payload

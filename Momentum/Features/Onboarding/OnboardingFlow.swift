@@ -1046,10 +1046,9 @@ struct OnboardingFlow: View {
             Toggle(isOn: $vm.hasRace) {
                 Text("I have a race date").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
             }
-            .tint(Theme.ink)
             if vm.hasRace {
                 DatePicker("Race day", selection: $vm.raceDate, in: Date()..., displayedComponents: .date)
-                    .datePickerStyle(.compact).tint(Theme.ink)
+                    .datePickerStyle(.compact)
             } else {
                 Text("No date is fine. We'll build a rolling block you can race off anytime.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -1588,7 +1587,7 @@ struct OnboardingFlow: View {
                     // reverted 2026-07-26).
                     Image(systemName: "star.fill")
                         .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(Theme.route)
+                        .foregroundStyle(Theme.proLavender)
                         .opacity(rateStarsIn ? 1 : 0)
                         .scaleEffect(rateStarsIn ? 1 : 0.7)
                         .animation(reduceMotion ? nil

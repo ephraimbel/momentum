@@ -74,10 +74,10 @@ struct InjuryReportSheet: View {
                 } label: {
                     Text(a.label)
                         .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                        .foregroundStyle(on ? Theme.background : Theme.ink)
+                        .foregroundStyle(on ? .white : Theme.ink)
                         .frame(maxWidth: .infinity).frame(height: 46)
                         .background {
-                            Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                            Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.surface))
                             if !on { Capsule().stroke(Theme.hairline) }
                         }
                         .contentShape(Capsule())
@@ -108,8 +108,9 @@ struct InjuryReportSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             // The straight talk — general management + when to see a professional. Not a diagnosis.
             HStack(alignment: .top, spacing: Theme.Space.sm) {
-                Image(systemName: "stethoscope").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.purple)
-                    .frame(width: 32, height: 32).background(Circle().fill(Theme.purple.opacity(0.1)))
+                // Calm monochrome, not brand lavender — see TodayView.injuryBanner.
+                Image(systemName: "stethoscope").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 32, height: 32).background(Circle().fill(Theme.surface))
                 Text(o.guidance).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

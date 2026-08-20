@@ -275,7 +275,7 @@ struct PlanRevealView: View {
                 sectionLabel("YOUR TRAINING BLOCK")
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     // Elegant progression bars — a gray build with the peak week in the running-trace
-                    // purple (Theme.route), its value called out on a pill that pops in once bars settle.
+                    // purple (Theme.proLavender), its value called out on a pill that pops in once bars settle.
                     HStack(alignment: .bottom, spacing: barGap(count)) {
                         ForEach(Array(data.values.enumerated()), id: \.offset) { i, v in
                             VStack(spacing: 5) {
@@ -296,7 +296,7 @@ struct PlanRevealView: View {
                                 UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 0,
                                                        bottomTrailingRadius: 0, topTrailingRadius: 6, style: .continuous)
                                     .fill(i == peakIdx
-                                          ? AnyShapeStyle(LinearGradient(colors: [Theme.route, Theme.route.opacity(0.78)],
+                                          ? AnyShapeStyle(LinearGradient(colors: [Theme.proLavender, Theme.proLavender.opacity(0.78)],
                                                                          startPoint: .top, endPoint: .bottom))
                                           : AnyShapeStyle(LinearGradient(colors: [Theme.ink.opacity(0.18), Theme.ink.opacity(0.05)],
                                                                          startPoint: .top, endPoint: .bottom)))

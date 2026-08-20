@@ -106,9 +106,9 @@ struct LifeHappensSheet: View {
             HStack(spacing: Theme.Space.md) {
                 Image(systemName: s.icon)
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(on ? Theme.background : Theme.ink)
+                    .foregroundStyle(on ? .white : Theme.ink)
                     .frame(width: 34, height: 34)
-                    .background(Circle().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface)))
+                    .background(Circle().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.surface)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(s.title).font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .foregroundStyle(Theme.ink)
@@ -126,7 +126,7 @@ struct LifeHappensSheet: View {
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(on ? Theme.ink : Theme.hairline, lineWidth: on ? 1.5 : 1)
+                    .stroke(on ? Theme.purple : Theme.hairline, lineWidth: on ? 1.5 : 1)
             }
             .contentShape(Rectangle())
         }
@@ -142,11 +142,11 @@ struct LifeHappensSheet: View {
                 Button { Haptics.selection(); travelDays = d } label: {
                     Text("\(d) days")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(on ? Theme.background : Theme.ink)
+                        .foregroundStyle(on ? .white : Theme.ink)
                         .frame(maxWidth: .infinity).frame(height: 40)
                         .background {
                             RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                                .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                                .fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.surface))
                             if !on { RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous).stroke(Theme.hairline) }
                         }
                         .contentShape(Rectangle())

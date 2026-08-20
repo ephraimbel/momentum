@@ -118,9 +118,9 @@ struct PaywallView: View {
             Image("WordmarkWhite")
                 .resizable().interpolation(.high).scaledToFit().frame(height: 21 * s)
                 .padding(.top, 2)
-            Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(Color(hex: "0E0E12"))
+            Text("PRO").font(.rounded(11, weight: .black)).tracking(2.2).foregroundStyle(Theme.inkOnFixedLight)
                 .padding(.horizontal, 10).padding(.vertical, 3.5)
-                .background(Capsule().fill(Theme.route))
+                .background(Capsule().fill(Theme.proLavender))
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)

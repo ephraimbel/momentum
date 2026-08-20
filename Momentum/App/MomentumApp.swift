@@ -174,7 +174,9 @@ struct MomentumApp: App {
             .environment(comments)
             .environment(moderation)
             .environment(remoteFeed)
-            .tint(Theme.ink)
+            // The brand lavender as the app-wide tint (rebrand 2026-08-16, was Theme.ink) —
+            // links, toggles, pickers, and the selected tab icon all say "alive" in one voice.
+            .tint(Theme.purple)
             // Ceiling on Dynamic Type. `Font.custom(_:size:)` scales relative to `.body`, so every
             // string in the app grows with the athlete's text-size setting — unbounded, until this.
             // At the largest accessibility sizes the dense surfaces stopped being readable rather
