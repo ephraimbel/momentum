@@ -637,10 +637,10 @@ struct SettingsView: View {
                     Text("We couldn't open your training data")
                         .font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .foregroundStyle(Theme.ink)
-                    // No support clause: there is no contact route in the app and no import path,
-                    // so promising "send it to support to get it back" would name a destination
-                    // that does not exist. Say only what is true — the file is still here, and it
-                    // can leave the phone. Widen this the day a contact row and an importer ship.
+                    // No support clause: a contact row now exists (below), but there is still no
+                    // import path — promising "send it to support to get it back" would promise a
+                    // repair that can't be done. Say only what is true — the file is still here,
+                    // and it can leave the phone. Widen this the day an importer ships.
                     Text("On \(quarantine.at.formatted(date: .abbreviated, time: .shortened)) this app started with an empty library. Your previous data was set aside rather than deleted, and you can save a copy of it here.")
                         .font(.rounded(Theme.FontSize.caption, weight: .medium))
                         .foregroundStyle(Theme.inkSecondary)
@@ -721,6 +721,13 @@ struct SettingsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            inset
+            // The one human door (owner ask 2026-08-20): opens Mail to the business address —
+            // support@momentumco.app forwards to the owner's inbox (ImprovMX catch-all on the
+            // domain), so a question here actually reaches a person.
+            actionRow("Contact support", icon: "envelope") {
+                open("mailto:support@momentumco.app?subject=momentum%20support")
+            }
         }
     }
 
