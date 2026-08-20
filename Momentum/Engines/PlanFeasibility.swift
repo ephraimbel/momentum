@@ -55,10 +55,10 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
     /// An honest one-liner about the tradeoff (nil when there's nothing to warn about).
     var riskNote: String? {
         switch self {
-        case .gentle:     "Lower injury risk — best if you're new, coming back, or injury-prone."
+        case .gentle:     "Lower injury risk. Best if you're new, coming back, or injury-prone."
         case .balanced:   nil
-        case .aggressive: "Higher injury and burnout risk — we'll watch your recovery closely and pull back sooner."
-        case .podium:     "Five-plus days, two hard sessions a week, jogs where rest days sat. For athletes chasing the front of the race — we watch recovery closely and pull back the moment your body says so."
+        case .aggressive: "Higher injury and burnout risk. We'll watch your recovery closely and pull back sooner."
+        case .podium:     "Five-plus days, two hard sessions a week, jogs where rest days sat. For athletes chasing the front of the race. We watch recovery closely and pull back the moment your body says so."
         }
     }
 
@@ -130,7 +130,7 @@ struct PlanFeasibility: Sendable {
             return PlanFeasibility(verdict: .noRace, weeksAvailable: weeksAvailable, weeksNeeded: 0,
                                    recommended: (experience == .new || injuryProne) ? .gentle : .balanced,
                                    headline: "A plan that grows with you",
-                                   detail: "No race on the calendar — we'll build your fitness safely, week over week, and you can point it at a race anytime.",
+                                   detail: "No race on the calendar. We'll build your fitness safely, week over week, and you can point it at a race anytime.",
                                    options: [], realisticFinishS: nil)
         }
 
@@ -302,7 +302,7 @@ struct PlanFeasibility: Sendable {
         // Frequency-driven tooShort gets its own copy: the calendar may be fine — the WEEK is the
         // problem, and "move your race later" would be advice for the wrong constraint.
         if let f = frequencyShortfall, f.minDays - f.days >= 2 {
-            var opts = ["Train \(f.minDays) days a week — \(f.minDays + 1) is even better for a \(label)"]
+            var opts = ["Train \(f.minDays) days a week. \(f.minDays + 1) is even better for a \(label)"]
             if distanceM >= RaceDistance.half.meters {
                 let shorter = distanceM >= RaceDistance.marathon.meters ? "half marathon" : "10K"
                 opts.append("Point this week at a \(shorter) instead and build up from there")
@@ -318,11 +318,20 @@ struct PlanFeasibility: Sendable {
         var (headline, detail, options): (String, String, [String])
         switch verdict {
         case .onTrack:
-            (headline, detail, options) = ("You've got room",
-                    "\(weeksAvailable) weeks is comfortable for a safe \(label) build. We'll progress you steadily and arrive fresh.",
-                    [])
+            // The no-date sentinel (OnboardingViewModel passes 999 when a race distance is chosen
+            // but no date is on the calendar): a literal "999 weeks is comfortable" shipped once.
+            // No date means no clock, so say that instead of the number.
+            if weeksAvailable >= 900 {
+                (headline, detail, options) = ("You've got room",
+                        "No race date yet, so there's no clock on this. We'll build you toward your \(label) steadily, and you'll be ready when you pick one.",
+                        [])
+            } else {
+                (headline, detail, options) = ("You've got room",
+                        "\(weeksAvailable) weeks is comfortable for a safe \(label) build. We'll progress you steadily and arrive fresh.",
+                        [])
+            }
         case .tight:
-            (headline, detail, options) = ("It'll be tight — but doable",
+            (headline, detail, options) = ("It'll be tight, but doable",
                     "\(weeksAvailable) weeks to your \(label). We'd ideally want about \(weeksNeeded). It's within reach if you stay consistent; an aggressive plan bridges the gap, and we'll watch your recovery closely.",
                     [])
         case .tooShort:
@@ -333,7 +342,7 @@ struct PlanFeasibility: Sendable {
                 opts.append("Run a \(shorter) now and build to the \(label) later")
             }
             (headline, detail, options) = ("That's a very short runway",
-                    "A safe \(label) build from where you are is about \(weeksNeeded) weeks, and you have \(weeksAvailable). We won't pretend otherwise — cramming that gap sharply raises injury risk. We'll still coach every day between now and the start line — fresh legs, race-pace touches, a plan that gets you there ready to run the day well — but honestly, here are your best moves:",
+                    "A safe \(label) build from where you are is about \(weeksNeeded) weeks, and you have \(weeksAvailable). We won't pretend otherwise: cramming that gap sharply raises injury risk. We'll still coach every day between now and the start line, with fresh legs, race-pace touches, and a plan that gets you there ready to run the day well. But honestly, here are your best moves:",
                     opts)
         case .noRace:
             (headline, detail, options) = ("A plan that grows with you", "", [])
@@ -344,9 +353,11 @@ struct PlanFeasibility: Sendable {
         if let f = frequencyShortfall {
             let tight = verdict == .tight && calendarVerdict == .onTrack
             if tight {
-                detail = "\(weeksAvailable) weeks is comfortable — but \(f.days) days a week is the light side for a \(label). Most of the gap closes with one more day."
+                detail = weeksAvailable >= 900
+                    ? "No race date yet, so there's no clock. But \(f.days) days a week is the light side for a \(label). Most of the gap closes with one more day."
+                    : "\(weeksAvailable) weeks is comfortable, but \(f.days) days a week is the light side for a \(label). Most of the gap closes with one more day."
             }
-            options.insert("Train \(f.minDays) days a week — a \(label) build really wants \(f.minDays)–\(f.minDays + 1)", at: 0)
+            options.insert("Train \(f.minDays) days a week. A \(label) build really wants \(f.minDays)–\(f.minDays + 1)", at: 0)
         }
         return (headline, detail, options)
     }

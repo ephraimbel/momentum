@@ -20,6 +20,14 @@ final class AuthController {
     private static let nameKey = "com.momentum.auth.name"
     private static let emailKey = "com.momentum.auth.email"
     private static let cloudSessionKey = "com.momentum.auth.hadCloudSession"
+    /// The athlete CHOSE to sign out (Settings, account deletion, a revoked credential). Only then
+    /// does the welcome gate hold a returning athlete — any other signed-out-with-local-training
+    /// state (a demo-seeded install, a lost identity write) walks straight back in as the local
+    /// athlete instead of hitting the welcome on every launch (owner call 2026-08-20).
+    private static let explicitSignOutKey = "com.momentum.auth.explicitSignOut"
+    static var wasExplicitlySignedOut: Bool {
+        UserDefaults.standard.bool(forKey: explicitSignOutKey)
+    }
     /// The last REAL account (Apple/Google/email) whose local data lives on this device. Survives a
     /// plain sign-out (unlike `userIDKey`) so a DIFFERENT account signing in on a shared/hand-me-down
     /// device is detected and the prior owner's SwiftData wiped — see `noteRealSignIn`.
@@ -57,6 +65,7 @@ final class AuthController {
     /// fire `onAccountSwitch` (wipe + re-onboard). First-ever sign-in (`prior == nil`) and a guest
     /// upgrade (guests never write `lastRealUserIDKey`) both carry local data over, as intended.
     private func noteRealSignIn(_ incoming: String) {
+        UserDefaults.standard.removeObject(forKey: Self.explicitSignOutKey)   // they're back
         let prior = UserDefaults.standard.string(forKey: Self.lastRealUserIDKey)
         UserDefaults.standard.set(incoming, forKey: Self.lastRealUserIDKey)
         guard let prior, prior != incoming else { return }
@@ -96,6 +105,7 @@ final class AuthController {
             UserDefaults.standard.removeObject(forKey: Self.emailKey)
             UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
             UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
+            UserDefaults.standard.removeObject(forKey: Self.explicitSignOutKey)
             if let client = SupabaseClientProvider.client { Task { try? await client.auth.signOut() } }
             return
         }
@@ -201,6 +211,7 @@ final class AuthController {
         userID = Self.guestID
         displayName = nil
         email = nil
+        UserDefaults.standard.removeObject(forKey: Self.explicitSignOutKey)   // entering counts as coming back
         UserDefaults.standard.set(Self.guestID, forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
@@ -230,6 +241,8 @@ final class AuthController {
         userID = nil
         displayName = nil
         email = nil
+        // A deliberate exit: the welcome gate should hold until they choose to come back in.
+        UserDefaults.standard.set(true, forKey: Self.explicitSignOutKey)
         UserDefaults.standard.removeObject(forKey: Self.userIDKey)
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
@@ -487,7 +500,11 @@ final class AuthController {
         }
         guard !userID.hasPrefix("google:"), !userID.hasPrefix("email:") else { return }   // Keychain sessions
         ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { [weak self] state, _ in
-            guard state == .revoked || state == .notFound else { return }
+            // `.revoked` ONLY (2026-08-20): `.notFound` is what a flaky lookup returns too, and a
+            // false bounce here signed a real athlete out on launch — the welcome page every time
+            // they opened the app. A genuinely revoked credential still reports `.revoked`, and a
+            // stale local session risks nothing: cloud calls fail closed on their own JWT.
+            guard state == .revoked else { return }
             Task { @MainActor in self?.signOut() }
         }
     }

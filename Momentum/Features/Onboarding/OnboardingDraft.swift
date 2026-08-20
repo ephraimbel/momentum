@@ -37,11 +37,14 @@ struct OnboardingDraft: Codable {
     var muscleFocus: [String] = []
     var preferredDays: [Int] = []
     var hybridPriority: String?
+    var strengthSplit: String?
     var intensity: String?
     var goalHours = 0
     var goalMinutes = 0
     var sex: String?
     var heightCm: Double?
+    var weightUnitChoice: String?
+    var heightMetricChoice: Bool?
     var birthYear: Int?
     var bodyMassKg: Double?
     var weeklyRunVolumeM: Double?
@@ -94,11 +97,14 @@ extension OnboardingViewModel {
             muscleFocus: muscleFocus.map(\.rawValue),
             preferredDays: Array(preferredDays),
             hybridPriority: hybridPriority.rawValue,
+            strengthSplit: strengthSplit.rawValue,
             intensity: intensity.rawValue,
             goalHours: goalHours,
             goalMinutes: goalMinutes,
             sex: sex?.rawValue,
             heightCm: heightCm,
+            weightUnitChoice: weightUnitChoice,
+            heightMetricChoice: heightMetricChoice,
             birthYear: birthYear,
             bodyMassKg: bodyMassKg,
             weeklyRunVolumeM: weeklyRunVolumeM,
@@ -143,11 +149,14 @@ extension OnboardingViewModel {
         muscleFocus = Set(d.muscleFocus.compactMap(MuscleGroup.init(rawValue:)))
         preferredDays = Set(d.preferredDays)
         hybridPriority = d.hybridPriority.flatMap(HybridPriority.init(rawValue:)) ?? hybridPriority
+        strengthSplit = d.strengthSplit.flatMap(StrengthSplitStyle.init(rawValue:)) ?? strengthSplit
         intensity = d.intensity.flatMap(PlanIntensity.init(rawValue:)) ?? intensity
         goalHours = d.goalHours
         goalMinutes = d.goalMinutes
         sex = d.sex.flatMap(BiologicalSex.init(rawValue:))
         heightCm = d.heightCm
+        weightUnitChoice = d.weightUnitChoice
+        heightMetricChoice = d.heightMetricChoice
         birthYear = d.birthYear
         bodyMassKg = d.bodyMassKg
         weeklyRunVolumeM = d.weeklyRunVolumeM
@@ -169,14 +178,25 @@ extension OnboardingViewModel {
             step = Step.allCases.first ?? step
             return false
         }
+        // Answers restored up to here were the athlete's own — per-step prefills (the intensity
+        // recommendation) must not overwrite them on re-entry. See `restoredAtOrPast`.
+        restoredStep = placedStep
         return true
     }
+
+    /// One decode per process: `OnboardingFlow` holds its VM in `@State`, whose initial-value
+    /// expression re-runs on every re-init of the view (each RootView body pass while the cover is
+    /// up) and is immediately discarded. The draft only matters on the FIRST construction after a
+    /// process start — later passes skip the UserDefaults read + JSON decode entirely.
+    @MainActor private static var resumeAttempted = false
 
     /// A fresh view model, or one restored from a saved draft when a previous onboarding was
     /// interrupted before the profile was created. Deep-link launches (`--onboarding-*`) drive the
     /// step themselves and never resume; the base flow and a plain launch do.
     static func resuming() -> OnboardingViewModel {
         let vm = OnboardingViewModel()
+        guard !Self.resumeAttempted else { return vm }
+        Self.resumeAttempted = true
         #if DEBUG
         // Verification hook: seed a mid-flow draft so the launch resumes onto it (RootView shows
         // onboarding on its own — signed in via AuthController's --resume-demo, no profile yet).

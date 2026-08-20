@@ -23,6 +23,11 @@ struct OnboardingFlow: View {
     @Environment(\.requestReview) private var requestReview
     @State private var rateStarsIn = false
     @State private var rateAsked = false     // one-shot: the auto-presented review ask fired
+    /// The athlete left the rating beat (Continue → paywall/account). `finishOnboarding` presents
+    /// the paywall as a COVER without changing the step, so the delayed `requestReview` can't key
+    /// off `vm.step` alone — without this latch a fast Continue put Apple's rating alert on top of
+    /// the just-presented paywall (and burned the once-ever ask on a moment nobody saw).
+    @State private var rateUsLeft = false
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     /// The curated look picked on the identity beat (ring in the strip); cleared by a photo pick.
     @State private var onboardingPreset: AvatarPreset?
@@ -52,6 +57,7 @@ struct OnboardingFlow: View {
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
     @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
+    @State private var completedOnce = false         // the completion hand-off ran — never twice
 
     var body: some View {
         ZStack {
@@ -202,7 +208,14 @@ struct OnboardingFlow: View {
         // is never silently lost. Since 2026-08-05 the wall is the two-page flow (the device tour,
         // then the same PaywallView the rest of the app shows).
         .fullScreenCover(isPresented: $showPaywall, onDismiss: {
-            if !paywallHandledExit { goToAccountBeat() }
+            if !paywallHandledExit {
+                // Same jump-cut `exitPaywall` uses: this fallback (the store-unreachable escape
+                // dismisses without a callback) advances under the dismissing cover, and an
+                // animated advance there ghosts the rating step through the account beat.
+                jumpCut = true
+                goToAccountBeat()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { jumpCut = false }
+            }
             paywallHandledExit = false
         }) {
             OnboardingPaywallFlow(onEntitled: { exitPaywall() }, onClose: { exitPaywall() })
@@ -544,8 +557,11 @@ struct OnboardingFlow: View {
         .onAppear(perform: seedVolumeDefaultsIfNeeded)
     }
 
-    // Volume is entered in the athlete's locale unit (mi in the US/UK, km elsewhere) but stored in meters.
-    private var useMetricDistance: Bool { Locale.current.measurementSystem != .us }
+    // Volume is entered in the athlete's locale unit (mi in the US/UK, km elsewhere) but stored in
+    // meters. Route through DistanceUnit so this agrees with the rest of the app: a plain
+    // measurementSystem check put UK athletes (`.uk`, not `.us`) in km while every other surface
+    // showed them miles.
+    private var useMetricDistance: Bool { DistanceUnit.auto.resolved() == .metric }
     private var metersPerUnit: Double { useMetricDistance ? 1000 : 1609.344 }
     private var distanceUnitLabel: String { useMetricDistance ? "km" : "mi" }
     private func volumeDisplay(_ meters: Double?) -> Double { (meters ?? 0) / metersPerUnit }
@@ -825,7 +841,14 @@ struct OnboardingFlow: View {
                     .transition(.opacity)
             }
         }
-        .onAppear { if !touchedSteps.contains(.intensity) { vm.intensity = f.recommended } }
+        // Prefill the honest recommendation on FIRST arrival only. `touchedSteps` covers this
+        // session; `restoredAtOrPast` covers a resumed draft — without it, re-entering the step
+        // after an eviction overwrote the athlete's restored pick (Podium, say) with the default.
+        .onAppear {
+            if !touchedSteps.contains(.intensity), !vm.restoredAtOrPast(.intensity) {
+                vm.intensity = f.recommended
+            }
+        }
     }
 
     /// The truth about the goal vs. the calendar — the icon carries the verdict; monochrome otherwise.
@@ -961,8 +984,10 @@ struct OnboardingFlow: View {
         }
         guard !candidates.isEmpty else { return }
         let range = vm.benchmark.range
-        let seconds = candidates.first(where: { range.contains($0) })
-            ?? min(range.upperBound, max(range.lowerBound, candidates[0]))
+        // No reading lands anywhere near plausible ("0:00", stray garbage): reject the entry
+        // outright, like an empty parse. Clamping used to turn nonsense into the range FLOOR —
+        // a near-world-record time silently seeding every pace in the plan.
+        guard let seconds = candidates.first(where: { range.contains($0) }) else { return }
         vm.calibrationMode = .time
         vm.recentRunSeconds = seconds
     }
@@ -1367,7 +1392,12 @@ struct OnboardingFlow: View {
                       { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(9, vm.goalHours + 1) }).reveal(cascade(0))
             metricRow("Minutes", String(format: "%02d", vm.goalMinutes),
                       typed: { if let m = Int($0.filter(\.isNumber)) { vm.goalMinutes = min(59, max(0, m)) } },
-                      { vm.goalMinutes = (vm.goalMinutes + 55) % 60 }, { vm.goalMinutes = (vm.goalMinutes + 5) % 60 }).reveal(cascade(1))
+                      // Carry through the hour instead of wrapping in place: at 3:55, "+" means
+                      // 4:00, not a jump back to 3:00 (and "−" at 4:00 means 3:55).
+                      { if vm.goalMinutes >= 5 { vm.goalMinutes -= 5 }
+                        else if vm.goalHours > 0 { vm.goalHours -= 1; vm.goalMinutes = 55 } },
+                      { if vm.goalMinutes <= 50 { vm.goalMinutes += 5 }
+                        else if vm.goalHours < 9 { vm.goalHours += 1; vm.goalMinutes = 0 } }).reveal(cascade(1))
             if let t = vm.goalFinishTimeS, let m = vm.raceDistance?.meters, m > 0 {
                 Text("That's about \(Formatters.pace(secPerKm: t / (m / 1000), unit: .auto)), a strong target.")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
@@ -1656,7 +1686,7 @@ struct OnboardingFlow: View {
             guard !rateAsked else { return }
             rateAsked = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                guard vm.step == .rateUs else { return }   // they moved on before it fired
+                guard vm.step == .rateUs, !rateUsLeft else { return }   // they moved on before it fired
                 requestReview()
                 // Latch the once-ever guard so the post-first-save pre-prompt doesn't ask the
                 // same athlete again a few days later.
@@ -1696,6 +1726,7 @@ struct OnboardingFlow: View {
     /// Where onboarding actually ends: the paywall gate (or straight through for entitled athletes),
     /// then the account beat. Was inline in `primersStep` before `.rateUs` was inserted between them.
     private func finishOnboarding() {
+        rateUsLeft = true   // the delayed rating alert must not rise over what comes next
         if paywall.isPro { goToAccountBeat(); return }
         // Arm the relaunch gate BEFORE presenting — not to wall anyone in (the gate is soft now),
         // but so a force-quit mid-wall re-offers it once from RootView instead of dropping the
@@ -1720,6 +1751,11 @@ struct OnboardingFlow: View {
     /// data, which used to loop the athlete into a plan-less "Save your progress" forever
     /// (audit 2026-08-11).
     private func complete() {
+        // One exit only: "Not now" on the account beat is the single unlatched advance in the
+        // flow, and a fast double-tap ran the completion hand-off twice. Idempotent today, but
+        // nothing downstream should have to stay that way by accident.
+        guard !completedOnce else { return }
+        completedOnce = true
         OnboardingDraftStore.clear()
         onComplete()
     }

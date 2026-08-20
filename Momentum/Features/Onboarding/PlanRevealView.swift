@@ -198,32 +198,20 @@ struct PlanRevealView: View {
     private var reflectionChips: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             sectionLabel("BUILT AROUND YOU")
-            ScrollView(.horizontal) {
-                HStack(spacing: Theme.Space.sm) {
-                    ForEach(vm.reflections(), id: \.self) { chip in
-                        Text(chip)
-                            .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                            .monospacedDigit()
-                            .foregroundStyle(Theme.ink)
-                            .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
-                            .background(Capsule().fill(Theme.surface))
-                            .overlay(Capsule().stroke(Theme.hairline))
-                    }
+            // Wrapping, not a horizontal scroller (owner rule 2026-08-20: chip rows wrap via
+            // FlowLayout) — every chip reads in full instead of the overflow dissolving behind
+            // a trailing fade.
+            FlowLayout(spacing: Theme.Space.sm) {
+                ForEach(vm.reflections(), id: \.self) { chip in
+                    Text(chip)
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.ink)
+                        .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
+                        .background(Capsule().fill(Theme.surface))
+                        .overlay(Capsule().stroke(Theme.hairline))
                 }
-                // Parks the last chip clear of the trailing fade below when scrolled to the end.
-                .padding(.trailing, Theme.Space.lg)
             }
-            .scrollIndicators(.hidden)
-            // Soft trailing fade at the clip edge: when the row overflows, the cut chip dissolves
-            // instead of slicing mid-capsule (the same scrim idea the paywall CTA uses). The
-            // leading edge stays crisp so the row reads left-aligned with the label above.
-            .mask(
-                LinearGradient(stops: [
-                    .init(color: .black, location: 0),
-                    .init(color: .black, location: 0.92),
-                    .init(color: .clear, location: 1.0),
-                ], startPoint: .leading, endPoint: .trailing)
-            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -247,7 +235,10 @@ struct PlanRevealView: View {
         if vm.running {
             var m = [Double](repeating: 0, count: weekCount)
             for group in weeks where group.week <= weekCount {
-                for s in group.sessions where s.discipline == .running {
+                // Training volume only: the race itself isn't a build week, and counting its
+                // 42.2 km put the chart's "peak" on race week — contradicting the Podium card's
+                // PEAK WEEK (which already excludes it) and burying the real build→taper shape.
+                for s in group.sessions where s.discipline == .running && s.runType != .race {
                     m[group.week - 1] += s.targetDistanceM ?? 0
                 }
             }
@@ -300,7 +291,11 @@ struct PlanRevealView: View {
                                                                          startPoint: .top, endPoint: .bottom))
                                           : AnyShapeStyle(LinearGradient(colors: [Theme.ink.opacity(0.18), Theme.ink.opacity(0.05)],
                                                                          startPoint: .top, endPoint: .bottom)))
-                                    .frame(height: max(5, CGFloat(v / maxV) * 116) * (barsIn ? 1 : 0.02))
+                                    // Grow-up entrance is a TRANSFORM (scale from the base), never
+                                    // an animated frame height — a layout pass per frame across 16
+                                    // bars is exactly the jank the transforms-only rule exists for.
+                                    .frame(height: max(5, CGFloat(v / maxV) * 116))
+                                    .scaleEffect(x: 1, y: barsIn ? 1 : 0.02, anchor: .bottom)
                             }
                             .frame(maxWidth: .infinity)
                         }

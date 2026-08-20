@@ -53,6 +53,17 @@ final class OnboardingViewModel {
 
     // Hybrid emphasis (run + lift athletes) — biases the run/lift day split.
     var hybridPriority: HybridPriority = .balanced
+    /// The step a saved draft resumed onto, nil for a fresh flow. Lets per-step prefills (the
+    /// intensity recommendation) tell "first arrival" from "re-entering a step the athlete already
+    /// answered before the interruption" — `touchedSteps` is view @State and doesn't survive.
+    var restoredStep: Step?
+    /// True when a draft resumed at or past `s` — the athlete already saw and answered it.
+    func restoredAtOrPast(_ s: Step) -> Bool {
+        guard let restoredStep,
+              let restored = Step.allCases.firstIndex(of: restoredStep),
+              let target = Step.allCases.firstIndex(of: s) else { return false }
+        return restored >= target
+    }
     // How the lifting week composes — coach's pick, full body, upper/lower, or push/pull/legs.
     var strengthSplit: StrengthSplitStyle = .coach
     // How hard to push toward the goal (Take your time / Balanced / Aggressive). Pre-set to the honest
@@ -318,9 +329,13 @@ final class OnboardingViewModel {
         if goal == .raceDistance, let r = raceDistance { chips.append(r.label) } else { chips.append(goalLabel) }
         if let g = goalTimeLabel { chips.append("Goal \(g)") }
         if hybrid, hybridPriority != .balanced { chips.append(hybridPriority == .running ? "Run-focused" : "Lift-focused") }
-        if !muscleFocus.isEmpty { chips.append("Focus: \(muscleFocus.count) area\(muscleFocus.count == 1 ? "" : "s")") }
-        if disciplines.contains(.strength) { chips.append(equipmentLabel) }
-        chips.append("\(sessionMinutes) min")
+        if goal == .buildMuscle, !muscleFocus.isEmpty { chips.append("Focus: \(muscleFocus.count) area\(muscleFocus.count == 1 ? "" : "s")") }
+        if disciplines.contains(.strength) {
+            chips.append(equipmentLabel)
+            // Session length only shapes strength days; pure runners were never asked, so the
+            // default "45 min" read as an answer they didn't give.
+            chips.append("\(sessionMinutes) min")
+        }
         return chips
     }
 
@@ -405,7 +420,10 @@ final class OnboardingViewModel {
         // (Run a race → Lose fat) used to leave `raceDate` set — the sibling fields below all guard
         // on `goal == .raceDistance`, so the engine periodized the whole block toward a phantom race
         // and the reveal promised "race-ready by <date>" for a goal that isn't racing.
-        let racing = goal == .raceDistance
+        // …and on `running` too: the goal step precedes disciplines, so "Run a race" with running
+        // deselected afterwards is reachable — the race steps are gated on BOTH (see `computeSteps`),
+        // and the writes must match or a lift-only athlete ships phantom race periodization.
+        let racing = goal == .raceDistance && running
         profile.raceDate = (racing && hasRace) ? Calendar.current.startOfDay(for: raceDate) : nil
         profile.raceDistanceM = racing ? raceDistance?.meters : nil
         // Only carried when the runVolume step applies (running, non-beginner); otherwise nil → the
@@ -418,8 +436,10 @@ final class OnboardingViewModel {
         if lifting { profile.strengthSplit = strengthSplit.rawValue }
         if running { profile.planIntensity = intensity.rawValue }
         profile.injuryHistory = injuryAreas.map(\.rawValue).sorted()
-        if goal == .raceDistance { profile.goalFinishTimeS = goalFinishTimeS }
-        profile.muscleFocus = muscleFocus.map(\.rawValue)
+        if racing { profile.goalFinishTimeS = goalFinishTimeS }
+        // Same stale-answer guard as the race fields: the muscle-focus step only shows for
+        // build-muscle lifters, so picks made under an abandoned goal must not leak into the plan.
+        profile.muscleFocus = (goal == .buildMuscle && lifting) ? muscleFocus.map(\.rawValue) : []
         profile.preferredDays = Array(preferredDays).sorted()
         profile.crossTraining = extraActivities.map { $0.workoutType.rawValue }
         // Display units: the athlete's explicit choice from the metrics page wins; otherwise the
@@ -442,7 +462,7 @@ final class OnboardingViewModel {
         // Build the plan (shared day budget + cross-training) — same path as the edit-settings rebuild.
         PlanService.rebuild(for: profile, calibration: calibration, in: context)
         // A catalog race picked during onboarding names the season after its occasion.
-        if goal == .raceDistance, let raceName = plannedRaceName, profile.plan?.name.isEmpty != false {
+        if racing, let raceName = plannedRaceName, profile.plan?.name.isEmpty != false {
             profile.plan?.name = raceName
         }
         // Seed the Athlete Model so the AI isn't starting from a blank slate (ATHLETE-MODEL.md §5).

@@ -161,6 +161,16 @@ struct SignInView: View {
         // A quiet settle-in so the brand lands on the photo instead of snapping in. Honors Reduce
         // Motion (no transform, no fade).
         .onAppear {
+            // A remembered athlete never waits at the gate (owner call 2026-08-20, "Strava just
+            // opens"): training already on this device + no deliberate sign-out means the gate is
+            // a formality — walk them straight back in as the local athlete. The welcome still
+            // holds for true first-runs (no profile) and for anyone who chose to sign out
+            // (Settings, account deletion, a revoked Apple credential).
+            if hasLocalProfile, !AuthController.wasExplicitlySignedOut,
+               !ProcessInfo.processInfo.arguments.contains("--reset-auth") {   // auth UI tests need the gate
+                auth.continueAsGuest(celebrate: false)
+                return
+            }
             guard !reduceMotion else { welcomeAppeared = true; return }
             withAnimation(.easeOut(duration: 0.65).delay(0.12)) { welcomeAppeared = true }
         }

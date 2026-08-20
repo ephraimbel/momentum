@@ -84,6 +84,8 @@ struct BuildingPlanView: View {
                 .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
         }
-        .animation(.easeOut(duration: 0.35), value: completed)
+        // Reduce Motion lands all rows in one shot (the parent writes `completed` 0→n at once) —
+        // suppress the per-row scale-pop there so it reads as the sanctioned instant settle.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: completed)
     }
 }
