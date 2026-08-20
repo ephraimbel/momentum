@@ -27,7 +27,8 @@ struct FuelTipsTests {
             headline: "", refuelDue: refuelDue,
             micros: .init(potassiumMg: 0, magnesiumMg: 0, ironMg: 0, calciumMg: 0,
                           potassiumFloorMg: 3000, magnesiumFloorMg: 370, ironFloorMg: 13,
-                          calciumFloorMg: 1000))
+                          calciumFloorMg: 1000),
+            fluidsMl: 0, fluidsFloorMl: FuelReadiness.fluidsBaselineMl)
     }
 
     private func date(hour: Int, minute: Int = 0) -> Date {

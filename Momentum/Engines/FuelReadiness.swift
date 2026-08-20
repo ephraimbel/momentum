@@ -28,6 +28,9 @@ enum FuelReadiness {
         var magnesiumMg: Int? = nil
         var ironMg: Double? = nil
         var calciumMg: Int? = nil
+        /// Drink volume (2026-08-15 — hydration joins the readout; it was captured on every meal
+        /// and displayed nowhere). nil-preserving like every field: nil = not estimated.
+        var fluidsMl: Int? = nil
         /// false while an estimate is pending — pending meals are excluded from totals but counted,
         /// so the readout can say "2 meals still estimating" instead of quietly under-reporting.
         var hasNumbers: Bool { carbsG != nil || kcal != nil }
@@ -126,6 +129,11 @@ enum FuelReadiness {
         let refuelDue: Bool
         /// Potassium · magnesium · iron · calcium — the quiet second row.
         let micros: Micros
+        /// Hydration (2026-08-15): drink volume logged so far, and the day's floor — baseline
+        /// plus training sweat (ACSM fluid-replacement anchor, same doctrine as sodium). A floor,
+        /// never a ceiling, like everything here.
+        let fluidsMl: Int
+        let fluidsFloorMl: Int
 
         /// The leading macro's eaten amount / floor / word — the status bar and headline read
         /// these so they don't each re-branch on `primary`.
@@ -143,6 +151,11 @@ enum FuelReadiness {
     static let fatPerKgFloor = 1.0
     static let sodiumBaselineMg = 1500
     static let sodiumPerLongHourMg = 700
+    /// Hydration floor: an everyday drinking baseline plus a conservative sweat replacement per
+    /// training hour (ACSM band ~0.4–0.8 L/h; the floor takes the low end — honest middles,
+    /// every number ≈). Unlike sodium, fluid loss starts at hour zero.
+    static let fluidsBaselineMl = 2000
+    static let fluidsPerTrainingHourMl = 500
     static let fallbackMassKg = 70.0
     // Goal math (Mifflin-St Jeor BMR × a daily-life base; the day's REAL training burn adds on top,
     // so no survey "activity level" ever double-counts a workout).
@@ -299,6 +312,11 @@ enum FuelReadiness {
         let sodiumFloor = goal.kind == .custom
             ? (goal.customSodiumMg ?? sodiumBaselineMg + Int(sweatMg.rounded()))
             : sodiumBaselineMg + Int(sweatMg.rounded())
+        // Hydration: everyday baseline + sweat replacement for the day's real training (done +
+        // planned, the same hours the sodium add-on reads — but from hour ZERO: a 45-minute run
+        // still sweats). No goal override; drinking is never part of a deficit.
+        let fluids = numbered.compactMap(\.fluidsMl).reduce(0, +)
+        let fluidsFloor = fluidsBaselineMl + Int((Double(fluidsPerTrainingHourMl) * longHours).rounded())
 
         // The leading macro follows the goal: carbs fund the plan's sessions; every muscle-oriented
         // goal (leaner/build/custom) optimizes protein first. Status + headline judge THIS macro.
@@ -340,7 +358,8 @@ enum FuelReadiness {
                                value: primaryValue, floor: primaryFloor,
                                driving: drivingLabel, refuelDue: refuelDue),
             refuelDue: refuelDue,
-            micros: micros)
+            micros: micros,
+            fluidsMl: fluids, fluidsFloorMl: fluidsFloor)
     }
 
     /// Plain words, no shame: what's true about the leading macro and the one next step.

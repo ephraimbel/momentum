@@ -18,7 +18,8 @@ enum FuelReadoutBuilder {
             FuelReadiness.MealInput(eatenAt: $0.eatenAt, kcal: $0.kcal, carbsG: $0.carbsG,
                                     proteinG: $0.proteinG, fatG: $0.fatG, sodiumMg: $0.sodiumMg,
                                     potassiumMg: $0.potassiumMg, magnesiumMg: $0.magnesiumMg,
-                                    ironMg: $0.ironMg, calciumMg: $0.calciumMg)
+                                    ironMg: $0.ironMg, calciumMg: $0.calciumMg,
+                                    fluidsMl: $0.fluidsMl)
         }
         // Open running sessions today/tomorrow — the carb target's driver.
         let sessions: [FuelReadiness.SessionInput] = (plan?.sessions ?? [])

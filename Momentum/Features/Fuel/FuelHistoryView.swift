@@ -9,8 +9,18 @@ import SwiftData
 /// same portion editor (fixing history is legitimate; totals update live). The iridescent dot
 /// beside a date marks a day that met the easy carb floor — earned, as always.
 struct FuelHistoryView: View {
-    @Query(sort: \Meal.eatenAt, order: .reverse) private var meals: [Meal]
+    /// Newest-first, bounded past the year window it renders (5 meals/day × 365 ≈ 1,800): the
+    /// unbounded query re-materialized and re-sorted the WHOLE Meal table on every store change
+    /// (perf audit 2026-08-16 — the one unbounded meal query left; FuelView/FuelHealthView are
+    /// both bounded).
+    private static var recentMeals: FetchDescriptor<Meal> {
+        var d = FetchDescriptor<Meal>(sortBy: [SortDescriptor(\Meal.eatenAt, order: .reverse)])
+        d.fetchLimit = 2200
+        return d
+    }
+    @Query(FuelHistoryView.recentMeals) private var meals: [Meal]
     @Query private var profiles: [UserProfile]
+    @Environment(\.modelContext) private var context
     @State private var editing: Meal?
     @State private var query = ""
     /// Search haystacks decoded ONCE per data change: `journalTitle` runs a JSONDecoder over the
@@ -18,6 +28,14 @@ struct FuelHistoryView: View {
     /// the field for long-tenured athletes (audit 2026-08-11). Rebuilt on appear, on a meal
     /// count change, and when the editor closes (edits can rename items).
     @State private var searchIndex: [(meal: Meal, haystack: String)] = []
+    /// Row-display memo, filled by the same rebuild pass that decodes for search: `journalTitle`
+    /// and `healthVerdict` each run a JSONDecoder over the meal's items, and the rows were paying
+    /// both PER ROW PER RENDER — every search keystroke re-decoded the visible window twice
+    /// (perf audit 2026-08-16; this is FuelView's cachedTitles/cachedScores pattern, verbatim).
+    @State private var cachedTitles: [UUID: String] = [:]
+    @State private var cachedVerdicts: [UUID: HealthScore.Verdict] = [:]
+    /// Snapshotted in the rebuild pass so body doesn't re-filter the year window to answer it.
+    @State private var truncatedFlag = false
 
     /// The browsing window — a full training year. The footer says so when there's more beyond it.
     private static let windowDays = 365
@@ -41,7 +59,7 @@ struct FuelHistoryView: View {
                             monthHeader(entry)
                         }
                     }
-                    if truncated, query.isEmpty {
+                    if truncatedFlag, query.isEmpty {
                         Text("Showing the last year.")
                             .font(.rounded(Theme.FontSize.label, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary)
@@ -66,9 +84,17 @@ struct FuelHistoryView: View {
     }
 
     private func rebuildSearchIndex() {
-        searchIndex = window.map {
-            (meal: $0, haystack: "\($0.text)\n\($0.journalTitle)\n\($0.note ?? "")")
+        var titles: [UUID: String] = [:]
+        var verdicts: [UUID: HealthScore.Verdict] = [:]
+        searchIndex = window.map { meal in
+            let title = meal.journalTitle   // ONE decode per meal per rebuild — rows read the memo
+            titles[meal.id] = title
+            if let v = meal.healthVerdict { verdicts[meal.id] = v }
+            return (meal: meal, haystack: "\(meal.text)\n\(title)\n\(meal.note ?? "")")
         }
+        cachedTitles = titles
+        cachedVerdicts = verdicts
+        truncatedFlag = meals.count > searchIndex.count
     }
 
     // MARK: Window → search → months → days (all lazy-rendered; grouping is plain string/date work)
@@ -79,7 +105,6 @@ struct FuelHistoryView: View {
         return meals.filter { $0.eatenAt >= cutoff }
     }
 
-    private var truncated: Bool { meals.count > window.count }
 
     /// Case-insensitive across the athlete's words, the AI's item names, and the note — "pasta"
     /// finds "big pasta dinner" and "Cooked Pasta ×2" alike. Searches the precomputed
@@ -171,8 +196,9 @@ struct FuelHistoryView: View {
     }
 
     private func row(_ meal: Meal) -> some View {
-        // Decoded once per row body (the chip and VoiceOver both read it).
-        let verdict = meal.healthVerdict
+        // Memoized in `rebuildSearchIndex` — falls back to a live decode only for a row that
+        // renders before the first rebuild lands (then the memo takes over).
+        let verdict = cachedVerdicts[meal.id] ?? meal.healthVerdict
         return Button {
             // Mirror FuelView's row rule: a meal mid-estimate is not editable — a partial
             // manual save landing over the estimate wiped its just-landed numbers with blanks,
@@ -182,12 +208,11 @@ struct FuelHistoryView: View {
         } label: {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: Theme.Space.sm) {
-                    Text(meal.journalTitle)
+                    Text(cachedTitles[meal.id] ?? meal.journalTitle)
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                         .lineLimit(2).multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
-                    // Same verdict chip as the main journal — one decode per visible row per
-                    // render, the `journalTitle` precedent (rows are lazily rendered).
+                    // Same verdict chip as the main journal, reading the rebuild-pass memo.
                     if let verdict {
                         HealthScoreChip(verdict: verdict)
                     }
@@ -215,6 +240,34 @@ struct FuelHistoryView: View {
         .accessibilityLabel("Meal: \(meal.text)")
         // The label overrides children for VoiceOver — speak the chip as the row's value.
         .accessibilityValue(verdict.map { "health score \($0.score), \($0.band.word)" } ?? "")
+        .contextMenu {
+            // Re-log any remembered meal straight from the journal (2026-08-15) — the usuals
+            // chips' exact semantics (numbers copied, clock is now, the old session note stays
+            // behind), through the same shared definition, so this and a chip tap produce
+            // byte-identical rows. No estimator, no waiting. Numberless meals decline: there is
+            // nothing to copy, and re-logging a pending meal would just mint a second stranger.
+            if meal.carbsG != nil || meal.kcal != nil {
+                Button {
+                    let copy = Meal()
+                    copy.text = meal.text
+                    FuelLocalResolver.copyNumbers(from: meal, to: copy)
+                    withAnimation(Motion.standard) {
+                        context.insert(copy)
+                        try? context.save()
+                    }
+                    Haptics.success()
+                } label: { Label("Log again today", systemImage: "arrow.uturn.up") }
+            }
+            // Parity with the main journal's row menu — the sheet's Delete, one press closer.
+            Button(role: .destructive) {
+                guard !EstimateGate.isEstimating(meal.id) else { return }
+                withAnimation(Motion.standard) {
+                    context.delete(meal)
+                    try? context.save()
+                }
+                Haptics.medium()
+            } label: { Label("Delete meal", systemImage: "trash") }
+        }
     }
 
     private var emptyState: some View {

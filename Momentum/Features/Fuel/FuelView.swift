@@ -70,6 +70,7 @@ struct FuelView: View {
     @State private var barcodeDemoShown = false   // DEBUG --barcode-demo latch (see onAppear)
     @State private var healthDemoShown = false    // DEBUG --fuel-health latch (same pattern)
     @State private var mealDetailShown = false    // DEBUG --meal-detail latch (same pattern)
+    @State private var readoutDemoShown = false   // DEBUG --fuel-readout latch (same pattern)
     /// The "Hey Siri, log a meal in Momentum" tip row — shown until the athlete dismisses it.
     @AppStorage("com.momentum.fuel.siriTip") private var siriTipVisible = true
     @FocusState private var composing: Bool
@@ -99,6 +100,8 @@ struct FuelView: View {
     @State private var cachedScores: [UUID: HealthScore.Verdict] = [:]
     /// The whole day's verdict — the toolbar gauge and the health page's headline number.
     @State private var cachedDayVerdict: HealthScore.Verdict?
+    /// The trailing week's fueling consistency (FuelWeek) — drawn in the Today's-fueling sheet.
+    @State private var cachedWeek: FuelWeek.Summary?
     /// The signature the caches were built from. nil = never built (first frame).
     @State private var cacheToken: Int?
     /// Within-pass memo for the frames the @State cache CANNOT cover: the very first paint (which
@@ -136,6 +139,7 @@ struct FuelView: View {
                     kcalHeadline.reveal(0)
                     readoutStrip.reveal(0.05)
                     ringsRow.reveal(0.10)
+                    fluidsLine.reveal(0.13)
                     composer.reveal(0.16)
                     usualsRow.reveal(0.20)
                     // Discoverability for hands-free logging ("Hey Siri, log a meal in Momentum").
@@ -291,6 +295,11 @@ struct FuelView: View {
                 if ProcessInfo.processInfo.arguments.contains("--meal-detail"), !mealDetailShown {
                     mealDetailShown = true
                     editing = meals.first { Calendar.current.isDateInToday($0.eatenAt) }
+                }
+                // `--fuel-readout` self-opens the Today's-fueling sheet (same latch pattern).
+                if ProcessInfo.processInfo.arguments.contains("--fuel-readout"), !readoutDemoShown {
+                    readoutDemoShown = true
+                    showingReadout = true
                 }
             }
             #endif
@@ -451,6 +460,16 @@ struct FuelView: View {
         cachedTitles = titles
         cachedScores = scores
         cachedDayVerdict = HealthScore.aggregate(dayFacts)
+        // The week strip's inputs — the query sorts newest-first, so the 7-day window is a
+        // leading prefix (same reasoning as `todaySlice`). A past-day edit made in History
+        // reaches this through the unconditional `.onAppear` refresh, like plan edits do.
+        let weekCutoff = Calendar.current.date(byAdding: .day, value: -6,
+                                               to: Calendar.current.startOfDay(for: Date())) ?? .distantPast
+        cachedWeek = FuelWeek.summary(
+            meals: meals.prefix { $0.eatenAt >= weekCutoff }
+                .filter { !$0.isDeleted }
+                .map { FuelWeek.MealInput(eatenAt: $0.eatenAt, carbsG: $0.carbsG, proteinG: $0.proteinG) },
+            bodyMassKg: profiles.first?.bodyMassKg, now: Date())
         cacheToken = cacheSignature
     }
 
@@ -561,7 +580,7 @@ struct FuelView: View {
                                  : "about \(r.primaryValueG) of \(r.primaryFloorG) grams of \(r.primaryLabel)")
             + (r.primary == .carbs ? (r.drivingSession.map { ", keyed to \($0)" } ?? "") : ""))
         .accessibilityHint("Shows the full fueling detail")
-        .sheet(isPresented: $showingReadout) { FuelReadoutSheet(readout: readout) }
+        .sheet(isPresented: $showingReadout) { FuelReadoutSheet(readout: readout, week: cachedWeek) }
     }
 
     /// The toolbar's day-score gauge: a 22-pt ring drawn to score/100 in the band's ink with the
@@ -989,6 +1008,34 @@ struct FuelView: View {
         .animation(Motion.standard, value: r)
     }
 
+    /// Hydration, as a whisper under the rings (2026-08-15) — fluids were captured on every meal
+    /// and shown nowhere. One quiet line, not a fifth ring: drinking is a floor to fund, never a
+    /// gauge to race. Earns nothing; the rings own the iridescent arrivals.
+    private var fluidsLine: some View {
+        let r = readout
+        return HStack(spacing: 5) {
+            Image(systemName: "drop.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Theme.inkTertiary)
+            Text("≈\(litersText(r.fluidsMl)) of \(litersText(r.fluidsFloorMl))+ fluids")
+                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(Theme.inkTertiary)
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity)
+        .animation(Motion.standard, value: r.fluidsMl)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Fluids")
+        .accessibilityValue("about \(litersText(r.fluidsMl)) of \(litersText(r.fluidsFloorMl)) or more")
+    }
+
+    /// "850 ml" below a liter, "1.2 L" from there — the compact drink grammar.
+    private func litersText(_ ml: Int) -> String {
+        guard ml >= 1000 else { return "\(ml) ml" }
+        let l = Double(ml) / 1000
+        return l == l.rounded() ? "\(Int(l)) L" : String(format: "%.1f L", l)
+    }
+
     // MARK: Your usuals — one-tap repeat (the numbers are already known; nothing waits)
 
     /// Most-repeated meals with numbers ready to reuse, recency-breaking ties — an established
@@ -1257,99 +1304,29 @@ struct FuelView: View {
 /// it). Everything is the same `DayReadout` the strip judged — one engine, two zoom levels.
 private struct FuelReadoutSheet: View {
     let readout: FuelReadiness.DayReadout
+    /// The trailing week's consistency (FuelWeek) — nil renders nothing (a new journal owes
+    /// no verdict; the engine itself also stays silent under 3 logged days).
+    var week: FuelWeek.Summary?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let r = readout
-        // The big bar leads with the goal's primary macro (carbs for plan-fueling, protein for
-        // muscle goals); the other macro drops to the floor-cell grid below.
-        let fraction = min(1, CGFloat(r.primaryValueG) / CGFloat(max(1, r.primaryFloorG)))
-        let primaryTint = r.primary == .carbs ? Theme.Fuel.carbs : Theme.Fuel.protein
-        let primaryCaption = r.primary == .carbs
-            ? "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs"
-            : "of \(r.proteinFloorG)+ g protein"
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                    Text(r.headline)
-                        .font(.display(22, weight: .bold)).foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .reveal(0)
-                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("≈\(r.primaryValueG) g")
-                                .font(.display(34, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                            Text(primaryCaption)
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                        }
-                        Capsule().fill(Theme.surface)
-                            .overlay(alignment: .leading) {
-                                Capsule()
-                                    .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(primaryTint))
-                                    .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
-                                    .opacity(r.primaryValueG > 0 ? 1 : 0)
-                            }
-                            .frame(height: 10)
-                            .clipShape(Capsule())
-                            .accessibilityElement()
-                            .accessibilityLabel(r.primaryLabel.capitalized)
-                            .accessibilityValue("about \(r.primaryValueG) of \(r.primaryFloorG) grams")
+                    hero(r).reveal(0)
+                    targetsCard(r).reveal(0.08)
+                    if r.kcal > 0 {
+                        card("ENERGY SPLIT") { macroSplit(r) }.reveal(0.13)
                     }
-                    .reveal(0.08)
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
-                              alignment: .leading, spacing: Theme.Space.md) {
-                        floorCell("≈\(r.kcal)", r.kcalIsGoal ? "of \(r.kcalFloor) kcal today" : "of \(r.kcalFloor)+ kcal")
-                        // The macro NOT in the big bar above — so all four still appear once.
-                        if r.primary == .carbs {
-                            floorCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein")
-                        } else {
-                            floorCell("≈\(r.carbsG) g", "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs")
-                        }
-                        floorCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat")
-                        floorCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium")
+                    microsCard(r).reveal(0.17)
+                    if let week, week.line != nil {
+                        card("THE LAST 7 DAYS") { weekContent(week) }.reveal(0.20)
                     }
-                    .reveal(0.14)
-                    // The micros (2026-07-22): sex-aware RDA/AI floors, eaten values summed from
-                    // meals that carry them. Daily RINGS were and remain the wrong surface for
-                    // slow-moving markers — but the tap-through card is exactly where the complete
-                    // picture belongs, and this display is what re-justified estimating them.
-                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                        Text("MICROS")
-                            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                            .foregroundStyle(Theme.inkTertiary)
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
-                                  alignment: .leading, spacing: Theme.Space.md) {
-                            floorCell("≈\(r.micros.potassiumMg.formatted())",
-                                      "of \(r.micros.potassiumFloorMg.formatted())+ mg potassium")
-                            floorCell("≈\(r.micros.magnesiumMg)",
-                                      "of \(r.micros.magnesiumFloorMg)+ mg magnesium")
-                            floorCell("≈\(ironText(r.micros.ironMg)) mg",
-                                      "of \(ironText(r.micros.ironFloorMg))+ mg iron")
-                            floorCell("≈\(r.micros.calciumMg.formatted())",
-                                      "of \(r.micros.calciumFloorMg.formatted())+ mg calcium")
-                        }
-                    }
-                    .reveal(0.18)
-                    if let driving = r.drivingSession {
-                        Text("Carb target keyed to \(driving) — glycogen banks overnight, so the eve matters as much as the morning.")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .reveal(0.20)
-                    }
-                    Text("Floors, never ceilings — enough to fund the work. Every number is an estimate.")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                        .reveal(0.24)
-                    // App Review 1.4.1: the published science behind these targets, one tap away
-                    // right where the numbers appear.
-                    NavigationLink { ScienceSourcesView() } label: {
-                        Text("Science & sources")
-                            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                            .underline()
-                    }
-                    .buttonStyle(.plain)
-                    .reveal(0.26)
+                    footer(r).reveal(0.24)
                 }
                 .padding(Theme.Space.lg)
+                .padding(.bottom, Theme.Space.xl)
             }
             .background(Theme.background)
             .navigationTitle("Today's fueling")
@@ -1360,16 +1337,260 @@ private struct FuelReadoutSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
-    private func floorCell(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+    // MARK: Hero — the verdict, its context, and the leading macro's bar
+
+    /// The engine's plain-words headline, the FOR line naming what the target serves (promoted
+    /// from the old footer — context belongs beside the verdict, not three cards below it), and
+    /// the display-size primary numeral over the full band bar.
+    private func hero(_ r: FuelReadiness.DayReadout) -> some View {
+        let fraction = min(1, CGFloat(r.primaryValueG) / CGFloat(max(1, r.primaryFloorG)))
+        let primaryTint = r.primary == .carbs ? Theme.Fuel.carbs : Theme.Fuel.protein
+        let primaryCaption = r.primary == .carbs
+            ? "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs"
+            : "of \(r.proteinFloorG)+ g protein"
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(r.headline)
+                .font(.display(22, weight: .bold)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if let driving = r.drivingSession {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("FOR")
+                        .font(.rounded(10, weight: .bold)).tracking(1.2)
+                        .foregroundStyle(Theme.inkTertiary)
+                    Text(driving)
+                        .font(.rounded(Theme.FontSize.caption, weight: r.raceEve ? .semibold : .medium))
+                        .foregroundStyle(r.raceEve ? Theme.inkSecondary : Theme.inkTertiary)
+                }
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("≈\(r.primaryValueG) g")
+                        .font(.display(34, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
+                    Text(primaryCaption)
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                }
+                Capsule().fill(Theme.surface)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(primaryTint))
+                            .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
+                            .opacity(r.primaryValueG > 0 ? 1 : 0)
+                    }
+                    .frame(height: 10)
+                    .clipShape(Capsule())
+                    .accessibilityElement()
+                    .accessibilityLabel(r.primaryLabel.capitalized)
+                    .accessibilityValue("about \(r.primaryValueG) of \(r.primaryFloorG) grams")
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    // MARK: The cards — one titled surface per idea, the app's card grammar throughout
+
+    /// Section chrome: tracked-caps title inside a hairlined surface card (the detail sheet's
+    /// NUTRITION precedent) — one structure for every idea on the page.
+    private func card<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(title)
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
+                .foregroundStyle(Theme.inkTertiary)
+            content()
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+    }
+
+    /// Every daily floor as a live gauge cell — the number, its floor, and a hairline progress
+    /// capsule in the metric's ink that turns iridescent exactly at the floor (the rings' earned
+    /// rule at grid scale). Replaces the old bare-text cells: the same facts, now readable as
+    /// progress at a glance.
+    private func targetsCard(_ r: FuelReadiness.DayReadout) -> some View {
+        // A real Grid, NOT LazyVGrid: five fixed cells gain nothing from laziness, and a lazy
+        // grid below the medium-detent fold genuinely omits its cells from the accessibility
+        // hierarchy — VoiceOver's rotor (and the UI suite) couldn't see the sheet's own numbers.
+        card("THE DAY'S FLOORS") {
+            Grid(alignment: .topLeading, horizontalSpacing: Theme.Space.md, verticalSpacing: Theme.Space.md) {
+                GridRow {
+                    gaugeCell("≈\(r.kcal)", r.kcalIsGoal ? "of \(r.kcalFloor) kcal today" : "of \(r.kcalFloor)+ kcal",
+                              eaten: r.kcal, floor: r.kcalFloor, tint: Theme.inkSecondary)
+                    // The macro NOT in the hero bar — so all four still appear exactly once.
+                    if r.primary == .carbs {
+                        gaugeCell("≈\(r.proteinG) g", "of \(r.proteinFloorG)+ g protein",
+                                  eaten: r.proteinG, floor: r.proteinFloorG, tint: Theme.Fuel.protein)
+                    } else {
+                        gaugeCell("≈\(r.carbsG) g", "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs",
+                                  eaten: r.carbsG, floor: r.carbsFloorG, tint: Theme.Fuel.carbs)
+                    }
+                }
+                GridRow {
+                    gaugeCell("≈\(r.fatG) g", "of \(r.fatFloorG)+ g fat",
+                              eaten: r.fatG, floor: r.fatFloorG, tint: Theme.Fuel.fat)
+                    gaugeCell("≈\(r.sodiumMg)", "of \(r.sodiumFloorMg)+ mg sodium",
+                              eaten: r.sodiumMg, floor: r.sodiumFloorMg, tint: Theme.Fuel.sodium)
+                }
+                GridRow {
+                    // Hydration (2026-08-15) — baseline + the day's training sweat.
+                    gaugeCell("≈\(litersText(r.fluidsMl))", "of \(litersText(r.fluidsFloorMl))+ fluids",
+                              eaten: r.fluidsMl, floor: r.fluidsFloorMl, tint: Theme.inkSecondary)
+                }
+            }
+        }
+    }
+
+    /// The micros, in the same gauge-cell grammar — bars stay MONOCHROME (the metric inks are
+    /// reserved until the micros earn color; the doctrine note in FuelPalette), and iridescence
+    /// still marks a met floor: earned is earned at any scale.
+    private func microsCard(_ r: FuelReadiness.DayReadout) -> some View {
+        // A real Grid for the same reason as `targetsCard` — every cell must exist for VoiceOver
+        // whatever the detent.
+        card("MICROS") {
+            Grid(alignment: .topLeading, horizontalSpacing: Theme.Space.md, verticalSpacing: Theme.Space.md) {
+                GridRow {
+                    gaugeCell("≈\(r.micros.potassiumMg.formatted())", "of \(r.micros.potassiumFloorMg.formatted())+ mg potassium",
+                              eaten: r.micros.potassiumMg, floor: r.micros.potassiumFloorMg, tint: Theme.inkSecondary)
+                    gaugeCell("≈\(r.micros.magnesiumMg)", "of \(r.micros.magnesiumFloorMg)+ mg magnesium",
+                              eaten: r.micros.magnesiumMg, floor: r.micros.magnesiumFloorMg, tint: Theme.inkSecondary)
+                }
+                GridRow {
+                    gaugeCell("≈\(ironText(r.micros.ironMg)) mg", "of \(ironText(r.micros.ironFloorMg))+ mg iron",
+                              eaten: Int(r.micros.ironMg * 10), floor: Int(r.micros.ironFloorMg * 10), tint: Theme.inkSecondary)
+                    gaugeCell("≈\(r.micros.calciumMg.formatted())", "of \(r.micros.calciumFloorMg.formatted())+ mg calcium",
+                              eaten: r.micros.calciumMg, floor: r.micros.calciumFloorMg, tint: Theme.inkSecondary)
+                }
+            }
+        }
+    }
+
+    /// One floor, one cell: value · floor · a 3.5-pt progress capsule. Iridescent at the floor.
+    private func gaugeCell(_ value: String, _ label: String, eaten: Int, floor: Int, tint: Color) -> some View {
+        let fraction = min(1, CGFloat(eaten) / CGFloat(max(1, floor)))
+        let met = floor > 0 && eaten >= floor
+        return VStack(alignment: .leading, spacing: 3) {
             Text(value).font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
             Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            Capsule().fill(Theme.hairline)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(met ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(tint))
+                        .scaleEffect(x: max(0.004, fraction), y: 1, anchor: .leading)
+                        .opacity(eaten > 0 ? 1 : 0)
+                }
+                .frame(height: 3.5)
+                .clipShape(Capsule())
+                .padding(.trailing, Theme.Space.md)
+                .padding(.top, 1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The texts stay REAL staticTexts (the old floorCell's behavior) — flattening the cell
+        // into an .other container hid "mg potassium" from VoiceOver's rotor and from the UI
+        // suite's staticTexts assertions alike. The bar is decorative; shapes are silent anyway.
+    }
+
+    /// Where today's energy came from — C·P·F in the rings' own inks. Distribution is
+    /// information, not a target: no ideal band, no verdict, just the honest shape of the day.
+    private func macroSplit(_ r: FuelReadiness.DayReadout) -> some View {
+        let carbsK = Double(r.carbsG) * 4, proteinK = Double(r.proteinG) * 4, fatK = Double(r.fatG) * 9
+        let total = max(1, carbsK + proteinK + fatK)
+        let pc = Int((carbsK / total * 100).rounded())
+        let pp = Int((proteinK / total * 100).rounded())
+        let pf = max(0, 100 - pc - pp)   // the three always print to 100
+        return VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    Rectangle().fill(Theme.Fuel.carbs).frame(width: geo.size.width * carbsK / total)
+                    Rectangle().fill(Theme.Fuel.protein).frame(width: geo.size.width * proteinK / total)
+                    Rectangle().fill(Theme.Fuel.fat)
+                }
+            }
+            .frame(height: 6)
+            .clipShape(Capsule())
+            HStack(spacing: 6) {
+                Text("\(pc)% carbs").foregroundStyle(Theme.Fuel.carbs)
+                Text("·").foregroundStyle(Theme.inkTertiary)
+                Text("\(pp)% protein").foregroundStyle(Theme.Fuel.protein)
+                Text("·").foregroundStyle(Theme.inkTertiary)
+                Text("\(pf)% fat").foregroundStyle(Theme.Fuel.fat)
+            }
+            .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Energy split")
+        .accessibilityValue("\(pc) percent carbs, \(pp) percent protein, \(pf) percent fat")
+    }
+
+    /// Seven dots, one honest sentence. Iridescent = the carb floor was met that day (the
+    /// History dot's earned language); filled ink = logged; hairline = a gap in the journal —
+    /// a gap, never a failure.
+    private func weekContent(_ week: FuelWeek.Summary) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(spacing: 0) {
+                ForEach(week.cells, id: \.day) { cell in
+                    VStack(spacing: 4) {
+                        ZStack {
+                            if cell.carbsMet {
+                                Circle().fill(AnyShapeStyle(IridescentMaterial()))
+                            } else if cell.logged {
+                                Circle().fill(Theme.inkTertiary.opacity(0.55))
+                            } else {
+                                Circle().stroke(Theme.hairline, lineWidth: 1.5)
+                            }
+                        }
+                        .frame(width: 11, height: 11)
+                        Text(cell.label)
+                            .font(.rounded(9, weight: cell.isToday ? .bold : .medium))
+                            .foregroundStyle(cell.isToday ? Theme.ink : Theme.inkTertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(cell.isToday ? "Today" : cell.spokenDay)
+                    .accessibilityValue(cell.carbsMet ? "carb floor met"
+                                        : (cell.logged ? "logged" : "not logged"))
+                }
+            }
+            if let line = week.line {
+                Text(line)
+                    .font(.rounded(Theme.FontSize.label, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    // MARK: Footer — the doctrine, and the science door
+
+    private func footer(_ r: FuelReadiness.DayReadout) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if r.drivingSession != nil {
+                Text("Glycogen banks overnight — the eve matters as much as the morning.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Floors, never ceilings — enough to fund the work. Every number is an estimate.")
+                .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            // App Review 1.4.1: the published science behind these targets, one tap away
+            // right where the numbers appear.
+            NavigationLink { ScienceSourcesView() } label: {
+                Text("Science & sources")
+                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .underline()
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// "850 ml" below a liter, "1.2 L" from there — mirrors the dashboard's grammar.
+    private func litersText(_ ml: Int) -> String {
+        guard ml >= 1000 else { return "\(ml) ml" }
+        let l = Double(ml) / 1000
+        return l == l.rounded() ? "\(Int(l)) L" : String(format: "%.1f L", l)
     }
 
     /// Iron carries a decimal only when it earns one — "≈4.2 mg" but "of 18+ mg", never "18.0+".

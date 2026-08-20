@@ -207,6 +207,22 @@ action-gated Pro door as History/Goals. A whole-food score (80+) earns iridescen
 Old meals without the quality fields still score from macros+micros alone, just more roughly.
 Recipes: `--fuel-health` self-pushes the page; `--meal-detail` opens the first today-meal's sheet.
 
+## The complete-tracker pass (2026-08-15, second sweep)
+- **Hydration is first-class**: `FuelReadiness` grew a fluids floor (2,000 ml baseline + 500 ml
+  per training hour from hour ZERO — ACSM anchor, already cited) and the fluids Σ. Displays as a
+  QUIET line under the rings (a whisper, never a fifth ring — drinking is a floor to fund, not a
+  gauge to race) and a floor cell in the Today's-fueling sheet. Goals never touch it.
+- **The energy split**: one banded C·P·F bar (4/4/9, metric inks) + percentages in the readout
+  sheet. Descriptive only — no ideal band, no verdict.
+- **The week** (`FuelWeek`, pure + pinned): seven dots in the readout sheet — iridescent = carb
+  easy-floor met (History's exact earned rule, so the surfaces can never disagree), ink = logged,
+  hairline = a gap (never a failure) — plus one counts-only line ("Carb floor met 5 of the last
+  7 days · protein 6 of 7"), silent until 3 logged days.
+- **Log again today** from any History row's context menu — the usuals chips' shared copy path
+  (`FuelLocalResolver.copyNumbers`), so a re-log is byte-identical however it's asked for.
+  Numberless meals decline. Delete rides the same menu.
+- Recipe: `--fuel-readout` self-opens the Today's-fueling sheet.
+
 ## Later (explicitly deferred)
 Add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness ·
 fueling trends in Progress · refuel push notification · pre-race dinner reminder ·

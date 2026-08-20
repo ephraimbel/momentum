@@ -60,17 +60,17 @@ enum DemoSeed {
         let existingToday = ((try? context.fetch(FetchDescriptor<Meal>())) ?? [])
             .filter { cal.isDateInToday($0.eatenAt) }
         guard existingToday.count < 2 else { return }
-        // (hour, minute, text, kcal, carbs, protein, fat, sodium, fiber, sugar, satFat, note?)
-        let day: [(Double, Double, String, Int, Int, Int, Int, Int, Int, Int, Int, String?)] = [
-            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190, 7, 34, 2,
+        // (hour, minute, text, kcal, carbs, protein, fat, sodium, fiber, sugar, satFat, fluids, note?)
+        let day: [(Double, Double, String, Int, Int, Int, Int, Int, Int, Int, Int, Int, String?)] = [
+            (7, 40, "oatmeal with banana, honey and coffee", 520, 92, 14, 9, 190, 7, 34, 2, 240,
              "Strong carb start — this is the fuel today's session runs on."),
-            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, 5, 22, 3, nil),
-            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150, 12, 6, 8,
+            (10, 15, "greek yogurt with berries and granola", 420, 52, 24, 11, 150, 5, 22, 3, 0, nil),
+            (12, 45, "chicken burrito bowl with rice and beans", 780, 88, 46, 22, 1150, 12, 6, 8, 400,
              "Great mixed plate — carbs restocked, protein covered."),
-            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, 0, 56, 0, nil),
-            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480, 7, 4, 6,
+            (15, 30, "2 gels and a sports drink", 320, 74, 0, 0, 460, 0, 56, 0, 500, nil),
+            (18, 50, "salmon, potatoes and greens with olive oil", 690, 54, 42, 28, 480, 7, 4, 6, 350,
              "Recovery-forward dinner — protein and healthy fats where they count."),
-            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, 3, 24, 10, nil),
+            (20, 30, "dark chocolate and a glass of milk", 320, 30, 12, 18, 160, 3, 24, 10, 250, nil),
         ]
         for m in day where m.0 <= Double(cal.component(.hour, from: Date())) || true {
             let meal = Meal()
@@ -79,7 +79,8 @@ enum DemoSeed {
             meal.kcal = m.3; meal.carbsG = m.4; meal.proteinG = m.5
             meal.fatG = m.6; meal.sodiumMg = m.7
             meal.fiberG = m.8; meal.sugarG = m.9; meal.satFatG = m.10
-            meal.note = m.11
+            meal.fluidsMl = m.11
+            meal.note = m.12
             meal.source = "ai"
             meal.confidence = 0.85
             context.insert(meal)
