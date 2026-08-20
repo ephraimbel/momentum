@@ -85,11 +85,18 @@ struct RootView: View {
     @State private var showStrengthSave = false
     #endif
 
+    /// The splash rides over EVERYTHING for ~1.15s at cold launch (owner ask 2026-08-20) — it
+    /// mirrors the static launch screen exactly, so system frame → splash → app reads as one
+    /// continuous moment. State starts true once per process; unmounted after its fade.
+    @State private var showSplash = true
+
     var body: some View {
         #if DEBUG
         mainBody
+            .overlay { if showSplash { SplashView { showSplash = false } } }
         #else
         mainBody
+            .overlay { if showSplash { SplashView { showSplash = false } } }
         #endif
     }
 

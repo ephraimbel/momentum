@@ -110,8 +110,14 @@ targets:
         # templates, local-only social). Setup: docs/SOCIAL-BACKEND-SETUP.md.
         SupabaseURL: "$(SUPABASE_URL)"
         SupabaseAnonKey: "$(SUPABASE_ANON_KEY)"
-        # OAuth deep-link callback (Google sign-in via ASWebAuthenticationSession) — the scheme
-        # the Supabase web flow redirects back to (momentum://auth-callback).
+        # Native Google sign-in (GoogleNativeAuth, 2026-08-20): the iOS OAuth client in the
+        # owner's "momentum app" Google Cloud project. Public by design (client IDs ship in the
+        # binary); Supabase's Google provider lists it as an accepted audience. Empty → the
+        # Google button fails soft, like every network seam.
+        GoogleIOSClientID: "879632127799-iejgvukbgucemk54svlbd3704b0klv2s.apps.googleusercontent.com"
+        # Auth deep-link callback — the scheme Supabase email links (verify / password reset)
+        # redirect back to (momentum://auth-callback). Google sign-in no longer uses it: its
+        # native flow's redirect is caught inside ASWebAuthenticationSession, no scheme needed.
         CFBundleURLTypes:
           - CFBundleURLName: com.ephraimbel.momentum.app.auth
             CFBundleURLSchemes:
@@ -148,6 +154,8 @@ targets:
           - SKAdNetworkIdentifier: n38lu8286q.skadnetwork
         UILaunchScreen:
           UIColorName: background
+          UIImageName: LaunchMark
+          UIImageRespectsSafeAreaInsets: true
         UIAppFonts:
           - Inter-Regular.ttf
           - Inter-Medium.ttf
