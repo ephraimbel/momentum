@@ -242,12 +242,16 @@ private struct CommunityPostPage: View {
             // top" — the media runs clean to the top edge; the bottom fade stays for the text
             // stack). Eased (SoftScrim), not two-stop: over a dark basemap a linear fade "ends
             // in a line" (owner report 2026-07-29).
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
-                // Taller than the profile pager's: this overlay stacks byline + title + caption +
-                // stats, and a busy basemap's POI labels bled through the byline at 320.
-                SoftScrim.bottom(Theme.background)
-                    .frame(height: bottomInset + 430)
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    // 35% of the page, no more (owner call 2026-08-20 — the old bottomInset+430
+                    // hazed half the screen). The reshaped SoftScrim curve reaches real opacity
+                    // fast after its silent onset, so the byline at the stack's top still sits
+                    // on coverage even though the fade is short.
+                    SoftScrim.bottom(Theme.background)
+                        .frame(height: geo.size.height * 0.35)
+                }
             }
 
             VStack(spacing: 0) {
