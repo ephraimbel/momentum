@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.4.0"      # 2026-08-20: 1.3.0 (build 27) went READY_FOR_SALE — this sweep ships as 1.4.0. Must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version. (1.4.0 record creation needs the owner or an approved ASC write.)
-    CURRENT_PROJECT_VERSION: "30"   # build 30 (v1.4.0) — supersedes 29 (uploaded, never attached): adds the trial retirement (SAVE 50% yearly badge, one-payment timeline; ASC intro offers deleted in all territories) + the support-email Settings row. Everything from 29 rides along.
+    CURRENT_PROJECT_VERSION: "31"   # build 31 (v1.4.0) — supersedes 30 (archived, never uploaded): adds the wordmark splash (final take), dead-code sweep, native Google sign-in (final hop needs a TestFlight test), and the any-length week arc. Everything from 28-30 rides along.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
