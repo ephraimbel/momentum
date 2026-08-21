@@ -43,8 +43,11 @@ final class CardioSaveMapStyleUITests: XCTestCase {
         let proChip = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Pro style'")).firstMatch
         XCTAssertTrue(proChip.exists, "Pro style chips missing.")
         proChip.tap()
-        let trialCTA = app.buttons["Start my 7-day free trial"]
-        XCTAssertTrue(trialCTA.waitForExistence(timeout: 8), "Pro style did not open the paywall.")
+        // Offer-shape-agnostic anchor: the primary CTA reads "Continue · <price>" (trial-less,
+        // 2026-08-20) or "Start my N-day free trial" if an intro offer ever returns.
+        let paywallCTA = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
+        XCTAssertTrue(paywallCTA.waitForExistence(timeout: 8), "Pro style did not open the paywall.")
         attach(app, name: "save-mapstyle-paywall")
         app.buttons["Close"].firstMatch.tap()
 

@@ -203,9 +203,11 @@ final class FuelFlowUITests: XCTestCase {
         field.typeText("test meal")
         shot(app, "8-fuel-free-composer")
 
-        // The stable paywall anchor: the annual-default CTA "Start my 7-day free trial" (shared by
-        // PaywallUITests / CardioSaveMapStyleUITests). Tapping SEND must present it.
-        let trialCTA = app.buttons["Start my 7-day free trial"]
+        // The stable paywall anchor: the annual-default primary CTA — "Continue · <price>" since
+        // the trial retired (2026-08-20), "Start my N-day free trial" if an intro offer returns
+        // (shared shape with PaywallUITests / CardioSaveMapStyleUITests). Tapping SEND must present it.
+        let trialCTA = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         app.buttons["Log meal"].tap()
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 8), "Send didn't present the paywall for a free athlete.")
         shot(app, "8a-fuel-free-paywall")

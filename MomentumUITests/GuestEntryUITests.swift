@@ -91,7 +91,7 @@ final class GuestEntryUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Close"].exists, "the tour page carries no X — checkout-only")
         attach("beat-2-paywall")
         tryNow.tap()
-        let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "the checkout page should follow the reminder page")
         XCTAssertTrue(app.buttons["Close"].exists, "the checkout page must offer the soft gate's X")
         trialCTA.tap()
@@ -157,7 +157,7 @@ final class GuestEntryUITests: XCTestCase {
         // safe as a loop guard: none of the generic taps below match "Start my …", so the walker
         // can't buy — pages one and two of the flow ("Try now", "Continue for free") sell without
         // transacting, so walking through them is free.
-        let paywallCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        let paywallCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
         // anymore) — it presents from com.apple.Health, so drive that process directly.
         let healthApp = XCUIApplication(bundleIdentifier: "com.apple.Health")

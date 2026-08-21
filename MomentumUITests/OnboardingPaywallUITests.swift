@@ -59,7 +59,7 @@ final class OnboardingPaywallUITests: XCTestCase {
 
         // Through to the checkout page: the X survives to where the money is.
         advanceToCheckout(app)
-        let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(cta.waitForExistence(timeout: 10), "The flow didn't reach the checkout page.")
         let close = app.buttons["Close"]
         XCTAssertTrue(close.exists, "The checkout page must offer the close button too.")
@@ -137,7 +137,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         // The wall is re-raised from the persisted gate flag — force-quitting is not a way in.
         // The relaunch gate re-enters the flow AT the checkout page (the story was told last
         // launch), so the trial CTA is the first thing on screen.
-        let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(cta.waitForExistence(timeout: 20), "The gate didn't survive a force-quit.")
         XCTAssertTrue(app.buttons["Close"].exists, "The relaunch gate is soft too — the X must be there.")
         // Hittable, not exists: this gate covers the real tab shell (unlike onboarding's, which sits
@@ -217,7 +217,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         launchToPaywall(app)
         advanceToCheckout(app)
 
-        let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my'")).firstMatch
+        let cta = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(cta.waitForExistence(timeout: 10), "The flow didn't reach the checkout page.")
         cta.tap()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20),
