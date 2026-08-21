@@ -180,24 +180,26 @@ struct PaywallView: View {
     @ViewBuilder
     private func timeline(_ s: CGFloat) -> some View {
         if paywall.pricingIsLive {
-            // BOTH plan states render inside one fixed-footprint ZStack and only crossfade
-            // (owner call 2026-08-20: switching plans must never move the buttons below —
-            // content that changes animates in place, the geometry holds still). The ZStack
-            // sizes to the taller three-row annual timeline, so the monthly line simply fades
-            // in over reserved space.
-            ZStack(alignment: .topLeading) {
-                annualTimeline(s)
-                    .opacity(selected == .annual ? 1 : 0)
-                    .accessibilityHidden(selected != .annual)
-                // "No trial" is a contrast line — it only earns its place while the yearly
-                // actually carries one.
-                timelineRow(offering.annual.trialDays > 0
-                            ? "Billed monthly at \(offering.monthly.priceText). No trial, cancel anytime"
-                            : "Billed monthly at \(offering.monthly.priceText). Cancel anytime",
-                            live: true, s: s)
-                    .opacity(selected == .monthly ? 1 : 0)
-                    .accessibilityHidden(selected != .monthly)
+            // The two states RESIZE the page (owner call 2026-08-21, superseding the 08-20
+            // fixed footprint): picking Monthly collapses the three-beat timeline to its one
+            // line, and the headline block above settles down toward the checkout — the gap
+            // closes instead of holding reserved air. The selection tap wraps this change in
+            // `withAnimation` (see `planSegment`), so the reflow plays as one settle, never a
+            // jump; a deliberate exception to the transforms-only rule for a small, static
+            // block the owner asked to breathe.
+            Group {
+                if selected == .annual {
+                    annualTimeline(s)
+                } else {
+                    // "No trial" is a contrast line — it only earns its place while the yearly
+                    // actually carries one.
+                    timelineRow(offering.annual.trialDays > 0
+                                ? "Billed monthly at \(offering.monthly.priceText). No trial, cancel anytime"
+                                : "Billed monthly at \(offering.monthly.priceText). Cancel anytime",
+                                live: true, s: s)
+                }
             }
+            .transition(.opacity)
         } else {
             // Store prices not yet loaded — promise nothing numeric (pricing honesty rule).
             timelineRow("Every feature unlocks today", live: true, s: s)
@@ -268,11 +270,11 @@ struct PaywallView: View {
                 Text(offering.annual.trialDays > 0
                      ? "\(offering.annual.trialDays) DAYS FREE"
                      : "SAVE \(offering.annualSavingsPercent)%")
-                    .font(.rounded(8, weight: .heavy)).tracking(0.8)
+                    .font(.rounded(10, weight: .heavy)).tracking(0.8)
                     .foregroundStyle(Theme.inkOnFixedLight)
-                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
                     .background(Capsule().fill(Theme.proLavender))
-                    .offset(x: 14, y: -9)
+                    .offset(x: 14, y: -11)
             }
         }
     }
@@ -281,7 +283,10 @@ struct PaywallView: View {
         let isSelected = p.period == selected
         return Button {
             guard !isSelected else { return }
-            selected = p.period
+            // Animated so the timeline's height change above reads as one settle (the page
+            // breathes closed on Monthly); Reduce Motion snaps.
+            if reduceMotion { selected = p.period }
+            else { withAnimation(.easeOut(duration: 0.3)) { selected = p.period } }
             Haptics.selection()
         } label: {
             VStack(spacing: 1) {
