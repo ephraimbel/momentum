@@ -152,9 +152,13 @@ targets:
           - SKAdNetworkIdentifier: 22mmun2rn5.skadnetwork
           - SKAdNetworkIdentifier: v9wttpbfk9.skadnetwork
           - SKAdNetworkIdentifier: n38lu8286q.skadnetwork
+        # The launch frame (owner call 2026-08-20): the white wordmark on the brand's warm dark
+        # charcoal — one committed dark look in BOTH appearances (LaunchCanvas is a fixed color,
+        # deliberately not the adaptive `background` token). SplashView renders the identical
+        # frame the instant the app takes over, so launch reads as one continuous moment.
         UILaunchScreen:
-          UIColorName: background
-          UIImageName: LaunchMark
+          UIColorName: LaunchCanvas
+          UIImageName: LaunchWordmark
           UIImageRespectsSafeAreaInsets: true
         UIAppFonts:
           - Inter-Regular.ttf
