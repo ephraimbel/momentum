@@ -30,7 +30,7 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift.git
     from: "2.0.0"
-# Phase 3 billing SDKs — uncomment with the Momentum-target deps below to go live (PRD §10).
+# Billing (PRD §10): RevenueCat LIVE since 2026-07-15. Superwall stays commented — not set up (RevenueCat-only per owner call).
   RevenueCat:
     url: https://github.com/RevenueCat/purchases-ios
     from: "5.0.0"
@@ -170,10 +170,10 @@ targets:
         embed: true
       - package: MapboxMaps          # map rendering (Today, live route, heatmap, route suggestion)
       - package: Supabase            # auth (Sign in with Apple → JWT), social tables, photo storage
-    # ── Phase 3 billing (RevenueCat + Superwall) ─────────────────────────
-    # The integration code is already written behind `#if canImport(...)` (PaywallController);
-    # uncomment these two lines + the `packages:` block below, set the Info.plist keys, then
-    # `xcodegen generate`. Full runbook: docs/MONETIZATION-SETUP.md.
+    # ── Billing (RevenueCat live 2026-07-15; Superwall optional, still off) ──
+    # PaywallController guards everything behind `#if canImport(...)` — to add Superwall later,
+    # uncomment its line here + the `packages:` entry above, then `xcodegen generate`.
+    # Full runbook: docs/MONETIZATION-SETUP.md.
       - package: RevenueCat        # billing live 2026-07-15 (RC project "Momentum", entitlement `pro`, offering `default`)
     #   - package: Superwall       # not set up — RevenueCat-only per user; native PaywallView is the fallback
       - package: TikTokBusinessSDK # TikTok ads attribution (SKAN-only, no ATT) — TikTokAdsService

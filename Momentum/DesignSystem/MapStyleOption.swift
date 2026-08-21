@@ -157,7 +157,6 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     var isImagery: Bool { self == .satellite || self == .standardSatellite }
 
     /// True when the basemap itself is dark — floating chrome and route casings adapt.
-    var isDarkBase: Bool { self == .night || self == .dark }
 
     /// Camera tilt (degrees) for the explore map. The 3D styles tilt so terrain + buildings read
     /// as a real skyline; the flat styles stay top-down.

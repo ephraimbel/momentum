@@ -74,14 +74,10 @@ enum Theme {
     // MARK: Iridescent opacity — the earned accent is soft; these name the levels that were
     // scattered as raw literals (0.16–0.55) across the app so every surface tints consistently.
     enum IridescentOpacity: Double {
-        case faint = 0.16   // completed plan-session tint
-        case soft  = 0.18   // ambient pill backings (learning teaser)
-        case line  = 0.20   // earned-line capsule
-        case chip  = 0.22   // live chips (streak alive, coach)
-        case glyph = 0.25   // small glyph fills / chart area
-        case badge = 0.30   // icon-circle backings (plan/confirm glyphs)
-        case card  = 0.32   // earned cards (identity, learned beliefs)
-        case hero  = 0.55   // hero status fills (ACWR band)
+        // Once a full scale (0.16–0.55); every level but the earned-line capsule fell out of use
+        // as surfaces migrated to their own tokens (dead-code sweep 2026-08-20). Grows back one
+        // named case at a time when a surface actually tints.
+        case line = 0.20    // earned-line capsule
         var value: Double { rawValue }
     }
 }

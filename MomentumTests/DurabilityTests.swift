@@ -75,7 +75,7 @@ struct DurabilityTests {
         #expect(pending.gps?.hrSamples.count == 3)
         #expect(pending.gps?.hrSamples.map(\.bpm).sorted() == [120, 140, 160])
 
-        await store.attachHR(140)
+        await store.attachFinishExtras(cadence: nil, hr: 140, structuredReps: nil)
         await store.finishWorkout(distanceM: 1000, durationS: 300, elevationGainM: 0)
         let all = try container.mainContext.fetch(FetchDescriptor<Workout>())
         #expect(all.first { $0.id == pending.id }?.gps?.avgHR == 140)

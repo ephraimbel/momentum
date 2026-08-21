@@ -33,7 +33,6 @@ struct FuelEstimator {
         }
         let items: [Item]
         let confidence: Double
-        let tags: [String]
         let note: String
     }
 

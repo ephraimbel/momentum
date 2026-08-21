@@ -22,14 +22,12 @@ enum MetricColor {
     // colours each domain identically (Health segment, Trends charts, vitals strip sparklines).
     /// Fitness — VO₂ / CTL, the long game. Deep periwinkle.
     static let fitness = Theme.Health.sleepInk
-    /// Load / strain — effort accumulated. Peach ink, with `loadWash` for the safe-zone band.
+    /// Load / strain — effort accumulated. Peach ink.
     static let load = Theme.Health.strainInk
-    static let loadWash = Theme.Health.strainWash
     /// Pace / HR-derived speed metrics — crisp ice.
     static let pace = Theme.Health.vitalsInk
-    /// Freshness / recovery-side reads — mint ink, with `freshWash` for "good zone" ribbons.
+    /// Freshness / recovery-side reads — mint ink.
     static let fresh = Theme.Health.recoveryInk
-    static let freshWash = Theme.Health.recoveryWash
 
     /// The five heart-rate zones, cool → hot (the Garmin/COROS convention).
     static let zones: [Color] = [

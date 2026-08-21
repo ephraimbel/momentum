@@ -21,8 +21,6 @@ struct ProTrendsSection: View {
     @State private var appeared = false
     @State private var model: Model?
 
-    private var imperial: Bool { distanceUnit.resolved() == .imperial }
-
     /// The section's data, computed once off the render path (the F&F pipeline walks every
     /// workout's load history; it was previously re-run inside `body` on every re-render).
     /// Slimmed with the 2026-07-22 redesign: only the PMC points — the retired cards' pipelines

@@ -35,9 +35,6 @@ struct CompletionCelebration: View {
     /// work to land *after* the beat rather than stalling the screen before it.
     static let duration: Double = 0.99
 
-    /// When the fade-out starts. Content underneath should begin its own reveal here, so the two
-    /// cross-dissolve into one motion instead of playing back to back with a dead gap between.
-    static let handoff: Double = 0.73
 
     /// The animated ring-sweep position (meaningful reading) …
     @State private var swept = 0.0

@@ -107,13 +107,6 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    /// Attach the run's average cadence (steps/min) captured from CoreMotion (R3). Written at finish;
-    /// nil/zero is simply not stored so imported or motion-less runs stay blank.
-    func attachCadence(_ stepsPerMin: Int) {
-        guard stepsPerMin > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
-        detail.avgCadence = stepsPerMin
-        try? modelContext.save()
-    }
 
     /// Persist one live heart-rate reading the moment it arrives (R3) — same durability contract as
     /// `persistSample`, so a force-quit keeps every beat captured so far. Powers the post-run HR
@@ -127,13 +120,6 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    /// Attach the run's average heart rate (bpm) from the live source — a BLE strap or a Watch
-    /// workout session via Health (R3). Written at finish; sourceless runs stay blank.
-    func attachHR(_ bpm: Int) {
-        guard bpm > 0, let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
-        detail.avgHR = bpm
-        try? modelContext.save()
-    }
 
     /// The finish-time extras in ONE hop and ONE save. `finish()` used to make three separate
     /// awaited round-trips (cadence → HR → structured reps), each its own SQLite transaction,
@@ -147,11 +133,6 @@ actor GPSWorkoutStore: GPSWorkoutSink {
         try? modelContext.save()
     }
 
-    func attachStructuredReps(_ data: Data) {
-        guard let gpsID, let detail = self[gpsID, as: GPSDetail.self] else { return }
-        detail.structuredRepsData = data
-        try? modelContext.save()
-    }
 }
 
 /// Durable persistence sink for strength capture (PRD §8.4). Maps each live exercise row

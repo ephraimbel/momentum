@@ -9,7 +9,6 @@ struct StrengthLiveView: View {
     var plannedSession: PlannedSession? = nil
     var onFinish: (UUID?) -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(Services.self) private var services
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var vm: StrengthViewModel?

@@ -49,7 +49,6 @@ struct ProgressScreen: View {
     @State private var aggregatedForKey = ""                 // .task(id:) re-fires on every tab visit; only re-walk when data (or the day) moved
     @State private var showAllAdaptations = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
 
     enum Segment: String, CaseIterable, Identifiable {
         case trends = "Trends", health = "Health", history = "History"

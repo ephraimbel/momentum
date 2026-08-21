@@ -31,7 +31,6 @@ struct AddSessionSheet: View {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
     }
     private var isGPS: Bool { sport.isGPS }
-    private var isTimed: Bool { sport.isTimed }
     private var unitLabel: String { distanceUnit.resolved() == .imperial ? "mi" : "km" }
 
     init(plan: TrainingPlan, defaultDate: Date = Date(), onDone: @escaping () -> Void,

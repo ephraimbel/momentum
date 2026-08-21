@@ -51,10 +51,6 @@ struct CardioSummaryContent: View {
     /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
     @State private var weekWorkouts: [Workout] = []
 
-    private var unitMeters: Double {
-        distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
-    }
-
     var body: some View {
         if let gps = workout.gps {
             // Reveal-first: lead with the mastery payoff (hero distance + any "you got better" win),

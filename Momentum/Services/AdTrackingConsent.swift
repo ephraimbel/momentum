@@ -29,14 +29,6 @@ enum AdTrackingConsent {
     /// Guards against a second `request` while the system dialog is already up.
     private static var isRequesting = false
 
-    /// True once the athlete has answered — in either direction.
-    static var hasBeenAsked: Bool {
-        #if canImport(AppTrackingTransparency)
-        return ATTrackingManager.trackingAuthorizationStatus != .notDetermined
-        #else
-        return true
-        #endif
-    }
 
     /// Ask for tracking permission if iOS has not already recorded an answer.
     ///

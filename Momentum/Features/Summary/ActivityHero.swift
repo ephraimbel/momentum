@@ -202,15 +202,6 @@ enum ActivityHeroMetrics {
     static let muscleHeight: CGFloat = 380
     static let glyphHeight: CGFloat = 260
 
-    /// The scroll offset past which the chrome's scrim may appear (user call 2026-08-14): only
-    /// once the hero itself has left the top of the screen. Keying the scrim off a small offset
-    /// washed the TOP of the map with background while it was still on screen — the map must
-    /// dissolve at its bottom edge only, never from above.
-    static func scrimThreshold(for workout: Workout) -> CGFloat {
-        if workout.type.isGPS, workout.gps?.samples.isEmpty == false { return mapHeight - 110 }
-        if workout.type.isStrengthStyle { return muscleHeight - 110 }
-        return glyphHeight - 90
-    }
 }
 
 // MARK: - Camera chip

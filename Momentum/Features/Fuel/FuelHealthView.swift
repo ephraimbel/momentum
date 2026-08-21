@@ -25,7 +25,6 @@ struct FuelHealthView: View {
     }
     @Query(FuelHealthView.recentMeals) private var meals: [Meal]
     @Query private var profiles: [UserProfile]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
     /// One ranked food from today's journal.
