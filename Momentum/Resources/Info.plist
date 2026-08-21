@@ -43,6 +43,8 @@
 	<string>$(META_CLIENT_TOKEN)</string>
 	<key>FacebookDisplayName</key>
 	<string>momentum</string>
+	<key>GoogleIOSClientID</key>
+	<string>879632127799-iejgvukbgucemk54svlbd3704b0klv2s.apps.googleusercontent.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>MBXAccessToken</key>
@@ -116,7 +118,7 @@
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
-		<string>background</string>
+		<string>LaunchCanvas</string>
 	</dict>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

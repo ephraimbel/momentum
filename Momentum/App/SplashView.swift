@@ -17,6 +17,7 @@ struct SplashView: View {
     let onFinished: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var word = false
     @State private var bloom = false
     @State private var gone = false
 
@@ -33,20 +34,21 @@ struct SplashView: View {
             Image("LaunchWordmark")
                 .blur(radius: 26)
                 .opacity(bloom || reduceMotion ? 0.5 : 0)
-            // EXACTLY the static launch screen's frame: the wordmark at its intrinsic 240pt
-            // (owner call 2026-08-21: a touch larger — sized in the ASSET so both layers grow in
-            // lockstep; sizing only one side would put a pop in the handoff),
-            // centered. Rendering the same asset at the same size is what makes the system→app
-            // handoff invisible; the glow then plays as the word lighting up, not as a swap.
+            // The wordmark exists at ONE size only (owner call 2026-08-21): the static launch
+            // frame is now plain charcoal — iOS zooms that frame up from the app icon, and a
+            // wordmark printed on it rode the zoom and read as the logo growing. Instead the
+            // word FADES in here, already at its final 240pt, and never moves or scales.
             Image("LaunchWordmark")
+                .opacity(word || reduceMotion ? 1 : 0)
         }
         .opacity(gone ? 0 : 1)
         .onAppear {
             if !reduceMotion {
-                // A slow breath, not a pop — the glow arriving gently is most of its elegance.
-                withAnimation(.easeInOut(duration: 0.9)) { bloom = true }
+                withAnimation(.easeOut(duration: 0.35)) { word = true }
+                // The glow follows a beat behind — the word arrives, then lights up.
+                withAnimation(.easeInOut(duration: 0.9).delay(0.15)) { bloom = true }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 withAnimation(.easeOut(duration: 0.3)) { gone = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { onFinished() }
             }
