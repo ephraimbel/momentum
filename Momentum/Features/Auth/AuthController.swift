@@ -37,6 +37,9 @@ final class AuthController {
     /// the raw value — the pair is how the identity token is bound to this one request.
     private var pendingRawNonce: String?
 
+    /// The native Google OAuth dance (PKCE against accounts.google.com) — see `GoogleNativeAuth`.
+    private let googleAuth = GoogleNativeAuth()
+
     /// Fired once, on the very first Supabase session this install ever gets — the hook that
     /// claims guest-era local data (re-marks workouts dirty so they upload under the new uid).
     var onFirstCloudSession: (() -> Void)?
@@ -255,16 +258,23 @@ final class AuthController {
         }
     }
 
-    /// Google sign-in via the Supabase OAuth web sheet (ASWebAuthenticationSession — no Google
-    /// SDK, per the third-party-dependency rules). The SDK opens the sheet, captures the
-    /// `momentum://auth-callback` redirect, and persists the session in the Keychain. Returns
-    /// false on cancel/offline/unconfigured — the gate simply stays put.
+    /// Google sign-in, natively (2026-08-20). The OAuth dance runs directly against
+    /// accounts.google.com (`GoogleNativeAuth`: ASWebAuthenticationSession + PKCE — still no
+    /// Google SDK, per the third-party-dependency rules) and the ID token is bridged to a
+    /// Supabase session exactly like the Apple path; the SDK persists it in the Keychain.
+    /// Replaces the Supabase web-sheet flow, whose iOS permission dialog named the project's
+    /// supabase.co domain — the sheet's dialog now says "google.com". Returns false on
+    /// cancel/offline/unconfigured — the gate simply stays put.
     func signInWithGoogle() async -> Bool {
         guard let client = SupabaseClientProvider.client else { return false }
         do {
-            let session = try await client.auth.signInWithOAuth(
-                provider: .google,
-                redirectTo: URL(string: "momentum://auth-callback"))
+            let tokens = try await googleAuth.signIn()
+            let session = try await client.auth.signInWithIdToken(
+                credentials: OpenIDConnectCredentials(
+                    provider: .google,
+                    idToken: tokens.idToken,
+                    accessToken: tokens.accessToken,
+                    nonce: tokens.rawNonce))
             let name = session.user.userMetadata["full_name"]?.stringValue
                 ?? session.user.userMetadata["name"]?.stringValue
             // No Apple id to key on — the Supabase user id (prefixed so `refresh()` knows not to
