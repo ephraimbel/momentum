@@ -22,8 +22,35 @@ final class CaptureRigUITests: XCTestCase {
         // `simctl privacy` on a fresh container — the whole reason this rig exists is that the
         // XCUITest path can do what simctl cannot).
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let deadline = Date().addingTimeInterval(TimeInterval(env["CAPTURE_HOLD"].flatMap(Double.init) ?? 60))
+        let began = Date()
+        let deadline = began.addingTimeInterval(TimeInterval(env["CAPTURE_HOLD"].flatMap(Double.init) ?? 60))
+        // CAPTURE_SWIPE_Y=<0..1>: ~12s in, drag right-to-left across that screen height once —
+        // lets an external screenshot verify paged/swipeable strips without a bespoke test.
+        var swiped = false
         while Date() < deadline {
+            // A clean-keychain launch parks on the welcome film's "Continue as <athlete>" button
+            // (no token to auto-continue on). Tap through it so seeded captures land in the app.
+            let welcomeContinue = app.buttons
+                .matching(NSPredicate(format: "label BEGINSWITH 'Continue as'")).firstMatch
+            if welcomeContinue.exists { welcomeContinue.tap() }
+            // Swipe only once safely IN the app — firing while welcome is still up burns the
+            // one drag on the film (exactly what a first verification run did).
+            else if !swiped, let y = env["CAPTURE_SWIPE_Y"].flatMap(Double.init),
+                    Date() > began.addingTimeInterval(15) {
+                // Prefer the element itself (hit-tested by the AX tree) over blind coordinates.
+                let strip = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label BEGINSWITH 'Training block'")).firstMatch
+                if strip.exists {
+                    NSLog("CAPTURE_SWIPE: strip frame \(strip.frame)")
+                    strip.swipeLeft()
+                } else {
+                    NSLog("CAPTURE_SWIPE: strip NOT FOUND, coordinate fallback")
+                    let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: y))
+                    let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: y))
+                    from.press(forDuration: 0.05, thenDragTo: to)
+                }
+                swiped = true
+            }
             for host in [app, springboard] {
                 let alert = host.alerts.firstMatch
                 guard alert.exists else { continue }

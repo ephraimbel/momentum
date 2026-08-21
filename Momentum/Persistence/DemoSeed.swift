@@ -221,6 +221,18 @@ enum DemoSeed {
             profile.raceDistanceM = RaceDistance.half.meters
             profile.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 7, to: Date())
         }
+        // --seed-plan-long: a marathon 28 weeks out — the >26-week plan that exercises the Plan
+        // page's PAGED week arc (7 bars per swipe). The one deterministic path to a long block.
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-long") {
+            profile.disciplines = ["running"]
+            profile.goal = .raceDistance
+            profile.daysPerWeek = 5
+            profile.experience = ["running": "experienced"]
+            profile.weeklyRunVolumeM = 50_000
+            profile.longestRunM = 16_000
+            profile.raceDistanceM = RaceDistance.marathon.meters
+            profile.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 28, to: Date())
+        }
         // --seed-split-ppl / --seed-split-upper: the demo athlete chose a strength split — the
         // hybrid week's 2 lift days rotate through it (PPL continues its cycle ACROSS weeks), so
         // the Plan board and Today deck render "Push day"/"Upper body" sessions for verification.

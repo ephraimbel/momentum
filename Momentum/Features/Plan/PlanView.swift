@@ -565,35 +565,16 @@ struct PlanView: View {
     /// periodization `PlanEngine` computes, finally legible on the page it governs. Tap a bar to
     /// jump; the ink bar is the displayed week, the dot anchors the current calendar week.
     ///
-    /// The old chip strip remains only as the fallback for blocks too long for tappable bars
-    /// (>26 weeks — edge-of-cap plans), and chevron paging still covers plans with no derivable
-    /// weeks. The chips' one job the arc keeps: position — the board header now names the week
-    /// ("Week 5") so the bars don't need numerals.
+    /// The arc draws at ANY length — a 27-week marathon build just gets thinner bars, never the
+    /// old horizontally-scrolling chip strip (killed 2026-08-20: it broke both the block-shape
+    /// aesthetic and the vertical-only rule the moment a race sat >26 weeks out). Long blocks
+    /// drop to sparse numerals (every 5th week + the current one) so labels never collide;
+    /// chevron paging still covers plans with no derivable weeks.
     @ViewBuilder
     private var weekStrip: some View {
         let weeks = planWeekStarts
-        if weeks.count > 1, weeks.count <= 26 {
+        if weeks.count > 1 {
             weekArc(weeks)
-        } else if weeks.count > 1 {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: Theme.Space.sm) {
-                        ForEach(Array(weeks.enumerated()), id: \.element) { i, start in
-                            weekChip(index: i, start: start)
-                                .id(i)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-                .onAppear {
-                    if let idx = planWeekIndex(of: weekStart) { proxy.scrollTo(idx, anchor: .center) }
-                }
-                .onChange(of: weekStart) {
-                    if let idx = planWeekIndex(of: weekStart) {
-                        withAnimation(Motion.standard) { proxy.scrollTo(idx, anchor: .center) }
-                    }
-                }
-            }
         }
     }
 
@@ -604,14 +585,62 @@ struct PlanView: View {
         let volumes = weekVolumesCache.count == weeks.count ? weekVolumesCache
             : Array(repeating: 0, count: weeks.count)   // first frame before rebuildDerived lands
         let maxV = volumes.max() ?? 0
-        return HStack(alignment: .bottom, spacing: weeks.count > 16 ? 2 : 3) {
-            ForEach(Array(weeks.enumerated()), id: \.element) { i, start in
-                weekBar(index: i, start: start, volume: volumes[i], maxVolume: maxV)
+        // Blocks that fit draw as ONE row (the whole shape at a glance). Longer builds — a
+        // marathon 27+ weeks out — keep the SAME single row but page it (owner call
+        // 2026-08-21): seven weeks per swipe, each swipe locked to its group like a carousel,
+        // never a stacked grid and never a free-scrolling strip.
+        return Group {
+            if weeks.count <= 26 {
+                HStack(alignment: .bottom, spacing: weeks.count > 16 ? 2 : 3) {
+                    ForEach(Array(weeks.enumerated()), id: \.element) { i, start in
+                        weekBar(index: i, start: start, volume: volumes[i], maxVolume: maxV)
+                    }
+                }
+            } else {
+                pagedArc(weeks, volumes: volumes, maxVolume: maxV)
             }
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Training block, \(weeks.count) weeks")
+    }
+
+    /// The long-block arc: identical bars, paged seven weeks at a swipe — a locked carousel
+    /// (`TabView(.page)`, the one primitive whose paging never fights nested scrolling). Follows
+    /// the selected week: arriving on the page (or tapping into another week) lands the strip on
+    /// the right group, the way the old chip strip centered itself.
+    @State private var arcPage = 0
+    private func pagedArc(_ weeks: [Date], volumes: [Double], maxVolume: Double) -> some View {
+        let pageSize = 7
+        let pages: [[Int]] = stride(from: 0, to: weeks.count, by: pageSize).map {
+            Array($0..<min($0 + pageSize, weeks.count))
+        }
+        return TabView(selection: $arcPage) {
+            ForEach(Array(pages.enumerated()), id: \.offset) { p, indices in
+                HStack(alignment: .bottom, spacing: 3) {
+                    ForEach(indices, id: \.self) { i in
+                        weekBar(index: i, start: weeks[i],
+                                volume: volumes[i], maxVolume: maxVolume)
+                    }
+                    // A short last page keeps the same column rhythm as full ones —
+                    // spacers stand in for the missing weeks instead of stretching.
+                    ForEach(0..<(pageSize - indices.count), id: \.self) { _ in
+                        Color.clear.frame(maxWidth: .infinity).frame(height: 1)
+                    }
+                }
+                .tag(p)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .frame(height: 58)
+        .onAppear {
+            if let idx = planWeekIndex(of: weekStart) { arcPage = idx / pageSize }
+        }
+        .onChange(of: weekStart) {
+            if let idx = planWeekIndex(of: weekStart) {
+                withAnimation(Motion.standard) { arcPage = idx / pageSize }
+            }
+        }
     }
 
     private func weekBar(index: Int, start: Date, volume: Double, maxVolume: Double) -> some View {
@@ -667,38 +696,6 @@ struct PlanView: View {
         if isCurrent { label += ", current" }
         if selected { label += ", selected" }
         return label
-    }
-
-    private func weekChip(index: Int, start: Date) -> some View {
-        let selected = Calendar.current.isDate(start, inSameDayAs: weekStart)
-        let isPast = start < currentWeekStart
-        let isCurrent = Calendar.current.isDate(start, inSameDayAs: currentWeekStart)
-        return Button {
-            Haptics.selection()
-            withAnimation(Motion.standard) { weekStart = start }
-        } label: {
-            VStack(spacing: 2) {
-                Text("WK").font(.rounded(8, weight: .black)).tracking(0.8)
-                Text("\(index + 1)").font(.display(15, weight: .heavy)).monospacedDigit()
-            }
-            .foregroundStyle(selected ? .white : (isPast ? Theme.inkTertiary : Theme.ink))
-            .frame(width: 44, height: 44)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(selected ? Theme.purple : Theme.surface)
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(selected ? Color.clear : Theme.hairline)
-            }
-            .overlay(alignment: .bottom) {
-                // The current calendar week keeps a quiet anchor dot even when browsing elsewhere.
-                if isCurrent && !selected {
-                    Circle().fill(Theme.ink).frame(width: 3.5, height: 3.5).offset(y: -4)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Week \(index + 1)\(isCurrent ? ", current" : "")\(selected ? ", selected" : "")")
     }
 
     /// The board's header: the week's story (title, phase, intent) and its progress. Lives INSIDE
