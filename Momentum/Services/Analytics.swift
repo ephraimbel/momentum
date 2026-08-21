@@ -24,6 +24,19 @@ enum AnalyticsEvent: Equatable {
     /// invisible without this event — the only signal that a shipped migration broke somebody's
     /// install. `recovered` is false when the store had to be removed to make the app launchable.
     case storeQuarantined(recovered: Bool)
+    /// A workout upload batch was rejected by the server (non-2xx). Distinct from being offline,
+    /// which is normal and uncounted: this is the shape of failure that stays stuck — a 413 from an
+    /// oversized body, a 401 from an expired session, a 4xx from an RLS rule. Without it, an athlete
+    /// whose history stopped backing up looks identical to one who simply hasn't opened the app.
+    case syncFailed(status: Int)
+    /// A MetricKit diagnostic day: crashes, hangs, and CPU exceptions the system observed on this
+    /// install. Counts only — no stack frames, no addresses, nothing identifying. This is how the
+    /// >99.5% crash-free quality bar (PRD §22) becomes a number somebody can actually read; before
+    /// it existed the payloads went to `os_log` on the device and stopped there.
+    case appDiagnostics(crashes: Int, hangs: Int, cpuExceptions: Int)
+    /// The daily aggregated launch/responsiveness histogram, reduced to its p90-ish tail bucket.
+    /// `-1` means the payload carried no histogram for that metric.
+    case appPerformance(launchMs: Int, hangMs: Int)
 
     /// The canonical event name (PRD §13.5).
     var name: String {
@@ -43,6 +56,9 @@ enum AnalyticsEvent: Equatable {
         case .spotsViewed:       "spots_viewed"
         case .spotSelected:      "spot_selected"
         case .storeQuarantined:  "store_quarantined"
+        case .syncFailed:        "sync_failed"
+        case .appDiagnostics:    "app_diagnostics"
+        case .appPerformance:    "app_performance"
         }
     }
 
@@ -64,6 +80,11 @@ enum AnalyticsEvent: Equatable {
         case .spotsViewed(let n):              ["count": String(n)]
         case .spotSelected(let k):             ["kind": k]
         case .storeQuarantined(let r):         ["recovered": String(r)]
+        case .syncFailed(let status):          ["status": String(status)]
+        case .appDiagnostics(let c, let h, let x): ["crashes": String(c), "hangs": String(h),
+                                                   "cpu_exceptions": String(x)]
+        case .appPerformance(let launch, let hang): ["launch_ms": String(launch),
+                                                    "hang_ms": String(hang)]
         }
     }
 }

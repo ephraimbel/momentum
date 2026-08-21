@@ -104,7 +104,9 @@ struct MomentumApp: App {
         TikTokAdsService.configure()   // TikTok ads attribution — dark until Secrets.xcconfig keys are set
         MetaAdsService.configure()     // Meta ads attribution — same dark-seam contract
         auth.refresh()                 // sign out if the Apple credential was revoked (Supabase touch)
-        MetricsMonitor.shared.start()  // crash + performance monitoring (PRD §13.5)
+        // Crash + performance monitoring (PRD §13.5). Passing the analytics service is what gets
+        // MetricKit's crash/hang counts OFF the device — without it they only ever reached os_log.
+        MetricsMonitor.shared.start(reporting: services.analytics)
         // A previous launch could not open the store and moved it aside (`PersistenceController`).
         // Report it exactly once — it is the only signal that a shipped migration broke somebody's
         // install — but leave the record in place, because Settings goes on offering the file back
@@ -177,8 +179,15 @@ struct MomentumApp: App {
             // The brand lavender as the app-wide tint (rebrand 2026-08-16, was Theme.ink) —
             // links, toggles, pickers, and the selected tab icon all say "alive" in one voice.
             .tint(Theme.purple)
-            // Ceiling on Dynamic Type. `Font.custom(_:size:)` scales relative to `.body`, so every
-            // string in the app grows with the athlete's text-size setting — unbounded, until this.
+            // Ceiling on Dynamic Type. This clamp dates to the SF Rounded era, when `.rounded()`
+            // returned `.system(size:)` and text genuinely scaled. The 2026-06 move to bundled
+            // faces switched both helpers to `Font.custom(_:size:)` — which is FROZEN at its point
+            // size, `relativeTo:`-less — and scaling silently died app-wide, leaving this modifier
+            // capping something that no longer moved. `Typography.swift` restored it 2026-08-21 by
+            // passing `relativeTo:`, so the ceiling below is load-bearing again and means what it
+            // says. (The old comment here claimed `Font.custom(_:size:)` scales relative to
+            // `.body`. It does not; that belief is why the regression went unnoticed for two
+            // months.)
             // At the largest accessibility sizes the dense surfaces stopped being readable rather
             // than becoming more readable: Today's primary button truncated to "Start…", Progress's
             // streak pill landed on top of the title, and VO₂ MAX rendered as "3…" — the number the

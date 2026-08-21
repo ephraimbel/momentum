@@ -522,7 +522,7 @@ extension HealthSegmentView {
                     guard let d = day(ago) else { continue }
                     // The loop is main-actor (SwiftData models aren't Sendable) — yield every few
                     // mornings so it runs in frame-sized slices instead of one long blocking chunk.
-                    if ago % 4 == 0 { await Task.yield() }
+                    if ago.isMultiple(of: 4) { await Task.yield() }
                     var sig = RecoverySignals()
                     sig.hrvMs = hrvByDay[d]
                     sig.restingHR = rhrByDay[d].map { Int($0.rounded()) }
@@ -1036,7 +1036,7 @@ extension HealthSegmentView.Model {
                 return RhythmCard.Day(date: day(ago),
                                       strain: DayStrain(workoutsToday: [], ambientSteps: steps,
                                                         chronicLoad: 40, now: day(ago), calendar: calendar),
-                                      workoutName: ago % 5 == 0 ? "the tempo" : nil,
+                                      workoutName: ago.isMultiple(of: 5) ? "the tempo" : nil,
                                       ambientSteps: steps)
             },
             hasRhythmData: true,

@@ -21,7 +21,7 @@ enum SocialDebug {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--seed-follows-active") {
             let all = CommunityDirectory.all().map(\.handle)
-            return Set(all.enumerated().compactMap { i, h in i % 8 == 0 ? h : nil })
+            return Set(all.enumerated().compactMap { i, h in i.isMultiple(of: 8) ? h : nil })
         }
         guard args.contains("--seed-follows") else { return [] }
         return ["mayaruns", "coachtheo", "joonw973"]

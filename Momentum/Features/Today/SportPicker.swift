@@ -16,7 +16,16 @@ struct SportPicker: View {
 
     @State private var query = ""
     @State private var favorites = SportFavorites()
-    @Query private var workouts: [Workout]
+    /// Feeds the "most used" ordering only (`loggedCounts`), never a displayed total — so it reads a
+    /// recent slice rather than every workout ever logged to sort a list of ~20 sports. 500 sessions
+    /// is years of training for most athletes; where it does differ from all-time, ranking by recent
+    /// use is the better answer for a picker anyway.
+    private static var recentForRanking: FetchDescriptor<Workout> {
+        var d = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\Workout.startedAt, order: .reverse)])
+        d.fetchLimit = 500
+        return d
+    }
+    @Query(SportPicker.recentForRanking) private var workouts: [Workout]
     /// Per-sport log counts, snapshotted once on present — grouping the whole workout table inside a
     /// computed property re-ran per body evaluation (every search keystroke, every star toggle).
     @State private var loggedCounts: [WorkoutType: Int] = [:]

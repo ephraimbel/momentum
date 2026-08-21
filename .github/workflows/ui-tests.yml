@@ -1,0 +1,76 @@
+name: UI tests
+
+# Split out of ci.yml on purpose. The XCUITest suite sits at 75 passing / 14 failing on a clean
+# simulator (the burn-down list is tracked separately), so it cannot gate merges without becoming a
+# required check that is red by default — which trains everyone to ignore it, including when it goes
+# red for a real reason. It runs nightly instead, and flips to a PR gate the day it reaches green.
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 09:00 UTC, after the working day it is reporting on
+  workflow_dispatch:
+
+jobs:
+  ui-tests:
+    name: XCUITest suite
+    runs-on: macos-15
+    timeout-minutes: 90
+    continue-on-error: true   # informational until the suite is green
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if [ -d /Applications/Xcode_26.2.app ]; then
+            sudo xcode-select -switch /Applications/Xcode_26.2.app
+          else
+            sudo xcode-select -switch "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          fi
+
+      - name: Configure Mapbox download token
+        env:
+          MAPBOX_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOAD_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOAD_TOKEN" ]; then
+            echo "::error::Missing repo secret MAPBOX_DOWNLOAD_TOKEN."
+            exit 1
+          fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOAD_TOKEN" > ~/.netrc
+          chmod 600 ~/.netrc
+
+      - name: Write Secrets.xcconfig
+        env:
+          MBX_ACCESS_TOKEN: ${{ secrets.MBX_ACCESS_TOKEN }}
+        run: |
+          cp Secrets.xcconfig.example Secrets.xcconfig
+          if [ -n "$MBX_ACCESS_TOKEN" ]; then
+            sed -i '' "s|^MBX_ACCESS_TOKEN = .*|MBX_ACCESS_TOKEN = $MBX_ACCESS_TOKEN|" Secrets.xcconfig
+          fi
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          command -v xcbeautify >/dev/null || brew install xcbeautify
+          xcodegen generate
+
+      # A fresh simulator every run. Manual `--seed-demo` launches pollute a shared simulator's
+      # container, and a polluted container is the difference between a real failure and a ghost.
+      - name: Run the UI suite on a clean simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Momentum.xcodeproj \
+            -scheme MomentumUITests \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -derivedDataPath build/ci \
+            -resultBundlePath build/ci/ui.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify
+
+      - name: Upload result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-xcresult
+          path: build/ci/ui.xcresult
+          retention-days: 7

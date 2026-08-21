@@ -450,7 +450,7 @@ private struct RhythmCardPreview: View {
             let strain = DayStrain(workoutsToday: [], ambientSteps: steps, chronicLoad: 40,
                                    now: date, calendar: cal)
             return RhythmCard.Day(date: date, strain: strain,
-                                  workoutName: ago % 5 == 0 ? "the tempo" : nil,
+                                  workoutName: ago.isMultiple(of: 5) ? "the tempo" : nil,
                                   ambientSteps: steps)
         }
 

@@ -1,0 +1,135 @@
+name: CI
+
+# The suite this runs — 1,438 `@Test` cases across 154 files — existed long before this workflow
+# did, and until now only ran when somebody remembered to run it. That is the gap this closes.
+on:
+  pull_request:
+  push:
+    branches: [main, "docs/**", "feat/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Build + unit tests
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the toolchain the project targets (CLAUDE.md: "Build with Xcode 26.2"), but the
+      # runner image's exact Xcode inventory changes without notice — falling back to the newest
+      # installed beats failing the whole run on a version suffix.
+      - name: Select Xcode
+        run: |
+          if [ -d /Applications/Xcode_26.2.app ]; then
+            sudo xcode-select -switch /Applications/Xcode_26.2.app
+          else
+            echo "::warning::Xcode 26.2 not on this image; using the newest installed."
+            sudo xcode-select -switch "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          fi
+          xcodebuild -version
+
+      # The Mapbox SDK is a binary framework served from api.mapbox.com behind a DOWNLOADS:READ
+      # token. SwiftPM reads it from ~/.netrc — there is no other way in. Without the secret the
+      # resolve fails several minutes deep with an opaque 401, so fail fast and say why instead.
+      - name: Configure Mapbox download token
+        env:
+          MAPBOX_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOAD_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOAD_TOKEN" ]; then
+            echo "::error::Missing repo secret MAPBOX_DOWNLOAD_TOKEN (a Mapbox sk.* token with the DOWNLOADS:READ scope). Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOAD_TOKEN" > ~/.netrc
+          chmod 600 ~/.netrc
+
+      # Secrets.xcconfig is untracked by design (real keys never land in git). Every value in it is
+      # optional at runtime — empty means "ship dark": no Supabase, no ad SDKs, deterministic AI
+      # templates. That is exactly the shape CI should compile and test against, so the example file
+      # is the right stand-in. The runtime Mapbox pk.* token is the one value tests want non-empty,
+      # so it comes from a secret when present.
+      - name: Write Secrets.xcconfig
+        env:
+          MBX_ACCESS_TOKEN: ${{ secrets.MBX_ACCESS_TOKEN }}
+        run: |
+          cp Secrets.xcconfig.example Secrets.xcconfig
+          if [ -n "$MBX_ACCESS_TOKEN" ]; then
+            sed -i '' "s|^MBX_ACCESS_TOKEN = .*|MBX_ACCESS_TOKEN = $MBX_ACCESS_TOKEN|" Secrets.xcconfig
+          fi
+
+      # Momentum.xcodeproj is gitignored — project.yml is the source of truth (CLAUDE.md).
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          command -v xcbeautify >/dev/null || brew install xcbeautify
+          xcodegen generate
+
+      - name: Cache SwiftPM checkouts
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      # The ruleset is curated to sit at zero (see .swiftlint.yml), so `--strict` is honest here:
+      # any violation is something this change introduced, not backlog. Runs before the build
+      # because it takes seconds and the build takes minutes.
+      - name: Lint
+        run: |
+          command -v swiftlint >/dev/null || brew install swiftlint
+          swiftlint lint --strict
+
+      # Two phases on purpose (CLAUDE.md): `test-without-building` then runs the exact binary this
+      # step produced. A single `xcodebuild test` re-resolves and can test something else.
+      - name: Build for testing
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project Momentum.xcodeproj \
+            -scheme Momentum \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -derivedDataPath build/ci \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify
+
+      # UI tests are deliberately excluded: the suite sits at 75/14 on a clean simulator, so gating
+      # merges on it would mean a permanently red required check that everyone learns to ignore.
+      # They run on their own schedule (ui-tests.yml) until the burn-down closes.
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project Momentum.xcodeproj \
+            -scheme Momentum \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -derivedDataPath build/ci \
+            -resultBundlePath build/ci/tests.xcresult \
+            -only-testing:MomentumTests \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify
+
+      # `-only-testing` with an identifier that doesn't match runs ZERO tests and exits 0 — a green
+      # check that tested nothing (CLAUDE.md calls this out by name). Assert a real count so the
+      # failure mode this workflow exists to prevent can't hide inside the workflow itself.
+      - name: Assert tests actually ran
+        run: |
+          COUNT=$(xcrun xcresulttool get test-results summary \
+            --path build/ci/tests.xcresult --format json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("totalTestCount", 0))')
+          echo "totalTestCount=$COUNT"
+          if [ "$COUNT" -lt 1000 ]; then
+            echo "::error::Only $COUNT tests ran (expected 1000+). The -only-testing identifier or the scheme's test targets probably changed."
+            exit 1
+          fi
+
+      - name: Upload result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresult
+          path: build/ci/tests.xcresult
+          retention-days: 7

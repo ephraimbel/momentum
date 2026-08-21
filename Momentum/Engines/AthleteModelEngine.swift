@@ -304,7 +304,7 @@ struct AthleteModelEngine {
         guard !values.isEmpty else { return 0 }
         let s = values.sorted()
         let mid = s.count / 2
-        return s.count % 2 == 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid]
+        return s.count.isMultiple(of: 2) ? (s[mid - 1] + s[mid]) / 2 : s[mid]
     }
 
     /// Mode of values binned to the nearest `bin` (e.g. session minutes → 15-min bins).

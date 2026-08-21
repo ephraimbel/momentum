@@ -5,43 +5,35 @@ import SwiftData
 /// in the app (PRD §17).
 ///
 /// **Schema changes are additive-only.** Every new property on an existing model must be optional
-/// or defaulted, so SwiftData's implicit lightweight migration opens an older store without a
-/// `VersionedSchema`. The shipped precedent is `LocationSample.pausedSpan` (`Workout.swift`), added
-/// after v1.0 as "additive-only (defaults false, so pre-2026-07 rows read as 'never paused')".
-/// A `VersionedSchema` + `SchemaMigrationPlan` becomes necessary the first time a change is *not*
-/// additive — a rename, a type change, a deletion. There is none in the tree today, and that is the
-/// only reason this file does not declare one; it is a live constraint on every new property, not
-/// an accident. (An earlier version of this comment claimed the schema *was* versioned as
-/// `SchemaV1`. It never was.)
+/// or defaulted, so SwiftData's lightweight migration opens an older store. The shipped precedent is
+/// `LocationSample.pausedSpan` (`Workout.swift`), added after v1.0 as "additive-only (defaults
+/// false, so pre-2026-07 rows read as 'never paused')".
+///
+/// The schema is now genuinely versioned (`SchemaVersions.swift`, 2026-08-21) and the container
+/// takes a `MomentumMigrationPlan`, so the first NON-additive change — a rename, a retype, a
+/// deletion — has somewhere to go: add `SchemaV2` plus a stage. Before that existed, such a change
+/// would have failed to open every shipped store and dropped the whole install base down the
+/// `quarantineStore` path below. The additive rule still applies day to day; the plan is what makes
+/// breaking it a decision rather than an accident.
 @MainActor
 final class PersistenceController {
     static let shared = PersistenceController()
 
     let container: ModelContainer
 
-    /// All persisted model types. Keep in sync with `Models/`.
-    static let models: [any PersistentModel.Type] = [
-        UserProfile.self,
-        Workout.self, WorkoutPhoto.self, GPSDetail.self, LocationSample.self, Split.self, HeartRateSample.self,
-        StrengthSession.self, WorkoutExercise.self, SetEntry.self,
-        Exercise.self,
-        TrainingPlan.self, PlannedSession.self, PlannedExercise.self,
-        PersonalRecord.self,
-        SavedRoute.self,
-        EarnedAward.self,
-        AthleteModel.self, MemoryNote.self, FitnessSnapshot.self,
-        ChatMessage.self,
-        CoachingEvent.self,
-        AppNotification.self,
-        DailyCheckin.self,
-        Meal.self,
-    ]
+    /// All persisted model types — forwards to the versioned schema, which is the canonical list.
+    /// Kept as a name because tests and previews build containers from it.
+    static let models: [any PersistentModel.Type] = SchemaV1.models
 
     private init(inMemory: Bool = false) {
-        let schema = Schema(Self.models)
+        // `Schema(versionedSchema:)` stamps the store with V1's identifier. An unversioned
+        // `Schema(_:)` already reported 1.0.0, so this is the SAME identity an existing store
+        // carries — the upgrade is a no-op read, not a migration.
+        let schema = Schema(versionedSchema: SchemaV1.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         do {
-            container = try ModelContainer(for: schema, configurations: [config])
+            container = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                                           configurations: [config])
         } catch {
             // A failed lightweight migration or a corrupt store must NOT become a permanent launch
             // crash-loop escapable only by delete-and-reinstall — and it must not silently delete
@@ -51,7 +43,8 @@ final class PersistenceController {
             // move, so a failure there is genuinely fatal.
             if !inMemory { Self.quarantineStore(at: config.url) }
             do {
-                container = try ModelContainer(for: schema, configurations: [config])
+                container = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                                               configurations: [config])
             } catch {
                 fatalError("Failed to create ModelContainer even after quarantining the store: \(error)")
             }

@@ -285,7 +285,7 @@ enum DemoSeed {
         for daysAgo in [0, 2, 4, 7, 9, 11, 14, 16, 18, 21, 24, 26, 30, 33] {
             let start = Date().addingTimeInterval(Double(-daysAgo) * 86_400 - 3 * 3600)
             let week = Double(daysAgo) / 7
-            if daysAgo % 4 == 0 {
+            if daysAgo.isMultiple(of: 4) {
                 let sw = Workout(); sw.type = .strength; sw.startedAt = start
                 sw.durationS = 2700 + Double(14 - daysAgo) * 20
                 sw.strength = strengthSession(lifts: lifts, week: week)
@@ -403,7 +403,7 @@ enum DemoSeed {
         // Give the most recent run a guided-session rep breakdown so the summary's Reps section shows.
         if let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? [])
             .filter({ $0.type == .run && $0.gps != nil })
-            .sorted(by: { $0.startedAt > $1.startedAt }).first, let gps = recent.gps {
+            .max(by: { $0.startedAt < $1.startedAt }), let gps = recent.gps {
             let achieved: [Double] = [296, 302, 291, 315, 305, 288]   // 6×400 @ 5K pace (300); one slow rep
             let reps = achieved.enumerated().map { i, a in
                 RepResult(repIndex: i + 1, repTotal: achieved.count, title: nil, targetPaceSPerKm: 300,
@@ -604,7 +604,7 @@ enum DemoSeed {
         for j in 0..<185 {
             let city = cities[j % cities.count]
             // Mostly single-loop training runs; a weekly long run of 2–3 laps.
-            let laps = (j % 7 == 0) ? rng.int(2...3) : 1
+            let laps = j.isMultiple(of: 7) ? rng.int(2...3) : 1
             let daysAgo = 60 + Double(j) * 2.25 + rng.double(-0.6, 0.6)
             addRun(city: city, laps: laps, daysAgo: daysAgo, dense: false, variant: j)
         }

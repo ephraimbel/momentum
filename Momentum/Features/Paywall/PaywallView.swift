@@ -413,6 +413,9 @@ private struct FilmLoopView: UIViewRepresentable {
 
     final class PlayerView: UIView {
         override static var layerClass: AnyClass { AVPlayerLayer.self }
+        // Safe by the `layerClass` override directly above — UIKit builds this view's layer from
+        // that type, so the cast cannot fail. (The rule stays on everywhere else.)
+        // swiftlint:disable:next force_cast
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         var looper: AVPlayerLooper?
         var resumeObserver: NSObjectProtocol?

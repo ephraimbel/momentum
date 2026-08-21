@@ -91,7 +91,7 @@ actor StrengthSessionEngine {
     /// Pure; used for the prefill of *planned* strength sets.
     static func progressedTarget(previousSets: [Int: SetTarget], index: Int,
                                  repLow: Int, repHigh: Int, stepKg: Double = 2.5) -> SetTarget {
-        let base = previousSets[index] ?? previousSets.sorted { $0.key < $1.key }.first?.value ?? SetTarget()
+        let base = previousSets[index] ?? previousSets.min { $0.key < $1.key }?.value ?? SetTarget()
         let completed = previousSets.values.filter { $0.weightKg != nil && $0.reps != nil }
         guard !completed.isEmpty, repHigh > 0,
               completed.allSatisfy({ ($0.reps ?? 0) >= repHigh }) else { return base }
@@ -109,7 +109,7 @@ actor StrengthSessionEngine {
     static func plannedTarget(scheme: String, previousSets: [Int: SetTarget], index: Int,
                               repLow: Int, repHigh: Int, targetPctRM: Double? = nil,
                               stepKg: Double = 2.5) -> SetTarget {
-        let base = previousSets[index] ?? previousSets.sorted { $0.key < $1.key }.first?.value ?? SetTarget()
+        let base = previousSets[index] ?? previousSets.min { $0.key < $1.key }?.value ?? SetTarget()
         let completed = previousSets.values.filter { $0.weightKg != nil && $0.reps != nil }
         switch scheme {
         case "linear":

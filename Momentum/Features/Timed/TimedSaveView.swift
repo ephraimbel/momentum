@@ -14,9 +14,23 @@ struct TimedSaveView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    /// Exactly the one row this screen edits. It used to be a bare `@Query` over every workout ever
+    /// recorded, scanned in memory for a matching id — so opening a save sheet materialized the whole
+    /// training history to reach a single object, and every insert anywhere republished it. The
+    /// predicate does the same job in the store (same shape as `WorkoutCompletion.fetch`), and the
+    /// query stays live, so an edit landing from elsewhere still refreshes this screen.
     @Query private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
-    private var workout: Workout? { workouts.first { $0.id == workoutId } }
+    private var workout: Workout? { workouts.first }
+
+    init(workoutId: UUID, booksCompletion: Bool = true, onDone: @escaping () -> Void) {
+        self.workoutId = workoutId
+        self.booksCompletion = booksCompletion
+        self.onDone = onDone
+        var d = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == workoutId })
+        d.fetchLimit = 1
+        _workouts = Query(d)
+    }
 
     @State private var title = ""
     @State private var desc = ""

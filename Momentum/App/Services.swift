@@ -59,16 +59,19 @@ final class Services {
     /// (so `services.paywall` and `@Environment(PaywallController.self)` are the same instance);
     /// previews/tests fall back to the unlock-all stub so feature surfaces stay visible.
     static func live(paywall: any PaywallServing = StubPaywallService()) -> Services {
-        Services(
+        // Built first so the sync sweep reports rejected uploads through the *same* analytics
+        // instance the rest of the app logs to, rather than a second one with its own buffer.
+        let analytics = AnalyticsService()
+        return Services(
             location: LocationService(),
             motion: MotionService(),
             health: HealthService(),
             ai: AIService(),
-            sync: SyncService(),
+            sync: SyncService(analytics: analytics),
             paywall: paywall,
             notifications: NotificationService(),
             athleteModel: AthleteModelService(),
-            analytics: AnalyticsService(),
+            analytics: analytics,
             voiceCoach: VoiceCoachService(),
             presence: LivePresenceService(),
             social: SupabaseSocialBackend(paywall: paywall)

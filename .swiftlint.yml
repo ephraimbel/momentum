@@ -1,0 +1,79 @@
+# SwiftLint for momentum — added 2026-08-21.
+#
+# This is an `only_rules` list, deliberately. SwiftLint's default set produces ~3,000 violations
+# here, and essentially all of them argue with house style rather than find defects: 445 comma
+# spacings, 218 intentional trailing commas, and ~1,800 "identifier name too short" on the short,
+# consistent binding names (`w` for workout, `s` for session, `d` for descriptor) this codebase uses
+# everywhere and reads fine. A gate that noisy gets switched off in a week.
+#
+# So the list below is the opposite trade: only rules that catch a real bug or a real cost, chosen so
+# the tree is at ZERO violations today. That makes it enforceable in CI from day one — the gate means
+# "you added something", never "the backlog is still there". Add rules as they're earned.
+#
+# Two deliberate omissions:
+#   • `force_unwrapping` — 420 hits, nearly all `Calendar.current.date(byAdding:)!`, which is
+#     idiomatic and safe. Worth revisiting as a focused refactor, not as a gate.
+#   • `empty_count` — its one hit was a false positive: the watch countdown's `count > 0` is an Int,
+#     not a collection, and it matched on the name alone.
+
+only_rules:
+  # — correctness / crash risk —
+  - force_cast
+  - force_try
+  - implicitly_unwrapped_optional
+  - block_based_kvo
+  - class_delegate_protocol
+  - compiler_protocol_init
+  - discarded_notification_center_observer
+  - notification_center_detachment
+  - ns_number_init_as_function_reference
+  - nsobject_prefer_isequal
+  - overridden_super_call
+  - prohibited_super_call
+  - self_in_property_initialization
+  - unused_setter_value
+  - weak_delegate
+  - unowned_variable_capture
+
+  # — cost: each of these is an avoidable allocation, copy, or full sort —
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - first_where
+  - last_where
+  - sorted_first_last
+  - reduce_into
+  - is_disjoint
+  - unused_enumerated
+
+  # — dead or redundant —
+  - duplicate_imports
+  - redundant_nil_coalescing
+  - redundant_objc_attribute
+  - redundant_set_access_control
+  - unused_closure_parameter
+  - unused_control_flow_label
+  - unused_optional_binding
+
+  # — modern API —
+  - empty_string
+  - legacy_random
+  - legacy_multiple
+  - toggle_bool
+  - static_operator
+  - deployment_target
+
+included:
+  - Momentum
+  - MomentumWatch
+  - MomentumWidgets
+  - MomentumWatchWidgets
+
+excluded:
+  - build
+  - .build
+  # Test targets keep `try!` in fixture setup on purpose — a throw there IS the failure, and
+  # unwrapping it is what makes the diagnostic readable.
+  - MomentumTests
+  - MomentumUITests

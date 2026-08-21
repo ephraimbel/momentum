@@ -266,7 +266,7 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         let lats = [37.7735, 37.7757, 37.7779, 37.7801, 37.7823, 37.7845]   // successive E-W streets, S→N
         var pts: [(Double, Double)] = []
         for (r, lat) in lats.enumerated() {
-            let ends = r % 2 == 0 ? (lonW, lonE) : (lonE, lonW)
+            let ends = r.isMultiple(of: 2) ? (lonW, lonE) : (lonE, lonW)
             pts.append((lat, ends.0)); pts.append((lat, ends.1))
         }
         return pts

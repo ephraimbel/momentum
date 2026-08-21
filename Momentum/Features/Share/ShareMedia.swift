@@ -94,6 +94,8 @@ struct LoopingVideoView: UIViewRepresentable {
         private var looper: AVPlayerLooper?
         private var loadedURL: URL?
 
+        // Safe by this view's `layerClass` override — UIKit builds the layer from that type.
+        // swiftlint:disable:next force_cast
         private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 
         func load(_ url: URL) {

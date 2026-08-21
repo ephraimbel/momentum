@@ -11,7 +11,17 @@ struct PlanProposalCard: View {
     @Environment(Services.self) private var services
     @Environment(PaywallController.self) private var paywall
     @Query private var profiles: [UserProfile]
-    @Query private var workouts: [Workout]
+    /// `proposeAdjustment` reads only `ProgressInsights.recommendation`, which is built from a 7-day
+    /// acute window, a 28-day chronic window, and a chronic divisor that saturates at 4 weeks of
+    /// history. Every one of those is inside 120 days, so bounding the query here is not an
+    /// approximation — it returns the identical recommendation while reading a fixed slice instead
+    /// of the athlete's entire log.
+    private static var recentLoad: FetchDescriptor<Workout> {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -120, to: Date()) ?? .distantPast
+        return FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt >= cutoff },
+                                        sortBy: [SortDescriptor(\Workout.startedAt, order: .reverse)])
+    }
+    @Query(PlanProposalCard.recentLoad) private var workouts: [Workout]
 
     /// `nil` = undecided, `>= 0` = applied (n sessions), `-1` = dismissed. Latches so the card
     /// resolves to one state and never re-offers within the summary.

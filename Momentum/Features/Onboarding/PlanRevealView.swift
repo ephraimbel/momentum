@@ -311,7 +311,7 @@ struct PlanRevealView: View {
                             Text("\(i + 1)")
                                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
                                 .foregroundStyle(i == peakIdx ? Theme.ink : Theme.inkTertiary)
-                                .opacity((i % tickEvery == 0 || i == count - 1 || i == peakIdx) ? 1 : 0)
+                                .opacity((i.isMultiple(of: tickEvery) || i == count - 1 || i == peakIdx) ? 1 : 0)
                                 .frame(maxWidth: .infinity)
                         }
                     }

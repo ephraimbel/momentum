@@ -1199,10 +1199,10 @@ enum CoachResponder {
             .components(separatedBy: "—")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        return pieces.enumerated().reduce("") { acc, e in
+        return pieces.enumerated().reduce(into: "") { acc, e in
             let (idx, piece) = e
             let capped = idx == 0 ? piece : piece.prefix(1).uppercased() + piece.dropFirst()
-            return idx == 0 ? capped : acc + ". " + capped
+            if idx == 0 { acc = capped } else { acc += ". " + capped }
         }
     }
 }

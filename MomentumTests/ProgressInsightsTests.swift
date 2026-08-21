@@ -171,4 +171,42 @@ struct ProgressInsightsTests {
         #expect(changed == 0)
         #expect(plan.sessions[0].targetDistanceM == 5000)
     }
+
+    // MARK: The 120-day query bound (PlanProposalCard)
+
+    /// `PlanProposalCard` reads a 120-day slice instead of the whole log. That is only legitimate if
+    /// it changes nothing: the acute window is 7 days, the chronic window 28, and the chronic
+    /// divisor saturates at 4 weeks of history — so a workout older than 120 days cannot move
+    /// `recommendation`. Three years of history, sliced, must agree with the full set.
+    @Test func recommendationIsUnchangedByThe120DayBound() {
+        // Three years of steady training, plus a recent block that decides the verdict.
+        var all: [Workout] = (0..<156).map { run(daysAgo: 7 * $0 + 200, minutes: 45) }
+        all += [run(daysAgo: 2, minutes: 60), run(daysAgo: 5, minutes: 50),
+                run(daysAgo: 9, minutes: 55), run(daysAgo: 16, minutes: 45),
+                run(daysAgo: 23, minutes: 40), run(daysAgo: 30, minutes: 40)]
+
+        let cutoff = Calendar.current.date(byAdding: .day, value: -120, to: Date())!
+        let bounded = all.filter { $0.startedAt >= cutoff }
+
+        #expect(bounded.count < all.count)   // the bound is actually cutting something
+        #expect(ProgressInsights(workouts: bounded).recommendation
+                == ProgressInsights(workouts: all).recommendation)
+        #expect(ProgressInsights(workouts: bounded).status
+                == ProgressInsights(workouts: all).status)
+    }
+
+    /// The same equivalence for a brand-new athlete, whose entire history is inside the window —
+    /// the case where the chronic divisor has NOT saturated and a wrong bound would show up.
+    @Test func the120DayBoundIsAlsoIdenticalForANewAthlete() {
+        let all = [run(daysAgo: 1, minutes: 30), run(daysAgo: 4, minutes: 35),
+                   run(daysAgo: 8, minutes: 30)]
+        let cutoff = Calendar.current.date(byAdding: .day, value: -120, to: Date())!
+        let bounded = all.filter { $0.startedAt >= cutoff }
+
+        #expect(bounded.count == all.count)
+        #expect(ProgressInsights(workouts: bounded).acwr == ProgressInsights(workouts: all).acwr)
+        #expect(ProgressInsights(workouts: bounded).recommendation
+                == ProgressInsights(workouts: all).recommendation)
+    }
+
 }

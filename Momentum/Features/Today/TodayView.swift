@@ -9,6 +9,10 @@ import MapboxMaps
 struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.colorScheme) private var colorScheme
+    /// Read only to let the deck's prescription line wrap instead of truncate at large text sizes
+    /// (see `planRow`). Typography went Dynamic-Type-aware 2026-08-21; this is the one Today layout
+    /// that lost information rather than gained it when text started scaling.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(Services.self) private var services
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router   // morning readout → Progress · Health
@@ -1616,8 +1620,12 @@ struct TodayView: View {
                     Text(planEyebrow).font(.rounded(Theme.FontSize.label, weight: .bold))
                         .tracking(1.4).foregroundStyle(Theme.inkTertiary)
                         .lineLimit(1)
+                    // "Easy 3.5 mi ~11:45 /mi" — one line normally, two at accessibility sizes.
+                    // A hard `lineLimit(1)` clipped it to "Easy 3.5 mi ~11:45…" once type scaled,
+                    // dropping the pace: the half of the prescription the row exists to state.
                     Text(PlanCoaching.brief(for: session)).font(.rounded(Theme.FontSize.body, weight: .semibold))
-                        .foregroundStyle(Theme.ink).lineLimit(1)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                     // The why, right on the deck — an eased/moved/rebuild session must never show
                     // its changed prescription without its one-line reason ("Eased today — poor
                     // sleep…"). The row grows only on mornings the coach actually did something.

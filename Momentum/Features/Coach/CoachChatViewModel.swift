@@ -102,7 +102,7 @@ final class CoachChatViewModel {
         let cal = Calendar.current
         let profile = fetchProfile()
         let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-        if !PlanCoaching.todaySessions(profile?.plan, on: Date()).filter({ $0.status != .completed }).isEmpty {
+        if PlanCoaching.todaySessions(profile?.plan, on: Date()).contains(where: { $0.status != .completed }) {
             out.append("Brief me on today")
         }
         if let last = workouts.max(by: { $0.startedAt < $1.startedAt }),

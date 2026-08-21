@@ -83,7 +83,7 @@ enum RouteEndpoints {
         ctx.setFillColor(UIColor(finishColor).cgColor)
         let cell = d / CGFloat(checkerCells)
         for row in 0..<checkerCells {
-            for col in 0..<checkerCells where (row + col) % 2 == 0 {
+            for col in 0..<checkerCells where (row + col).isMultiple(of: 2) {
                 ctx.fill(CGRect(x: face.minX + CGFloat(col) * cell,
                                 y: face.minY + CGFloat(row) * cell,
                                 width: cell, height: cell))
@@ -164,7 +164,7 @@ struct RouteFinishMark: View {
                     let cells = RouteEndpoints.checkerCells
                     let cell = size.width / CGFloat(cells)
                     for row in 0..<cells {
-                        for col in 0..<cells where (row + col) % 2 == 0 {
+                        for col in 0..<cells where (row + col).isMultiple(of: 2) {
                             ctx.fill(Path(CGRect(x: CGFloat(col) * cell, y: CGFloat(row) * cell,
                                                  width: cell, height: cell)),
                                      with: .color(RouteEndpoints.finishColor))

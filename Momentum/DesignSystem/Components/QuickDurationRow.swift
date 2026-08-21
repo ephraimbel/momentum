@@ -19,7 +19,7 @@ struct QuickDurationRow: View {
 
     static func label(_ seconds: TimeInterval) -> String {
         let minutes = Int(seconds / 60)
-        if minutes % 60 == 0 { return "\(minutes / 60)h" }
+        if minutes.isMultiple(of: 60) { return "\(minutes / 60)h" }
         return minutes > 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
     }
 

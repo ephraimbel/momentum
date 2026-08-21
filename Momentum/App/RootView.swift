@@ -304,8 +304,7 @@ struct RootView: View {
                         if let session = profiles.first?.plan?.sessions
                             .filter({ $0.discipline == .strength && !$0.strengthTargets.isEmpty
                                       && $0.status != .completed })
-                            .sorted(by: { abs($0.date.timeIntervalSinceNow) < abs($1.date.timeIntervalSinceNow) })
-                            .first {
+                            .min(by: { abs($0.date.timeIntervalSinceNow) < abs($1.date.timeIntervalSinceNow) }) {
                             StrengthLiveView(container: context.container, type: .strength,
                                              plannedSession: session) { _ in
                                 showStrengthLivePlanned = false

@@ -200,10 +200,10 @@ enum WorkoutReadTemplates {
             .components(separatedBy: "—")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        return pieces.enumerated().reduce("") { acc, e in
+        return pieces.enumerated().reduce(into: "") { acc, e in
             let (idx, p) = e
             let capped = idx == 0 ? p : p.prefix(1).uppercased() + p.dropFirst()
-            return idx == 0 ? capped : acc + ". " + capped
+            if idx == 0 { acc = capped } else { acc += ". " + capped }
         }
     }
 }
