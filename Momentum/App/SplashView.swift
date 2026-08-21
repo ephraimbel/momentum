@@ -17,7 +17,6 @@ struct SplashView: View {
     let onFinished: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var word = false
     @State private var bloom = false
     @State private var gone = false
 
@@ -34,19 +33,18 @@ struct SplashView: View {
             Image("LaunchWordmark")
                 .blur(radius: 26)
                 .opacity(bloom || reduceMotion ? 0.5 : 0)
-            // The wordmark exists at ONE size only (owner call 2026-08-21): the static launch
-            // frame is now plain charcoal — iOS zooms that frame up from the app icon, and a
-            // wordmark printed on it rode the zoom and read as the logo growing. Instead the
-            // word FADES in here, already at its final 240pt, and never moves or scales.
+            // The wordmark exists at ONE size only, and it does not "appear" (owner call
+            // 2026-08-21, third take): it is simply THERE from the splash's first frame, full
+            // opacity, no fade — the word is the page, and only its light moves. (It still can't
+            // ride the system's zoom-open at fixed size: iOS scales the whole launch frame, which
+            // is why the static frame stays plain charcoal and the word begins here.)
             Image("LaunchWordmark")
-                .opacity(word || reduceMotion ? 1 : 0)
         }
         .opacity(gone ? 0 : 1)
         .onAppear {
             if !reduceMotion {
-                withAnimation(.easeOut(duration: 0.35)) { word = true }
-                // The glow follows a beat behind — the word arrives, then lights up.
-                withAnimation(.easeInOut(duration: 0.9).delay(0.15)) { bloom = true }
+                // Only the light moves: the glow breathes in behind the already-present word.
+                withAnimation(.easeInOut(duration: 0.9).delay(0.1)) { bloom = true }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 withAnimation(.easeOut(duration: 0.3)) { gone = true }
