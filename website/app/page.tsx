@@ -20,7 +20,7 @@ const appSchema = {
       "@type": "Offer",
       price: "59.99",
       priceCurrency: "USD",
-      description: "momentum Pro, annual — 7-day free trial",
+      description: "momentum Pro, annual — save 50% vs monthly",
     },
   ],
 };
@@ -444,10 +444,10 @@ function Pricing() {
             </div>
             <div className="price-actions">
               <a className="btn btn-ink" href={APP_STORE_URL} target="_blank" rel="noopener">
-                Start 7 days free <span className="arrow" aria-hidden>↗</span>
+                Get momentum Pro <span className="arrow" aria-hidden>↗</span>
               </a>
               <p className="price-note">
-                Then $59.99/year — under $5 a month. Or $9.99/month without the trial.
+                $59.99/year — under $5 a month, half the monthly price. Or $9.99/month.
                 <br />
                 Tracking every run is free, forever. Billed by Apple · cancel anytime.
               </p>
@@ -467,7 +467,7 @@ function FAQ() {
   const items = [
     {
       q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $59.99/year with a 7-day free trial, which works out to under $5 a month. Prefer month to month? $9.99, no trial.",
+      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $59.99/year, which works out to under $5 a month, half the monthly price. Prefer month to month? $9.99.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
