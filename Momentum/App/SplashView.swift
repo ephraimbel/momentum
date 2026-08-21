@@ -23,28 +23,28 @@ struct SplashView: View {
     var body: some View {
         ZStack {
             Color("LaunchCanvas").ignoresSafeArea()
-            // The bloom: one soft lavender pool waking behind the wordmark — brand, not
-            // decoration, and the page's only motion. Static under Reduce Motion. The dark-mode
-            // lavender, hardcoded: the canvas is scheme-fixed, so the accent must be too.
-            Circle()
-                .fill(
-                    RadialGradient(colors: [Color(red: 0.62, green: 0.55, blue: 0.96).opacity(0.20), .clear],
-                                   center: .center, startRadius: 10, endRadius: 190)
-                )
-                .frame(width: 380, height: 380)
-                .opacity(bloom ? 1 : 0)
-                .scaleEffect(bloom ? 1 : 0.7)
+            // The glow (owner call 2026-08-21, replacing a lavender radial pool that read as a
+            // blob): the wordmark's OWN light — a blurred copy of the letterforms breathing in
+            // beneath the sharp one, so the halo hugs the word's shape instead of imposing a
+            // circle on it. White, deliberately: lavender means "tappable or happening now"
+            // (scarcity rule), and a splash is neither — on charcoal, a monochrome glow is the
+            // elegant read. No scale, ever; light doesn't zoom. Static at rest under Reduce
+            // Motion (a held glow is fine; only the breath is motion).
+            Image("LaunchWordmark")
+                .blur(radius: 26)
+                .opacity(bloom || reduceMotion ? 0.5 : 0)
             // EXACTLY the static launch screen's frame: the wordmark at its intrinsic 240pt
             // (owner call 2026-08-21: a touch larger — sized in the ASSET so both layers grow in
             // lockstep; sizing only one side would put a pop in the handoff),
             // centered. Rendering the same asset at the same size is what makes the system→app
-            // handoff invisible; the bloom then plays as the word lighting up, not as a swap.
+            // handoff invisible; the glow then plays as the word lighting up, not as a swap.
             Image("LaunchWordmark")
         }
         .opacity(gone ? 0 : 1)
         .onAppear {
             if !reduceMotion {
-                withAnimation(.easeOut(duration: 0.45)) { bloom = true }
+                // A slow breath, not a pop — the glow arriving gently is most of its elegance.
+                withAnimation(.easeInOut(duration: 0.9)) { bloom = true }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
                 withAnimation(.easeOut(duration: 0.3)) { gone = true }
