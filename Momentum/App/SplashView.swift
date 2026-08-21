@@ -34,7 +34,9 @@ struct SplashView: View {
                 .frame(width: 380, height: 380)
                 .opacity(bloom ? 1 : 0)
                 .scaleEffect(bloom ? 1 : 0.7)
-            // EXACTLY the static launch screen's frame: the wordmark at its intrinsic 220pt,
+            // EXACTLY the static launch screen's frame: the wordmark at its intrinsic 240pt
+            // (owner call 2026-08-21: a touch larger — sized in the ASSET so both layers grow in
+            // lockstep; sizing only one side would put a pop in the handoff),
             // centered. Rendering the same asset at the same size is what makes the system→app
             // handoff invisible; the bloom then plays as the word lighting up, not as a swap.
             Image("LaunchWordmark")
