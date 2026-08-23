@@ -9,14 +9,14 @@ final class OnboardingPaywallUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    /// Enters at the RATING beat, which is the step immediately before the paywall since the
-    /// 2026-07-26 reorder (reveal → notifications → rating → paywall → account). Driving from
+    /// Enters at the LOCATION PRIMER, the step immediately before the paywall since the rating beat
+    /// was removed (2026-08-22): reveal → notifications → primers → paywall → account. Driving from
     /// `--onboarding-reveal` used to work and silently stopped when those beats moved between the
     /// reveal and the wall; entering one step out keeps this suite pinned to the real hand-off.
     private func launchToPaywall(_ app: XCUIApplication) {
         // Seeded profile (the flow needs one) + forced-free entitlement so the paywall actually
         // shows — `--debug-free` is read before `--seed-demo`'s Pro grant, so free wins.
-        app.launchArguments = ["--seed-demo", "--debug-free", "--onboarding", "--onboarding-rate"]
+        app.launchArguments = ["--seed-demo", "--debug-free", "--onboarding", "--onboarding-primers"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
                 let button = alert.buttons[label]
@@ -27,11 +27,15 @@ final class OnboardingPaywallUITests: XCTestCase {
         app.launch()
         app.tap()
 
+        // The location primer is now the last beat before the wall (the rating beat that used to sit
+        // between them was removed 2026-08-22), so its Continue IS the hand-off under test.
         // 30s, not 15: a cold launch that also has to run `--seed-demo` can blow well past 15s on a
         // loaded machine, which showed up once as a phantom failure of this suite under CPU load.
-        let notNow = app.buttons["Not now"]
-        XCTAssertTrue(notNow.waitForExistence(timeout: 30), "Didn't land on the rating beat.")
-        notNow.tap()
+        XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 30),
+                      "Didn't land on the location primer.")
+        let cont = app.buttons["Continue"]
+        XCTAssertTrue(cont.waitForExistence(timeout: 10), "The primer must offer Continue.")
+        cont.tap()
     }
 
     /// Walks the two-page flow (2026-08-05) from its device-tour opener to the checkout page.
@@ -52,7 +56,7 @@ final class OnboardingPaywallUITests: XCTestCase {
 
         // The tour page: no X here (user call 2026-08-06) — Restore is the only chrome.
         let tryNow = app.buttons["Try now"]
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Paywall didn't follow the rating beat.")
+        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Paywall didn't follow the location primer.")
         XCTAssertFalse(app.buttons["Close"].exists,
                        "The tour page must NOT carry the close button — the X is checkout-only.")
         XCTAssertTrue(app.buttons["Restore"].exists, "The paywall must still offer Restore.")
@@ -87,13 +91,24 @@ final class OnboardingPaywallUITests: XCTestCase {
     func testCloseHandsOffToTheAccountBeatForGuests() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--onboarding-guest", "--debug-free",
-                               "--onboarding", "--onboarding-rate"]
+                               "--onboarding", "--onboarding-primers"]
+        // The location primer asks for location ~0.55s after it settles; dismiss it however it lands.
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]
+                if b.exists { b.tap(); return true }
+            }
+            return false
+        }
         app.launch()
         app.tap()
 
-        let notNow = app.buttons["Not now"]
-        XCTAssertTrue(notNow.waitForExistence(timeout: 30), "Didn't land on the rating beat.")
-        notNow.tap()
+        // The last beat before the wall since the rating beat was removed (2026-08-22).
+        XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 30),
+                      "Didn't land on the location primer.")
+        let primerContinue = app.buttons["Continue"]
+        XCTAssertTrue(primerContinue.waitForExistence(timeout: 10), "The primer must offer Continue.")
+        primerContinue.tap()
 
         advanceToCheckout(app)
         let close = app.buttons["Close"]
@@ -118,16 +133,27 @@ final class OnboardingPaywallUITests: XCTestCase {
     func testRelaunchGatePurchaseStillOffersTheAccount() {
         let app = XCUIApplication()
         let args = ["--seed-demo", "--onboarding-guest", "--debug-free"]
-        app.launchArguments = args + ["--onboarding", "--onboarding-rate"]
+        app.launchArguments = args + ["--onboarding", "--onboarding-primers"]
+        // The location primer asks for location ~0.55s after it settles; dismiss it however it lands.
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]
+                if b.exists { b.tap(); return true }
+            }
+            return false
+        }
         app.launch()
         app.tap()
 
-        let notNow = app.buttons["Not now"]
-        XCTAssertTrue(notNow.waitForExistence(timeout: 30), "Didn't land on the rating beat.")
-        notNow.tap()
+        // The last beat before the wall since the rating beat was removed (2026-08-22).
+        XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 30),
+                      "Didn't land on the location primer.")
+        let primerContinue = app.buttons["Continue"]
+        XCTAssertTrue(primerContinue.waitForExistence(timeout: 10), "The primer must offer Continue.")
+        primerContinue.tap()
 
         XCTAssertTrue(app.buttons["Try now"].waitForExistence(timeout: 10),
-                      "Paywall didn't follow the rating beat.")
+                      "Paywall didn't follow the location primer.")
 
         // Force-quit AT the wall, then come back with no onboarding deep link at all.
         app.terminate()
@@ -168,13 +194,24 @@ final class OnboardingPaywallUITests: XCTestCase {
     func testStoreUnreachableHardGateOffersADeferral() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--debug-free", "--paywall-pricing-down",
-                               "--onboarding", "--onboarding-rate"]
+                               "--onboarding", "--onboarding-primers"]
+        // The location primer asks for location ~0.55s after it settles; dismiss it however it lands.
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]
+                if b.exists { b.tap(); return true }
+            }
+            return false
+        }
         app.launch()
         app.tap()
 
-        let notNow = app.buttons["Not now"]
-        XCTAssertTrue(notNow.waitForExistence(timeout: 30), "Didn't land on the rating beat.")
-        notNow.tap()
+        // The last beat before the wall since the rating beat was removed (2026-08-22).
+        XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 30),
+                      "Didn't land on the location primer.")
+        let primerContinue = app.buttons["Continue"]
+        XCTAssertTrue(primerContinue.waitForExistence(timeout: 10), "The primer must offer Continue.")
+        primerContinue.tap()
 
         // The first two pages sell without transacting, so they advance even with the store down.
         advanceToCheckout(app)

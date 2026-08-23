@@ -174,19 +174,21 @@ final class OnboardingViewModel {
         // profile photo and avatar looks) follows `name`, both before any training questions.
         // `experience` doubles as the running pace question (2026-07-24), so there's no separate
         // `calibration` step any more — runners are asked their level once.
-        // `rateUs` sits between `primers` and the paywall (user call 2026-07-26).
+        // There is NO rating beat. One shipped between `primers` and the paywall from 2026-07-26 and
+        // was REMOVED 2026-08-22 (owner call, funnel work): it asked a rating from someone who had
+        // never used the app, and it sat in the worst possible seat — the last screen before the
+        // checkout, spending the athlete's patience immediately before spending their money. It was
+        // also the exact thing this app was rejected for under App Review 5.6.3. The rating ask now
+        // lives only where engagement justifies it: the soft pre-prompt after a first saved workout
+        // (`AppReview.shouldRequestReview` + `RatingPromptView`). Do not re-add one here.
         // `account` is the LAST beat, AFTER the paywall (user call 2026-07-27): the sign-in/sign-up
         // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
         // someone. Setup now runs local-only (guest) and the account is offered once there's a plan
         // worth saving. Skippable — `AccountOptionsView(.onboardingBeat)`.
-        // ⚠️ App Review guideline 5.6.3 says not to solicit ratings before real engagement, and this
-        // app was rejected under exactly that rule for a rating beat in onboarding. Shipping it again
-        // is a deliberate, informed decision by the owner — if a submission is rejected, this step is
-        // the first thing to pull (delete the case; the flow closes over it with no other changes).
         case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, strengthSplit,
              hybridFocus, why,
-             health, intensity, building, reveal, notifications, primers, rateUs, account
+             health, intensity, building, reveal, notifications, primers, account
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -206,7 +208,7 @@ final class OnboardingViewModel {
         if let c = stepsCache, c.key == key { return (c.steps, c.questions) }
         let all = computeSteps()
         let questions = all.filter {
-            ![.health, .building, .reveal, .notifications, .primers, .rateUs, .account].contains($0)
+            ![.health, .building, .reveal, .notifications, .primers, .account].contains($0)
         }
         stepsCache = (key, all, questions)
         return (all, questions)
@@ -244,7 +246,7 @@ final class OnboardingViewModel {
 
     /// The answerable steps (drives the progress bar + the question chrome).
     /// `.health` is an opt-in consent beat (like notifications), not an answerable question.
-    /// `.rateUs` and `.account` aren't either — neither may add a phantom notch to the progress
+    /// `.account` isn't either — it may not add a phantom notch to the progress
     /// bar (which would then never reach 100% on the last question). The filter lives in
     /// `cachedStepLists` alongside `steps`.
     private var questionSteps: [Step] { cachedStepLists.questions }

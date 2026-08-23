@@ -19,15 +19,11 @@ struct OnboardingFlow: View {
     @Environment(AuthController.self) private var auth
     @Environment(PaywallController.self) private var paywall
     @Environment(\.scenePhase) private var scenePhase
-    /// Apple's native App Store rating alert — used by the `.rateUs` beat.
-    @Environment(\.requestReview) private var requestReview
-    @State private var rateStarsIn = false
-    @State private var rateAsked = false     // one-shot: the auto-presented review ask fired
-    /// The athlete left the rating beat (Continue → paywall/account). `finishOnboarding` presents
-    /// the paywall as a COVER without changing the step, so the delayed `requestReview` can't key
-    /// off `vm.step` alone — without this latch a fast Continue put Apple's rating alert on top of
-    /// the just-presented paywall (and burned the once-ever ask on a moment nobody saw).
-    @State private var rateUsLeft = false
+    /// The athlete left the last primer (Continue → paywall/account). `finishOnboarding` presents
+    /// the paywall as a COVER **without changing the step**, so anything the primers beat scheduled
+    /// can't key off `vm.step` alone — without this latch a fast Continue put the system location
+    /// prompt on top of the just-presented paywall.
+    @State private var leftPrimers = false
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     /// The curated look picked on the identity beat (ring in the strip); cleared by a photo pick.
     @State private var onboardingPreset: AvatarPreset?
@@ -51,7 +47,7 @@ struct OnboardingFlow: View {
     @State private var lastStepChangeAt = Date.distantPast   // double-tap guard for goNext/goBack
     /// True while the paywall's exit advances the step UNDER the still-presented cover — the
     /// travel animation is suppressed so the account beat is fully composed before the cover
-    /// dismisses (the mid-flight crossfade used to ghost the rating step through it).
+    /// dismisses (the mid-flight crossfade used to ghost the step underneath through it).
     @State private var jumpCut = false
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
@@ -170,7 +166,6 @@ struct OnboardingFlow: View {
                 vm.step = .intensity
             }
             // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
-            if args.contains("--onboarding-rate") { vm.step = .rateUs }
             if args.contains("--onboarding-account") { vm.step = .account }
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
@@ -196,11 +191,11 @@ struct OnboardingFlow: View {
         // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
-        // The onboarding_complete paywall (PRD §10) — shown from the rating beat's hand-off, after
+        // The onboarding_complete paywall (PRD §10) — shown from the last primer's hand-off, after
         // every opt-in. **SOFT since 2026-08-06** (user call, reversing the 2026-07-28 hard flip):
         // the flow's X closes it un-entitled. Purchase and close both exit through `exitPaywall`,
         // which advances the flow UNDER the cover before dismissing it — so the dismissal reveals
-        // the account beat, not a half-second flash of the rating step the wall was presented over
+        // the account beat, not a half-second flash of the step the wall was presented over
         // (that flash shipped through 1.2.0; fixed 2026-08-06). `onDismiss` remains only for the
         // store-unreachable deferral, whose escape dismisses without an exit callback.
         // `finishOnboarding` still arms `onboardingGatePending` first, so a force-quit AT the wall
@@ -211,7 +206,7 @@ struct OnboardingFlow: View {
             if !paywallHandledExit {
                 // Same jump-cut `exitPaywall` uses: this fallback (the store-unreachable escape
                 // dismisses without a callback) advances under the dismissing cover, and an
-                // animated advance there ghosts the rating step through the account beat.
+                // animated advance there ghosts the underlying step through the account beat.
                 jumpCut = true
                 goToAccountBeat()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { jumpCut = false }
@@ -350,7 +345,6 @@ struct OnboardingFlow: View {
         }
         case .notifications: notificationsStep
         case .primers: primersStep
-        case .rateUs: rateUsStep
         case .account: accountStep
         }
     }
@@ -1464,7 +1458,7 @@ struct OnboardingFlow: View {
                     // Same one-shot latch as "Turn on reminders" — during the settings round-trip
                     // before the system alert presents, this button used to stay live, and tapping
                     // it advanced once immediately and AGAIN from the alert's completion, skipping
-                    // the location primer and stacking its prompt over the rating beat.
+                    // the location primer and stacking its prompt over the beat after it.
                     guard !remindersAdvanced else { return }
                     remindersAdvanced = true
                     Haptics.light()
@@ -1584,10 +1578,10 @@ struct OnboardingFlow: View {
             Spacer()
             BrandMark(size: 96)
             // This beat is ONLY about location. It used to read "You're all set" / "Start training"
-            // from when it genuinely ended onboarding — three beats (rateUs → paywall → account) have
-            // since been added after it, so that copy promised a finish the flow doesn't deliver and
-            // made everything past it feel like an ambush. Headline and CTA both stay neutral: if
-            // this ever becomes the last step again, that's the moment to promise an ending.
+            // from when it genuinely ended onboarding — the paywall and the account beat still come
+            // after it, so that copy promised a finish the flow doesn't deliver and made everything
+            // past it feel like an ambush. Headline and CTA both stay neutral: if this ever becomes
+            // the last step again, that's the moment to promise an ending.
             VStack(spacing: Theme.Space.sm) {
                 Text("Map your runs")
                     .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -1598,8 +1592,9 @@ struct OnboardingFlow: View {
             }
             .reveal(0.15)
             Spacer()
-            // Hands off to `rateUs`, which is the last beat before the paywall (2026-07-26).
-            OversizedButton(title: "Continue") { goNext() }
+            // The last beat the athlete drives: hands straight off to the paywall gate, then the
+            // account. (Went through a `rateUs` step from 2026-07-26 until it was removed 2026-08-22.)
+            OversizedButton(title: "Continue") { finishOnboarding() }
                 .reveal(0.3)
         }
         // Ask for location only AFTER this page is visibly on screen — the athlete reads WHY (their
@@ -1608,89 +1603,15 @@ struct OnboardingFlow: View {
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
                 // Tapping Continue inside the 0.55s window used to fire the system prompt over the
-                // NEXT beat (the rating ask), which reads as a random permission grab on a screen
-                // that says nothing about location. Only ask if this step is still the one on screen.
-                guard vm.step == .primers else { return }
+                // next beat, which reads as a random permission grab on a screen that says nothing
+                // about location. `vm.step` alone is no longer enough to detect that: since the
+                // rating beat was removed (2026-08-22) Continue raises the paywall as a COVER and
+                // leaves the step on `.primers`, so without `leftPrimers` the prompt would land on
+                // top of the checkout — the worst place in the app to interrupt.
+                guard vm.step == .primers, !leftPrimers else { return }
                 let loc = locator ?? LocationService()
                 locator = loc
                 loc.requestAuthorization()
-            }
-        }
-    }
-
-    /// The last onboarding beat: an ask for an App Store rating, immediately before the paywall.
-    ///
-    /// ⚠️ App Review guideline 5.6.3 — "don't require or encourage customers to submit a rating" —
-    /// and this app has already been rejected once for a rating beat in onboarding. This ships at
-    /// the owner's explicit, informed direction. If a submission comes back rejected, delete the
-    /// `.rateUs` case from `Step` and this view; `primersStep`'s button calls `finishOnboarding()`
-    /// directly and nothing else changes (the paywall → `.account` hand-off is unaffected).
-    ///
-    /// Skippable by design: the system alert is dismissible and the page's Continue is always
-    /// reachable — nothing is gated behind rating. The alert is Apple's own `requestReview`
-    /// (auto-presented on arrival, owner call 2026-08-20); we never fake stars and never route
-    /// unhappy athletes anywhere but onward.
-    private var rateUsStep: some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer()
-
-            HStack(spacing: 10) {
-                ForEach(0..<5, id: \.self) { i in
-                    // Filled, matching RatingPromptView (owner's call — outlined was tried and
-                    // reverted 2026-07-26).
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(Theme.proLavender)
-                        .opacity(rateStarsIn ? 1 : 0)
-                        .scaleEffect(rateStarsIn ? 1 : 0.7)
-                        .animation(reduceMotion ? nil
-                                   : .spring(response: 0.4, dampingFraction: 0.7).delay(0.1 + Double(i) * 0.07),
-                                   value: rateStarsIn)
-                }
-            }
-            .accessibilityHidden(true)
-
-            // Copy order is deliberate: the athlete's own experience first (what they just built),
-            // the ask second. Wording is the owner's call (2026-07-26) — "runners", not "users".
-            // Note for anyone auditing this later: the closing clause does encourage a rating, which
-            // is the behaviour App Review 5.6.3 names, and this app has been rejected under that rule
-            // before. That trade-off was made knowingly; see the warning on OnboardingViewModel.Step.
-            VStack(spacing: Theme.Space.sm) {
-                Text("Your plan is ready")
-                    .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("A quick rating helps the next runner find theirs.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .reveal(0.15)
-
-            Spacer()
-
-            // The ask presents ITSELF (owner call 2026-08-20): Apple's alert rises over this
-            // page moments after it settles, so the page's only control is the way onward. The
-            // system alert is modally its own window — Continue can't race it, and if the
-            // rate-limited alert chooses not to appear the page still reads and flows.
-            OversizedButton(title: "Continue") { finishOnboarding() }
-                .reveal(0.3)
-        }
-        .onAppear {
-            if reduceMotion { rateStarsIn = true }
-            else { withAnimation { rateStarsIn = true } }
-            // Auto-present once per arrival at this beat: after the stars land (~0.55s) plus a
-            // breath, Apple's own requestReview rises — the only sanctioned way to open it; the
-            // system rate-limits it and may decline (it rarely renders in the simulator at all).
-            guard !rateAsked else { return }
-            rateAsked = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                guard vm.step == .rateUs, !rateUsLeft else { return }   // they moved on before it fired
-                requestReview()
-                // Latch the once-ever guard so the post-first-save pre-prompt doesn't ask the
-                // same athlete again a few days later.
-                AppReview.markAsked()
             }
         }
     }
@@ -1717,16 +1638,16 @@ struct OnboardingFlow: View {
                     try? context.save()
                 }
                 // Let the Apple/Google sheet finish dismissing before this cover tears down — two
-                // modals resolving on one frame is the stuck-screen bug `rateUsStep` already
-                // works around above.
+                // modals resolving on one frame is a stuck-screen bug this file works around
+                // in several places.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { complete() }
             })
     }
 
     /// Where onboarding actually ends: the paywall gate (or straight through for entitled athletes),
-    /// then the account beat. Was inline in `primersStep` before `.rateUs` was inserted between them.
+    /// then the account beat. Called straight from `primersStep`'s Continue.
     private func finishOnboarding() {
-        rateUsLeft = true   // the delayed rating alert must not rise over what comes next
+        leftPrimers = true   // the delayed location prompt must not rise over what comes next
         if paywall.isPro { goToAccountBeat(); return }
         // Arm the relaunch gate BEFORE presenting — not to wall anyone in (the gate is soft now),
         // but so a force-quit mid-wall re-offers it once from RootView instead of dropping the
@@ -1762,7 +1683,7 @@ struct OnboardingFlow: View {
 
     /// The paywall's exit (purchase or the X), sequenced so nothing stale peeks through: advance
     /// to the account beat FIRST, under the still-presented cover, then dismiss — the dismissal
-    /// reveals "Save your progress" directly instead of flashing the rating step for the length
+    /// reveals "Save your progress" directly instead of flashing the step underneath for the length
     /// of the animation. Signed-in athletes have no account beat to advance to, so the whole flow
     /// completes in ONE dismissal (`onComplete` tears down the onboarding cover with the paywall
     /// still nested inside it) rather than two stacked ones.
@@ -1770,7 +1691,7 @@ struct OnboardingFlow: View {
         paywallHandledExit = true
         if auth.isSignedIn, !auth.isGuest { complete(); return }
         // Jump-cut, not travel: the advance happens under the still-presented cover, and if it
-        // animates, the cover's dismissal reveals a half-finished crossfade — the rating step
+        // animates, the cover's dismissal reveals a half-finished crossfade — the step underneath
         // ghosting through "Save your progress" (frame-stepped 2026-08-11). Compose the account
         // beat instantly, then let the cover's own dismissal be the only motion on screen.
         jumpCut = true

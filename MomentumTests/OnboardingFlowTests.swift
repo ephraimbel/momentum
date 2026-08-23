@@ -211,43 +211,37 @@ struct OnboardingFlowTests {
         #expect(easy.recommended == .gentle)
     }
 
-    /// The rating beat sits immediately before the paywall gate (owner call 2026-07-26). Two things
-    /// must hold or the flow breaks in ways a screenshot won't catch: it has to sit after `primers`
-    /// (so "Start training" reaches it), and it must not be counted as an answerable question (or
-    /// the progress bar grows a phantom notch and never reads 100%).
-    ///
-    /// ⚠️ This step is a deliberate App Review 5.6.3 risk — the app was previously rejected for a
-    /// rating beat in onboarding. If it has to come out, delete the `.rateUs` case and this test.
-    @Test func ratingBeatPrecedesThePaywallAndIsNotAQuestion() {
+    /// There is NO rating beat in onboarding (removed 2026-08-22). It shipped from 2026-07-26 as the
+    /// last screen before the checkout, which is both an App Review 5.6.3 risk this app was already
+    /// rejected under and the worst seat in the funnel — spending the athlete's patience immediately
+    /// before asking for money. `primers` must now hand straight to the paywall, and the only rating
+    /// ask left is the engagement-gated one after a first saved workout.
+    @Test func onboardingHasNoRatingBeat() {
         let all = OnboardingViewModel.Step.allCases
-        let primers = all.firstIndex(of: .primers)!
-        let rate = all.firstIndex(of: .rateUs)!
-        #expect(rate == primers + 1, "rateUs must come straight after primers")
-
-        // Not an answerable question: it must never appear in the progress denominator.
-        let vm = OnboardingViewModel()
-        vm.step = .rateUs
-        #expect(!vm.isQuestionStep)
+        #expect(!all.contains { "\($0)".localizedCaseInsensitiveContains("rate") },
+                "no rating step may exist in the onboarding flow")
+        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .primers)! + 1,
+                "primers hands straight to the paywall, which advances to account")
     }
 
     /// The account beat is the LAST step, AFTER the paywall (owner call 2026-07-27 — the sign-in
     /// screen used to gate the app on launch, which is the cheapest place in the funnel to lose
-    /// someone). Same two invariants as the rating beat, plus: onboarding must read as *finished*
-    /// by the time it shows, since every question was answered a while back.
+    /// someone). It must not be an answerable question, and onboarding must read as *finished* by
+    /// the time it shows, since every question was answered a while back.
     @Test func accountBeatIsTheFinalStepAndIsNotAQuestion() {
         let all = OnboardingViewModel.Step.allCases
         #expect(all.last == .account, "account must be the last step — nothing follows it")
-        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .rateUs)! + 1,
-                "the paywall is raised between these two; account must be the step rateUs advances to")
+        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .primers)! + 1,
+                "the paywall is raised between these two; account must be the step primers advances to")
 
         let vm = OnboardingViewModel()
         vm.step = .account
         #expect(!vm.isQuestionStep, "no header, no Continue bar, no progress notch")
         #expect(vm.progress == 1, "every question is long since answered")
 
-        // `advance()` from the rating beat lands here — that is how the paywall's onDismiss
-        // reaches it (`goToAccountBeat` → `goNext`).
-        vm.step = .rateUs
+        // `advance()` from the last primer lands here — that is how the paywall's onDismiss reaches
+        // it (`goToAccountBeat` → `goNext`), since the wall never changed the step underneath it.
+        vm.step = .primers
         vm.advance()
         #expect(vm.step == .account)
         // And it is a genuine terminus: advancing off the end must not wrap or stall elsewhere.

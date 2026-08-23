@@ -41,16 +41,10 @@ enum AppReview {
         return true
     }
 
-    /// Latch the once-ever guard without going through `shouldRequestReview`.
-    ///
-    /// Needed because the onboarding `.rateUs` beat (added 2026-07-26 at the owner's direction, see
-    /// the 5.6.3 warning on `OnboardingViewModel.Step`) asks BEFORE any workout exists, so it can't
-    /// use the engagement gate. Calling this there is what stops the post-first-save prompt from
-    /// asking the same athlete a second time — iOS would suppress the duplicate alert anyway, but the
-    /// styled pre-prompt in front of it would still appear, which reads as nagging.
-    static func markAsked(defaults: UserDefaults = .standard) {
-        defaults.set(true, forKey: askedKey)
-    }
+    // `markAsked` lived here from 2026-07-26 to 2026-08-22, so the onboarding `.rateUs` beat could
+    // latch the once-ever guard without passing the engagement gate (it asked before any workout
+    // existed). That beat is gone and nothing else may bypass the gate: an ask that hasn't earned
+    // its engagement is exactly the 5.6.3 problem. `shouldRequestReview` is the only door.
 
     #if DEBUG
     /// Test-only reset so fixtures start clean.

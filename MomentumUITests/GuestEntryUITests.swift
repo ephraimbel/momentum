@@ -68,18 +68,23 @@ final class GuestEntryUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         // --debug-free: a sim left dev-unlocked by an earlier --debug-pro would sail past the paywall.
-        app.launchArguments = ["--onboarding", "--onboarding-guest", "--onboarding-rate", "--debug-free"]
+        app.launchArguments = ["--onboarding", "--onboarding-guest", "--onboarding-primers", "--debug-free"]
+        // The primer asks for location ~0.55s after it settles; dismiss it however it lands.
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]
+                if b.exists { b.tap(); return true }
+            }
+            return false
+        }
         app.launch()
+        app.tap()
 
-        // The rating beat, the last step before the paywall — the review ask auto-presents
-        // (2026-08-20), so the walker just continues past it.
-        let planReady = app.staticTexts["Your plan is ready"]
-        XCTAssertTrue(planReady.waitForExistence(timeout: 15), "should land on the rating beat")
-        attach("beat-1-rate")
-        // The auto-presented review alert renders on simulators; dismiss it like a human would
-        // ("Not Now", capital N) before continuing past the beat.
-        let reviewNotNow = app.buttons["Not Now"]
-        if reviewNotNow.waitForExistence(timeout: 4) { reviewNotNow.tap() }
+        // The location primer — the last step before the paywall since the rating beat was removed
+        // (2026-08-22). Its Continue raises the wall directly.
+        let mapYourRuns = app.staticTexts["Map your runs"]
+        XCTAssertTrue(mapYourRuns.waitForExistence(timeout: 15), "should land on the location primer")
+        attach("beat-1-primer")
         app.buttons["Continue"].tap()
 
         // The paywall — a two-page flow since 2026-08-05 (device tour, then checkout), SOFT since
@@ -87,7 +92,7 @@ final class GuestEntryUITests: XCTestCase {
         // purchase path; the DEBUG seam grants locally, which is exactly the entitlement flip
         // under test.
         let tryNow = app.buttons["Try now"]
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the paywall should follow the rating beat")
+        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the paywall should follow the location primer")
         XCTAssertFalse(app.buttons["Close"].exists, "the tour page carries no X — checkout-only")
         attach("beat-2-paywall")
         tryNow.tap()
@@ -151,7 +156,7 @@ final class GuestEntryUITests: XCTestCase {
         // Walk generically as far as the PAYWALL: answer the one step that demands a pick, decline
         // every opt-in, Continue through everything else. The loop has to stop here — past the
         // paywall the account beat's "Not now" would be skipped mid-crossfade before it could be
-        // checked. (The rating beat auto-presents its ask and continues like any other step now.)
+        // checked. (No rating beat sits in here any more — it was removed 2026-08-22.)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         // The hard paywall's checkout CTA is the sentinel now that it renders no Close. It's also
         // safe as a loop guard: none of the generic taps below match "Start my …", so the walker
@@ -183,12 +188,7 @@ final class GuestEntryUITests: XCTestCase {
             let maybeLater = app.buttons["Maybe later"]
             let notNow = app.buttons["Not now"]
             let tryNow = app.buttons["Try now"]                             // paywall flow, the tour page
-            // The rating beat auto-presents Apple's review alert (2026-08-20); its "Not Now"
-            // (capital N) must be dismissed FIRST or it blocks every control beneath it and the
-            // walk stalls out — exactly how this test died under host load.
-            let reviewNotNow = app.buttons["Not Now"]
-            if reviewNotNow.exists && reviewNotNow.isHittable { reviewNotNow.tap() }
-            else if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
+            if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
             else if looksGreat.exists && looksGreat.isHittable { looksGreat.tap() }
             else if maybeLater.exists && maybeLater.isHittable { maybeLater.tap() }
             else if notNow.exists && notNow.isHittable { notNow.tap() }     // legacy skip labels
@@ -200,9 +200,6 @@ final class GuestEntryUITests: XCTestCase {
 
         let accountBeat = app.staticTexts["Save your progress"]
         XCTAssertTrue(accountBeat.waitForExistence(timeout: 20), "the paywall should hand off to the account beat")
-        // Let the rating beat finish animating out, or "Not now" resolves ambiguously.
-        let ratingTitle = app.staticTexts["Your plan is ready"]
-        for _ in 0..<20 where ratingTitle.exists { usleep(200_000) }
         attach("walk-2-account-beat")
 
         // Decline the account — everything built as a guest must still be there.
