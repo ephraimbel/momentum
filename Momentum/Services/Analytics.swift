@@ -6,6 +6,17 @@ import os
 /// ms, booleans) — never routes, names, locations, or health values, per the §13.3 privacy rule
 /// (no health-data-exfiltrating analytics, no ad SDKs).
 enum AnalyticsEvent: Equatable {
+    /// A cold launch. `first` is true on the very first launch of this install — which makes it the
+    /// **true install denominator**, the thing every funnel view was missing (2026-08-22). Until
+    /// this existed the first event of any kind was the first `onboarding_step`, so an athlete who
+    /// opened the app, looked at the welcome and left fired NOTHING: they weren't a drop-off in the
+    /// funnel, they weren't even an install. That is the exact shape of a cold ad click, so paid
+    /// traffic was leaking out of a door we could not see.
+    case appLaunched(first: Bool)
+    /// What happened at the welcome gate — the screen before `onboarding_step(0)`. Pair with
+    /// `app_launched(first=true)`: installs that fired the launch but never a welcome action are
+    /// the athletes who bounced at the door.
+    case welcomeAction(action: String)
     case onboardingStep(index: Int)
     case planGenerated(disciplines: Int)
     case paywallView(placement: String)
@@ -41,6 +52,8 @@ enum AnalyticsEvent: Equatable {
     /// The canonical event name (PRD §13.5).
     var name: String {
         switch self {
+        case .appLaunched:       "app_launched"
+        case .welcomeAction:     "welcome_action"
         case .onboardingStep:    "onboarding_step"
         case .planGenerated:     "plan_generated"
         case .paywallView:       "paywall_view"
@@ -65,6 +78,8 @@ enum AnalyticsEvent: Equatable {
     /// Non-PII dimensions for this event.
     var parameters: [String: String] {
         switch self {
+        case .appLaunched(let first):          ["first": String(first)]
+        case .welcomeAction(let a):            ["action": a]
         case .onboardingStep(let i):           ["index": String(i)]
         case .planGenerated(let d):            ["disciplines": String(d)]
         case .paywallView(let p):              ["placement": p]
@@ -114,9 +129,15 @@ final class AnalyticsService: AnalyticsServing {
     init(northStar: NorthStarTracker = NorthStarTracker(), sink: AnalyticsSink? = AnalyticsSink()) {
         self.northStar = northStar
         self.sink = sink
+        // Read the first-launch stamp BEFORE `markLaunch` writes it — that ordering is the whole
+        // trick behind `first`, and swapping these two lines makes every launch look like a repeat.
+        let isFirstLaunch = northStar.funnel.firstLaunch == nil
         northStar.markLaunch()   // start the 24h north-star window on first launch (idempotent)
         // Send anything the last run buffered but never got to flush.
         if let sink { Task { await sink.flush() } }
+        // The install denominator. Logged here rather than in a view because it must fire even when
+        // the athlete never reaches a screen that is instrumented — which was precisely the bug.
+        log(.appLaunched(first: isFirstLaunch))
     }
 
     func log(_ event: AnalyticsEvent) {

@@ -14,6 +14,7 @@ import AVFoundation
 ///    quiet guest path so nobody is ever blocked at the door.
 struct SignInView: View {
     @Environment(AuthController.self) private var auth
+    @Environment(Services.self) private var services
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// True when presented as a cover (Settings → guest "more ways to sign in"): skips the
@@ -116,6 +117,9 @@ struct SignInView: View {
                 VStack(spacing: Theme.Space.xs) {
                     Button {
                         Haptics.light()
+                        // The door metric: this is the tap that turns an install into a funnel.
+                        services.analytics.log(.welcomeAction(action: hasLocalProfile ? "resume"
+                                                                                      : "get_started"))
                         // No account either way — setup runs local-only and the account is offered
                         // on the last beat. With training already on this device we're resuming it,
                         // not starting a fresh session, so the ownership marker stays put.
@@ -139,6 +143,7 @@ struct SignInView: View {
                     // walking setup first.
                     Button {
                         Haptics.light()
+                        services.analytics.log(.welcomeAction(action: "have_account"))
                         showingSignIn = true
                     } label: {
                         Text("I already have an account")
@@ -168,6 +173,9 @@ struct SignInView: View {
             // (Settings, account deletion, a revoked Apple credential).
             if hasLocalProfile, !AuthController.wasExplicitlySignedOut,
                !ProcessInfo.processInfo.arguments.contains("--reset-auth") {   // auth UI tests need the gate
+                // Walked straight through without seeing the gate — logged so these launches don't
+                // read as welcome bounces (they never had a welcome to bounce off).
+                services.analytics.log(.welcomeAction(action: "auto_resume"))
                 auth.continueAsGuest(celebrate: false)
                 return
             }
@@ -699,5 +707,7 @@ struct AccountOptionsView: View {
 }
 
 #Preview {
-    SignInView().environment(AuthController(userID: nil))
+    SignInView()
+        .environment(AuthController(userID: nil))
+        .environment(Services.live())
 }

@@ -7,6 +7,8 @@ import Foundation
 struct AnalyticsEventTests {
 
     @Test func eventNamesMatchPRDTaxonomy() {
+        #expect(AnalyticsEvent.appLaunched(first: true).name == "app_launched")
+        #expect(AnalyticsEvent.welcomeAction(action: "get_started").name == "welcome_action")
         #expect(AnalyticsEvent.onboardingStep(index: 0).name == "onboarding_step")
         #expect(AnalyticsEvent.planGenerated(disciplines: 2).name == "plan_generated")
         #expect(AnalyticsEvent.paywallView(placement: "ai_read").name == "paywall_view")
@@ -28,6 +30,12 @@ struct AnalyticsEventTests {
         #expect(AnalyticsEvent.paywallConvert(product: "monthly").parameters == ["product": "monthly"])
         #expect(AnalyticsEvent.restTimerComplete.parameters.isEmpty)
         #expect(AnalyticsEvent.planSessionAdapted.parameters.isEmpty)
+        // The install denominator: `first` must serialize as the literal the funnel views filter on
+        // (`params->>'first' = 'true'`), so a change to Bool's description would break the read side.
+        #expect(AnalyticsEvent.appLaunched(first: true).parameters == ["first": "true"])
+        #expect(AnalyticsEvent.appLaunched(first: false).parameters == ["first": "false"])
+        #expect(AnalyticsEvent.welcomeAction(action: "get_started").parameters
+                == ["action": "get_started"])
     }
 }
 
