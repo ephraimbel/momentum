@@ -10,7 +10,10 @@ struct SetNewPasswordView: View {
     @State private var confirm = ""
     @State private var inFlight = false
     @State private var message: String?
-    @FocusState private var focused: Bool
+    @State private var messageKind: AuthMessageKind = .error
+    @State private var reveal = false
+    @FocusState private var focused: Field?
+    private enum Field { case password, confirm }
 
     var body: some View {
         NavigationStack {
@@ -21,49 +24,57 @@ struct SetNewPasswordView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, Theme.Space.sm)
 
-                box {
-                    if Self.uiTestPlainFields {
-                        TextField("New password", text: $password)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .focused($focused)
-                    } else {
-                        SecureField("New password", text: $password).textContentType(.newPassword).focused($focused)
+                HStack(spacing: Theme.Space.sm) {
+                    Group {
+                        if Self.uiTestPlainFields || reveal {
+                            TextField("New password", text: $password)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        } else {
+                            SecureField("New password", text: $password).textContentType(.newPassword)
+                        }
+                    }
+                    .focused($focused, equals: .password)
+                    if !Self.uiTestPlainFields, !password.isEmpty {
+                        Button {
+                            reveal.toggle()
+                            focused = .password
+                        } label: {
+                            Image(systemName: reveal ? "eye.slash" : "eye")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Theme.inkTertiary)
+                                .frame(width: 32, height: 32).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(reveal ? "Hide password" : "Show password")
                     }
                 }
-                box {
-                    if Self.uiTestPlainFields {
+                .authFieldBox(focused: focused == .password, tap: { focused = .password })
+
+                Group {
+                    if Self.uiTestPlainFields || reveal {
                         TextField("Confirm password", text: $confirm)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     } else {
                         SecureField("Confirm password", text: $confirm).textContentType(.newPassword)
                     }
                 }
+                .focused($focused, equals: .confirm)
+                .authFieldBox(focused: focused == .confirm, tap: { focused = .confirm })
 
-                if let message {
-                    Text(message)
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                        .foregroundStyle(Theme.inkSecondary)
+                // Stated before it can be broken, exactly as on the account page.
+                if message == nil {
+                    Text("At least 8 characters.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                if let message { AuthMessageRow(text: message, kind: messageKind) }
 
-                Button {
-                    save()
-                } label: {
-                    Group {
-                        if inFlight {
-                            ProgressView().tint(Theme.background)
-                        } else {
-                            Text("Save password").font(.rounded(Theme.FontSize.body, weight: .bold))
-                        }
-                    }
-                    .foregroundStyle(Theme.background)
-                    .frame(maxWidth: .infinity).frame(height: 52)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink))
-                }
-                .buttonStyle(.plain)
-                .disabled(inFlight || password.isEmpty || confirm.isEmpty)
-                .opacity(password.isEmpty || confirm.isEmpty ? 0.5 : 1)
-                .padding(.top, Theme.Space.xs)
+                AuthPrimaryButton(title: "Save password",
+                                  enabled: !password.isEmpty && !confirm.isEmpty,
+                                  inFlight: inFlight,
+                                  action: save)
+                    .padding(.top, Theme.Space.sm)
 
                 Spacer()
             }
@@ -77,7 +88,7 @@ struct SetNewPasswordView: View {
                         .font(.rounded(Theme.FontSize.body, weight: .semibold))
                 }
             }
-            .onAppear { focused = true }
+            .onAppear { focused = .password }
         }
     }
 
@@ -91,19 +102,13 @@ struct SetNewPasswordView: View {
         #endif
     }
 
-    private func box<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .font(.rounded(Theme.FontSize.body, weight: .medium))
-            .foregroundStyle(Theme.ink)
-            .frame(height: 52)
-            .padding(.horizontal, Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
-    }
-
     private func save() {
-        guard password == confirm else { message = "Those passwords don't match."; return }
-        guard password.count >= 8 else { message = "Passwords need at least 8 characters."; return }
+        guard password == confirm else {
+            message = "Those passwords don't match."; messageKind = .error; return
+        }
+        guard password.count >= 8 else {
+            message = "Passwords need at least 8 characters."; messageKind = .error; return
+        }
         message = nil
         inFlight = true
         Task {
@@ -114,6 +119,7 @@ struct SetNewPasswordView: View {
                 dismiss()
             } else {
                 message = "Couldn't update the password. Try again in a moment."
+                messageKind = .error
             }
         }
     }

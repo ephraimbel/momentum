@@ -29,7 +29,7 @@ final class GuestEntryUITests: XCTestCase {
         // The account page must be reachable WITHOUT walking setup — the reinstall path.
         returning.tap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5), "email box should be on the account page")
-        XCTAssertTrue(app.buttons["Sign in with Apple"].exists, "SIWA must accompany third-party login (4.8)")
+        XCTAssertTrue(app.appleSignInButton.exists, "SIWA must accompany third-party login (4.8)")
         XCTAssertTrue(app.buttons["Continue with Google"].exists)
         XCTAssertTrue(app.buttons["Continue without an account"].exists, "the guest door stays open")
         attach("2-account-page")
@@ -105,7 +105,7 @@ final class GuestEntryUITests: XCTestCase {
         let accountBeat = app.staticTexts["Save your progress"]
         XCTAssertTrue(accountBeat.waitForExistence(timeout: 10),
                       "dismissing the paywall must hand off to the account beat, not complete onboarding")
-        XCTAssertTrue(app.buttons["Sign in with Apple"].exists, "SIWA must accompany third-party login (4.8)")
+        XCTAssertTrue(app.appleSignInButton.exists, "SIWA must accompany third-party login (4.8)")
         XCTAssertTrue(app.buttons["Continue with Google"].exists)
         attach("beat-3-account")
 

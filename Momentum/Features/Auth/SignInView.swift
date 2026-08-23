@@ -285,6 +285,8 @@ struct AccountOptionsView: View {
 
     @Environment(AuthController.self) private var auth
     @Environment(\.dismiss) private var dismiss
+    /// The Apple button ships its own fixed palette, so it has to be told which surface it is on.
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var googleInFlight = false
     @State private var resetInFlight = false
@@ -294,12 +296,21 @@ struct AccountOptionsView: View {
     @State private var isCreatingAccount: Bool
     @State private var emailInFlight = false
     @State private var authMessage: String?
+    /// Whether `authMessage` is a refusal or a "this worked, here's what's next".
+    ///
+    /// Set explicitly by whoever writes the message — never inferred from the text. The first cut
+    /// sniffed a string prefix, which quietly mis-filed the successful sign-up confirmation
+    /// ("Almost there…") as an error the moment the styling started to differ.
+    @State private var messageKind: AuthMessageKind = .error
     /// Failures from the Apple/Google buttons. Deliberately separate from `authMessage`: that one
     /// renders inside the email block, which sits a full screen above the OAuth buttons — a message
     /// shown there for a Google failure would land off-screen for anyone who scrolled down to tap it.
     @State private var oauthMessage: String?
     @FocusState private var focusedField: Field?
-    private enum Field { case email, password }
+    fileprivate enum Field { case email, password }
+    /// Show the password in the clear. Standard on any serious sign-in form: a typo in an
+    /// invisible field is the single most common reason a correct password "fails".
+    @State private var revealPassword = false
 
     init(presentation: Presentation,
          hasLocalProfile: Bool = false,
@@ -318,6 +329,15 @@ struct AccountOptionsView: View {
         creating = creating || ProcessInfo.processInfo.arguments.contains("--signin-create")
         #endif
         _isCreatingAccount = State(initialValue: creating)
+        #if DEBUG
+        // `--signin-prefill`: land with the form filled so the ENABLED CTA, the reveal control and
+        // the focus ring are screenshot-verifiable (a sim can't type, and the UI-test password mode
+        // deliberately swaps in a plain field, which hides the reveal).
+        if ProcessInfo.processInfo.arguments.contains("--signin-prefill") {
+            _email = State(initialValue: "maya@momentumco.app")
+            _password = State(initialValue: "correcthorse")
+        }
+        #endif
     }
 
     private var isBeat: Bool { presentation == .onboardingBeat }
@@ -328,13 +348,20 @@ struct AccountOptionsView: View {
             if !isBeat { Theme.background.ignoresSafeArea() }
 
             if !isBeat {
+                // The app's own chrome treatment (the glass circle the paywall and the recorder
+                // wear), not a bare glyph floating in the corner — this is the first screen a new
+                // athlete sees, and a naked chevron is the tell that it was assembled rather than
+                // designed. The 44pt tap target is unchanged.
                 Button {
                     Haptics.light()
                     if presentation == .sheet { dismiss() } else { onBack?() }
                 } label: {
                     Image(systemName: presentation == .sheet ? "xmark" : "chevron.left")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(Theme.ink)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.surface))
+                        .overlay(Circle().stroke(Theme.hairline))
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
@@ -345,6 +372,7 @@ struct AccountOptionsView: View {
             }
 
             // Scrolls so the whole column stays reachable with the keyboard up on small screens.
+            ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     BrandMark(size: isBeat ? 72 : 88)
@@ -367,7 +395,7 @@ struct AccountOptionsView: View {
 
                     // The classic boxes: email + password, with sign-in ↔ create-account toggle.
                     VStack(spacing: Theme.Space.sm) {
-                        field {
+                        field(focused: focusedField == .email, tap: { focusedField = .email }) {
                             TextField("Email", text: $email)
                                 .keyboardType(.emailAddress)
                                 .textContentType(.emailAddress)
@@ -377,62 +405,92 @@ struct AccountOptionsView: View {
                                 .submitLabel(.next)
                                 .onSubmit { focusedField = .password }
                         }
-                        field {
-                            Group {
-                                if Self.uiTestPlainPassword {
-                                    // UI tests: a plain field so iOS's password AutoFill (the
-                                    // "Use Strong Password?" takeover and the post-signup "Save
-                                    // Password?" panel, both untappable from XCUITest) never
-                                    // engages. Real athletes always get the SecureField below.
-                                    TextField("Password", text: $password)
-                                        .textInputAutocapitalization(.never)
-                                        .autocorrectionDisabled()
-                                } else {
-                                    SecureField("Password", text: $password)
-                                        .textContentType(isCreatingAccount ? .newPassword : .password)
+                        field(focused: focusedField == .password, tap: { focusedField = .password }) {
+                            HStack(spacing: Theme.Space.sm) {
+                                Group {
+                                    if Self.uiTestPlainPassword || revealPassword {
+                                        // UI tests: a plain field so iOS's password AutoFill (the
+                                        // "Use Strong Password?" takeover and the post-signup "Save
+                                        // Password?" panel, both untappable from XCUITest) never
+                                        // engages. Real athletes get the SecureField unless they
+                                        // deliberately asked to see what they typed.
+                                        TextField("Password", text: $password)
+                                            .textInputAutocapitalization(.never)
+                                            .autocorrectionDisabled()
+                                    } else {
+                                        SecureField("Password", text: $password)
+                                            .textContentType(isCreatingAccount ? .newPassword : .password)
+                                    }
+                                }
+                                .focused($focusedField, equals: .password)
+                                .submitLabel(.go)
+                                .onSubmit { submitEmailAuth() }
+
+                                // Reveal. A typo in an invisible box is the commonest reason a
+                                // correct password "fails", and every serious sign-in form offers
+                                // this. Swapping Secure↔plain drops first responder, so focus is
+                                // put straight back — without that the keyboard closes on the tap.
+                                if !Self.uiTestPlainPassword, !password.isEmpty {
+                                    Button {
+                                        revealPassword.toggle()
+                                        focusedField = .password
+                                    } label: {
+                                        Image(systemName: revealPassword ? "eye.slash" : "eye")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(Theme.inkTertiary)
+                                            .frame(width: 32, height: 32)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(revealPassword ? "Hide password" : "Show password")
+                                    .transition(.opacity)
                                 }
                             }
-                            .focused($focusedField, equals: .password)
-                            .submitLabel(.go)
-                            .onSubmit { submitEmailAuth() }
                         }
-                        if let authMessage {
-                            Text(authMessage)
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                .foregroundStyle(Theme.inkSecondary)
+                        // Say the rule BEFORE it can be broken. It used to surface only as an
+                        // error after a rejected submit, which is the same information delivered
+                        // as a failure.
+                        if isCreatingAccount, authMessage == nil {
+                            Text("At least 8 characters.")
+                                .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .transition(.opacity)
                         }
-                        Button {
-                            submitEmailAuth()
-                        } label: {
-                            Group {
-                                if emailInFlight {
-                                    ProgressView().tint(Theme.background)
-                                } else {
-                                    Text(isCreatingAccount ? "Create account" : "Sign in")
-                                        .font(.rounded(Theme.FontSize.body, weight: .bold))
-                                }
-                            }
-                            .foregroundStyle(Theme.background)
-                            .frame(maxWidth: .infinity).frame(height: 52)
-                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink))
+                        if let authMessage {
+                            AuthMessageRow(text: authMessage, kind: messageKind)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(emailInFlight || email.isEmpty || password.isEmpty)
-                        .opacity(email.isEmpty || password.isEmpty ? 0.5 : 1)
+                        AuthPrimaryButton(title: isCreatingAccount ? "Create account" : "Sign in",
+                                          enabled: canSubmit,
+                                          inFlight: emailInFlight,
+                                          action: submitEmailAuth)
+                            // Set apart from the two inputs above it. At the group's own 8pt
+                            // spacing the CTA became a third identical box in a stack of three —
+                            // an ACTION has to sit outside the group it acts on, or it reads as
+                            // another field.
+                            .padding(.top, Theme.Space.sm)
 
                         HStack {
                             Button {
                                 Haptics.light()
                                 withAnimation(.easeOut(duration: 0.15)) {
                                     isCreatingAccount.toggle()
+                                    // Both, not just the email one: a stale "Google sign-in didn't
+                                    // complete" sat under the OAuth buttons across the switch and
+                                    // read as a fresh failure of whatever the athlete did next.
                                     authMessage = nil
+                                    oauthMessage = nil
+                                    // Re-hide the password. Revealing it was consent to show THIS
+                                    // secret; switching modes means a different one is about to be
+                                    // typed, and it should not arrive already on screen.
+                                    revealPassword = false
                                 }
                             } label: {
                                 Text(isCreatingAccount ? "Have an account? Sign in" : "New here? Create an account")
                                     .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                    .foregroundStyle(Theme.ink)
+                                    // Lavender = "tappable", the app-wide rule. These read as two
+                                    // more labels in ink; as links they have to look like links.
+                                    .foregroundStyle(Theme.purple)
                             }
                             .buttonStyle(.plain)
                             Spacer(minLength: 0)
@@ -449,7 +507,7 @@ struct AccountOptionsView: View {
                                     } else {
                                         Text("Forgot password?")
                                             .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                            .foregroundStyle(Theme.inkSecondary)
+                                            .foregroundStyle(Theme.purple)
                                     }
                                 }
                                 .buttonStyle(.plain)
@@ -459,6 +517,7 @@ struct AccountOptionsView: View {
                         .padding(.top, 2)
                     }
                     .padding(.top, Theme.Space.xl)
+                    .id("form")
 
                     HStack(spacing: Theme.Space.sm) {
                         Rectangle().fill(Theme.hairline).frame(height: 1)
@@ -470,7 +529,10 @@ struct AccountOptionsView: View {
                     .padding(.vertical, Theme.Space.md)
 
                     VStack(spacing: Theme.Space.sm) {
-                        SignInWithAppleButton(.signIn) { request in
+                        // `.signUp` reads "Sign up with Apple" — matching the mode the athlete is
+                        // actually in. The identifier tests assert ("Sign in with Apple") is the
+                        // sign-in wording, which is what the default (and every test path) uses.
+                        SignInWithAppleButton(isCreatingAccount ? .signUp : .signIn) { request in
                             auth.prepareAppleSignIn(request)
                         } onCompletion: { result in
                             switch result {
@@ -490,7 +552,10 @@ struct AccountOptionsView: View {
                                 }
                             }
                         }
-                        .signInWithAppleButtonStyle(.black)
+                        // Apple's own guidance: never a black button on a dark surface. On the
+                        // warm charcoal the black style all but vanished — only its white lettering
+                        // showed, so the most trusted control on the page read as a hole.
+                        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                         .frame(height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                         // One sign-in at a time: launching Apple while an email submit is in
@@ -538,20 +603,25 @@ struct AccountOptionsView: View {
                         .disabled(googleInFlight)
                         .accessibilityLabel("Continue with Google")
 
-                        if let oauthMessage {
-                            Text(oauthMessage)
-                                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                .foregroundStyle(Theme.inkSecondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .transition(.opacity)
-                        }
+                        if let oauthMessage { AuthMessageRow(text: oauthMessage, kind: .error) }
                     }
 
                     footer
                 }
                 .padding(.horizontal, isBeat ? 0 : Theme.Space.xl)
+                // NO entrance animation here, deliberately. Every route onto this screen already
+                // animates it in — the gate slides from the trailing edge, the sheet presents, the
+                // onboarding beat crossfades. A second fade layered on top of that reads as the
+                // content arriving late, which is the exact "the page glitches" feel.
             }
             .scrollDismissesKeyboard(.interactively)
+            // Keyboard up on a small screen hid the submit button under it, with no way to know
+            // it was there. Bring the active field — and everything under it — into view.
+            .onChange(of: focusedField) { _, field in
+                guard field != nil else { return }
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("form", anchor: .center) }
+            }
+            }
         }
         // A real account landed. `.gate` needs nothing — RootView's signed-in branch takes over.
         .onChange(of: auth.userID) { _, id in
@@ -647,15 +717,19 @@ struct AccountOptionsView: View {
         #endif
     }
 
-    /// The boxed text-field chrome shared by the email and password inputs.
-    private func field<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .font(.rounded(Theme.FontSize.body, weight: .medium))
-            .foregroundStyle(Theme.ink)
-            .frame(height: 52)
-            .padding(.horizontal, Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+    /// Whether the form can be submitted at all. Trimmed, because the raw `email.isEmpty` check
+    /// let a field holding only spaces enable the button — and `submitEmailAuth` then trimmed it,
+    /// found it empty, and returned silently. A live button that does nothing is worse than a
+    /// disabled one.
+    private var canSubmit: Bool {
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
+    }
+
+    /// The boxed text-field chrome — see `AuthFormControls`.
+    private func field<Content: View>(focused: Bool,
+                                      tap: @escaping () -> Void,
+                                      @ViewBuilder content: () -> Content) -> some View {
+        content().authFieldBox(focused: focused, tap: tap)
     }
 
     private func submitEmailAuth() {
@@ -663,10 +737,12 @@ struct AccountOptionsView: View {
         guard !emailInFlight, !address.isEmpty, !password.isEmpty else { return }
         guard address.contains("@"), address.contains(".") else {
             authMessage = "That doesn't look like an email address."
+            messageKind = .error
             return
         }
         if isCreatingAccount && password.count < 8 {
             authMessage = "Passwords need at least 8 characters."
+            messageKind = .error
             return
         }
         Haptics.light()
@@ -679,10 +755,21 @@ struct AccountOptionsView: View {
                 ? await auth.signUpWithEmail(address, password: password)
                 : await auth.signInWithEmail(address, password: password)
             emailInFlight = false
-            if case .failure(let message) = outcome {
-                withAnimation(.easeOut(duration: 0.15)) { authMessage = message }
+            withAnimation(.easeOut(duration: 0.15)) {
+                switch outcome {
+                case .failure(let message):
+                    authMessage = message; messageKind = .error
+                case .pending(let message):
+                    // Signed up fine; the session arrives when they tap the emailed link. Said as
+                    // the good news it is, and the fields are cleared so the screen isn't still
+                    // offering a submit that would now just fail as "already registered".
+                    authMessage = message; messageKind = .info
+                    password = ""
+                case .success:
+                    // Routes through auth.userID (the onChange above) — nothing to do here.
+                    authMessage = nil
+                }
             }
-            // Success routes through auth.userID (the onChange above) — nothing to do here.
         }
     }
 
@@ -691,6 +778,7 @@ struct AccountOptionsView: View {
         let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard address.contains("@") else {
             authMessage = "Enter your email above first, then tap Forgot password."
+            messageKind = .error
             return
         }
         resetInFlight = true
@@ -701,6 +789,7 @@ struct AccountOptionsView: View {
                 authMessage = sent
                     ? "Check \(address) for a reset link."
                     : "Couldn't send a reset link. Try again in a moment."
+                messageKind = sent ? .info : .error
             }
         }
     }

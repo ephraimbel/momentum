@@ -10,6 +10,11 @@ enum Theme {
     static let surface = Color("surface")
     static let background = Color("background")
     static let hairline = Color("hairline")
+    /// Validation + failure states the athlete has to act on (a refused sign-in, a rejected form).
+    /// Aliases the readiness ramp's warm sienna ON PURPOSE: the brand has no alarm red anywhere,
+    /// and that hue is already tuned for legibility on both the light canvas and the warm charcoal.
+    /// Named separately so form errors don't reach across into the health palette for a colour.
+    static let warning = Color("readinessStrained")
     /// THE map trace — one color on every map, light or dark (owner call 2026-08-19): the brand
     /// purple, so the line you're drawing is unmistakably "happening now". Asset-backed but the
     /// same #7C63F0 in both appearances; snapshots, tiles, live maps and the puck all draw it.

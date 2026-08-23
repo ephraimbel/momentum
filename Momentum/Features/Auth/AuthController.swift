@@ -312,6 +312,14 @@ final class AuthController {
     enum EmailAuthOutcome: Equatable {
         case success
         case failure(String)
+        /// The request WORKED, but the athlete has one thing left to do before they're in —
+        /// today that means tapping the confirmation link we just emailed them.
+        ///
+        /// ⚠️ This case exists because "we emailed you a link" was returned as `.failure`, so the
+        /// form told someone whose sign-up had just succeeded that it had gone wrong. The form now
+        /// styles refusals distinctly (icon + warning colour), which turned an ambiguous line into
+        /// an outright lie. Success-with-a-next-step is not a failure; give it its own case.
+        case pending(String)
     }
 
     /// Sign IN with email + password. The @handle stays the social username — email is only
@@ -345,8 +353,9 @@ final class AuthController {
                 email: email, password: password,
                 redirectTo: URL(string: "momentum://auth-callback"))
             guard case .session(let session) = response else {
-                // Confirmations are on: the session arrives via the emailed link instead.
-                return .failure("Almost there. Tap the link we just emailed you and you're in.")
+                // Confirmations are on: the session arrives via the emailed link instead. This is
+                // the HAPPY path for a new account — see the `pending` case above.
+                return .pending("Almost there. Tap the link we just emailed you and you're in.")
             }
             adoptEmailSession(session)
             return .success
