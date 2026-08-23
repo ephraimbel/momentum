@@ -93,6 +93,55 @@ struct SocialSyncEngineTests {
         #expect(actions.publish.isEmpty)
     }
 
+    // MARK: markEdited — editing an activity you already posted
+
+    /// The gap this closes: `publishActions` only ever publishes an UNSTAMPED workout, so before
+    /// `markEdited` existed every edit to an already-published post — a rename, a photo attached
+    /// days later, a new caption — stayed on the device forever.
+    @Test func editingAPublishedPostQueuesItForRepublish() {
+        let w = run(.public); w.postPublishedAt = Date(); w.syncedAt = Date()
+        SocialSyncEngine.markEdited(w)
+        #expect(w.syncedAt == nil)
+        #expect(w.postPublishedAt == nil, "a shared post must go back in the publish queue")
+        #expect(SocialSyncEngine.publishActions([w]).publish.map(\.id) == [w.id])
+    }
+
+    /// The privacy bug inside the same gap: narrowing Everyone → Friends leaves the workout SHARED,
+    /// so the stamp survived, the sweep saw nothing to do, and the server kept serving the post at
+    /// its old audience. The re-publish upserts the row with the new visibility.
+    @Test func narrowingTheAudienceRepublishesRatherThanDoingNothing() {
+        let w = run(.public); w.postPublishedAt = Date()
+        w.privacy = .friends
+        SocialSyncEngine.markEdited(w)
+        let actions = SocialSyncEngine.publishActions([w])
+        #expect(actions.publish.map(\.id) == [w.id])
+        #expect(actions.unpublish.isEmpty)
+        #expect(SocialSyncEngine.postDTO(for: w, profile: profile())?.visibility == "friends")
+    }
+
+    /// ⚠️ The one case that must NOT clear the stamp. Going private is a DELETE, and the stamp is
+    /// the only record that a server post exists to delete — clearing it here would strand the post
+    /// online with nothing left to reconcile it.
+    @Test func goingPrivateKeepsItsStampSoTheSweepCanDeleteThePost() {
+        let w = run(.public); w.postPublishedAt = Date()
+        w.privacy = .private
+        SocialSyncEngine.markEdited(w)
+        #expect(w.postPublishedAt != nil, "the unpublish path needs this stamp")
+        let actions = SocialSyncEngine.publishActions([w])
+        #expect(actions.unpublish.map(\.id) == [w.id])
+        #expect(actions.publish.isEmpty)
+    }
+
+    /// A private workout has no post; editing it must not invent one, only re-sync the backup.
+    @Test func editingAPrivateWorkoutPublishesNothing() {
+        let w = run(.private); w.syncedAt = Date()
+        SocialSyncEngine.markEdited(w)
+        #expect(w.syncedAt == nil)
+        let actions = SocialSyncEngine.publishActions([w])
+        #expect(actions.publish.isEmpty)
+        #expect(actions.unpublish.isEmpty)
+    }
+
     // MARK: feedItem — remote rows render through the same card
 
     @Test func feedRowMapsToFeedItem() {

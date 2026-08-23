@@ -24,7 +24,15 @@ struct RouteMapView: View {
     /// Defaults to the athlete's persisted app-wide style, read at init (summary/history cards).
     var style: MapStyleOption = .persisted
     var interactive: Bool = false
-    var padding: CGFloat = 28
+    /// How much room to leave around the route, per edge.
+    ///
+    /// Asymmetric on purpose (2026-08-22). Both hosts that show the hero map — the save editors and
+    /// the history detail — float their chrome (back, ⋯, Done/Edit/Share) OVER the top of the map,
+    /// and the fit is width-constrained on a typical loop, so an even inset centred the route in the
+    /// FRAME and left the top of the loop sitting behind those buttons. Padding the top more than
+    /// the bottom moves the centre down by half the difference, which is what actually clears it.
+    var insets: SwiftUI.EdgeInsets = SwiftUI.EdgeInsets(top: 28, leading: 28,
+                                                        bottom: 28, trailing: 28)
     /// See `RouteMapCameraHandle`; only meaningful when `interactive`.
     var cameraHandle: RouteMapCameraHandle? = nil
     @Environment(\.colorScheme) private var colorScheme
@@ -41,12 +49,21 @@ struct RouteMapView: View {
     init(coordinates: [CLLocationCoordinate2D], style: MapStyleOption = .persisted,
          interactive: Bool = false, padding: CGFloat = 28,
          cameraHandle: RouteMapCameraHandle? = nil) {
+        self.init(coordinates: coordinates, style: style, interactive: interactive,
+                  insets: SwiftUI.EdgeInsets(top: padding, leading: padding,
+                                             bottom: padding, trailing: padding),
+                  cameraHandle: cameraHandle)
+    }
+
+    init(coordinates: [CLLocationCoordinate2D], style: MapStyleOption = .persisted,
+         interactive: Bool = false, insets: SwiftUI.EdgeInsets,
+         cameraHandle: RouteMapCameraHandle? = nil) {
         self.coordinates = coordinates
         self.style = style
         self.interactive = interactive
-        self.padding = padding
+        self.insets = insets
         self.cameraHandle = cameraHandle
-        _viewport = State(initialValue: Self.fit(coordinates, padding: padding))
+        _viewport = State(initialValue: Self.fit(coordinates, insets: insets))
     }
 
     var body: some View {
@@ -83,9 +100,9 @@ struct RouteMapView: View {
                 cameraHandle?.isExplored = idle
             }
             .onAppear {
-                cameraHandle?.recenterAction = { [coordinates, padding] in
+                cameraHandle?.recenterAction = { [coordinates, insets] in
                     withViewportAnimation(.easeOut(duration: 0.7)) {
-                        viewport = Self.fit(coordinates, padding: padding)
+                        viewport = Self.fit(coordinates, insets: insets)
                     }
                 }
             }
@@ -153,7 +170,7 @@ struct RouteMapView: View {
     }
 
     /// Frame the whole route with padding; fall back to a centered camera for a single point.
-    private static func fit(_ coordinates: [CLLocationCoordinate2D], padding: CGFloat) -> Viewport {
+    private static func fit(_ coordinates: [CLLocationCoordinate2D], insets: SwiftUI.EdgeInsets) -> Viewport {
         guard coordinates.count > 1 else {
             if let c = coordinates.first { return .camera(center: c, zoom: 14) }
             return .idle
@@ -161,8 +178,7 @@ struct RouteMapView: View {
         // maxZoom: a tiny route (a 100 m test lap, a track repeat) otherwise fits to
         // building-level zoom where the line is a scribble on one rooftop — clamp to street level.
         return .overview(geometry: LineString(coordinates),
-                         geometryPadding: EdgeInsets(top: padding, leading: padding,
-                                                     bottom: padding, trailing: padding),
+                         geometryPadding: insets,
                          maxZoom: 17)
     }
 }

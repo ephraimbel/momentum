@@ -135,6 +135,25 @@ enum SocialSyncEngine {
     /// The publish sweep (runs opportunistically with the workout sync): which workouts need a
     /// post created, and which need their post deleted (privacy downgraded after publishing).
     /// Symmetric and idempotent — backfill of already-shared history falls out for free.
+    /// A workout that already exists was EDITED — its title, notes, sport, photos, cover or
+    /// audience changed. Mark it so the next sweep carries the change to the server.
+    ///
+    /// `publishActions` only publishes a workout whose `postPublishedAt` is nil, so without this an
+    /// edit to an already-published post stayed local forever: renaming a shared run, adding the
+    /// photo that landed on the phone after the save screen was gone, or — worst of the three —
+    /// narrowing "Everyone" to "Friends" and having the server keep serving it to everyone. The
+    /// server row is upserted on `id`, so clearing the stamp updates the post in place rather than
+    /// creating a second one.
+    ///
+    /// ⚠️ The stamp is cleared ONLY while the workout is still shared. On a downgrade to private it
+    /// is the one thing telling the sweep to DELETE the server post — clearing it there would strand
+    /// the post online with no local record that it exists, which is the privacy failure this
+    /// function is meant to prevent.
+    static func markEdited(_ workout: Workout) {
+        workout.syncedAt = nil
+        if SocialPrivacy.isShared(workout) { workout.postPublishedAt = nil }
+    }
+
     static func publishActions(_ workouts: [Workout]) -> (publish: [Workout], unpublish: [Workout]) {
         let publish = workouts
             .filter { SocialPrivacy.isShared($0) && $0.postPublishedAt == nil }

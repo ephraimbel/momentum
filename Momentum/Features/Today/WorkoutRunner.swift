@@ -157,6 +157,13 @@ struct WorkoutRunner: ViewModifier {
                 // during the previous one's exit fade must build a FRESH recorder, never resume
                 // the fading one's @State.
                 .id(launch.id)
+                // The paywall host for everything inside the recorder: the live screen AND all
+                // three save editors. As a full-screen overlay this context is unreachable by
+                // RootView's root host, so without this a locked tap here (a Pro map style, the AI
+                // read, a Pro share style) showed nothing and then ambushed the athlete with the
+                // paywall the moment the save screen closed. Registered, so the root host stands
+                // down and only ONE cover is ever bound to `presentedFeature`.
+                .nestedPaywallHost()
             }
         }
         .animation(Motion.standard, value: launch != nil)

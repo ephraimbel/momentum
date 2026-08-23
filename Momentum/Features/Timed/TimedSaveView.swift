@@ -417,7 +417,7 @@ struct TimedSaveView: View {
         // stamped already. Without this, the title, note and effort typed here never leave the
         // device. Cardio and strength both route through `commit`; this screen writes directly, and
         // was the one path that never cleared it.
-        workout.syncedAt = nil
+        SocialSyncEngine.markEdited(workout)
         do { try context.save() } catch { saveFailed = true; return }
         let saved = workout
         if booksCompletion {

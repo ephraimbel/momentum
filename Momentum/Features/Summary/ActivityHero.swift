@@ -80,7 +80,8 @@ private struct HeroMap: View {
     var body: some View {
         Group {
             if smoothedCoords.count > 1 {
-                RouteMapView(coordinates: smoothedCoords, style: style)
+                RouteMapView(coordinates: smoothedCoords, style: style,
+                             insets: ActivityHeroMetrics.routeInsets)
                     .frame(height: ActivityHeroMetrics.mapHeight)
                     // Remount ONLY when the map-matched route lands (the line's source holds the
                     // old coordinates otherwise). A style change deliberately does NOT remount
@@ -199,6 +200,17 @@ private struct HeroGlyphBand: View {
 
 enum ActivityHeroMetrics {
     static let mapHeight: CGFloat = 460
+
+    /// Room to leave around the route in the hero.
+    ///
+    /// The hero runs full-bleed UNDER the floating chrome — the safe area plus the back / ⋯ /
+    /// Done / Edit / Share controls on top, the fade and the expand chip at the bottom — so the
+    /// frame is bigger than the part of it an athlete can actually see the route in. An even inset
+    /// centred the loop in the FRAME and left its top arc behind the buttons (reported 2026-08-22:
+    /// "we should be able to see the entire loop"). The heavier top inset moves the centre down by
+    /// half the top/bottom difference; the wider sides stop a loop from grazing the screen edges,
+    /// which is the other half of "I can see it fits, but only just".
+    static let routeInsets = EdgeInsets(top: 112, leading: 34, bottom: 52, trailing: 34)
     static let muscleHeight: CGFloat = 380
     static let glyphHeight: CGFloat = 260
 
@@ -242,7 +254,9 @@ private struct HeroCameraChip: View {
             order += 1
         }
         picked = []
-        workout.syncedAt = nil
+        // A photo added here can land on an already-published post — mark it for re-publish, not
+        // just re-sync.
+        SocialSyncEngine.markEdited(workout)
         try? context.save()
         Haptics.success()
     }

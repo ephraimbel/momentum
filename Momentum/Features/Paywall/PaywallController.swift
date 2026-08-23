@@ -119,6 +119,50 @@ final class PaywallController: PaywallServing {
     /// The locked feature that triggered the paywall — drives the host sheet. `nil` ⇒ not shown.
     var presentedFeature: Feature?
 
+    /// The live NESTED paywall hosts, oldest first (see `nestedPaywallHost()`).
+    ///
+    /// `presentedFeature` is one piece of state, so exactly one presentation may ever bind to it —
+    /// two hosts on one item is the documented double-present bug (paywall twice, dark flash
+    /// between). But the root host in `RootView` cannot present on top of a context that is itself
+    /// a cover, an overlay or a sheet: the workout recorder, a save editor, the share composer, the
+    /// coach. Those contexts host their own and register here.
+    ///
+    /// They also NEST — the share composer opens as a sheet from a save editor that is already
+    /// inside the recorder overlay — so this is a stack, not a flag. Only `topHostToken` binds; the
+    /// root host stands down whenever the stack is non-empty. That keeps exactly one live host at
+    /// every depth.
+    ///
+    /// ⚠️ Registration is what makes a locked tap WORK inside those contexts at all. Before this
+    /// existed only `CardioSaveView` hosted one, so tapping a locked feature on the strength or
+    /// timed save screen set `presentedFeature` with **no live host** — nothing appeared, the
+    /// feature stayed set, and the paywall finally rose the instant the save screen closed and the
+    /// root host came back. That reads to the athlete as "the paywall threw me out of my activity".
+    private var liveHostTokens: [Int] = []
+    private var lastHostToken = 0
+
+    /// The host currently allowed to present — the innermost one.
+    var topHostToken: Int? { liveHostTokens.last }
+    /// Non-zero while any nested host is live; the root host stands down on this.
+    var nestedHostDepth: Int { liveHostTokens.count }
+
+    /// A nested host appeared. Returns its token, which it must hand back to `releaseNestedHost`.
+    func retainNestedHost() -> Int {
+        lastHostToken += 1
+        liveHostTokens.append(lastHostToken)
+        return lastHostToken
+    }
+
+    /// A nested host went away, so any feature still waiting is dropped: it was raised from a
+    /// context that no longer exists, and letting it survive is exactly the ambush described above.
+    ///
+    /// Safe to do unconditionally. A host whose own paywall is up is NOT disappearing — presenting
+    /// a cover or sheet leaves its presenter mounted — so this only ever fires for a context the
+    /// athlete has actually left.
+    func releaseNestedHost(_ token: Int) {
+        liveHostTokens.removeAll { $0 == token }
+        presentedFeature = nil
+    }
+
     /// A HARD gate was let go because the App Store could not be reached (see `PaywallView`'s
     /// store-unreachable escape). Deliberately **not persisted** and never written to
     /// `onboardingGatePending`: the athlete gets this launch, and the wall comes straight back on the

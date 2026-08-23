@@ -165,13 +165,20 @@ struct RootView: View {
                 // cover for the "gate on send" moment. Both binding to `presentedFeature` fired the
                 // paywall TWICE (root + coach) with a dark flash in between; gating on
                 // `coach.isPresented` leaves exactly one host live at a time.
-                // Also stands down while a workout save context owns the screen: CardioSaveView
-                // hosts its OWN paywall cover (a save screen can itself sit inside a cover — the
-                // crash-recovery save, the --save-screen harness — where this root cover cannot
-                // present on top). One live host per context, never two bound to one item (the
-                // double-present bug).
+                // Also stands down while any NESTED host is live — the recorder overlay, a save
+                // editor's container, the manual-log review, the DEBUG harnesses. Those contexts
+                // are themselves a cover or a full-screen overlay, so this root cover cannot
+                // present on top of them; each carries its own via `.nestedPaywallHost()` and
+                // registers on `paywall.nestedHostDepth`. One live host per context, never two
+                // bound to one item (the double-present bug).
+                // The count REPLACES the old hand-listed conditions, which is the point: they only
+                // named the recorder and the recovery save, so the manual-log review and the DEBUG
+                // harnesses were left with two live hosts, and the strength/timed editors inside
+                // the recorder with none. `workoutLaunch`/`recoverySave` stay in the condition as
+                // belt-and-braces for the frame before a nested host's `onAppear` lands.
                 .fullScreenCover(item: Binding(
-                    get: { coach.isPresented || router.workoutLaunch != nil || recoverySave != nil
+                    get: { coach.isPresented || paywall.nestedHostDepth > 0
+                        || router.workoutLaunch != nil || recoverySave != nil
                         ? nil : paywall.presentedFeature },
                     set: { paywall.presentedFeature = $0 })) { feature in
                     PaywallView(feature: feature)
@@ -255,6 +262,9 @@ struct RootView: View {
                     let runs = recentWorkouts.filter { $0.type == .run && $0.gps != nil }
                     if let run = runs.first(where: { $0.gps?.structuredRepsData != nil }) ?? runs.first {
                         NavigationStack { WorkoutDetailView(workout: run) }
+                            // A cover, so the root host can't reach the detail page's locked
+                            // surfaces here the way it does on the real (in-shell) route.
+                            .nestedPaywallHost()
                     }
                 }
                 // --save-screen: the post-run save editor for the newest seeded GPS run —
@@ -282,6 +292,7 @@ struct RootView: View {
                                                                         profile: profiles.first, in: context)) {
                                 showSaveScreen = false
                             }
+                            .nestedPaywallHost()   // a cover — see NestedPaywallHost.swift
                         }
                     }
                 }
@@ -293,6 +304,7 @@ struct RootView: View {
                     Color.clear.fullScreenCover(isPresented: $showStrengthSave) {
                         if let lift = recentWorkouts.first(where: { $0.strength != nil }) {
                             StrengthSaveView(workoutId: lift.id) { showStrengthSave = false }
+                                .nestedPaywallHost()   // a cover — see NestedPaywallHost.swift
                         }
                     }
                 }
@@ -347,14 +359,19 @@ struct RootView: View {
             Text("Looks like the app closed mid-workout. Everything you recorded is safe — keep it?")
         }
         .fullScreenCover(item: $recoverySave) { presented in
-            if presented.type.isStrengthStyle {
-                StrengthSaveView(workoutId: presented.id) { recoverySave = nil }
-            } else if presented.type.isTimed {
-                TimedSaveView(workoutId: presented.id) { recoverySave = nil }
-            } else {
-                CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
-                               workoutType: presented.type) { recoverySave = nil }
+            Group {
+                if presented.type.isStrengthStyle {
+                    StrengthSaveView(workoutId: presented.id) { recoverySave = nil }
+                } else if presented.type.isTimed {
+                    TimedSaveView(workoutId: presented.id) { recoverySave = nil }
+                } else {
+                    CardioSaveView(workoutId: presented.id, distanceUnit: distanceUnit,
+                                   workoutType: presented.type) { recoverySave = nil }
+                }
             }
+            // A cover: the root host below cannot present on top of it, so this context carries
+            // its own for any locked tap the athlete makes while tidying up a recovered workout.
+            .nestedPaywallHost()
         }
         // Onboarding presents from THIS always-installed level, not from the signed-in branch:
         // sign-in flips the branch and raises this flag in the same update, and a cover attached
@@ -430,6 +447,7 @@ struct RootView: View {
         .fullScreenCover(isPresented: $showTimedSaveEbike) {
             if let w = ebikeDebugWorkout {
                 TimedSaveView(workoutId: w.id) { showTimedSaveEbike = false }
+                    .nestedPaywallHost()   // a cover — see NestedPaywallHost.swift
             }
         }
         #if DEBUG

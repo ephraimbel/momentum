@@ -162,9 +162,10 @@ struct WorkoutPhotoSection: View {
 
     /// Re-dirty for sync (the `FinishedWorkoutReader.commit` contract). Photos are now editable
     /// from History too (2026-08-14) — there no save screen follows to clear the stamp, so a photo
-    /// added weeks later would otherwise never leave the device.
+    /// added weeks later would otherwise never leave the device. Routed through the engine so a
+    /// photo added to an ALREADY-PUBLISHED post re-publishes it instead of staying local.
     private func markEdited() {
-        workout.syncedAt = nil
+        SocialSyncEngine.markEdited(workout)
     }
 
     // MARK: Mutations (all edits run on the multi-photo set — legacy folds in first)

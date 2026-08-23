@@ -361,7 +361,7 @@ final class FinishedWorkoutReader {
         // (waking Today's throttled sweep) BEFORE this editor appears: the un-named workout was
         // routinely uploaded and stamped, so the title, notes, effort and sport correction the
         // athlete then typed never left the device.
-        workout.syncedAt = nil
+        SocialSyncEngine.markEdited(workout)
         do { try context.save(); return true } catch { return false }
     }
 

@@ -176,15 +176,15 @@ struct CardioSaveView: View {
         } message: {
             Text("It's still in your history. Nothing was deleted.")
         }
-        // This screen hosts its OWN paywall cover: a save screen can sit inside a fullScreenCover
-        // (crash-recovery save, the --save-screen harness), where RootView's root host cannot
-        // present on top. The root host STANDS DOWN whenever a workout save context owns the
-        // screen (same arrangement as the coach chat), so exactly one host is ever live — never
-        // two bound to one item (the documented double-present bug). Briefly removed 2026-08-20;
-        // CardioSaveMapStyleUITests caught the covered-context gap same day.
-        .fullScreenCover(item: $paywall.presentedFeature) { feature in
-            PaywallView(feature: feature)
-        }
+        // NO paywall cover here. This screen used to host its own, which was right about the
+        // problem (a save editor sits inside a cover, where RootView's root host cannot present on
+        // top) and wrong about the place: the editor is not the context, its CONTAINER is. Hosting
+        // here fixed the cardio screen and left the strength and timed editors — which live in the
+        // very same containers — with no host at all, so a locked tap there set `presentedFeature`,
+        // showed nothing, and finally raised the paywall as the save screen closed.
+        // The host now lives on each container (`.nestedPaywallHost()`): the recorder overlay, the
+        // crash-recovery cover, the manual-log review, the DEBUG harnesses. One host per context,
+        // all three editors covered. See `NestedPaywallHost.swift`.
         .task {
             guard reader == nil else { return }
             let reader = FinishedWorkoutReader(container: context.container, workoutId: workoutId)

@@ -508,7 +508,12 @@ struct WeekContextCard: View {
 
     /// `raw` is the metric's SI value for the day (metres or kilograms). `idx` (0…6, oldest →
     /// newest) is the bar's x position — the chart plots INDEXES, not dates (see the chart note).
-    private struct DayBar: Identifiable { let id = UUID(); let idx: Int; let dayStart: Date; let raw: Double; let isAnchor: Bool }
+    private struct DayBar: Identifiable {
+        let id = UUID(); let idx: Int; let dayStart: Date; let raw: Double; let isAnchor: Bool
+        /// The x the chart actually plots. `Double` so the mark, the scale domain and the axis
+        /// values all live in ONE numeric space — see the chart note below.
+        var x: Double { Double(idx) }
+    }
 
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
     private var unitLabel: String {
@@ -572,41 +577,20 @@ struct WeekContextCard: View {
                 let maxDist = days.map { disp($0.raw) }.max() ?? 0
                 let total = days.reduce(0) { $0 + $1.raw }
                 card(total: total) {
-                    // Plotted on a plain INDEX axis, not dates (2026-08-14): date bands put each
-                    // bar at the band's centre (noon) while the domain ended at the last
-                    // midnight+12h, so the anchor bar clipped at the edge and every weekday
-                    // letter sat half a bar off. Integer x-positions with labels AT those same
-                    // integers make bar and letter alignment exact by construction.
-                    Chart(days) { d in
-                        BarMark(x: .value("Day", d.idx),
-                                y: .value("Total", animate ? disp(d.raw) : 0),
-                                width: .fixed(20))
-                            .foregroundStyle(d.isAnchor ? AnyShapeStyle(IridescentMaterial())
-                                                        : AnyShapeStyle(Theme.ink.opacity(0.18)))
-                            .cornerRadius(3)
-                            .annotation(position: .top, spacing: 4) {
-                                if animate, d.isAnchor, disp(d.raw) > 0 {
-                                    Text(fmt(disp(d.raw)))
-                                        .font(.rounded(9, weight: .bold)).monospacedDigit()
-                                        .foregroundStyle(Theme.ink).fixedSize()
-                                }
-                            }
-                    }
-                    .chartXScale(domain: -0.5...6.5)
-                    .chartYScale(domain: 0...max(1, maxDist * 1.2))
-                    .chartYAxis(.hidden)
-                    .chartXAxis {
-                        AxisMarks(values: Array(0...6)) { value in
-                            AxisValueLabel {
-                                if let i = value.as(Int.self), let d = days.first(where: { $0.idx == i }) {
-                                    Text(d.dayStart, format: .dateTime.weekday(.narrow))
-                                        .font(.rounded(9, weight: d.isAnchor ? .bold : .semibold))
-                                        .foregroundStyle(d.isAnchor ? Theme.ink : Theme.inkTertiary)
-                                }
-                            }
-                        }
-                    }
-                    .frame(height: 118)
+                    // NOT a Chart. Seven equal columns, each holding its bar AND its weekday
+                    // letter, so the letter is centred under its own bar by layout — the alignment
+                    // is structural and cannot drift.
+                    //
+                    // ⚠️ Do not "restore" Swift Charts here. This card has been through two axis
+                    // fixes already. Date bands put each bar at the band's centre (noon) while the
+                    // domain ended at the last midnight+12h, so the anchor bar clipped and every
+                    // letter sat half a bar off (2026-08-14 — moved to an index axis). The index
+                    // axis was right, but bars and `AxisMarks` labels still resolved against plot
+                    // rects that differed by a constant ~7pt, so every letter sat a third of a bar
+                    // left of its column (measured off a screenshot, 2026-08-22). A seven-bar
+                    // sparkline does not need a chart engine, and the engine is the whole source of
+                    // the disagreement: there is only one geometry here now.
+                    weekStrip
                     .accessibilityLabel(metric == .distance
                         ? "This week's distance by day, with this run's day highlighted"
                         : "This week's training volume by day, with this session's day highlighted")
@@ -614,6 +598,53 @@ struct WeekContextCard: View {
                 .task { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { animate = true } }
             }
         }
+    }
+
+    /// Seven equal columns. Each column owns its bar and its weekday letter, both centred in the
+    /// same width, so "the letter under the bar" is a layout fact rather than two coordinate spaces
+    /// that have to be talked into agreeing. See the note at the call site before changing this.
+    private var weekStrip: some View {
+        // The tallest bar fills the plot; the ×1.2 headroom is what the old y-domain reserved so the
+        // anchor's value label has somewhere to sit.
+        let ceiling = max(1, (days.map { disp($0.raw) }.max() ?? 0) * 1.2)
+        return HStack(alignment: .bottom, spacing: 0) {
+            ForEach(days) { d in
+                let value = disp(d.raw)
+                VStack(spacing: 4) {
+                    // Fixed-height slot, so a day with a value label and a day without still line
+                    // their bars up along one baseline.
+                    Text(d.isAnchor && value > 0 ? fmt(value) : " ")
+                        .font(.rounded(9, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(Theme.ink)
+                        .opacity(animate && d.isAnchor && value > 0 ? 1 : 0)
+                        .fixedSize()
+                        .frame(height: 12)
+                    ZStack(alignment: .bottom) {
+                        Color.clear
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(d.isAnchor ? AnyShapeStyle(IridescentMaterial())
+                                             : AnyShapeStyle(Theme.ink.opacity(0.18)))
+                            .frame(width: 20, height: animate ? barHeight(value, ceiling: ceiling) : 0)
+                    }
+                    .frame(height: Self.plotHeight)
+                    Text(d.dayStart, format: .dateTime.weekday(.narrow))
+                        .font(.rounded(9, weight: d.isAnchor ? .bold : .semibold))
+                        .foregroundStyle(d.isAnchor ? Theme.ink : Theme.inkTertiary)
+                        .frame(height: 12)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(height: 118)
+    }
+
+    private static let plotHeight: CGFloat = 82
+
+    /// A day with no work draws nothing at all — a hairline stub would read as "a little training",
+    /// which is the one thing a rest day is not.
+    private func barHeight(_ value: Double, ceiling: Double) -> CGFloat {
+        guard value > 0 else { return 0 }
+        return max(2, Self.plotHeight * CGFloat(value / ceiling))
     }
 
     private func card<Content: View>(total: Double, @ViewBuilder _ content: () -> Content) -> some View {

@@ -124,6 +124,11 @@ struct ShareCardView: View {
             .navigationTitle("Share")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            // The composer is always a SHEET, and it opens from places that are themselves already
+            // presented — the save editors inside the recorder overlay, a history detail. Nothing
+            // underneath can raise a cover above this sheet, so the Pro-styles gate hosts its own
+            // paywall here. Registered, so the host beneath stands down while this one is up.
+            .nestedPaywallHost()
             .fullScreenCover(isPresented: $showingCamera) {
                 CameraPicker { image in adopt(.image(image)) }
                     .ignoresSafeArea()

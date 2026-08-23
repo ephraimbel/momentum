@@ -306,8 +306,26 @@ final class SupabaseSocialBackend: SocialBackending {
                       map_style: dto.mapStyle, ai_read: dto.aiRead, photo_paths: dto.photoPaths)
         do {
             try await client.from("posts").upsert(row).execute()
-            return true
         } catch { return false }
+
+        // Prune photos the athlete has since REMOVED. Paths are positional
+        // (`{uid}/{post}/{index}.jpg`), so a post that went from three photos to two leaves
+        // `2.jpg` in the bucket: the row stops referencing it, but the file stays. That is a
+        // privacy problem before it is a storage one — "I deleted that photo" has to mean the
+        // photo is gone, not just unlinked.
+        //
+        // AFTER the row upsert, never before: pruning first and then failing to update the row
+        // would leave the post pointing at files that no longer exist. Best-effort — a failure
+        // here costs an orphan, and the next publish tries again.
+        let folder = "\(uid)/\(post.id.lowercased())"
+        if let existing = try? await client.storage.from("post-photos").list(path: folder) {
+            let keep = Set(paths)
+            let stale = existing.map { "\(folder)/\($0.name)" }.filter { !keep.contains($0) }
+            if !stale.isEmpty {
+                _ = try? await client.storage.from("post-photos").remove(paths: stale)
+            }
+        }
+        return true
     }
 
     func unpublish(postID: UUID) async -> Bool {

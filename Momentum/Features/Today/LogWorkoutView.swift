@@ -145,17 +145,22 @@ struct LogWorkoutView: View {
     /// (already done in `save()`).
     @ViewBuilder
     private func reviewScreen(_ presented: PresentedWorkout) -> some View {
-        if presented.type.isStrengthStyle {
-            StrengthSaveView(workoutId: presented.id, booksCompletion: false) { closeReview() }
-        } else if presented.type.isTimed {
-            TimedSaveView(workoutId: presented.id, booksCompletion: false) { closeReview() }
-        } else {
-            // The athlete's explicit unit choice, like WorkoutRunner passes it — bare `.auto`
-            // would silently ignore a metric/imperial preference on this one path.
-            CardioSaveView(workoutId: presented.id,
-                           distanceUnit: DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto,
-                           workoutType: presented.type, booksCompletion: false) { closeReview() }
+        Group {
+            if presented.type.isStrengthStyle {
+                StrengthSaveView(workoutId: presented.id, booksCompletion: false) { closeReview() }
+            } else if presented.type.isTimed {
+                TimedSaveView(workoutId: presented.id, booksCompletion: false) { closeReview() }
+            } else {
+                // The athlete's explicit unit choice, like WorkoutRunner passes it — bare `.auto`
+                // would silently ignore a metric/imperial preference on this one path.
+                CardioSaveView(workoutId: presented.id,
+                               distanceUnit: DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto,
+                               workoutType: presented.type, booksCompletion: false) { closeReview() }
+            }
         }
+        // This review editor is itself presented inside a cover, so the root host cannot reach it.
+        // See `NestedPaywallHost.swift`.
+        .nestedPaywallHost()
     }
 
     private func closeReview() {

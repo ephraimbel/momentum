@@ -10,6 +10,8 @@ struct WorkoutDetailView: View {
     @Environment(\.modelContext) private var context
     /// Content has scrolled under the transparent bar — drives the top scrim below.
     @State private var scrolledUnderBar = false
+    /// The full editor (name, story, sport, effort, audience, photos) — Strava's "edit activity".
+    @State private var editing = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -40,7 +42,13 @@ struct WorkoutDetailView: View {
                     if CommunityAccess.enabled {
                         ShareVisibilityRow(privacy: $workout.privacy, boxed: true)
                             .onChange(of: workout.privacy) {
-                                workout.syncedAt = nil
+                                // `markEdited`, not a bare `syncedAt = nil`: narrowing Everyone →
+                                // Friends leaves the workout SHARED, so the old publish stamp
+                                // survived and the sweep did nothing — the server kept serving the
+                                // post to everyone. Clearing the stamp re-upserts it at the new
+                                // audience. A downgrade all the way to private still keeps its
+                                // stamp, which is what makes the sweep delete the post.
+                                SocialSyncEngine.markEdited(workout)
                                 try? context.save()
                             }
                     }
@@ -52,6 +60,17 @@ struct WorkoutDetailView: View {
         // The hero draws under the transparent bar; the back button floats over the scene.
         .ignoresSafeArea(edges: .top)
         .toolbarBackground(.hidden, for: .navigationBar)
+        // Everything the save editor asked for, askable again for as long as the activity exists.
+        // The inline controls below stay: audience and photos are the two things people reach for
+        // most, and making them a two-tap trip through a sheet would be worse. This is for the
+        // rest — the name, the story, a mis-logged sport, the effort nobody rates mid-cooldown.
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { editing = true } label: { Text("Edit") }
+                    .accessibilityLabel("Edit activity")
+            }
+        }
+        .sheet(isPresented: $editing) { ActivityEditView(workout: workout) }
         // Same scrim contract as the save screens' chrome: invisible while the hero owns the
         // top, materializing once content scrolls under the bar so text fades out beneath it.
         .onScrollGeometryChange(for: Bool.self) { geo in
@@ -71,6 +90,10 @@ struct WorkoutDetailView: View {
         }
         .onAppear {
             #if DEBUG
+            // `--activity-edit`: open the editor straight away — simctl can't tap a toolbar button.
+            if ProcessInfo.processInfo.arguments.contains("--activity-edit"), !editing {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { editing = true }
+            }
             // Deterministic sim verification of the time-in-zones card (simctl can't scroll).
             if ProcessInfo.processInfo.arguments.contains("--detail-scroll-zones") {
                 // Two attempts — the card's id only exists once its async HR series has loaded.

@@ -115,6 +115,8 @@ private struct ImmersiveWorkoutPage: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHint = false
+    /// The full editor, the same one the history detail opens.
+    @State private var editing = false
     /// Camera line to the route map (routes only): shows the re-center control once the athlete
     /// pinch-explores away from the fitted overview, and answers its tap.
     @State private var mapCamera = RouteMapCameraHandle()
@@ -167,6 +169,7 @@ private struct ImmersiveWorkoutPage: View {
             .padding(.bottom, bottomInset + Theme.Space.lg)
         }
         .contentShape(Rectangle())
+        .sheet(isPresented: $editing) { editSheet }
         .task {
             guard isFirst else { return }
             withAnimation(.easeIn(duration: 0.4).delay(0.5)) { showHint = true }
@@ -187,6 +190,16 @@ private struct ImmersiveWorkoutPage: View {
                 ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
                     .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
                     .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                // Edit lives here because this pager is the athlete's OWN media — its single call
+                // site is their profile grid (other people's posts open in `CommunityPager`), so
+                // there is no "is this mine" question to ask. This is where people actually look
+                // back at what they posted, so it is where "change the name / add the photo /
+                // narrow the audience" has to be reachable.
+                Button { editing = true } label: {
+                    Image(systemName: "pencil").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                }
+                .accessibilityLabel("Edit activity")
                 // Appears only once the athlete pinch-explores the route map; one tap re-frames
                 // the whole route. Joins the trailing control column so the map stays uncluttered.
                 if mapCamera.isExplored {
@@ -201,6 +214,8 @@ private struct ImmersiveWorkoutPage: View {
             .animation(.easeOut(duration: 0.25), value: mapCamera.isExplored)
         }
     }
+
+    private var editSheet: some View { ActivityEditView(workout: workout) }
 
     private var swipeHint: some View {
         VStack(spacing: 2) {
