@@ -80,6 +80,18 @@ struct PlanRevealView: View {
             .padding(.bottom, Theme.Space.sm)
         }
         .scrollIndicators(.hidden)
+        // The pinned CTA below paints an opaque background, so whatever line of content happens to
+        // sit at the viewport edge gets guillotined mid-glyph — on the reveal that is usually the
+        // volume chart's "Peaks at …" caption, and a half-height sentence reads as damage on the
+        // one screen that has to look finished (audit 2026-08-22). Nothing is lost (the caption
+        // scrolls into view), so this is a fade, not a layout change: the last few points dissolve
+        // into the page instead of being cut.
+        .overlay(alignment: .bottom) {
+            LinearGradient(colors: [Theme.background.opacity(0), Theme.background],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: Theme.Space.lg)
+                .allowsHitTesting(false)
+        }
         #if DEBUG
         .onAppear {
             // Deterministic sim verification of the lower half (simctl can't scroll).

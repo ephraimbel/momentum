@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The onboarding paywall (redesign 2026-08-05, after the Cal AI reference; settled the same day
-/// at two pages): a two-page sequence. Page one is the tour — "This is momentum." over a
+/// at two pages): a two-page sequence. Page one is the tour — "Welcome to momentum." over a
 /// large device mock paging through real screens; it asks for nothing (onboarding already asked
 /// for notifications — the trial reminder is still scheduled at purchase). Page two is THE
 /// paywall — the exact `PaywallView` the rest of the app shows, with its feature checklist
@@ -165,7 +165,7 @@ struct OnboardingPaywallFlow: View {
         // horizontal padding lives on the copy and the footer, not the whole page.
         VStack(spacing: 0) {
             Spacer(minLength: Theme.Space.lg)
-            Text("This is momentum.")
+            Text("Welcome to momentum.")
                 .font(.serif(29 * s, weight: .semibold)).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -175,7 +175,7 @@ struct OnboardingPaywallFlow: View {
             PaywallShowcase(height: 500 * s)
                 .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
             Spacer(minLength: Theme.Space.md)
-            footer(cta: "Try now", s: s) { advance() }
+            footer(cta: showcaseCTA, s: s) { advance() }
                 .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
         }
@@ -192,6 +192,21 @@ struct OnboardingPaywallFlow: View {
     /// the relaunch gate).
     private var pagePaywall: some View {
         PaywallView(feature: .fullPlan, hard: true, onEntitled: onEntitled)
+    }
+
+    /// "Try now" is only honest when a trial is actually behind it, and whether one IS behind it is
+    /// a STORE fact, not an app one: the live path reads `introductoryDiscount` off the product
+    /// (`PaywallController.trialDays(of:)`), so a trial can be switched on or off in App Store
+    /// Connect with no build. Hardcoded, this button promised a trial the store may not be
+    /// offering — it read "Try now" over a plain $59.99 charge after the trial was retired
+    /// (2026-08-20), which is both a conversion mismatch with the checkout page and the kind of
+    /// subscription-presentation ambiguity App Review 3.1.2 exists for.
+    ///
+    /// Same guard as the trust line in `footer` and as `PaywallCheckout`'s own CTA: with
+    /// placeholder pricing we do not yet know what the store offers, so we do not promise.
+    /// Flip the offer in ASC and this reverts to "Try now" on its own.
+    private var showcaseCTA: String {
+        offering.annual.trialDays > 0 && paywall.pricingIsLive ? "Try now" : "Continue"
     }
 
     // MARK: The tour page's footer

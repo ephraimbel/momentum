@@ -586,7 +586,7 @@ struct CardioTrackingView: View {
             .padding(.horizontal, Theme.Space.xl)
             Spacer()
             OversizedButton(title: denied ? "Start without route" : "Start now",
-                            systemImage: "bolt.fill", kind: .outline) { proceedToCountdown() }
+                            systemImage: "bolt.fill", kind: .glass) { proceedToCountdown() }
                 .padding(Theme.Space.md)
         }
         .onAppear { acquirePulse = true }
@@ -657,7 +657,7 @@ struct CardioTrackingView: View {
 
             HStack(spacing: Theme.Space.md) {
                 OversizedButton(title: vm.isPaused ? "Resume" : "Pause",
-                                systemImage: vm.isPaused ? "play.fill" : "pause.fill", kind: .outline) {
+                                systemImage: vm.isPaused ? "play.fill" : "pause.fill", kind: .glass) {
                     // A state change this big deserves its own weight, not the generic button tick:
                     // pause lands a medium thud, resume answers with the soft success double-tap.
                     Task {
