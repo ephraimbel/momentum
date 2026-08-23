@@ -69,9 +69,11 @@ final class AuthFlowsUITests: XCTestCase {
         XCTAssertFalse(newPass.isEmpty, "pass TEST_RUNNER_E2E_NEWPASS")
         let app = launchAtGate()
 
-        // The recovery link signs the athlete in AND raises the set-new-password sheet.
+        // The recovery link signs the athlete in AND raises the set-new-password sheet — but iOS
+        // parks the custom-scheme URL behind an "Open in momentum?" prompt first, and the app sees
+        // nothing until that is answered. See `waitForDeepLink`.
         let newField = app.textFields["New password"]
-        XCTAssertTrue(newField.waitForExistence(timeout: 90),
+        XCTAssertTrue(waitForDeepLink(newField),
                       "recovery deep link should raise the New password sheet (orchestrator running?)")
         attach(app, "recovery-sheet")
         newField.tap()

@@ -97,7 +97,10 @@ final class EmailAuthUITests: XCTestCase {
 
         // Name step — empty name is allowed (@handle is the required identity). Tap-and-verify:
         // a single tap can land mid-entrance-animation and miss (run 11).
-        let identityTitle = app.staticTexts["Claim your @handle"]
+        // "Make it yours" since the identity beat gained the photo + avatar look; it was still
+        // asserting the older "Claim your @handle" here. Nothing caught that, because without an
+        // orchestrator this test never ran — a stale test rots exactly this quietly.
+        let identityTitle = app.staticTexts["Make it yours"]
         for _ in 0..<6 where !identityTitle.exists {
             let cont = app.buttons["Continue"]
             if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
@@ -117,11 +120,16 @@ final class EmailAuthUITests: XCTestCase {
 
         // Walk the remaining steps generically: answer the two steps that demand input,
         // dismiss opt-in beats, Continue through the rest.
-        let week1 = app.staticTexts["Week 1"]   // the plan reveal
+        // The reveal's own CTA — the sentinel the other onboarding suites use. It was looking for
+        // a "Week 1" static text, which the reveal has not rendered since its redesign (it shows a
+        // WEEKS stat cell now); another literal that rotted unnoticed while this test couldn't run.
+        let week1 = app.buttons["This looks great"]
         // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
         // anymore) — it presents from com.apple.Health, so drive that process directly.
         let health = XCUIApplication(bundleIdentifier: "com.apple.Health")
-        for _ in 0..<25 {
+        // 40, not 25: the "building your plan" beat and each step's entrance animation each burn
+        // an iteration without advancing, and a runner+lifter answers more steps than a runner.
+        for _ in 0..<40 {
             if week1.exists { break }
             grantHealthSheet(health)
             if app.staticTexts["What do you want to do?"].exists,
