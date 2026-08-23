@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.4.0"      # 2026-08-20: 1.3.0 (build 27) went READY_FOR_SALE — this sweep ships as 1.4.0. Must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version. (1.4.0 record creation needs the owner or an approved ASC write.)
-    CURRENT_PROJECT_VERSION: "32"   # build 32 (v1.4.0) — supersedes 31 (archived, never uploaded): adds the paywall breathing pass (Monthly collapse + legible SAVE tag). Everything from 28-31 rides along.
+    CURRENT_PROJECT_VERSION: "33"   # build 33 (v1.4.0) — supersedes 32 (never uploaded). ⚠️ 33 is LOAD-BEARING, not just a bump: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it (the rateUs beat is gone from 33, sliding `account` 25 → 24), so shipping this sweep under any other build number silently mislabels every funnel row. Carries: the nested paywall host, post-activity editing, the auth-form rebuild, the week-strip and route-framing fixes.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
