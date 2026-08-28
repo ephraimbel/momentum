@@ -458,13 +458,13 @@ enum DemoSeed {
                 context.insert(w)
             }
         }
-        // --seed-track-run: eight laps of a real 400 m oval, finished half an hour ago, so it is
+        // --seed-track-run: five miles of laps on a stadium oval, finished half an hour ago, so it is
         // the newest run on the profile and the post-run page opens on a trace that actually
         // follows a track (a marketing capture, 2026-08-28 — the neighbourhood loops above read
         // as blobs). Lane-1 geometry: two 84.39 m straights joined by 36.5 m-radius bends.
         if ProcessInfo.processInfo.arguments.contains("--seed-track-run") {
             let start = Date().addingTimeInterval(-(30 * 60 + 16 * 60))
-            let trace = trackSamples(start: start, paceSPerKm: 300, laps: 8)
+            let trace = trackSamples(start: start, paceSPerKm: 300, laps: 19.35)   // ≈ 5.00 mi
             let w = Workout(); w.type = .run; w.startedAt = start
             w.durationS = trace.distanceM / 1000 * 300
             w.elapsedS = w.durationS
@@ -908,10 +908,12 @@ enum DemoSeed {
 
     /// Samples around a standard 400 m track, lane 1, long axis rotated by `headingDeg` (0 = the
     /// straights run north–south). Centre is the middle of the infield.
-    private static func trackSamples(start: Date, paceSPerKm: Double, laps: Int,
+    private static func trackSamples(start: Date, paceSPerKm: Double, laps: Double,
                                      centerLat: Double = 30.27873, centerLon: Double = -97.75002,
                                      headingDeg: Double = -4) -> (samples: [LocationSample], distanceM: Double) {
-        let straight = 84.39, radius = 36.5
+        // Fitted to the ring as the basemap DRAWS it (measured off a capture: ~65 m wide, ~171 m
+        // long) rather than to regulation lane-1 — a true 73 m-wide oval ran over the stands.
+        let straight = 106.0, radius = 32.5
         let perLap = 80
         let mPerDegLat = HeatmapBinning.metersPerDegLat
         let mPerDegLon = mPerDegLat * cos(centerLat * .pi / 180)
@@ -919,7 +921,7 @@ enum DemoSeed {
         var out: [LocationSample] = []
         var distanceM = 0.0, elapsed = 0.0
         var prevLat = 0.0, prevLon = 0.0
-        for i in 0...(laps * perLap) {
+        for i in 0...Int((laps * Double(perLap)).rounded()) {
             // Walk the perimeter: straight (east side, heading north) → bend → straight → bend.
             let u = Double(i % perLap) / Double(perLap)          // 0…1 around the lap
             let lapLen = 2 * straight + 2 * .pi * radius
