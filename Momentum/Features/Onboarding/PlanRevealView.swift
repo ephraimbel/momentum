@@ -700,11 +700,18 @@ private struct VolumeCurve: View {
                         .frame(height: h - axis - top, alignment: .top)
                         .offset(x: pts[i].x, y: top)
                 }
-                // Fill under the curve, revealed with the pen.
+                // Fill under the curve, revealed with the pen. The mask is a TRANSFORM, not a
+                // width: `Rectangle().frame(width: w * progress)` inside a mask is a layout change,
+                // and it was not clipping at all — the whole fill stood there complete while the
+                // line was still being drawn, which is the one thing a self-drawing chart must not
+                // do (caught on video, 2026-08-28). Scaling from the leading edge is also the rule
+                // this project already holds itself to: animate transforms, never layout.
                 fillPath(curve, base: h - axis, last: pts.last!, first: pts.first!)
                     .fill(LinearGradient(colors: [Theme.purple.opacity(0.22), Theme.purple.opacity(0.0)],
                                          startPoint: .top, endPoint: .bottom))
-                    .mask(Rectangle().frame(width: w * progress).frame(maxWidth: .infinity, alignment: .leading))
+                    .mask(alignment: .leading) {
+                        Rectangle().scaleEffect(x: max(0.0001, progress), y: 1, anchor: .leading)
+                    }
                 // The curve itself.
                 curve.trim(from: 0, to: progress)
                     .stroke(stroke, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
