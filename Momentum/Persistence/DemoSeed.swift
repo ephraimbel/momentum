@@ -467,6 +467,7 @@ enum DemoSeed {
             let start = Date().addingTimeInterval(-(10 * 60 + 90 * 60))
             let trace = traceSamples(ladyBirdLakeTrail, start: start, paceSPerKm: 331)
             let w = Workout(); w.type = .run; w.startedAt = start
+            w.title = "Long Run"
             w.durationS = trace.distanceM / 1000 * 331
             w.elapsedS = w.durationS
             let gps = GPSDetail()
