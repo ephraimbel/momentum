@@ -394,7 +394,10 @@ struct ProgressScreen: View {
                 warmup
             }
         }
-        .background(Theme.background)
+        // The paywall's field, at half strength (owner ask 2026-08-28: carry that aesthetic onto
+        // Trends and Health). Half, because this page is dense with cards — at the wall's own
+        // strength the pools compete with the content sitting on them.
+        .background(AiryField(intensity: 0.5))
         .navigationBarHidden(true)
         // Cross-tab segment requests (Today's readiness line, coach nav cards). Consume-then-nil,
         // on appear AND change — the request may land before or after this screen exists.
@@ -1373,12 +1376,12 @@ struct ProgressScreen: View {
 
     private func feedTitle(_ w: Workout) -> String {
         if !w.title.isEmpty { return w.title }
-        if w.type.discipline == .running, let rt = w.plannedSession?.runType { return "\(rt.rawValue.capitalized) run" }
+        if w.type.discipline == .running, let rt = w.plannedSession?.runType { return rt.planTitle }
         return w.type.title
     }
     private func feedSubtitle(_ w: Workout) -> String {
         let day = w.startedAt.formatted(.dateTime.weekday(.abbreviated).day())
-        let kind = w.plannedSession?.runType?.rawValue.capitalized ?? w.type.title
+        let kind = w.plannedSession?.runType?.planTitle ?? w.type.title
         // An untitled workout's title IS its type, so repeating it below read "Weight Training ·
         // Weight Training". Say the time instead — the one fact the row doesn't already carry.
         guard kind.caseInsensitiveCompare(feedTitle(w)) != .orderedSame else {

@@ -51,9 +51,25 @@ struct VitalTileModel: Identifiable {
         }
     }
 
-    /// Temperature is the lone lilac tile; every other vital is ice (§6 — one pastel per domain).
-    var ink: Color { kind == .wristTemp ? Theme.Health.temperatureInk : Theme.Health.vitalsInk }
-    var wash: Color { kind == .wristTemp ? Theme.Health.temperatureWash : Theme.Health.vitalsWash }
+    /// One hue per signal (owner call 2026-08-28). HRV, resting HR and respiratory all wore the
+    /// same ice blue, so the board read as one metric printed three times; each now carries its
+    /// own, and the walking-HR slot borrows the heart's since it measures the same thing.
+    var ink: Color {
+        switch kind {
+        case .hrv: Theme.Health.hrvInk
+        case .restingHR, .walkingHR: Theme.Health.heartInk
+        case .respiratory: Theme.Health.vitalsInk
+        case .wristTemp: Theme.Health.temperatureInk
+        }
+    }
+    var wash: Color {
+        switch kind {
+        case .hrv: Theme.Health.hrvWash
+        case .restingHR, .walkingHR: Theme.Health.heartWash
+        case .respiratory: Theme.Health.vitalsWash
+        case .wristTemp: Theme.Health.temperatureWash
+        }
+    }
 
     func format(_ value: Double) -> String {
         switch kind {

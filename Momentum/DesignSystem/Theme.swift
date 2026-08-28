@@ -134,9 +134,20 @@ extension Theme {
         static let strainWash = Color(hex: "FFD8C2")
         static let strainInk  = Color(hex: "C96F3B")
 
-        /// Vitals (HRV / resting HR / respiratory) — ice.
+        /// Vitals — respiratory keeps the family's ice; HRV and the heart get their own hue so
+        /// the board reads as four distinct signals (owner call 2026-08-28: three tiles in one
+        /// blue looked like one repeated metric). Same hex on both surfaces, like every pair here.
         static let vitalsWash = Color(hex: "C2F0FF")
         static let vitalsInk  = Color(hex: "1E90C0")
+
+        /// HRV — teal. The calm, variable signal, a step off respiratory's ice.
+        static let hrvWash = Color(hex: "BEEFF2")
+        static let hrvInk  = Color(hex: "0E9AA7")
+
+        /// Resting heart rate — rose. The heart's own colour, deliberately not the alarm red
+        /// `MetricColor.negative` owns: a low resting HR is good news.
+        static let heartWash = Color(hex: "FFD3E0")
+        static let heartInk  = Color(hex: "D6537A")
 
         /// Temperature / illness-watch — lilac + words, never red.
         static let temperatureWash = Color(hex: "E6C2FF")

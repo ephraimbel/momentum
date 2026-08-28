@@ -14,29 +14,12 @@ import UserNotifications
 /// rises from the very bottom so the canvas has depth behind the CTA. `IridescentView` freezes
 /// itself under Reduce Motion; the bloom is otherwise motion-free (opacity-static, no wander).
 struct PaywallBackground: View {
-    /// One bloom of the field. Square-framed and reaching clear well inside itself, so no bloom
-    /// can ever show an edge.
-    private func wash(_ c: Color, _ o: Double, _ at: UnitPoint, _ r: CGFloat) -> some View {
-        RadialGradient(colors: [c.opacity(o), c.opacity(o * 0.35), .clear],
-                       center: at, startRadius: 0, endRadius: r)
-    }
-
+    /// The shared `AiryField`, over the paywall's own brighter-than-canvas white. The wall is a
+    /// bright moment regardless of appearance, so it does not take `Theme.background`.
     var body: some View {
-        // A CONTINUOUS, MULTI-HUE field: mostly white with faint, well-separated pools of
-        // DIFFERENT hues, so the eye reads air rather than colour (owner call 2026-08-28 —
-        // lavender-family blooms at full strength read as one purple wash). The green note is
-        // `recoveryInk`, the one non-lavender the system already owns.
-        //
-        // Shared with `PaywallView` so the tour page and the wall behind it are ONE surface: the
-        // tour used to run an animated `IridescentView` mesh, which both broke that continuity
-        // and re-composited a full-screen mask every tick.
         ZStack {
             Color(hex: "FAFAFC")
-            wash(Theme.iridescent[0], 0.15, UnitPoint(x: 0.18, y: 0.16), 300)   // lavender
-            wash(Theme.iridescent[1], 0.18, UnitPoint(x: 0.96, y: 0.40), 300)   // sky
-            wash(Theme.Health.recoveryInk, 0.07, UnitPoint(x: 0.80, y: 0.62), 260)
-            wash(Theme.iridescent[2], 0.13, UnitPoint(x: 0.04, y: 0.70), 280)   // rose
-            wash(Theme.iridescent[4], 0.10, UnitPoint(x: 0.55, y: 0.95), 300)   // orchid
+            AiryField()
         }
         .ignoresSafeArea()
     }
@@ -202,9 +185,9 @@ struct PaywallShowcase: View {
     // of fitness and freshness"): LIGHT captures from a data-rich seed. Strength, the readiness
     // gauges, the post-run page and the record book replace vitals, sleep, the log and the globe.
     private static let slides = [
-        "PaywallShotToday", "PaywallShotPlan", "PaywallShotProgress",
-        "PaywallShotStrength", "PaywallShotReadiness", "PaywallShotVitals",
-        "PaywallShotCoach", "PaywallShotPostRun", "PaywallShotFuel",
+        "PaywallShotPlan", "PaywallShotProgress", "PaywallShotStrength",
+        "PaywallShotReadiness", "PaywallShotVitals", "PaywallShotCoach",
+        "PaywallShotPostRun", "PaywallShotFuel",
     ]
 
     var body: some View {
