@@ -16,6 +16,13 @@ struct PlanRevealView: View {
     @State private var shownSessions = 0.0
     @State private var curveIn = 0.0        // the volume curve draws itself 0…1
     @State private var calloutIn = false    // peak callout pops once the pen reaches it
+    // Three one-shot lights, each travelling 0…1 exactly once. The paywall's rule holds here:
+    // a lit object that moves ONCE reads as expensive, one that keeps moving reads as a spinner.
+    // At rest every band has travelled off its own view, so "finished" is also "invisible".
+    @State private var nameSheen = 0.0      // specular pass across the athlete's own name
+    @State private var curveGleam = 0.0     // a highlight running the drawn curve, after the pen
+    @State private var tileSheen = 0.0      // light crossing the stat tiles, left to right
+    @State private var stripFill = 0.0      // the first week's day dots lighting in order
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.requestReview) private var requestReview
@@ -81,6 +88,25 @@ struct PlanRevealView: View {
     /// workout or a meal. iOS still owns whether the sheet actually appears (three per 365 days),
     /// so the line settles into its thank-you either way — there is no way to know, and a tap that
     /// visibly did nothing would read as broken.
+    /// A narrow specular band travelling left to right, for masking onto whatever should catch the
+    /// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of
+    /// the animation are a clean no-op — nothing to fade in or out.
+    ///
+    /// `plusLighter` rather than a white fill: on the raised tiles it reads as light moving across
+    /// a surface, and on the name it brightens the gradient instead of painting over it.
+    private func sheenBand(_ progress: Double) -> some View {
+        GeometryReader { geo in
+            let w = max(geo.size.width, 1)
+            let band = max(56, w * 0.32)
+            LinearGradient(colors: [.white.opacity(0), .white.opacity(0.9), .white.opacity(0)],
+                           startPoint: .leading, endPoint: .trailing)
+                .frame(width: band)
+                .offset(x: -band + (w + band * 2) * progress)
+                .blendMode(.plusLighter)
+        }
+        .allowsHitTesting(false)
+    }
+
     /// The line's whole behaviour, in one place so the DEBUG hook exercises the real thing.
     private func tapReview() {
         guard !reviewTapped else { return }
@@ -136,17 +162,22 @@ struct PlanRevealView: View {
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, topInset + Theme.Space.sm)
             .padding(.bottom, Theme.Space.lg)
-            // The crown: a soft aurora falling from the very top of the screen, part of the
-            // CONTENT so it scrolls away with the hero (owner call 2026-08-27: not sticky, subtle).
+            // The crown: the PAYWALL'S OWN FIELD, falling from the very top of the screen and
+            // part of the CONTENT, so it still scrolls away with the hero (owner call 2026-08-27:
+            // not sticky, subtle). It was a three-stop lavender ramp until 2026-08-28; the owner
+            // asked for the paywall's premium feel here, and `AiryField` IS that feel — separated
+            // hues reading as air rather than as one purple wash. Same component, so the two pages
+            // cannot drift apart again, and `paintsBackground: false` keeps onboarding's lighter
+            // canvas underneath. The mask dissolves it into that canvas exactly where the old ramp
+            // ended.
             .background(alignment: .top) {
-                LinearGradient(stops: [
-                    .init(color: Theme.iridescent[0].opacity(colorScheme == .dark ? 0.26 : 0.42), location: 0),
-                    .init(color: Theme.iridescent[1].opacity(colorScheme == .dark ? 0.12 : 0.2), location: 0.45),
-                    .init(color: Theme.iridescent[2].opacity(0.07), location: 0.78),
-                    .init(color: .clear, location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-                .frame(height: 440 + topInset)
-                .allowsHitTesting(false)
+                AiryField(intensity: colorScheme == .dark ? 0.55 : 0.85, paintsBackground: false)
+                    .frame(height: 440 + topInset)
+                    .mask(LinearGradient(stops: [.init(color: .black, location: 0),
+                                                 .init(color: .black, location: 0.58),
+                                                 .init(color: .clear, location: 1)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .allowsHitTesting(false)
             }
         }
         .ignoresSafeArea(edges: .top)
@@ -242,10 +273,13 @@ struct PlanRevealView: View {
                 Text("Your plan,")
                     .font(.display(40, weight: .semibold))
                     .foregroundStyle(Theme.ink)
-                Text(heroName)
-                    .font(.display(40, weight: .semibold))
+                // The one moment on this page that is purely about THEM, so it is the one thing
+                // given a specular pass. The band is masked to the letterforms, so the light moves
+                // through the name rather than over a rectangle containing it.
+                heroNameText
                     .foregroundStyle(LinearGradient(colors: [Theme.purple, Color(hex: "B48CF2"), Theme.iridescent[1]],
                                                     startPoint: .leading, endPoint: .trailing))
+                    .overlay { sheenBand(nameSheen).mask(heroNameText) }
             }
             .tracking(-1.0)
             .lineLimit(1).minimumScaleFactor(0.7)
@@ -268,6 +302,11 @@ struct PlanRevealView: View {
     }
 
     /// "Maya." when we have a first name, "ready." otherwise.
+    /// One definition, drawn twice: once as the name, once as the mask its light travels through.
+    private var heroNameText: some View {
+        Text(heroName).font(.display(40, weight: .semibold))
+    }
+
     private var heroName: String {
         let first = vm.name.trimmingCharacters(in: .whitespaces).split(separator: " ").first.map(String.init)
         return (first.map { "\($0)." } ?? "ready.")
@@ -332,7 +371,8 @@ struct PlanRevealView: View {
                         .background(Capsule().fill(Theme.tintedField))
                 }
                 VolumeCurve(values: data.values, peakIndex: peakIdx, raceWeek: data.raceWeek,
-                            peakLabel: peakLabel(maxV), progress: curveIn, calloutIn: calloutIn)
+                            peakLabel: peakLabel(maxV), progress: curveIn, calloutIn: calloutIn,
+                            gleam: curveGleam)
                     .frame(height: 170)
                 if !data.caption.isEmpty {
                     Text(data.caption)
@@ -356,14 +396,14 @@ struct PlanRevealView: View {
     private var statTiles: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                statTile(shownWeeks, "WEEKS") { "\(Int($0.rounded()))" }
-                statTile(shownDays, "DAYS A WEEK") { "\(Int($0.rounded()))" }
-                statTile(shownSessions, "SESSIONS") { "\(Int($0.rounded()))" }
+                statTile(shownWeeks, "WEEKS", 0) { "\(Int($0.rounded()))" }
+                statTile(shownDays, "DAYS A WEEK", 1) { "\(Int($0.rounded()))" }
+                statTile(shownSessions, "SESSIONS", 2) { "\(Int($0.rounded()))" }
             }
             if vm.running, let s = peakWeekStats {
                 HStack(spacing: 12) {
-                    textTile(Formatters.distance(meters: s.volumeM, unit: distanceUnit), "PEAK WEEK")
-                    textTile(Formatters.distance(meters: s.longestM, unit: distanceUnit), "LONGEST RUN")
+                    textTile(Formatters.distance(meters: s.volumeM, unit: distanceUnit), "PEAK WEEK", 3)
+                    textTile(Formatters.distance(meters: s.longestM, unit: distanceUnit), "LONGEST RUN", 4)
                 }
             }
         }
@@ -371,7 +411,21 @@ struct PlanRevealView: View {
         .accessibilityLabel("\(planWeekCount) weeks, \(vm.daysPerWeek) days per week, \(totalSessions) sessions")
     }
 
-    private func statTile(_ value: Double, _ label: String, _ format: @escaping (Double) -> String) -> some View {
+    /// The light's arrival for tile `index` — one wave crossing the row, each tile a beat behind
+    /// the last, so the group reads as one surface catching it rather than five separate flashes.
+    private func tileLight(_ index: Int) -> Double {
+        min(1, max(0, (tileSheen - Double(index) * 0.11) / 0.62))
+    }
+
+    /// The band is clipped to the tile's OWN shape rather than the tile being clipped to the band:
+    /// clipping the tile would take its contact shadow with it, and the raised material is the
+    /// whole reason these read as objects.
+    private func tileShape() -> RoundedRectangle {
+        RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+    }
+
+    private func statTile(_ value: Double, _ label: String, _ index: Int,
+                          _ format: @escaping (Double) -> String) -> some View {
         VStack(spacing: 4) {
             AnimatedCounter(value: value, format: format)
                 .font(.display(30, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
@@ -379,17 +433,19 @@ struct PlanRevealView: View {
                 .lineLimit(1).minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity).frame(height: 84)
-        .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
+        .raised(tileShape())
+        .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
     }
 
-    private func textTile(_ value: String, _ label: String) -> some View {
+    private func textTile(_ value: String, _ label: String, _ index: Int) -> some View {
         VStack(spacing: 4) {
             Text(value).font(.display(24, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
                 .lineLimit(1).minimumScaleFactor(0.7)
             Text(label).font(.rounded(10, weight: .bold)).tracking(1.0).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity).frame(height: 78)
-        .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
+        .raised(tileShape())
+        .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
     }
 
     // MARK: Reflections
@@ -527,7 +583,7 @@ struct PlanRevealView: View {
         if let first = weeksGrouped.first {
             VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
                 sectionLabel("YOUR FIRST WEEK")
-                WeekStrip(sessions: first.sessions)
+                WeekStrip(sessions: first.sessions, fill: stripFill)
                 VStack(spacing: 10) {
                     ForEach(Array(first.sessions.enumerated()), id: \.element.persistentModelID) { i, session in
                         SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
@@ -579,10 +635,18 @@ struct PlanRevealView: View {
 
     // MARK: Reveal orchestration
 
+    /// The arrival, as one sequence rather than a pile of independent fades.
+    ///
+    /// Order is the point: the numbers settle, the block draws itself, the name catches the light,
+    /// the peak is called out, the line is polished, the tiles catch the same light in turn, and
+    /// the week assembles last. Each beat lands in a quiet moment left by the one before it —
+    /// two lights running at once is where this stops reading as craft.
     private func animateIn() {
         guard !reduceMotion else {
             shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
             shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
+            // Every band ends off its own view, so the finished frame is simply the still page.
+            nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1
             return
         }
         withAnimation(.easeOut(duration: 1.1).delay(0.3)) {
@@ -591,7 +655,11 @@ struct PlanRevealView: View {
             shownSessions = Double(totalSessions)
         }
         withAnimation(Motion.pen(1.4).delay(0.35)) { curveIn = 1 }
+        withAnimation(.easeInOut(duration: 0.95).delay(0.55)) { nameSheen = 1 }
+        withAnimation(.easeInOut(duration: 1.25).delay(1.05)) { tileSheen = 1 }
         withAnimation(.spring(response: 0.5, dampingFraction: 0.7).delay(1.5)) { calloutIn = true }
+        withAnimation(.easeInOut(duration: 0.9).delay(1.8)) { curveGleam = 1 }
+        withAnimation(.easeOut(duration: 0.75).delay(2.0)) { stripFill = 1 }
         Haptics.celebration()
     }
 }
@@ -608,6 +676,10 @@ private struct VolumeCurve: View {
     let peakLabel: String
     let progress: Double
     let calloutIn: Bool
+    /// A highlight travelling the finished stroke, 0…1 once. Runs AFTER the pen: a line that is
+    /// still being drawn is already the interesting thing on screen, and two lights on one path
+    /// read as a glitch rather than as craft.
+    var gleam: Double = 1
 
     private let inset: CGFloat = 8
     private let top: CGFloat = 30      // room for the callout pill
@@ -637,6 +709,15 @@ private struct VolumeCurve: View {
                 curve.trim(from: 0, to: progress)
                     .stroke(stroke, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     .shadow(color: Theme.purple.opacity(0.35), radius: 6, y: 3)
+                // The gleam: a short segment of the SAME path, lit. Travels past 1 so it leaves
+                // the line cleanly at the end instead of pooling at the last point.
+                if progress >= 1, gleam > 0, gleam < 1 {
+                    curve.trim(from: max(0, gleam * 1.16 - 0.14), to: min(1, gleam * 1.16))
+                        .stroke(Color.white.opacity(0.92),
+                                style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+                        .blendMode(.plusLighter)
+                        .allowsHitTesting(false)
+                }
                 // Pen head.
                 if progress < 1 {
                     Circle().fill(.white).frame(width: 10, height: 10)
@@ -727,6 +808,11 @@ private struct VolumeCurve: View {
 private struct WeekStrip: View {
     let sessions: [PlannedSession]
     var compact = false
+    /// 0…1 across the seven days — the first week's strip fills in order, so the athlete watches
+    /// their week assemble instead of finding it already there. The compact ladder strips below
+    /// pass nothing and render finished; seven rows of dots all counting themselves in would be
+    /// noise, not craft.
+    var fill: Double = 1
 
     private var days: [(letter: String, sessions: [PlannedSession])] {
         let cal = Calendar.current
@@ -743,12 +829,15 @@ private struct WeekStrip: View {
 
     var body: some View {
         HStack(spacing: compact ? 5 : 0) {
-            ForEach(Array(days.enumerated()), id: \.offset) { _, day in
+            ForEach(Array(days.enumerated()), id: \.offset) { i, day in
+                let lit = min(1, max(0, (fill - Double(i) * 0.085) / 0.3))
                 VStack(spacing: 6) {
                     if !compact {
                         Text(day.letter).font(.rounded(11, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     }
                     dot(day.sessions)
+                        .scaleEffect(0.72 + 0.28 * lit)
+                        .opacity(lit)
                 }
                 .frame(maxWidth: compact ? nil : .infinity)
             }

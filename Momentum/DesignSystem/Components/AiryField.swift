@@ -17,6 +17,11 @@ import SwiftUI
 struct AiryField: View {
     /// 1 = the paywall's strength. Content-dense pages should sit near 0.5.
     var intensity: Double = 1
+    /// False = the blooms ALONE, over whatever is already behind them. Onboarding paints a lighter
+    /// canvas than `Theme.background` (`OnboardingStyle.canvas`), so a field that brought its own
+    /// base would sit on those pages as a faintly different-toned rectangle. Every existing caller
+    /// leaves this true and is unaffected.
+    var paintsBackground: Bool = true
 
     private func wash(_ c: Color, _ o: Double, _ at: UnitPoint, _ r: CGFloat) -> some View {
         let a = o * intensity
@@ -26,7 +31,7 @@ struct AiryField: View {
 
     var body: some View {
         ZStack {
-            Theme.background
+            if paintsBackground { Theme.background }
             wash(Theme.iridescent[0], 0.15, UnitPoint(x: 0.18, y: 0.16), 300)   // lavender
             wash(Theme.iridescent[1], 0.18, UnitPoint(x: 0.96, y: 0.40), 300)   // sky
             wash(Theme.Health.recoveryInk, 0.07, UnitPoint(x: 0.80, y: 0.62), 260)
