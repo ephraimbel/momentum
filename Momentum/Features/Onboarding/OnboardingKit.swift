@@ -250,12 +250,19 @@ struct HealthTile: View {
     var body: some View {
         let side: CGFloat = 84
         let shape = RoundedRectangle(cornerRadius: side * 0.224, style: .continuous)
-        Image(systemName: "heart.fill")
-            .font(.system(size: 44, weight: .regular))
-            .foregroundStyle(LinearGradient(colors: [Color(hex: "FF7A9C"), Color(hex: "FF3B63"), Color(hex: "FF2A50")],
-                                            startPoint: .topLeading, endPoint: .bottomTrailing))
+        // Drawn to Apple's proportions rather than shipping their artwork: the heart fills ~62%
+        // of the tile's width (the icon's own ratio) and runs bright pink at the upper left into
+        // crimson at the lower right, which is the gradient's actual direction. Sizing by
+        // `side` keeps that ratio if the tile is ever rescaled.
+        shape.fill(.white)
+            .overlay {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: side * 0.62, weight: .regular))
+                    .foregroundStyle(LinearGradient(
+                        colors: [Color(hex: "FF6182"), Color(hex: "FB2B54"), Color(hex: "E80B3E")],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
             .frame(width: side, height: side)
-            .background { shape.fill(.white) }
             .overlay { shape.strokeBorder(.black.opacity(0.06), lineWidth: 0.6) }
             .clipShape(shape)
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
