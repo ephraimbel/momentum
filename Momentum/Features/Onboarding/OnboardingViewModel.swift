@@ -42,6 +42,10 @@ final class OnboardingViewModel {
     /// Explicit unit choices from the metrics page (owner ask 2026-07-30) — nil = locale default.
     /// Weight choice persists to the profile at finish; height choice is a display preference.
     var weightUnitChoice: String? = nil     // WeightUnit rawValue ("kg" | "lb")
+    /// `DistanceUnit` rawValue ("metric" | "imperial"), nil until the athlete answers, at which
+    /// point the units step seeds it from their locale. Before this existed the flow read the
+    /// locale directly and the athlete could not correct it anywhere in onboarding.
+    var distanceUnitChoice: String? = nil
     var heightMetricChoice: Bool? = nil     // true = cm, false = ft·in
     var birthYear: Int? = nil
     var bodyMassKg: Double? = nil
@@ -188,7 +192,11 @@ final class OnboardingViewModel {
         // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
         // someone. Setup now runs local-only (guest) and the account is offered once there's a plan
         // worth saving. Skippable — `AccountOptionsView(.onboardingBeat)`.
-        case name, identity, goal, disciplines, experience, injuries, metrics, race, raceGoalTime,
+        // `units` sits immediately after `disciplines` and before `experience`: the pace question
+        // is the first screen that prints a distance, and everything downstream (run volume,
+        // goal time, body weight, the reveal) is quoted in the athlete's own units. Asking later
+        // would mean showing them numbers in units they never chose.
+        case name, identity, goal, disciplines, units, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, strengthSplit,
              hybridFocus, why,
              health, intensity, building, reveal, notifications, primers, account
@@ -457,6 +465,9 @@ final class OnboardingViewModel {
         // locale default (lb + miles in the US/UK) so the app matches the figures they entered.
         // Distance stays `auto` (locale-resolved).
         profile.weightUnit = weightUnitChoice ?? WeightUnit.default().rawValue
+        // Onboarding never wrote this: the profile kept "auto" and re-derived from the locale on
+        // every read, so a choice made in the flow was silently dropped at the door.
+        profile.distanceUnit = distanceUnitChoice ?? DistanceUnit.auto.resolved().rawValue
         profile.sex = sex?.rawValue
         profile.heightCm = heightCm
         profile.birthYear = birthYear

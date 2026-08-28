@@ -44,6 +44,7 @@ struct OnboardingDraft: Codable {
     var sex: String?
     var heightCm: Double?
     var weightUnitChoice: String?
+    var distanceUnitChoice: String?
     var heightMetricChoice: Bool?
     var birthYear: Int?
     var bodyMassKg: Double?
@@ -105,6 +106,7 @@ extension OnboardingViewModel {
             sex: sex?.rawValue,
             heightCm: heightCm,
             weightUnitChoice: weightUnitChoice,
+            distanceUnitChoice: distanceUnitChoice,
             heightMetricChoice: heightMetricChoice,
             birthYear: birthYear,
             bodyMassKg: bodyMassKg,
@@ -158,6 +160,7 @@ extension OnboardingViewModel {
         sex = d.sex.flatMap(BiologicalSex.init(rawValue:))
         heightCm = d.heightCm
         weightUnitChoice = d.weightUnitChoice
+        distanceUnitChoice = d.distanceUnitChoice
         heightMetricChoice = d.heightMetricChoice
         birthYear = d.birthYear
         bodyMassKg = d.bodyMassKg

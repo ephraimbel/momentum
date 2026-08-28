@@ -37,7 +37,6 @@ struct OnboardingFlow: View {
     /// re-initialized whenever RootView's body re-evaluates (cover content closures re-run), and a
     /// fresh `CLLocationManager` per pass was pure waste (perf audit 2026-08-13). Held in @State so
     /// the manager outlives the authorization prompt it raises.
-    @State private var locator: LocationService?
     @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
     @State private var affirmation: String?          // the gentle "got it" micro-reward toast
     @State private var showPaywall = false           // the `onboarding_complete` paywall — the last beat, before the app
@@ -189,6 +188,7 @@ struct OnboardingFlow: View {
             // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
             if args.contains("--onboarding-account") { vm.step = .account }
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
+            if args.contains("--onboarding-units") { vm.name = "Maya"; vm.activities = [.run]; vm.step = .units }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
             if args.contains("--onboarding-metrics") { vm.activities = [.run]; vm.step = .metrics }
             if args.contains("--onboarding-race") { vm.activities = [.run]; vm.goal = .raceDistance; vm.step = .race }
@@ -336,6 +336,7 @@ struct OnboardingFlow: View {
         case .name: nameStep
         case .identity: identityStep
         case .goal: goalStep
+        case .units: unitsStep
         case .disciplines: disciplinesStep
         case .race: raceStep
         case .raceGoalTime: raceGoalTimeStep
@@ -498,6 +499,51 @@ struct OnboardingFlow: View {
         }
     }
 
+    /// Units. Asked early because every number after it is quoted back in the athlete's own, and
+    /// answered for them from their locale so the common case is one tap on Continue.
+    ///
+    /// Two rows rather than one metric/imperial switch: mixing is real and normal (the UK runs in
+    /// miles and weighs in kilos), and a single toggle would force one of those to be wrong.
+    private var unitsStep: some View {
+        questionScaffold("Which units do you use?",
+                         subtitle: "Every distance, pace and weight is shown your way.") {
+            unitRow("Distance", index: 0) {
+                SegmentedCapsule(items: [DistanceUnit.metric, .imperial],
+                                 selection: distanceUnitBinding, scale: .page,
+                                 title: { $0 == .metric ? "Kilometres" : "Miles" },
+                                 spokenLabel: { $0 == .metric ? "Kilometres" : "Miles" })
+            }
+            unitRow("Weight", index: 1) {
+                SegmentedCapsule(items: [WeightUnit.kg, .lb],
+                                 selection: weightUnitBinding, scale: .page,
+                                 title: { $0 == .kg ? "Kilograms" : "Pounds" },
+                                 spokenLabel: { $0 == .kg ? "Kilograms" : "Pounds" })
+            }
+        }
+    }
+
+    /// Reads the resolved unit (locale until the athlete answers) and writes their answer.
+    private var distanceUnitBinding: Binding<DistanceUnit> {
+        Binding(get: { useMetricDistance ? .metric : .imperial },
+                set: { vm.distanceUnitChoice = $0.rawValue })
+    }
+    private var weightUnitBinding: Binding<WeightUnit> {
+        Binding(get: { useMetricWeight ? .kg : .lb },
+                set: { vm.weightUnitChoice = $0.rawValue })
+    }
+
+    private func unitRow<C: View>(_ title: String, index: Int,
+                                  @ViewBuilder _ control: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(title.uppercased())
+                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.3)
+                .foregroundStyle(Theme.inkTertiary)
+                .padding(.leading, Theme.Space.xs)
+            control()
+        }
+        .reveal(cascade(index))
+    }
+
     private var goalStep: some View {
         // Running-first ordering (ENDURANCE-FOCUS Phase 0): the racing + endurance goals lead — this is
         // a running app. Strength/body-composition goals remain, as the supporting pillar.
@@ -576,7 +622,13 @@ struct OnboardingFlow: View {
     // meters. Route through DistanceUnit so this agrees with the rest of the app: a plain
     // measurementSystem check put UK athletes (`.uk`, not `.us`) in km while every other surface
     // showed them miles.
-    private var useMetricDistance: Bool { DistanceUnit.auto.resolved() == .metric }
+    /// The athlete's own answer from the units step, falling back to their locale until they
+    /// reach it. This used to read the locale and nothing else, so a runner whose phone region
+    /// disagreed with how they think was quoted miles (or km) through the entire flow with no
+    /// way to correct it.
+    private var useMetricDistance: Bool {
+        (vm.distanceUnitChoice.flatMap(DistanceUnit.init(rawValue:)) ?? .auto).resolved() == .metric
+    }
     private var metersPerUnit: Double { useMetricDistance ? 1000 : 1609.344 }
     private var distanceUnitLabel: String { useMetricDistance ? "km" : "mi" }
     private func volumeDisplay(_ meters: Double?) -> Double { (meters ?? 0) / metersPerUnit }
@@ -1597,9 +1649,9 @@ struct OnboardingFlow: View {
                 // leaves the step on `.primers`, so without `leftPrimers` the prompt would land on
                 // top of the checkout — the worst place in the app to interrupt.
                 guard vm.step == .primers, !leftPrimers else { return }
-                let loc = locator ?? LocationService()
-                locator = loc
-                loc.requestAuthorization()
+                // The SHARED service (2026-08-28): the grant — and the fix it triggers — must
+                // reach Today's map, which reads `services.location`.
+                services.location.requestAuthorization()
             }
         }
     }
