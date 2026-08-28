@@ -8,8 +8,6 @@ struct WorkoutDetailView: View {
     var distanceUnit: DistanceUnit = .auto
     @Environment(CoachPresenter.self) private var coach
     @Environment(\.modelContext) private var context
-    /// Content has scrolled under the transparent bar — drives the top scrim below.
-    @State private var scrolledUnderBar = false
     /// The full editor (name, story, sport, effort, audience, photos) — Strava's "edit activity".
     @State private var editing = false
 
@@ -56,10 +54,19 @@ struct WorkoutDetailView: View {
                 .padding(.horizontal, Theme.Space.md)
             }
             .padding(.bottom, Theme.Space.md)
+            // The page is vertical, full stop. `ActivityHero` already clamped ITSELF to the
+            // container width, but the scrolled content was still measuring 402.67pt against a
+            // 402pt viewport — two physical pixels of overflow, which is all UIScrollView needs to
+            // grant a horizontal axis and bounce along it. That is the side-to-side the owner
+            // could feel while scrolling down (2026-08-28); a UI test pinned it at 0.33pt. Clamping
+            // the whole stack to exactly the container width leaves no axis to move on, whatever
+            // any child inside it measures.
+            .containerRelativeFrame(.horizontal)
+            .clipped()
         }
         // The hero draws under the transparent bar; the back button floats over the scene.
         .ignoresSafeArea(edges: .top)
-        .toolbarBackground(.hidden, for: .navigationBar)
+
         // Everything the save editor asked for, askable again for as long as the activity exists.
         // The inline controls below stay: audience and photos are the two things people reach for
         // most, and making them a two-tap trip through a sheet would be worse. This is for the
@@ -71,23 +78,6 @@ struct WorkoutDetailView: View {
             }
         }
         .sheet(isPresented: $editing) { ActivityEditView(workout: workout) }
-        // Same scrim contract as the save screens' chrome: invisible while the hero owns the
-        // top, materializing once content scrolls under the bar so text fades out beneath it.
-        .onScrollGeometryChange(for: Bool.self) { geo in
-            geo.contentOffset.y + geo.contentInsets.top > 40
-        } action: { _, scrolled in
-            withAnimation(.easeOut(duration: 0.18)) { scrolledUnderBar = scrolled }
-        }
-        .overlay(alignment: .top) {
-            LinearGradient(colors: [Theme.background.opacity(0.96),
-                                    Theme.background.opacity(0.85),
-                                    Theme.background.opacity(0)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 90)
-                .ignoresSafeArea(edges: .top)
-                .opacity(scrolledUnderBar ? 1 : 0)
-                .allowsHitTesting(false)
-        }
         .onAppear {
             #if DEBUG
             // `--activity-edit`: open the editor straight away — simctl can't tap a toolbar button.
@@ -120,6 +110,10 @@ struct WorkoutDetailView: View {
         .background(Theme.background)
         .navigationTitle(workout.type.title)
         .navigationBarTitleDisplayMode(.inline)
+        // No hand-rolled fade over the top of the page (owner, 2026-08-28: "we dont need the fade
+        // coming from the top"). The gradient scrim that used to materialize on scroll is gone;
+        // the system bar is transparent while the hero owns the top and brings up its own
+        // background once content scrolls under it, which is the platform treatment, not a wash.
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)

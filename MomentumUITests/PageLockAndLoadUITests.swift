@@ -61,6 +61,44 @@ final class PageLockAndLoadUITests: XCTestCase {
         }
     }
 
+    /// The post-run page is the one a finished athlete stares at, and it carries a full-bleed map
+    /// plus charts — the two things that have pulled a page sideways before. A real scroll is
+    /// never perfectly vertical, so this drags DIAGONALLY (the owner's report, 2026-08-28: "why
+    /// do i move side to side when scrolling down") and asserts the page's own content stayed
+    /// put horizontally.
+    func testThePostRunPageDoesNotDriftSideways() {
+        let app = XCUIApplication()
+        // `--reset-store` first: `--seed-demo` only seeds an EMPTY store, so without it this test
+        // inherits whatever the tests above left in the container and the marathon never lands.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--marathon-hero",
+                               "--ui-test-run-detail", "--awards-quiet"]
+        app.launch()
+        let title = app.staticTexts["Austin Marathon"]
+        XCTAssertTrue(title.waitForExistence(timeout: 25), "post-run page never came up")
+        sleep(2)
+        let x0 = title.frame.minX
+        // Four diagonal drags, alternating lean, the way a thumb actually scrolls.
+        for lean in [0.06, -0.06, 0.10, -0.10] {
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5 + lean, dy: 0.30))
+            from.press(forDuration: 0.05, thenDragTo: to)
+            usleep(500_000)
+            XCTAssertEqual(app.frame.minX, 0, accuracy: 0.5, "the window shifted sideways")
+        }
+        // Scroll back to the top and re-measure the same element.
+        for _ in 0..<5 {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.30))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)))
+            usleep(250_000)
+        }
+        sleep(1)
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "title vanished after scrolling")
+        print("DRIFT title.minX before=\(x0) after=\(title.frame.minX)")
+        // Sub-point, not "close enough": the wobble this test was written for measured 0.33pt.
+        XCTAssertEqual(title.frame.minX, x0, accuracy: 0.1,
+                       "the post-run page drifted sideways under a diagonal scroll")
+    }
+
     /// Every tab must reach an interactive state quickly from a cold launch.
     func testEveryTabLoadsFast() {
         for (name, args, anchor) in [("Progress", ["--progress-tab"], "progress"),

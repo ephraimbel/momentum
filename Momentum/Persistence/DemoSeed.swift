@@ -782,6 +782,7 @@ enum DemoSeed {
         let durationS = 10_721.0                              // 2:58:41 (sub-3)
         let distanceM = 42_195.0                              // 26.2 mi
         let run = Workout(); run.type = .run; run.startedAt = start; run.durationS = durationS
+        run.title = "Austin Marathon"                        // the page names the race, not "Run"
         let gps = GPSDetail()
         gps.distanceM = distanceM
         gps.elevationGainM = 178
@@ -802,7 +803,7 @@ enum DemoSeed {
         }
         gps.hrSamples = hrTrace(start: start, durationS: durationS, variant: 1)
         gps.avgHR = RunSignals.mean(gps.hrSamples.map(\.bpm))
-        gps.mapStyleRaw = MapStyleOption.dark.rawValue        // route map on the flat dark basemap
+        gps.mapStyleRaw = MapStyleOption.realistic.rawValue   // the race reads on the realistic basemap
         // The demo athlete shares their race: with `--community` this is the OWN post on the wall
         // (tile + pager byline), proving the save→feed pipeline end to end. Privacy is invisible
         // in solo builds, where no community surface exists to read it.
