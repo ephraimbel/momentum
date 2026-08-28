@@ -8,6 +8,8 @@ import SwiftData
 final class AppNotification {
     enum Kind: String, Codable, Sendable {
         case reminder, coaching, streak, achievement, system
+        /// A mutual nudged you (social, 2026-08-25).
+        case nudge
 
         var systemImage: String {
             switch self {
@@ -16,6 +18,7 @@ final class AppNotification {
             case .streak: "flame.fill"
             case .achievement: "trophy.fill"
             case .system: "sparkles"
+            case .nudge: "hand.wave.fill"
             }
         }
     }

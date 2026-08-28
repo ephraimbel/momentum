@@ -12,6 +12,10 @@ final class TrainingPlan {
     var disciplines: [String] = []
     var raceDate: Date?
     var p5kSPerKm: Double = 360       // calibrated running pace (if running)
+    /// The goal race pace goal-pace sessions are set at (s/km) — the athlete's goal, honesty-capped
+    /// by the improvement model at generation. nil without a goal time. Recalibration re-derives
+    /// every other pace from `p5kSPerKm` but leaves this one alone: a goal is a decision.
+    var goalRacePaceSPerKm: Double?
     var createdAt: Date = Date()
     var lastAdaptedAt: Date?          // last automatic load adaptation — gates auto-adapt to ≤1/week
     /// Set while the plan is paused (travel/illness — CoachActions): future sessions were shifted past
