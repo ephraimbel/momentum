@@ -158,7 +158,14 @@ struct MorningReadiness {
         // they don't stack without bound.
         modifierPoints = max(mods.reduce(0) { $0 + $1.points }, -15)
 
-        score = Int(min(max(blend + modifierPoints, 0), 100).rounded())
+        var computed = Int(min(max(blend + modifierPoints, 0), 100).rounded())
+        #if DEBUG
+        // `--readiness-primed`: pin the headline to 100 for the marketing capture of the one
+        // state that earns the iridescent ring. The blend's fallback paths cap HRV and resting
+        // HR at 75 without a banded baseline, so no canned signal set can land there honestly.
+        if ProcessInfo.processInfo.arguments.contains("--readiness-primed") { computed = 100 }
+        #endif
+        score = computed
         band = RecoveryModel.band(score)
         confidence = switch pillars.count {
         case 5:  .high

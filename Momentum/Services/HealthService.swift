@@ -134,32 +134,62 @@ final class HealthService: HealthServing {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return .demo }
         if ProcessInfo.processInfo.arguments.contains("--health-recovery-strained") { return .demoStrained }
+        if ProcessInfo.processInfo.arguments.contains("--health-recovery-primed") { return .demoPrimed }
         #endif
         guard HKHealthStore.isHealthDataAvailable() else { return .empty }
         let ms = HKUnit.secondUnit(with: .milli)
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        // "Today's" vitals must actually be recent — a 2-day bound (overnight readings land the
-        // next morning; one missed sync forgiven) so readiness never scores off a dead device's
-        // last write. Absent-but-recent degrades gracefully: every field is optional by design.
-        async let hrv = latest(.heartRateVariabilitySDNN, unit: ms, within: 2)
+        let calendar = Calendar.current
+        let now = Date()
+        let today = calendar.startOfDay(for: now)
+        // "This morning's" values come through the SAME night-keyed reductions the histories and
+        // baselines use — never a raw "latest sample" (accuracy audit 2026-08-27). The old feed
+        // scored a value built by one rule against a norm built by another:
+        //   • HRV was the single most recent SDNN sample. A Watch writes daytime spot-checks, so
+        //     from mid-morning "today's HRV" was a lunchtime reading — systematically lower and
+        //     noisier than overnight — z-scored against an overnight-median baseline, and the
+        //     hero's number disagreed with the vitals tile beside it.
+        //   • Sleep was the asleep union inside a trailing 18-hour window. A stage-tracked night
+        //     is dozens of short segments, and at 21:00 the window reached back only to 03:00 and
+        //     dropped every segment that ended before it — four hours of a 23:00 bedtime. An
+        //     evening recompute (a logged run re-fires the deck's task) then cratered the sleep
+        //     pillar and PUBLISHED the wrong score to every surface, including the watch.
+        // Yesterday's morning is the oldest value accepted (one missed sync forgiven, as before),
+        // and that night began the evening before it — so the raw fetch reaches two days back.
+        let fetchStart = calendar.date(byAdding: .day, value: -2, to: today)
+            ?? now.addingTimeInterval(-2 * 86_400)
+        async let hrvSamples = quantitySamples(.heartRateVariabilitySDNN, unit: ms, from: fetchStart)
+        async let rhrSamples = quantitySamples(.restingHeartRate, unit: bpm, from: fetchStart)
+        async let segments = sleepSegments(from: fetchStart)
         async let hrvBase = average(.heartRateVariabilitySDNN, unit: ms, days: 30)
-        async let rhr = latest(.restingHeartRate, unit: bpm, within: 2)
         async let rhrBase = average(.restingHeartRate, unit: bpm, days: 30)
-        async let sleep = sleepHoursLastNight()
+        let sleep = await segments
+        let nights = Self.nightSpans(from: sleep, calendar: calendar)
+        let hrvDaily = Self.nightPreferredMedianPerDay(
+            (await hrvSamples).map { (date: $0.start, value: $0.value) }, nights: nights, calendar: calendar)
+        let rhrDaily = Self.medianPerDay(
+            (await rhrSamples).map { (date: $0.start, value: $0.value) }, calendar: calendar)
         return RecoverySignals(
-            hrvMs: await hrv, hrvBaselineMs: await hrvBase,
-            restingHR: (await rhr).map { Int($0.rounded()) }, restingHRBaseline: await rhrBase,
-            sleepHours: await sleep)
+            hrvMs: Self.recentMorningValue(hrvDaily, now: now, calendar: calendar),
+            hrvBaselineMs: await hrvBase,
+            restingHR: Self.recentMorningValue(rhrDaily, now: now, calendar: calendar).map { Int($0.rounded()) },
+            restingHRBaseline: await rhrBase,
+            sleepHours: Self.lastNightAsleepHours(from: sleep, now: now, calendar: calendar))
     }
 
     /// The device-measured VO₂max from Apple Health (Apple Watch outdoor runs, Garmin, etc.) — a real
-    /// cardiorespiratory measurement we prefer over our pace-derived estimate when present. `nil` if none.
+    /// cardiorespiratory measurement we prefer over our pace-derived estimate when present. `nil` if
+    /// none — or none RECENT: this read had no time bound, so a Watch reading from a device the
+    /// athlete stopped wearing a year ago still headlined Trends as "from your device" and outranked
+    /// a pace estimate built from last week's runs (accuracy audit 2026-08-27). A measurement older
+    /// than a training block (60 days) has stopped describing current fitness; the estimate takes over.
     func measuredVO2Max() async -> Double? {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return 42.4 }
+        if (ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") || ProcessInfo.processInfo.arguments.contains("--health-recovery-primed"))
+            || ProcessInfo.processInfo.arguments.contains("--health-recovery-primed") { return 42.4 }
         #endif
         guard HKHealthStore.isHealthDataAvailable() else { return nil }
-        return await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"))
+        return await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"), within: 60)
     }
 
     /// The time spans of Health workouts inside one day, for netting exercise out of ambient step
@@ -259,35 +289,6 @@ final class HealthService: HealthServing {
         }
     }
 
-    /// Hours of actual sleep in the most recent night — unions the `asleep*` category samples from the
-    /// last 18 hours (long enough to catch last night, short enough to exclude the night before). Naps
-    /// fold in; "in bed" (awake) time is excluded. Multiple sources (Watch + phone + a ring) each write
-    /// the same night, their intervals overlapping — so we merge into disjoint spans and sum those,
-    /// counting every minute asleep once rather than double-counting. `nil` when there's no sleep.
-    private func sleepHoursLastNight() async -> Double? {
-        await withCheckedContinuation { continuation in
-            let start = Calendar.current.date(byAdding: .hour, value: -18, to: Date())
-            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
-            let query = HKSampleQuery(sampleType: HKCategoryType(.sleepAnalysis), predicate: predicate,
-                                      limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
-                let asleep: Set<Int> = [
-                    HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
-                    HKCategoryValueSleepAnalysis.asleepCore.rawValue,
-                    HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
-                    HKCategoryValueSleepAnalysis.asleepREM.rawValue,
-                ]
-                // Merge overlapping asleep intervals (from every source) into a union of disjoint spans,
-                // then sum — so an overlap counted by both the Watch and a ring lands as one span, not two.
-                let intervals = (samples as? [HKCategorySample] ?? [])
-                    .filter { asleep.contains($0.value) }
-                    .map { (start: $0.startDate, end: $0.endDate) }
-                let seconds = Self.unionSeconds(intervals)
-                continuation.resume(returning: seconds > 0 ? seconds / 3600 : nil)
-            }
-            store.execute(query)
-        }
-    }
-
     /// Which wearables are actually feeding the recovery signals — for the provenance line, so it
     /// can say "your Oura ring" instead of "your connected wearable" (owner ask 2026-08-15).
     ///
@@ -353,6 +354,12 @@ final class HealthService: HealthServing {
         /// Per-source daily sums, then the MAX across sources — a phone and a Watch both count the
         /// same steps, so summing across sources double-counts every stride. The rule for counts.
         case maxSourceSum
+        /// Per-NIGHT median keyed to the wake-up morning (the `nightKey` rule, on the sample's end).
+        /// For the signals a wearable writes only during sleep — respiratory rate, wrist
+        /// temperature. Keyed on the sample's start like `.median`, one night split across two
+        /// dates (23:40 → yesterday, 02:10 → today): a baseline counted twice the "days" it had and
+        /// drew its band after four nights, not seven (accuracy audit 2026-08-27).
+        case nightMedian
     }
 
     /// Day-bucketed history for a quantity over the last `days` local days (today inclusive) —
@@ -375,6 +382,8 @@ final class HealthService: HealthServing {
         case .maxSourceSum:
             return Self.maxSourceSumPerDay(samples.map { (date: $0.start, value: $0.value, source: $0.source) },
                                            calendar: calendar)
+        case .nightMedian:
+            return Self.medianPerNight(samples.map { (date: $0.end, value: $0.value) }, calendar: calendar)
         }
     }
 
@@ -573,6 +582,41 @@ final class HealthService: HealthServing {
             .sorted { $0.day < $1.day }
     }
 
+    /// Pure reduction (testable): one median per NIGHT, keyed to the morning it ended — for the
+    /// overnight-only vitals. `date` is the sample's END so a pre-midnight reading files under the
+    /// morning the athlete woke, exactly as sleep segments do.
+    nonisolated static func medianPerNight(_ samples: [(date: Date, value: Double)],
+                                           calendar: Calendar) -> [(day: Date, value: Double)] {
+        Dictionary(grouping: samples) { nightKey(for: $0.date, calendar: calendar) }
+            .compactMap { day, s in median(s.map { $0.value }).map { (day: day, value: $0) } }
+            .sorted { $0.day < $1.day }
+    }
+
+    /// Pure pick (testable): this morning's value from a day-keyed history — today's key, else
+    /// yesterday's (one missed sync forgiven), else nil. Two days stale is absent, never "recent";
+    /// a key filed under tomorrow (an afternoon spot-check the night rule pushes forward) is never
+    /// "this morning". The live `recoverySignals` feed reads through this so the hero's number and
+    /// the vitals tile beside it are the same reduction of the same samples.
+    nonisolated static func recentMorningValue(_ history: [(day: Date, value: Double)],
+                                               now: Date, calendar: Calendar) -> Double? {
+        let today = calendar.startOfDay(for: now)
+        if let v = history.last(where: { $0.day == today })?.value { return v }
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
+        return history.last(where: { $0.day == yesterday })?.value
+    }
+
+    /// Pure pick (testable): last night's asleep hours — the night keyed to THIS morning, whole,
+    /// whatever the clock says now. nil when no asleep time was recorded for it: phone-only
+    /// bedtime tracking (in-bed, no asleep) is not a sleep measurement, and an early bedtime
+    /// already underway tonight files under tomorrow and is not "last night".
+    nonisolated static func lastNightAsleepHours(from segments: [SleepSegment],
+                                                 now: Date, calendar: Calendar) -> Double? {
+        let today = calendar.startOfDay(for: now)
+        guard let night = nightReports(from: segments, calendar: calendar).first(where: { $0.date == today }),
+              night.asleepH > 0 else { return nil }
+        return night.asleepH
+    }
+
     /// Pure reduction (testable): per-source daily sums, MAX across sources — the steps rule. A
     /// cumulative sum across sources would credit the same stride to the phone AND the Watch.
     nonisolated static func maxSourceSumPerDay(_ samples: [(date: Date, value: Double, source: String)],
@@ -742,7 +786,9 @@ final class HealthService: HealthServing {
 
     nonisolated static var demoRecoveryScenario: DemoRecovery? {
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("--health-recovery-demo") { return .rested }
+        // `--health-recovery-primed` rides the rested histories: the primed morning is the same
+        // athlete's best day, so the sleep nights, HRV and resting-HR charts stay one story.
+        if args.contains("--health-recovery-demo") || args.contains("--health-recovery-primed") { return .rested }
         if args.contains("--health-recovery-strained") { return .strained }
         return nil
     }

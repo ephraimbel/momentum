@@ -140,5 +140,12 @@ struct RecoverySignals: Sendable, Equatable {
     static let demoStrained = RecoverySignals(hrvMs: 46, hrvBaselineMs: 62, restingHR: 55,
                                               restingHRBaseline: 49, sleepHours: 5.4,
                                               respiratoryZ: 2.1, wristTempDeltaC: 0.6)
+
+    /// The best morning the model can describe — launched via `--health-recovery-primed` for the
+    /// marketing capture of a 100 readiness (the one state that earns the iridescent ring). HRV
+    /// well above norm, resting HR under it, a full night, breathing and temperature dead on band.
+    static let demoPrimed = RecoverySignals(hrvMs: 84, hrvBaselineMs: 63, restingHR: 47,
+                                            restingHRBaseline: 51.6, sleepHours: 8.6,
+                                            respiratoryZ: 0.0, wristTempDeltaC: 0.0)
     #endif
 }
