@@ -18,7 +18,7 @@ struct PlanRevealView: View {
     @State private var calloutIn = false    // peak callout pops once the pen reaches it
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.openURL) private var openURL
+    @Environment(\.requestReview) private var requestReview
     /// The review line is spent once — tapping it hands the athlete to the App Store, and the row
     /// settles into a thank-you rather than sitting there asking twice.
     @State private var reviewTapped = false
@@ -62,18 +62,39 @@ struct PlanRevealView: View {
     private var planWeekCount: Int { derived.weekCount }
     private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] { derived.weeksGrouped }
 
-    /// A quiet, opt-in line above the reveal's CTA (owner call 2026-08-28, after the risk was
-    /// spelled out): "Leave a review to help more runners join momentum."
+    /// A quiet, opt-in line above the reveal's CTA (owner call 2026-08-28, twice, with the 5.6.3
+    /// rejection history spelled out both times): "Leave a review to help more runners join
+    /// momentum."
     ///
-    /// It is deliberately NOT `requestReview()`. Guideline 5.6.3 is about the app *prompting*
-    /// someone who hasn't used it yet, and this beat is before the first workout exists — a system
-    /// sheet here is the precise thing the app was rejected for. A line the athlete chooses to tap,
-    /// which then navigates to the App Store, is user-initiated navigation rather than a prompt:
-    /// nothing is raised over them, and Continue is unaffected whether they tap it or not. It also
-    /// leaves all three native prompts unspent for the earned moments (`AppReview`) later.
+    /// Tapping it raises Apple's own rating sheet in place — the athlete rates without ever leaving
+    /// onboarding, which is the whole point (owner: "just popup the review so they can do it in app
+    /// really easy"). It shipped for one afternoon as a link out to the App Store; the round trip
+    /// cost more athletes than the guideline risk was ever going to.
     ///
-    /// Tapping it latches `recordRated`, so someone sent to write a review here is never asked
-    /// again after their first workout or meal.
+    /// What keeps this as far from the rejected beat as it can get while still being an in-app
+    /// sheet: it is never raised on its own. Nothing appears until the athlete taps a line they had
+    /// to choose to read, Continue is live the whole time and gated on nothing, and there is no
+    /// screen of its own — the reveal is still a plan reveal. The removed beat was a full step that
+    /// stood between the reveal and the checkout and asked without being asked.
+    ///
+    /// Tapping latches `recordRated`, so an athlete who rates here is never asked again after a
+    /// workout or a meal. iOS still owns whether the sheet actually appears (three per 365 days),
+    /// so the line settles into its thank-you either way — there is no way to know, and a tap that
+    /// visibly did nothing would read as broken.
+    /// The line's whole behaviour, in one place so the DEBUG hook exercises the real thing.
+    private func tapReview() {
+        guard !reviewTapped else { return }
+        Haptics.light()
+        AppReview.recordRated()
+        withAnimation(Motion.standard) { reviewTapped = true }
+        // After the row has settled, or the sheet arrives over a view mid-animation and iOS
+        // quietly drops it (the same beat `WorkoutRunner` waits out).
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.45))
+            requestReview()
+        }
+    }
+
     @ViewBuilder
     private var reviewLine: some View {
         if reviewTapped {
@@ -82,14 +103,7 @@ struct PlanRevealView: View {
                 .foregroundStyle(Theme.inkTertiary)
                 .transition(.opacity)
         } else {
-            Button {
-                Haptics.light()
-                AppReview.recordRated()
-                withAnimation(Motion.standard) { reviewTapped = true }
-                if let url = URL(string: "https://apps.apple.com/app/id6790830947?action=write-review") {
-                    openURL(url)
-                }
-            } label: {
+            Button { tapReview() } label: {
                 Text("Leave a review to help more runners join momentum")
                     .font(.rounded(Theme.FontSize.label, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
@@ -152,6 +166,12 @@ struct PlanRevealView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation { proxy.scrollTo("plan", anchor: .top) }
                 }
+            }
+            // `--reveal-review`: fire the review line's action on arrival. simctl can't tap, and
+            // the sheet it raises is a system surface, so this is the only way to see the beat in
+            // the sim: `--seed-demo --onboarding --onboarding-reveal --reveal-review`.
+            if ProcessInfo.processInfo.arguments.contains("--reveal-review") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { tapReview() }
             }
             if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-podium") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

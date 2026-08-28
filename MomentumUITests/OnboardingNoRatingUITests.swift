@@ -7,16 +7,17 @@ import XCTest
 /// rating from someone who had never used the app, and it sat directly between the plan reveal and
 /// the checkout, spending the athlete's patience at the exact moment the flow needed it.
 ///
-/// Since 2026-08-28 onboarding carries one quiet LINK — "Leave a review to help more runners join
-/// momentum", above the plan reveal's CTA (owner call, made with this history spelled out). The
-/// line between that and the thing Apple rejected is the whole point of this test, so it is drawn
-/// here rather than left to memory:
+/// Since 2026-08-28 onboarding carries one quiet line — "Leave a review to help more runners join
+/// momentum", above the plan reveal's CTA — which raises Apple's rating sheet in place when tapped
+/// (owner call, made twice with this history spelled out). What separates it from the rejected
+/// beat is drawn here rather than left to memory:
 ///
-///  • a link the athlete may tap is allowed; a card raised over them is not,
-///  • it must never call `requestReview()` — no system sheet before the first workout exists,
-///  • nothing may block or gate Continue on it,
+///  • nothing may be raised unprompted — the sheet appears only after a deliberate tap,
+///  • Continue must be live and ungated the entire time, tap or no tap,
+///  • the ask may never own a screen: the reveal stays a plan reveal (the removed beat was a full
+///    step of its own, standing between the reveal and the checkout),
 ///  • and no rating surface may appear on ANY later beat (notifications, location, the paywall
-///    hand-off), which is where the removed step used to live.
+///    hand-off), which is where that step used to live.
 ///
 /// The engagement-gated pre-prompt (`AppReview.shouldRequestReview` + `RatingPromptView`) still
 /// belongs only to the earned moments after a saved workout or a logged meal.
@@ -24,20 +25,22 @@ final class OnboardingNoRatingUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    /// The reveal's line is a link, and it is the ONLY rating surface in the flow: no modal card,
-    /// and Continue works whether or not it is ever tapped.
-    func testTheRevealsReviewLineIsALinkAndNotAPrompt() {
+    /// The reveal's line is opt-in and it is the ONLY rating surface in the flow: nothing is up
+    /// when the page lands, and Continue works whether or not the line is ever tapped.
+    func testTheRevealsReviewLineIsOptInAndNeverGatesTheFlow() {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-reveal", "--reveal-runs"]
         app.launch()
 
         let line = app.buttons["Leave a review for momentum on the App Store"]
         XCTAssertTrue(line.waitForExistence(timeout: 20), "Expected the reveal's review line.")
-        // A card raised over the athlete is the 5.6.3 shape. A line sitting under the CTA is not.
+        // Raising anything unprompted is the 5.6.3 shape. On arrival, nothing is up.
         XCTAssertFalse(app.buttons["Rate momentum"].exists,
                        "Onboarding must never raise the rating CARD — only the quiet line.")
         XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists,
                        "The engagement pre-prompt belongs to the earned moments, not onboarding.")
+        // The reveal is still a plan reveal: the ask shares the page, it does not own one.
+        XCTAssertTrue(app.staticTexts["WEEKS"].exists, "The reveal must still be showing the plan.")
         // Nothing about the ask may gate the flow.
         let cta = app.buttons["This looks great"]
         XCTAssertTrue(cta.exists, "The reveal's CTA must stand on its own.")
