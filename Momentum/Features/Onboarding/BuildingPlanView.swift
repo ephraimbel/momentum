@@ -23,23 +23,38 @@ struct BuildingPlanView: View {
     var ringProgress: Double = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var breathe = false
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                ProgressRing(progress: ringProgress, lineWidth: 6)
-                BrandMark(size: 40)
+                ProgressRing(progress: ringProgress, lineWidth: 7)
+                BrandMark(size: 46)
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
             }
-            .frame(width: 92, height: 92)
-            .padding(.bottom, Theme.Space.xxl)
+            .frame(width: 100, height: 100)
+            // The ring on its own pool of light, BEHIND it (a background never sizes the ring —
+            // as a ZStack sibling the 240pt pool blew the ring up to match). The pool breathes
+            // slowly while the plan builds; Reduce Motion holds it still.
+            .background {
+                RadialGradient(colors: [Theme.iridescent[0].opacity(0.42), Theme.iridescent[1].opacity(0.12), .clear],
+                               center: .center, startRadius: 8, endRadius: 110)
+                    .frame(width: 220, height: 220)
+                    .scaleEffect(breathe ? 1.08 : 0.94)
+                    .opacity(breathe ? 1 : 0.8)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+                               value: breathe)
+            }
+            .padding(.bottom, Theme.Space.xl)
+            .onAppear { breathe = true }
 
             VStack(spacing: Theme.Space.xs) {
                 Text("Building your plan")
-                    .font(.display(Theme.FontSize.title, weight: .black))
+                    .font(.rounded(30, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                 Text("Shaped around your answers, not averages.")
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
+                    .font(.rounded(17, weight: .regular))
+                    .foregroundStyle(Theme.inkSecondary)
             }
             .multilineTextAlignment(.center)
             .padding(.horizontal, Theme.Space.lg)
@@ -48,10 +63,12 @@ struct BuildingPlanView: View {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 ForEach(lines.indices, id: \.self) { i in checklistRow(i) }
             }
-            .frame(width: 300, alignment: .leading)
+            .padding(.horizontal, 22).padding(.vertical, 20)
+            .frame(width: 320, alignment: .leading)
+            .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .background(Theme.background.ignoresSafeArea())
+        .background(OnboardingCanvas())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Building your plan")
     }
@@ -64,8 +81,8 @@ struct BuildingPlanView: View {
                 if done {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                        .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                        .foregroundStyle(.white, Theme.purple)
+                        .transition(.opacity.combined(with: .scale(scale: 0.4)))
                 } else if current && !reduceMotion {
                     ProgressView().controlSize(.small).tint(Theme.inkTertiary)
                 } else {
@@ -86,6 +103,7 @@ struct BuildingPlanView: View {
         }
         // Reduce Motion lands all rows in one shot (the parent writes `completed` 0→n at once) —
         // suppress the per-row scale-pop there so it reads as the sanctioned instant settle.
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: completed)
+        // A spring, not an ease: each check lands with a small overshoot — the beat feels alive.
+        .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: completed)
     }
 }

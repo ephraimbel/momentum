@@ -50,6 +50,8 @@ final class OnboardingViewModel {
     // they are. nil until the `runVolume` step sets it (shown only to non-beginner runners).
     var weeklyRunVolumeM: Double? = nil
     var longestRunM: Double? = nil
+    /// The athlete's own weekly-mileage ceiling (meters); nil = "coach's call".
+    var targetWeeklyRunVolumeM: Double? = nil
 
     // Hybrid emphasis (run + lift athletes) — biases the run/lift day split.
     var hybridPriority: HybridPriority = .balanced
@@ -79,7 +81,7 @@ final class OnboardingViewModel {
     var feasibility: PlanFeasibility {
         let key = [String(describing: calibration), String(describing: goal),
                    String(describing: raceDistance), "\(goalHours):\(goalMinutes)",
-                   "\(weeklyRunVolumeM ?? -1)", "\(hasRace):\(weeksToRace ?? -1)",
+                   "\(weeklyRunVolumeM ?? -1)", "\(targetWeeklyRunVolumeM ?? -1)", "\(hasRace):\(weeksToRace ?? -1)",
                    String(describing: experience), "\(injuryAreas.count)",
                    "\(daysPerWeek)", String(describing: intensity)].joined(separator: "|")
         if let c = feasibilityCache, c.key == key { return c.value }
@@ -109,7 +111,8 @@ final class OnboardingViewModel {
             injuryProne: !injuryAreas.isEmpty,
             daysPerWeek: daysPerWeek,
             intensity: intensity,   // the banner reacts to how hard they choose to push
-            currentRaceTimeS: raceTimeS)
+            currentRaceTimeS: raceTimeS,
+            targetWeeklyVolumeM: targetWeeklyRunVolumeM)
     }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0
@@ -270,6 +273,11 @@ final class OnboardingViewModel {
         // engine actually programs; the extras still ride along as cross-training.
         case .disciplines: return !disciplines.isEmpty
         case .race: return raceDistance != nil
+        // The goal shapes everything after it, and `.generalFitness` has NO card on the goal
+        // screen: it is the untouched default, so advancing on it meant a plan built for a goal
+        // the athlete never saw, let alone chose (found in the 2026-08-28 bug sweep — the screen
+        // showed no selection with Continue enabled).
+        case .goal: return goal != .generalFitness
         default: return true
         }
     }
@@ -433,6 +441,7 @@ final class OnboardingViewModel {
         if running, experience != .new {
             profile.weeklyRunVolumeM = weeklyRunVolumeM
             profile.longestRunM = longestRunM
+            profile.targetWeeklyRunVolumeM = targetWeeklyRunVolumeM
         }
         if hybrid { profile.hybridPriority = hybridPriority.rawValue }
         if lifting { profile.strengthSplit = strengthSplit.rawValue }

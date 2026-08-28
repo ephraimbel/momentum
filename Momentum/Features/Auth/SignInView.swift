@@ -132,11 +132,13 @@ struct SignInView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .padding(.horizontal, Theme.Space.md)
-                            .frame(maxWidth: .infinity).frame(height: 56)
-                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(.white))
-                            .shadow(color: .black.opacity(0.28), radius: 20, y: 8)   // lifts the CTA off the photo
+                            .frame(maxWidth: .infinity).frame(height: 60)
+                            .background(Capsule().fill(LinearGradient(colors: [.white, Color(hex: "F2F2F4")],
+                                                                      startPoint: .top, endPoint: .bottom)))
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.9), lineWidth: 1))
+                            .shadow(color: .black.opacity(0.28), radius: 20, y: 8)   // lifts the CTA off the film
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(RaisedPressStyle())
 
                     // The returning athlete's door — reinstalls, a second device, and the second
                     // person on a hand-me-down phone all need to reach the account page without
@@ -345,29 +347,19 @@ struct AccountOptionsView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             // The onboarding flow owns its own canvas and padding; don't paint a second one over it.
-            if !isBeat { Theme.background.ignoresSafeArea() }
+            if !isBeat { OnboardingCanvas() }
 
             if !isBeat {
                 // The app's own chrome treatment (the glass circle the paywall and the recorder
                 // wear), not a bare glyph floating in the corner — this is the first screen a new
                 // athlete sees, and a naked chevron is the tell that it was assembled rather than
                 // designed. The 44pt tap target is unchanged.
-                Button {
-                    Haptics.light()
+                GlassCircleButton(systemName: presentation == .sheet ? "xmark" : "chevron.left",
+                                  label: presentation == .sheet ? "Close" : "Back") {
                     if presentation == .sheet { dismiss() } else { onBack?() }
-                } label: {
-                    Image(systemName: presentation == .sheet ? "xmark" : "chevron.left")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Theme.ink)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.surface))
-                        .overlay(Circle().stroke(Theme.hairline))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(presentation == .sheet ? "Close" : "Back")
-                .padding(.leading, Theme.Space.sm)
+                .padding(.leading, Theme.Space.md)
+                .padding(.top, Theme.Space.xs)
                 .zIndex(1)   // keep Close/Back above the ScrollView below, or the scroll layer eats its taps
             }
 
@@ -375,23 +367,18 @@ struct AccountOptionsView: View {
             ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                    BrandMark(size: isBeat ? 72 : 88)
-                        .elevation(Theme.Elevation.float)
-                        .padding(.top, isBeat ? Theme.Space.sm : Theme.Space.xxl)
+                    // The app icon as a raised glass tile — the same hero grammar as the
+                    // permission beats, so this page reads as the flow's last step.
+                    // The icon alone (owner call 2026-08-27: no tile/border around it) — just the
+                    // glass runner with a soft lavender glow underneath.
+                    BrandMark(size: isBeat ? 76 : 84)
+                        .shadow(color: .black.opacity(0.10), radius: 12, y: 6)
+                        .shadow(color: Theme.iridescent[0].opacity(0.6), radius: 26, y: 10)
+                        .padding(.top, isBeat ? Theme.Space.sm : Theme.Space.xxl + Theme.Space.md)
 
-                    VStack(spacing: Theme.Space.xs) {
-                        Text(title)
-                            .font(.display(26, weight: .black))
-                            .foregroundStyle(Theme.ink)
-                            .multilineTextAlignment(.center)
-                            .contentTransition(.opacity)
-                        Text(subtitle)
-                            .font(.rounded(Theme.FontSize.body, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.top, Theme.Space.lg)
+                    OnboardingHeading(title: title, subtitle: subtitle)
+                        .contentTransition(.opacity)
+                        .padding(.top, Theme.Space.lg)
 
                     // The classic boxes: email + password, with sign-in ↔ create-account toggle.
                     VStack(spacing: Theme.Space.sm) {
@@ -556,8 +543,9 @@ struct AccountOptionsView: View {
                         // warm charcoal the black style all but vanished — only its white lettering
                         // showed, so the most trusted control on the page read as a hole.
                         .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                        .frame(height: 52)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                        .frame(height: 56)
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.18), radius: 14, y: 7)
                         // One sign-in at a time: launching Apple while an email submit is in
                         // flight let the slower winner silently flip the identity afterwards
                         // (audit 2026-08-11).
@@ -595,11 +583,11 @@ struct AccountOptionsView: View {
                                     .font(.system(size: 19, weight: .medium))
                                     .foregroundStyle(Theme.ink)
                             }
-                            .frame(maxWidth: .infinity).frame(height: 52)
-                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+                            .frame(maxWidth: .infinity).frame(height: 56)
+                            .raised(Capsule())
+                            .contentShape(Capsule())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(RaisedPressStyle())
                         .disabled(googleInFlight)
                         .accessibilityLabel("Continue with Google")
 
@@ -608,7 +596,7 @@ struct AccountOptionsView: View {
 
                     footer
                 }
-                .padding(.horizontal, isBeat ? 0 : Theme.Space.xl)
+                .padding(.horizontal, isBeat ? 0 : Theme.Space.lg)
                 // NO entrance animation here, deliberately. Every route onto this screen already
                 // animates it in — the gate slides from the trailing edge, the sheet presents, the
                 // onboarding beat crossfades. A second fade layered on top of that reads as the

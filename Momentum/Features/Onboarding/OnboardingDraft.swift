@@ -49,6 +49,7 @@ struct OnboardingDraft: Codable {
     var bodyMassKg: Double?
     var weeklyRunVolumeM: Double?
     var longestRunM: Double?
+    var targetWeeklyRunVolumeM: Double?
     var calibrationMode: String?
     var paceFeel: String?
     var benchmark: String?
@@ -109,6 +110,7 @@ extension OnboardingViewModel {
             bodyMassKg: bodyMassKg,
             weeklyRunVolumeM: weeklyRunVolumeM,
             longestRunM: longestRunM,
+            targetWeeklyRunVolumeM: targetWeeklyRunVolumeM,
             calibrationMode: calibrationMode.rawValue,
             paceFeel: paceFeel?.rawValue,
             benchmark: benchmark.rawValue,
@@ -161,6 +163,7 @@ extension OnboardingViewModel {
         bodyMassKg = d.bodyMassKg
         weeklyRunVolumeM = d.weeklyRunVolumeM
         longestRunM = d.longestRunM
+        targetWeeklyRunVolumeM = d.targetWeeklyRunVolumeM
         calibrationMode = d.calibrationMode.flatMap(CalibrationMode.init(rawValue:)) ?? calibrationMode
         paceFeel = d.paceFeel.flatMap(PaceFeel.init(rawValue:))
         benchmark = d.benchmark.flatMap(RunBenchmark.init(rawValue:)) ?? benchmark

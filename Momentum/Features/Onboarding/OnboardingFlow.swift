@@ -15,6 +15,7 @@ struct OnboardingFlow: View {
 
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(Services.self) private var services
     @Environment(AuthController.self) private var auth
     @Environment(PaywallController.self) private var paywall
@@ -57,12 +58,17 @@ struct OnboardingFlow: View {
 
     var body: some View {
         ZStack {
-            Theme.background.ignoresSafeArea()
+            OnboardingCanvas()
             if vm.step == .building {
                 // A calm, centered loader — renders full-bleed so it escapes the flow's padding.
                 // `buildPlan` paces it (and slots the real generation behind the "Finalizing" line).
                 BuildingPlanView(lines: vm.buildingLines(), completed: buildCompleted, ringProgress: buildRing)
                     .task { await buildPlan() }
+                    .transition(.opacity)
+            } else if vm.step == .reveal {
+                // Full-bleed too: the reveal's scroll runs under the status bar (its aurora crown
+                // and a top scrim live there), so it escapes the question column's padding.
+                PlanRevealView(vm: vm, profile: profile) { goNext() }
                     .transition(.opacity)
             } else {
                 VStack(spacing: Theme.Space.lg) {
@@ -142,6 +148,21 @@ struct OnboardingFlow: View {
                 vm.experience = .some; vm.calibrationMode = .feel; vm.paceFeel = .regular; vm.weeklyRunVolumeM = 35_000
                 vm.step = .intensity
             }
+            // The mileage-ceiling row (2026-08-28) and the honesty line when the cap is under the goal.
+            if args.contains("--onboarding-volume") {
+                vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
+                vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 20, to: Date()) ?? Date()
+                vm.experience = .some; vm.weeklyRunVolumeM = 40_000; vm.longestRunM = 16_000
+                vm.step = .runVolume
+            }
+            if args.contains("--onboarding-intensity-capped") {
+                vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .marathon; vm.hasRace = true
+                vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 20, to: Date()) ?? Date()
+                vm.goalHours = 3; vm.goalMinutes = 0
+                vm.experience = .some; vm.calibrationMode = .feel; vm.paceFeel = .regular
+                vm.weeklyRunVolumeM = 40_000; vm.longestRunM = 16_000; vm.targetWeeklyRunVolumeM = 64_000
+                vm.intensity = .aggressive; vm.step = .intensity
+            }
             if args.contains("--onboarding-injuries") { vm.activities = [.run]; vm.step = .injuries }
             if args.contains("--onboarding-health") { vm.activities = [.run]; vm.step = .health }
             if args.contains("--onboarding-calibration") {
@@ -182,6 +203,7 @@ struct OnboardingFlow: View {
             #endif
         }
         .onChange(of: vm.step) { _, step in
+            Haptics.light()   // the screen landing — one light tick per step, so travel has feel
             services.analytics.log(.onboardingStep(index: step.rawValue))
             // Checkpoint on every navigation — the draft now holds every answer made up to and
             // including the step just left, so an eviction resumes here, not at question one.
@@ -227,8 +249,7 @@ struct OnboardingFlow: View {
                 .foregroundStyle(Theme.inkSecondary)
                 .padding(.horizontal, Theme.Space.md)
                 .padding(.vertical, 8)
-                .background(Capsule().fill(Theme.surface))
-                .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+                .raised(Capsule())
                 .transition(.opacity.combined(with: .offset(y: 10)))
                 .padding(.bottom, 92)
         }
@@ -242,12 +263,7 @@ struct OnboardingFlow: View {
         HStack(spacing: Theme.Space.md) {
             // Hidden on the first step: its `back()` is a no-op, so a visible chevron there is a
             // dead, feedback-less tap target on the entry screen.
-            Button { goBack() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 28, height: 28)
-            }
+            GlassCircleButton(systemName: "chevron.left", label: "Back") { goBack() }
             .opacity(vm.canGoBack ? 1 : 0)
             .disabled(!vm.canGoBack)
             .accessibilityHidden(!vm.canGoBack)
@@ -260,24 +276,25 @@ struct OnboardingFlow: View {
                     Capsule()
                         .fill(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
                         .frame(width: w)
-                        .shadow(color: Theme.iridescent[3].opacity(0.55), radius: 4)
-                        .overlay(alignment: .trailing) {
-                            Circle().fill(.white).frame(width: 6, height: 6)
-                                .shadow(color: Theme.iridescent[0].opacity(0.9), radius: 5)
-                        }
                 }
             }
-            .frame(height: 6)
+            .frame(height: 4)
         }
         .padding(.top, Theme.Space.xs)
     }
 
     private var continueBar: some View {
-        OversizedButton(title: "Continue", isEnabled: vm.canAdvance) { goNext() }
+        OnboardingCTA(title: "Continue", isEnabled: vm.canAdvance) { goNext() }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, Theme.Space.sm)
             .padding(.bottom, Theme.Space.sm)
-            .background(Theme.background)
+            // A soft rise into the canvas so scrolled options dissolve under the button, no edge.
+            .background(
+                LinearGradient(colors: [OnboardingStyle.canvas(colorScheme).opacity(0),
+                                        OnboardingStyle.canvas(colorScheme), OnboardingStyle.canvas(colorScheme)],
+                               startPoint: .top, endPoint: .bottom)
+                    .padding(.top, -Theme.Space.lg)
+                    .ignoresSafeArea())
     }
 
     /// One advance per gesture: a fast double-tap on any Continue used to skip a whole step —
@@ -371,7 +388,7 @@ struct OnboardingFlow: View {
     }
 
     private func activityCard(_ a: ActivityChoice) -> some View {
-        SelectionCard(title: a.title, systemImage: a.icon, isSelected: vm.activities.contains(a)) {
+        ChoiceCard(title: a.title, systemImage: a.icon, isSelected: vm.activities.contains(a), multi: true) {
             pick { if vm.activities.contains(a) { vm.activities.remove(a) } else { vm.activities.insert(a) } }
         }
     }
@@ -384,14 +401,11 @@ struct OnboardingFlow: View {
     private var nameStep: some View {
         questionScaffold("What should we call you?", subtitle: "We'll make the plan feel like it's yours.") {
             TextField("Your name", text: $vm.name)
-                .font(.display(24, weight: .bold)).foregroundStyle(Theme.ink)
+                .font(.rounded(22, weight: .semibold)).foregroundStyle(Theme.ink)
                 .textInputAutocapitalization(.words).autocorrectionDisabled()
                 .submitLabel(.done)
-                .padding(Theme.Space.md)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+                .padding(.horizontal, 22).padding(.vertical, 20)
+                .onboardingCard()
                 .reveal(cascade(0))
         }
     }
@@ -469,10 +483,7 @@ struct OnboardingFlow: View {
                 }
                 .padding(Theme.Space.md)
             }
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .onboardingCard()
             .reveal(cascade(1))
         }
         .onChange(of: pickedOnboardingAvatar) { _, item in
@@ -496,7 +507,7 @@ struct OnboardingFlow: View {
             (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"), (.getStronger, "Get stronger", "dumbbell.fill")]
         return questionScaffold("What's your main goal?", subtitle: "This shapes everything that follows.") {
             ForEach(Array(goals.enumerated()), id: \.element.0) { i, g in
-                SelectionCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) {
+                ChoiceCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) {
                     pick { vm.goal = g.0 }
                 }
                 .reveal(cascade(i))
@@ -514,7 +525,7 @@ struct OnboardingFlow: View {
                                               : (vm.hybrid ? "We'll set running and lifting separately." : nil)) {
             if vm.running {
                 ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
-                    SelectionCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
+                    ChoiceCard(title: f.title, subtitle: f.subtitle, systemImage: f.icon,
                                   isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
                         pick { vm.paceFeel = f; vm.calibrationMode = .feel; vm.experience = f.experienceLevel }
                     }
@@ -529,7 +540,7 @@ struct OnboardingFlow: View {
                 }
             } else {
                 ForEach(Array([ExperienceLevel.new, .some, .experienced].enumerated()), id: \.element) { i, e in
-                    SelectionCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
+                    ChoiceCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
                                   isSelected: vm.experience == e) { pick { vm.experience = e } }
                         .reveal(cascade(i))
                 }
@@ -540,13 +551,23 @@ struct OnboardingFlow: View {
     /// Current running load — seeds the plan's starting volume so it meets the athlete where they are.
     private var runVolumeStep: some View {
         questionScaffold("How much are you running now?",
-                         subtitle: "So your plan starts where you are. Challenging, not crushing.") {
+                         subtitle: "So your plan starts where you are and builds toward your goal.") {
             metricRow("Per week", volumeLabel(vm.weeklyRunVolumeM),
                       { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) - 5) },
                       { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) + 5) }).reveal(cascade(0))
             metricRow("Longest run", volumeLabel(vm.longestRunM),
                       { setLongest(volumeDisplay(vm.longestRunM) - 1) },
                       { setLongest(volumeDisplay(vm.longestRunM) + 1) }).reveal(cascade(1))
+            // The athlete's ceiling (2026-08-28): how far they're willing to build. Left to the
+            // coach, the plan builds to what the goal needs; set, it's a hard cap and the verdict
+            // says plainly what the cap costs.
+            metricRow("Build up to", vm.targetWeeklyRunVolumeM.map(volumeLabel) ?? "Coach",
+                      { setTarget(-5) }, { setTarget(5) }).reveal(cascade(2))
+            Text("The most you're willing to run in a week. Leave it to us and we build to what your goal needs.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .reveal(cascade(3))
         }
         .onAppear(perform: seedVolumeDefaultsIfNeeded)
     }
@@ -564,6 +585,15 @@ struct OnboardingFlow: View {
     // 200 km clipped it. (250 mi is beyond any human, harmlessly.)
     private func setWeekly(_ d: Double) { Haptics.light(); vm.weeklyRunVolumeM = min(250, max(0, d.rounded())) * metersPerUnit }
     private func setLongest(_ d: Double) { Haptics.light(); vm.longestRunM = min(60, max(1, d.rounded())) * metersPerUnit }
+    /// Steps the ceiling in 5s from the current weekly volume; stepping back down to (or under) the
+    /// current volume hands the decision back to the coach.
+    private func setTarget(_ delta: Double) {
+        Haptics.light()
+        let weekly = volumeDisplay(vm.weeklyRunVolumeM).rounded()
+        let current = vm.targetWeeklyRunVolumeM.map(volumeDisplay) ?? weekly
+        let next = (current + delta).rounded()
+        vm.targetWeeklyRunVolumeM = next <= weekly ? nil : min(250, next) * metersPerUnit
+    }
     /// Anchor the steppers on a sensible starting guess by experience (the athlete adjusts from there).
     private func seedVolumeDefaultsIfNeeded() {
         guard vm.weeklyRunVolumeM == nil else { return }
@@ -586,11 +616,11 @@ struct OnboardingFlow: View {
                             .frame(maxWidth: .infinity).frame(height: 50)
                             .foregroundStyle(on ? Theme.background : Theme.ink)
                             .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.ink : Theme.surface)
-                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                                if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink) }
                             }
+                            .modifier(SegmentRaise(on: on))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(RaisedPressStyle())
                     .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
                 }
             }
@@ -603,7 +633,7 @@ struct OnboardingFlow: View {
             (4, "4 days", "Consistent"), (5, "5 days", "High volume"), (6, "6+ days", "All in")]
         return questionScaffold("How many days a week?", subtitle: "We'll shape your week around this.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
-                SelectionCard(title: o.1, subtitle: o.2, isSelected: vm.daysPerWeek == o.0) { pick { vm.daysPerWeek = o.0 } }
+                ChoiceCard(title: o.1, subtitle: o.2, isSelected: vm.daysPerWeek == o.0) { pick { vm.daysPerWeek = o.0 } }
                     .reveal(cascade(i))
             }
             // Frequency honesty, said where the choice is made: a race build under its effective
@@ -621,8 +651,7 @@ struct OnboardingFlow: View {
                 .foregroundStyle(Theme.inkSecondary)
                 .padding(Theme.Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+                .onboardingCard()
                 .transition(.opacity)
             }
         }
@@ -634,7 +663,7 @@ struct OnboardingFlow: View {
             (.homeMinimal, "Home minimal", "house"), (.bodyweight, "Bodyweight", "figure.cooldown")]
         return questionScaffold("What equipment do you have?") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
-                SelectionCard(title: o.1, systemImage: o.2, isSelected: vm.equipment == o.0) { pick { vm.equipment = o.0 } }
+                ChoiceCard(title: o.1, systemImage: o.2, isSelected: vm.equipment == o.0) { pick { vm.equipment = o.0 } }
                     .reveal(cascade(i))
             }
         }
@@ -646,7 +675,7 @@ struct OnboardingFlow: View {
             (60, "60 min", "A full workout"), (75, "75+ min", "Go long")]
         return questionScaffold("How long per session?") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
-                SelectionCard(title: o.1, subtitle: o.2, isSelected: vm.sessionMinutes == o.0) { pick { vm.sessionMinutes = o.0 } }
+                ChoiceCard(title: o.1, subtitle: o.2, isSelected: vm.sessionMinutes == o.0) { pick { vm.sessionMinutes = o.0 } }
                     .reveal(cascade(i))
             }
         }
@@ -656,7 +685,7 @@ struct OnboardingFlow: View {
         let reasons = ["clear head", "health", "look better", "compete", "me-time"]
         return questionScaffold("Why are you doing this?", subtitle: "It sets your coach's tone.") {
             ForEach(Array(reasons.enumerated()), id: \.element) { i, r in
-                SelectionCard(title: r.capitalized, isSelected: vm.reason == r) { pick { vm.reason = r } }
+                ChoiceCard(title: r.capitalized, isSelected: vm.reason == r) { pick { vm.reason = r } }
                     .reveal(cascade(i))
             }
         }
@@ -670,8 +699,8 @@ struct OnboardingFlow: View {
     private var injuriesStep: some View {
         questionScaffold("Anything to train around?",
                          subtitle: "Past injuries shape a safer ramp. We'll build up gently where you've been hurt. Skip if you're all clear.") {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],
-                      spacing: Theme.Space.sm) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())],
+                      spacing: 12) {
                 ForEach(Array(InjuryArea.allCases.enumerated()), id: \.element) { i, area in
                     let on = vm.injuryAreas.contains(area)
                     Button {
@@ -685,9 +714,9 @@ struct OnboardingFlow: View {
                             .foregroundStyle(on ? .white : Theme.ink)
                             .frame(maxWidth: .infinity).frame(height: 48)
                             .background {
-                                Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.surface))
-                                if !on { Capsule().stroke(Theme.hairline) }
+                                if on { Capsule().fill(Theme.purple) }
                             }
+                            .modifier(ChipRaise(on: on))
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -710,10 +739,7 @@ struct OnboardingFlow: View {
                 }
                 .foregroundStyle(Theme.ink)
                 .frame(maxWidth: .infinity).frame(height: 52)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+                .onboardingCard()
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
             }
             .buttonStyle(.plain)
@@ -727,81 +753,63 @@ struct OnboardingFlow: View {
         }
     }
 
-    /// The recovery consent beat (ENDURANCE-FOCUS §7) — connect Apple Health so the plan adapts to how
-    /// the athlete is *actually* recovering. Benefit-first, names their devices, read-only reassurance.
+    /// The recovery consent beat (ENDURANCE-FOCUS §7) — Apple Health as a source of SIGNALS, so
+    /// the plan adapts to how the athlete is actually recovering. Staged as a permission hero (glass
+    /// pass 2026-08-27): a glowing glyph, the ask in plain words, and a quiet mock of the sheet
+    /// that follows, dissolving into the CTA.
     ///
     /// ⚠️ App Review guideline 5.1.1(iv) (rejected build 17, 2026-08-11): a priming screen before the
     /// HealthKit request must use a neutral button word ("Continue"/"Next", never "Connect") and must
     /// NOT offer a way to bypass the system prompt (no "Maybe later"). The athlete's real choice is
     /// the system sheet itself — declining there advances the flow exactly like accepting.
     private var healthStep: some View {
-        VStack(spacing: Theme.Space.lg) {
+        VStack(spacing: 0) {
+            Spacer(minLength: Theme.Space.lg)
+            HealthTile()
+                .reveal(0.02)
+            OnboardingHeading(title: "Train around your recovery",
+                              subtitle: "Next, iOS will ask about Apple Health. Momentum reads your sleep, heart rate and HRV so each week adapts to how you're actually doing. You choose what to share.")
+                .padding(.top, Theme.Space.md)
+                .padding(.horizontal, Theme.Space.sm)
+                .reveal(0.08)
+            Spacer(minLength: Theme.Space.lg)
+            HealthSheetMock()
+                .frame(maxWidth: .infinity)
+                .frame(height: 330, alignment: .top)
+                .bottomFade(from: 0.45)
+                .reveal(0.16)
             Spacer(minLength: 0)
-            VStack(spacing: Theme.Space.sm) {
-                Text("Train with your whole picture")
-                    .font(.serif(30, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                Text("Next, iOS will ask about Apple Health access. With it, momentum learns how you're actually recovering, so each week adapts to you, not a template. You choose what to share.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            }
-            .reveal(0.05)
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
-                healthBenefitRow("bed.double.fill", "Sleep & heart rate", "Rough night? Your week eases off before you overdo it.")
-                healthBenefitRow("applewatch", "Your devices, one tap", "Oura, Garmin, Whoop & Apple Watch already sync to Apple Health. No separate logins.")
-                healthBenefitRow("lock.fill", "Private, always", "Reads your recovery signals, saves your workouts. You pick exactly what, and can turn it off anytime.")
-            }
-            .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-            .reveal(0.15)
-            Spacer(minLength: 0)
-            VStack(spacing: Theme.Space.sm) {
-                OversizedButton(title: "Continue") {
-                    // One-shot: when permission is already determined the awaits return instantly
-                    // with no system sheet to swallow taps, and a double-tap advanced two steps.
-                    guard !healthRequestInFlight else { return }
-                    healthRequestInFlight = true
-                    Task {
-                        _ = await services.health.requestAuthorization()
-                        // Grab resting HR (and body mass, if the athlete skipped it) while we have
-                        // consent — it upgrades HR zones to Karvonen from the very first plan.
-                        let metrics = await services.health.importedBodyMetrics()
-                        if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
-                        if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
-                        // No workout history is imported here — or anywhere. Health is a source of
-                        // SIGNALS, never workouts (owner call 2026-08-15, `d419f0f`: the importer was
-                        // deleted after a fresh signup pulled ~10,000 mirrored Watch/Garmin/Strava
-                        // rows). A fresh account starts on an empty grid and fills from what the
-                        // athlete does IN the app. What connecting earns is exactly the two reads
-                        // above (resting HR + body mass → Karvonen zones from the first plan) plus
-                        // live HR and the recovery signals accruing from today forward.
-                        goNext()
-                        // Re-arm AFTER the step transition settles (in case the athlete comes
-                        // back) — an immediate reset would re-open the double-tap window.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { healthRequestInFlight = false }
-                    }
+            OnboardingCTA(title: "Continue") {
+                // One-shot: when permission is already determined the awaits return instantly
+                // with no system sheet to swallow taps, and a double-tap advanced two steps.
+                guard !healthRequestInFlight else { return }
+                healthRequestInFlight = true
+                Task {
+                    _ = await services.health.requestAuthorization()
+                    // Grab resting HR (and body mass, if the athlete skipped it) while we have
+                    // consent — it upgrades HR zones to Karvonen from the very first plan.
+                    let metrics = await services.health.importedBodyMetrics()
+                    if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
+                    if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
+                    // No workout history is imported here — or anywhere. Health is a source of
+                    // SIGNALS, never workouts (owner call 2026-08-15, `d419f0f`: the importer was
+                    // deleted after a fresh signup pulled ~10,000 mirrored Watch/Garmin/Strava
+                    // rows). A fresh account starts on an empty grid and fills from what the
+                    // athlete does IN the app. What connecting earns is exactly the two reads
+                    // above (resting HR + body mass → Karvonen zones from the first plan) plus
+                    // live HR and the recovery signals accruing from today forward.
+                    goNext()
+                    // Re-arm AFTER the step transition settles (in case the athlete comes
+                    // back) — an immediate reset would re-open the double-tap window.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { healthRequestInFlight = false }
                 }
             }
-            .reveal(0.28)
+            .padding(.top, Theme.Space.sm)
+            .reveal(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.bottom, Theme.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func healthBenefitRow(_ icon: String, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: Theme.Space.md) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.purple)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Theme.purple.opacity(0.1)))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                Text(detail).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
     }
 
     /// How hard to push — led by the honesty banner (what the calendar + current fitness actually
@@ -813,8 +821,8 @@ struct OnboardingFlow: View {
                                 subtitle: "Same goal, your pace. You can change this anytime.") {
             feasibilityBanner(f).reveal(cascade(0))
             ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { i, tier in
-                SelectionCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
-                              subtitle: tier.riskNote ?? tier.subtitle,
+                ChoiceCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
+                              subtitle: tier.subtitle,
                               isSelected: vm.intensity == tier,
                               iridescent: tier == .podium) {
                     pick {
@@ -828,7 +836,7 @@ struct OnboardingFlow: View {
                 .reveal(cascade(i + 1))
             }
             if vm.intensity == .podium {
-                Text("Podium trains \(PlanIntensity.podium.floorDays)+ days a week, so we've set your week to \(vm.daysPerWeek). Every recovery guardrail still applies.")
+                Text("Podium runs \(PlanIntensity.podium.floorDays)+ days a week. Your week is set to \(vm.daysPerWeek).")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -865,6 +873,12 @@ struct OnboardingFlow: View {
                 Text(f.detail).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Ceiling honesty: their cap is under the goal's usual mileage. Said once, plainly.
+            if let need = f.weeklyCapShortfallM {
+                Text("Your \(volumeLabel(vm.targetWeeklyRunVolumeM)) cap is under this goal's usual \(Int((need / metersPerUnit).rounded())) \(distanceUnitLabel) a week.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !f.options.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(f.options, id: \.self) { opt in
@@ -881,10 +895,7 @@ struct OnboardingFlow: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-        }
+        .onboardingCard()
     }
 
     /// The optional precise path — expand to enter a recent time over a distance you know.
@@ -919,10 +930,8 @@ struct OnboardingFlow: View {
                                 .lineLimit(1).minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity).frame(height: 40)
                                 .foregroundStyle(on ? .white : Theme.ink)
-                                .background {
-                                    Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(Theme.background))
-                                    if !on { Capsule().stroke(Theme.hairline) }
-                                }
+                                .background { if on { Capsule().fill(Theme.purple) } }
+                                .modifier(ChipRaise(on: on))
                         }
                         .buttonStyle(.plain)
                     }
@@ -946,10 +955,7 @@ struct OnboardingFlow: View {
             }
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .onboardingCard()
     }
 
     /// Typed race time. Accepts "21:45", "1:38:20", bare minutes ("22"), or run-on digits
@@ -1020,10 +1026,7 @@ struct OnboardingFlow: View {
                         .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                 }
                 .padding(Theme.Space.md)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+                .onboardingCard()
             }
             .buttonStyle(.plain)
             .reveal(cascade(0))
@@ -1045,7 +1048,7 @@ struct OnboardingFlow: View {
             }
 
             ForEach(Array(RaceDistance.allCases.enumerated()), id: \.element) { i, d in
-                SelectionCard(title: d.label, subtitle: raceSubtitle(d), isSelected: vm.raceDistance == d) {
+                ChoiceCard(title: d.label, subtitle: raceSubtitle(d), isSelected: vm.raceDistance == d) {
                     pick { vm.raceDistance = d }
                 }
                 .reveal(cascade(i + 1))
@@ -1077,7 +1080,7 @@ struct OnboardingFlow: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .onboardingCard()
     }
 
     // MARK: Muscle focus (build-muscle) — live anatomy
@@ -1093,7 +1096,7 @@ struct OnboardingFlow: View {
     private var muscleFocusStep: some View {
         questionScaffold("Where do you want to grow?", subtitle: "Pick areas to emphasize. Your plan adds volume there.") {
             AnatomyGlowView(activation: vm.targetMuscles(), sex: vm.bodySex, sequential: false)
-                .frame(height: 200).frame(maxWidth: .infinity)
+                .frame(height: 250).frame(maxWidth: .infinity)
                 .reveal(cascade(0))
             LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],
                       spacing: Theme.Space.sm) {
@@ -1105,11 +1108,11 @@ struct OnboardingFlow: View {
                             .frame(maxWidth: .infinity).frame(height: 52)
                             .foregroundStyle(on ? Theme.background : Theme.ink)
                             .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                                if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink) }
                             }
+                            .modifier(SegmentRaise(on: on))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(RaisedPressStyle())
                 }
             }
             .reveal(cascade(1))
@@ -1127,22 +1130,25 @@ struct OnboardingFlow: View {
     private var preferredDaysStep: some View {
         questionScaffold("Any preferred days?",
                          subtitle: "Optional. We'll fit your \(vm.daysPerWeek)-day week to these. Skip to auto-spread.") {
-            HStack(spacing: 6) {
+            // Seven raised discs (glass pass 2026-08-27) — a picked day fills ink.
+            HStack(spacing: 0) {
                 ForEach(1...7, id: \.self) { wd in
                     let on = vm.preferredDays.contains(wd)
                     Button { pick { if on { vm.preferredDays.remove(wd) } else { vm.preferredDays.insert(wd) } } } label: {
                         Text(weekdayLetter(wd))
-                            .font(.rounded(Theme.FontSize.body, weight: .bold))
-                            .frame(maxWidth: .infinity).frame(height: 56)
-                            .foregroundStyle(on ? Theme.background : Theme.ink)
-                            .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-                            }
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .frame(width: 42, height: 42)
+                            .foregroundStyle(on ? .white : Theme.ink)
+                            .modifier(DayDiscRaise(on: on))
+                            .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(RaisedPressStyle(scale: 0.92))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel(weekdayLetter(wd))
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
+            .padding(.vertical, Theme.Space.sm)
             .reveal(cascade(0))
         }
     }
@@ -1259,9 +1265,9 @@ struct OnboardingFlow: View {
                         .frame(maxWidth: .infinity).frame(height: 50)
                         .foregroundStyle(on ? Theme.background : Theme.ink)
                         .background {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                            if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                            if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink) }
                         }
+                        .modifier(SegmentRaise(on: on))
                 }
                 .buttonStyle(.plain)
             }
@@ -1302,7 +1308,7 @@ struct OnboardingFlow: View {
                 .accessibilityLabel("Increase \(label)")
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .onboardingCard()
         .animation(.snappy(duration: 0.2), value: value)
     }
 
@@ -1327,13 +1333,12 @@ struct OnboardingFlow: View {
             }
         }
         .padding(2)
-        .background(Capsule().fill(Theme.background))
-        .overlay(Capsule().stroke(Theme.hairline))
+        .background(Capsule().fill(Theme.tintedField))
     }
 
     private func metricStep(_ s: String) -> some View {
         Image(systemName: s).font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-            .frame(width: 44, height: 44).background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+            .frame(width: 44, height: 44).background(Circle().fill(Theme.tintedField))
     }
 
     // MARK: Commitment (the investment beat — hold the iridescent ring to commit)
@@ -1352,7 +1357,7 @@ struct OnboardingFlow: View {
         return questionScaffold("How do you like to split your lifting?",
                                 subtitle: "Change it anytime from your plan settings.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
-                SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.strengthSplit == o.0) {
+                ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.strengthSplit == o.0) {
                     pick { vm.strengthSplit = o.0 }
                 }
                 .reveal(cascade(i))
@@ -1368,7 +1373,7 @@ struct OnboardingFlow: View {
         return questionScaffold("Run and lift: where's your focus?",
                                 subtitle: "We'll weight your week toward it. Change it anytime.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
-                SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.hybridPriority == o.0) {
+                ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.hybridPriority == o.0) {
                     pick { vm.hybridPriority = o.0 }
                 }
                 .reveal(cascade(i))
@@ -1400,50 +1405,30 @@ struct OnboardingFlow: View {
         }
     }
 
-    /// Notification opt-in — a Runna-style beat: an iPhone showing a real momentum workout reminder,
-    /// the retention hook, and a single "Turn on reminders" that asks for permission.
+    /// Reminder opt-in — a permission hero (glass pass 2026-08-27): the glowing bell, what a
+    /// reminder from us actually is, and the phone showing one, dissolving into the buttons.
+    /// "Maybe later" stays: Apple flagged only HealthKit's skip, and reminders are optional by
+    /// nature; if a future review names it, apply the 5.1.1(iv) shape from the Health beat.
     private var notificationsStep: some View {
         VStack(spacing: 0) {
-            // The iPhone rises from the top of the screen; only its top half is drawn — the lower half
-            // is masked to transparent so the device dissolves straight into the headline below.
+            Spacer(minLength: Theme.Space.md)
+            GlowGlyph(systemName: "bell.fill", tint: Theme.iridescent[1])
+                .reveal(0.02)
+            OnboardingHeading(title: "A nudge before each run",
+                              subtitle: "One reminder ahead of every planned session, and a heads-up when your week adapts. Nothing else.")
+                .padding(.top, Theme.Space.md)
+                .padding(.horizontal, Theme.Space.sm)
+                .reveal(0.08)
+            Spacer(minLength: Theme.Space.lg)
+            // Only the phone's top half is drawn; the lower half dissolves straight into the buttons.
             phoneNotificationMockup
-                .frame(maxWidth: .infinity)               // center in the full width
-                .frame(height: 372, alignment: .top)      // reserve only the top ~half in layout
-                // A long, continuous dissolve — crisp through the notification, then many small,
-                // even steps so the rate never visibly changes (no choppiness), vanishing on a soft tail.
-                .mask(
-                    LinearGradient(stops: [
-                        .init(color: .black, location: 0.00),
-                        .init(color: .black, location: 0.30),
-                        .init(color: .black.opacity(0.97), location: 0.40),
-                        .init(color: .black.opacity(0.92), location: 0.48),
-                        .init(color: .black.opacity(0.84), location: 0.56),
-                        .init(color: .black.opacity(0.74), location: 0.64),
-                        .init(color: .black.opacity(0.62), location: 0.71),
-                        .init(color: .black.opacity(0.49), location: 0.78),
-                        .init(color: .black.opacity(0.36), location: 0.85),
-                        .init(color: .black.opacity(0.23), location: 0.91),
-                        .init(color: .black.opacity(0.11), location: 0.96),
-                        .init(color: .clear, location: 1.00),
-                    ], startPoint: .top, endPoint: .bottom)
-                )
-                .reveal(0.05)
-            VStack(spacing: Theme.Space.sm) {
-                (Text("You're ") + Text("2× more likely").fontWeight(.bold) + Text(" to finish your plan with reminders"))
-                    .font(.serif(27, weight: .medium))
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("A quiet nudge before each session keeps you on track. No spam. Just your plan.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.top, Theme.Space.sm)
-            .reveal(0.18)
+                .frame(maxWidth: .infinity)
+                .frame(height: 330, alignment: .top)
+                .bottomFade(from: 0.45)
+                .reveal(0.16)
             Spacer(minLength: 0)
-            VStack(spacing: Theme.Space.sm) {
-                OversizedButton(title: "Turn on reminders") {
+            VStack(spacing: Theme.Space.xs) {
+                OnboardingCTA(title: "Turn on reminders") {
                     // One-shot — a fast double-tap called goNext() twice and skipped a step.
                     guard !remindersAdvanced else { return }
                     remindersAdvanced = true
@@ -1454,22 +1439,18 @@ struct OnboardingFlow: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
                     }
                 }
-                Button {
+                OnboardingSecondary(title: "Maybe later") {
                     // Same one-shot latch as "Turn on reminders" — during the settings round-trip
                     // before the system alert presents, this button used to stay live, and tapping
                     // it advanced once immediately and AGAIN from the alert's completion, skipping
                     // the location primer and stacking its prompt over the beat after it.
                     guard !remindersAdvanced else { return }
                     remindersAdvanced = true
-                    Haptics.light()
                     goNext()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
-                } label: {
-                    Text("Maybe later").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                .buttonStyle(.plain)
             }
-            .reveal(0.3)
+            .reveal(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.md)
@@ -1486,6 +1467,7 @@ struct OnboardingFlow: View {
         }
     }
 
+
     /// A realistic iPhone caught mid-notification — Dynamic Island, a real status bar, and the momentum
     /// reminder as a frosted lock-screen banner at the top of the screen, on a dark wallpaper. Rendered
     /// at full height; the step masks the lower half so the device dissolves into the copy below.
@@ -1493,60 +1475,47 @@ struct OnboardingFlow: View {
     // day (owner call 2026-08-11) — the owner prefers this original staging; don't re-propose it.
     private var phoneNotificationMockup: some View {
         let unit = DistanceUnit.auto.resolved() == .imperial ? "3 mi" : "5 km"
-        // Warm-graphite wallpaper, on-brand with the monochrome aesthetic (and the warm-charcoal dark
-        // mode): a deep warm charcoal at the top so the reminder reads crisp, lifting to a warm near-
-        // white at the bottom so the screen melts into the page instead of ending on a hard dark edge.
+        // Warm-graphite wallpaper (owner call 2026-08-27: black, not lavender): deep charcoal at
+        // the top so the banner reads crisp, lifting toward the canvas so the screen dissolves
+        // into the page instead of ending on a hard dark edge.
         let wallpaper = LinearGradient(stops: [
-            .init(color: Color(red: 0.14, green: 0.13, blue: 0.12), location: 0.0),
-            .init(color: Color(red: 0.27, green: 0.26, blue: 0.24), location: 0.30),
-            .init(color: Color(red: 0.54, green: 0.53, blue: 0.51), location: 0.60),
-            .init(color: Color(red: 0.87, green: 0.87, blue: 0.865), location: 0.85),
-            .init(color: Color(red: 0.97, green: 0.97, blue: 0.965), location: 1.0),
+            .init(color: Color(red: 0.12, green: 0.11, blue: 0.10), location: 0.0),
+            .init(color: Color(red: 0.24, green: 0.23, blue: 0.22), location: 0.30),
+            .init(color: Color(red: 0.52, green: 0.51, blue: 0.50), location: 0.62),
+            .init(color: Color(hex: "F5F5F7"), location: 1.0),
         ], startPoint: .top, endPoint: .bottom)
-        return RoundedRectangle(cornerRadius: 60, style: .continuous)
-            .fill(LinearGradient(colors: [Color(white: 0.30), Color(white: 0.12)],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing))   // titanium rail
-            .overlay {
-                RoundedRectangle(cornerRadius: 52, style: .continuous)
-                    .fill(wallpaper)
-                    // A soft neutral highlight behind the notification for depth (no colour cast).
-                    .overlay {
-                        RadialGradient(colors: [Color.white.opacity(0.10), .clear],
-                                       center: UnitPoint(x: 0.5, y: 0.26), startRadius: 2, endRadius: 210)
-                            .blendMode(.screen)
+        return DeviceFrame {
+            Rectangle().fill(wallpaper)
+                // A soft highlight behind the banner for depth.
+                .overlay {
+                    RadialGradient(colors: [Color.white.opacity(0.16), .clear],
+                                   center: UnitPoint(x: 0.5, y: 0.26), startRadius: 2, endRadius: 210)
+                        .blendMode(.screen)
+                }
+                // Status bar, flanking the island.
+                .overlay(alignment: .top) {
+                    HStack(spacing: 0) {
+                        Text("9:41").font(.system(size: 14, weight: .semibold, design: .rounded))
+                        Spacer(minLength: 0)
+                        HStack(spacing: 5) {
+                            Image(systemName: "cellularbars")
+                            Image(systemName: "wifi")
+                            Image(systemName: "battery.75")
+                        }.font(.system(size: 12, weight: .semibold))
                     }
-                    // Status bar, flanking the island — the indicators clear the island's right edge
-                    // (island is 92pt wide/centred; the icons live in the right ~62pt), like real iOS.
-                    .overlay(alignment: .top) {
-                        HStack(spacing: 0) {
-                            Text("9:41").font(.system(size: 14, weight: .semibold, design: .rounded))
-                            Spacer(minLength: 0)
-                            HStack(spacing: 5) {
-                                Image(systemName: "cellularbars")
-                                Image(systemName: "wifi")
-                                Image(systemName: "battery.75")
-                            }.font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 22).padding(.top, 21)
-                    }
-                    // The reminder slides down from above as ONE solid, opaque unit (hidden by the
-                    // screen's clip, not by fading — so no part of it appears on its own timing), and
-                    // settles with a gentle spring, exactly like a real iOS banner. Reduce Motion fades.
-                    .overlay(alignment: .top) {
-                        lockNotification(unit)
-                            .padding(.horizontal, 14).padding(.top, 64)
-                            .offset(y: (notificationPopped || reduceMotion) ? 0 : -155)
-                            .opacity(reduceMotion ? (notificationPopped ? 1 : 0) : 1)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 52, style: .continuous))
-                    .padding(6)   // bezel thickness
-            }
-            .overlay(alignment: .top) {
-                Capsule().fill(.black).frame(width: 92, height: 31).padding(.top, 15)   // dynamic island
-            }
-            .frame(width: 300, height: 640)
-            .accessibilityHidden(true)   // no shadow: it should dissolve into the page, not float on a halo
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22).padding(.top, 18)
+                }
+                // The reminder slides down from above as ONE solid unit (hidden by the screen's
+                // clip, not by fading) and settles with a gentle spring, like a real iOS banner.
+                // Reduce Motion fades.
+                .overlay(alignment: .top) {
+                    lockNotification(unit)
+                        .padding(.horizontal, 12).padding(.top, 62)
+                        .offset(y: (notificationPopped || reduceMotion) ? 0 : -155)
+                        .opacity(reduceMotion ? (notificationPopped ? 1 : 0) : 1)
+                }
+        }
     }
 
     /// One iOS lock-screen notification: a light frosted panel with dark text (forced light so it reads
@@ -1573,30 +1542,43 @@ struct OnboardingFlow: View {
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
     }
 
+    /// The location beat — a permission hero (glass pass 2026-08-27): the glowing arrow, why we
+    /// ask, and the app's own Today map on a device, dissolving into the CTA. This beat is ONLY
+    /// about location; the paywall and the account beat still follow, so the headline and CTA stay
+    /// neutral and promise no ending.
     private var primersStep: some View {
-        VStack(spacing: Theme.Space.lg) {
-            Spacer()
-            BrandMark(size: 96)
-            // This beat is ONLY about location. It used to read "You're all set" / "Start training"
-            // from when it genuinely ended onboarding — the paywall and the account beat still come
-            // after it, so that copy promised a finish the flow doesn't deliver and made everything
-            // past it feel like an ambush. Headline and CTA both stay neutral: if this ever becomes
-            // the last step again, that's the moment to promise an ending.
-            VStack(spacing: Theme.Space.sm) {
-                Text("Map your runs")
-                    .font(.serif(Theme.FontSize.title, weight: .semibold)).foregroundStyle(Theme.ink)
-                Text("We use your location to trace your route and open the map right where you are.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 0) {
+            Spacer(minLength: Theme.Space.md)
+            GlowGlyph(systemName: "location.north.fill", tint: Theme.iridescent[0])
+                .reveal(0.02)
+            OnboardingHeading(title: "Map your runs",
+                              subtitle: "Your location traces every route and opens the map right where you are. Only while you're recording.")
+                .padding(.top, Theme.Space.md)
+                .padding(.horizontal, Theme.Space.sm)
+                .reveal(0.08)
+            Spacer(minLength: Theme.Space.md)
+            // The app's own finished race: the Austin Marathon post-run (the same capture the
+            // website's run detail uses), so the promise is a real traced route, not a stock map.
+            DeviceFrame {
+                Image("OnboardingShotPostRun")
+                    .resizable().interpolation(.medium).scaledToFill()
             }
-            .reveal(0.15)
-            Spacer()
+            .frame(maxWidth: .infinity)
+            // Tall enough that the whole traced course sits above the fade (owner note: the
+            // marathon was cut off at 330); the heading above is short, so the page still fits.
+            .frame(height: 420, alignment: .top)
+            .bottomFade(from: 0.72)
+            .reveal(0.16)
+            Spacer(minLength: 0)
             // The last beat the athlete drives: hands straight off to the paywall gate, then the
             // account. (Went through a `rateUs` step from 2026-07-26 until it was removed 2026-08-22.)
-            OversizedButton(title: "Continue") { finishOnboarding() }
-                .reveal(0.3)
+            OnboardingCTA(title: "Continue") { finishOnboarding() }
+                .padding(.top, Theme.Space.sm)
+                .reveal(0.26)
         }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.bottom, Theme.Space.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Ask for location only AFTER this page is visibly on screen — the athlete reads WHY (their
         // map centered on them) first, THEN the system prompt appears. The brief beat also guarantees
         // the prior notifications prompt has cleared, so the two never stack (user report 2026-07-24).
@@ -1615,6 +1597,7 @@ struct OnboardingFlow: View {
             }
         }
     }
+
 
     /// The last beat (2026-07-27): the account, offered — never required.
     ///
@@ -1709,21 +1692,18 @@ struct OnboardingFlow: View {
         // always scrolls when the content overflows (the disciplines picker etc.). The serif title
         // carries the welcome page's editorial voice through the flow; options stay in the clean UI face.
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    Text(title)
-                        .font(.serif(33, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let subtitle {
-                        Text(subtitle).font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                VStack(spacing: Theme.Space.sm) { content() }
+            VStack(alignment: .leading, spacing: Theme.Space.lg + 4) {
+                // Centered, in the display face — the question is the page's one headline; the
+                // options below carry the UI face. (The serif voice stays on the welcome.)
+                OnboardingHeading(title: title, subtitle: subtitle)
+                    .padding(.top, Theme.Space.md)
+                    .padding(.horizontal, Theme.Space.xs)
+                VStack(spacing: 14) { content() }
+                    // Room for the floating cards' drop shadows — the scroll view clips otherwise.
+                    .padding(.horizontal, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, Theme.Space.md)
+            .padding(.bottom, Theme.Space.xl)
         }
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
@@ -1741,7 +1721,10 @@ struct OnboardingFlow: View {
         touchedSteps.insert(vm.step)
         let lines = ["Got it.", "Nice pick.", "That shapes your plan.", "Noted."]
         let line = lines[abs(vm.step.rawValue) % lines.count]
-        withAnimation(Motion.standard) { affirmation = line }
+        // The toast is retired in the glass pass (2026-08-27): the reference language has no
+        // chatter, and a chip rising over the cards read as noise. Kept as a no-op line so the
+        // first-pick bookkeeping (and its tests) stay put.
+        _ = line
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.4))
             if affirmation == line { withAnimation(Motion.exit) { affirmation = nil } }
@@ -1793,13 +1776,40 @@ struct OnboardingFlow: View {
         // Tick the lead-in lines one at a time; the last line stays spinning for the real work.
         for i in 0..<(n - 1) {
             try? await Task.sleep(for: .seconds(tick))
+            Haptics.selection()   // one tick per line landing — the build is felt, not just watched
             withAnimation(.easeOut(duration: 0.35)) { buildCompleted = i + 1 }
         }
         // "Finalizing your plan" is the spinning row now — generate behind it (main-thread cost hidden).
         generate()
         // Land the last checkmark + complete the ring, hold on the finished state, then reveal.
+        Haptics.success()
         withAnimation(.easeOut(duration: 0.4)) { buildCompleted = n; buildRing = 1 }
         try? await Task.sleep(for: .seconds(0.85))
         goNext()
+    }
+}
+
+
+/// Injury chips: raised white at rest; the lavender fill when on carries its own weight.
+private struct ChipRaise: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content } else { content.raised(Capsule()) }
+    }
+}
+
+/// Sex segments: same rule as the chips, on the card radius.
+private struct SegmentRaise: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content } else { content.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)) }
+    }
+}
+
+/// Preferred-day discs: raised white at rest, raised ink when picked.
+private struct DayDiscRaise: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content.raised(Circle(), tone: .ink) } else { content.raised(Circle()) }
     }
 }

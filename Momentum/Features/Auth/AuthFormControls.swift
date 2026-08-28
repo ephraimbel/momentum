@@ -19,24 +19,18 @@ extension View {
         self
             .font(.rounded(Theme.FontSize.body, weight: .medium))
             .foregroundStyle(Theme.ink)
-            .frame(height: 52)
-            .padding(.horizontal, Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+            .frame(height: 56)
+            .padding(.horizontal, 20)
+            // The raised white field (glass pass 2026-08-27) — the same material as every
+            // onboarding card, so the account page reads as the flow's last step, not a form
+            // from another app. Focus = the lavender ring, the app's "happening now" accent.
+            .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(focused ? Theme.purple : Theme.hairline, lineWidth: focused ? 1.5 : 1)
-            }
-            .overlay {
-                // A soft tint halo outside the hairline — focus you can see at a glance without a
-                // hard second border. Lavender is the app's "happening now" accent, and a focused
-                // field is precisely that.
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(Theme.purpleTint, lineWidth: 4)
+                RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+                    .strokeBorder(Theme.purple, lineWidth: 1.5)
                     .opacity(focused ? 1 : 0)
-                    .blur(radius: 2)
-                    .allowsHitTesting(false)
             }
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
             .onTapGesture(perform: tap)
             .animation(.easeOut(duration: 0.16), value: focused)
     }
@@ -84,18 +78,24 @@ struct AuthPrimaryButton: View {
                     .opacity(inFlight ? 0 : 1)
                 if inFlight { ProgressView().tint(Theme.background) }
             }
-            .foregroundStyle(enabled ? Theme.background : Theme.inkTertiary)
-            .frame(maxWidth: .infinity).frame(height: 52)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    // Disabled is QUIET. Dimming the ink pill to 50% produced a mid-grey slab that
-                    // was the loudest thing on the page — the eye went straight to the one control
-                    // that could not be used.
-                    .fill(enabled ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.ink.opacity(0.08)))
-            }
+            .foregroundStyle(enabled ? .white : Theme.inkTertiary)
+            .frame(maxWidth: .infinity).frame(height: 58)
+            // Enabled: the raised ink capsule every onboarding CTA wears. Disabled stays QUIET
+            // (a flat 8% slab): dimming the ink pill to 50% produced a mid-grey slab that was the
+            // loudest thing on the page.
+            .modifier(AuthCTASurface(enabled: enabled))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RaisedPressStyle())
         .disabled(!enabled || inFlight)
         .animation(.easeOut(duration: 0.18), value: enabled)
+    }
+}
+
+/// Raised ink when live; a flat quiet slab when not.
+private struct AuthCTASurface: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled { content.raised(Capsule(), tone: .ink) }
+        else { content.background(Capsule().fill(Theme.ink.opacity(0.08))) }
     }
 }

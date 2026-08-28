@@ -179,6 +179,16 @@ private struct AwardUnlockPresenter: ViewModifier {
 
     private func maybePresent() {
         guard !presented, !paused, !unseen.isEmpty else { return }
+        #if DEBUG
+        // `--awards-quiet`: marketing/verification captures seed months of history in one go,
+        // which earns a haul of awards whose unlock moment then covers every page being
+        // captured. Retire them silently; the medallions still show in the gallery.
+        if ProcessInfo.processInfo.arguments.contains("--awards-quiet") {
+            for a in unseen { a.seen = true }
+            try? context.save()
+            return
+        }
+        #endif
         // Present in the order they were earned; ties break by catalog order so a single run's
         // haul (say, The 5K + First Fifty) reads smallest-to-summit.
         let awards = unseen
