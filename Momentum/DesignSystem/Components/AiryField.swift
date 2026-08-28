@@ -33,6 +33,11 @@ struct AiryField: View {
             wash(Theme.iridescent[2], 0.13, UnitPoint(x: 0.04, y: 0.70), 280)   // rose
             wash(Theme.iridescent[4], 0.10, UnitPoint(x: 0.55, y: 0.95), 300)   // orchid
         }
-        .ignoresSafeArea()
+        // Decoration only. Without this the field took part in hit testing behind a scrolling
+        // page and cards stopped reporting as hittable, which failed four Progress UI tests
+        // while the page still LOOKED right (2026-08-28). A background must never answer a touch.
+        .allowsHitTesting(false)
+        // `ignoresSafeArea` belongs to the caller, not in here: applied inside a `.background`
+        // it expands the backdrop's own footprint and drags the hosting geometry with it.
     }
 }

@@ -400,7 +400,7 @@ struct ProgressScreen: View {
         // The paywall's field, at half strength (owner ask 2026-08-28: carry that aesthetic onto
         // Trends and Health). Half, because this page is dense with cards — at the wall's own
         // strength the pools compete with the content sitting on them.
-        .background(AiryField(intensity: 0.5))
+        .background(AiryField(intensity: 0.5).ignoresSafeArea())
         .navigationBarHidden(true)
         // Cross-tab segment requests (Today's readiness line, coach nav cards). Consume-then-nil,
         // on appear AND change — the request may land before or after this screen exists.
