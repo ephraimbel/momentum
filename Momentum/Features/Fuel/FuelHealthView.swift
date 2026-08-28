@@ -276,7 +276,7 @@ struct FuelHealthView: View {
                 .accessibilityLabel("Health score, last 30 days")
                 .accessibilityValue(report.avgScore.map { "average \($0), \(scored.count) days scored" } ?? "")
             } else {
-                thinSample("A few more logged days and the month takes shape.")
+                thinSample("Log a few more days and the month takes shape.")
             }
         }
     }

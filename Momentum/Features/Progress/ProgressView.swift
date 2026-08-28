@@ -1673,10 +1673,15 @@ struct ProgressScreen: View {
 
     /// Quiet placeholder when a chart has fewer than ~2 weeks of real data, so it never shows a lone
     /// floating bar or point.
+    ///
+    /// It names the ACTION, not the calendar. This used to read "A couple more weeks and your
+    /// trend shows here", which is simply untrue: waiting produces nothing, and an athlete who
+    /// waited two weeks without training would find the same empty chart and a promise the app
+    /// had broken (owner call 2026-08-28).
     private var notEnoughData: some View {
         HStack(spacing: Theme.Space.sm) {
             Image(systemName: "chart.line.uptrend.xyaxis").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-            Text("A couple more weeks and your trend shows here.")
+            Text("Log a few sessions and your trend shows here.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

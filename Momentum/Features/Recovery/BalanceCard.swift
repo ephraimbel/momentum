@@ -468,7 +468,8 @@ struct BalanceCard: View {
         case .balanced:     "Strain and recovery are trading evenly."
         case .overreaching: "Spending past what recovery replaces — an easier day is cheap right now."
         case .detraining:   "Plenty in the tank — there's room to add."
-        case .insufficient: "A few more tracked days will name the pattern."
+        // The action, never the calendar: days do not track themselves.
+        case .insufficient: "Record a few more sessions and the pattern shows."
         }
     }
 
