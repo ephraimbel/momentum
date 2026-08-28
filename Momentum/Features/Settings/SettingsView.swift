@@ -274,7 +274,7 @@ struct SettingsView: View {
                     Text("Upgrade")
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.background)
                         .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(Capsule().fill(Theme.ink))
+                        .raised(Capsule(), tone: .ink)
                 }
                 .padding(.vertical, 11)
                 .contentShape(Rectangle())
@@ -596,7 +596,7 @@ struct SettingsView: View {
                             Text("Connect")
                                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.background)
                                 .padding(.horizontal, 12).padding(.vertical, 6)
-                                .background(Capsule().fill(Theme.ink))
+                                .raised(Capsule(), tone: .ink)
                         }
                     }
                     .padding(.vertical, 11)
@@ -849,10 +849,7 @@ struct SettingsView: View {
     private func card(@ViewBuilder _ content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 0) { content() }
             .padding(.horizontal, Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// A hairline between rows, inset past the icon chips so titles align through it.

@@ -157,6 +157,12 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
     /// Core-flow E2E test (`--ui-test-run4`): a full **4-mile run at 6:00/mi**, traced fast (burst)
     /// then held real-time so an XCUITest has time to Pause/Resume/Finish.
     static var isRun4: Bool { debugFlag("--ui-test-run4") }
+    /// With `--ui-test-route`: the feed goes dark ~25 s in — fixes stop arriving (the stream stays
+    /// open, as a real tunnel/canyon dropout leaves it) and the synthetic HR stream stops with it.
+    /// Drives the honest-outage states: watchdog → "Lost", HR → stale → the "--" placeholder.
+    static var isOutage: Bool { debugFlag("--ui-test-outage") }
+    /// When the simulated feeds go dark under `--ui-test-outage`, in seconds from stream start.
+    static let outageAtS = 25.0
 
 #if DEBUG
 
@@ -240,7 +246,15 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
                 var lat = 37.7917
                 let lon = -122.3996
                 var tick = 0.0
+                let outage = Self.isOutage
                 while !Task.isCancelled {
+                    // `--ui-test-outage`: the tunnel. Fixes simply stop — the stream stays open and
+                    // silent, exactly what CoreLocation does in a dropout — so the GPS-lost watchdog
+                    // and the sensor-staleness readout paths can be exercised deterministically.
+                    if outage, tick >= Self.outageAtS {
+                        try? await Task.sleep(for: .seconds(1))
+                        continue
+                    }
                     let wobble = 0.00045 * sin(tick * .pi / 90)
                     continuation.yield(GPSProcessor.Fix(
                         t: Date(), lat: lat, lon: lon + wobble,

@@ -18,20 +18,108 @@ enum CommunityGenerator {
     static let count = 2_863
 
     static func generate(now: Date) -> [CommunityAthlete] {
-        (0..<count).map { athlete(index: $0, now: now) }
+        // Handles are creative now, which means they can collide (two Mayas both landing on
+        // "mayamiles"). A colliding athlete is rebuilt with a numeric tail — the same fix a real
+        // signup flow makes. Seeded with the hand-curated eight so a generated athlete can never
+        // steal a featured handle and shadow them in `CommunityDirectory.byHandle`.
+        var used = featuredHandles
+        var out: [CommunityAthlete] = []
+        out.reserveCapacity(count)
+        for i in 0..<count {
+            let made = athlete(index: i, now: now)
+            if used.insert(made.handle).inserted {
+                out.append(made)
+            } else {
+                var n = 2
+                var candidate = "\(made.handle)\(n)"
+                while !used.insert(candidate).inserted { n += 1; candidate = "\(made.handle)\(n)" }
+                out.append(athlete(index: i, now: now, handleOverride: candidate))
+            }
+        }
+        return out
     }
 
-    private static func athlete(index i: Int, now: Date) -> CommunityAthlete {
+    /// The hand-curated featured handles, literal so `generate` never re-enters CommunityDirectory.
+    private static let featuredHandles: Set<String> = [
+        "sub3maya", "bennettbuilt", "chenvelo", "priya.hybrid",
+        "marcush2o", "vertsofia", "ergmornings", "amara_onestep"]
+
+    /// A handle with some personality. Real communities are not "firstname + initial + number"
+    /// 2,863 times over — that uniform shape was the loudest tell on every search result and
+    /// byline. Deterministic per athlete (hashed from name + index, NOT from the sequential rng),
+    /// mostly name-derived so search by name still finds people, with a thin tail of handles that
+    /// are just a phrase the way real ones are.
+    static func handle(first: String, last: String, discipline: WorkoutType, salt: Int) -> String {
+        let f = first.lowercased()
+        let l = last.lowercased()
+        let li = String(l.prefix(1))
+        let fi = String(f.prefix(1))
+        var h = handleHash("\(f).\(l).\(salt)")
+        func roll(_ n: Int) -> Int { h = h &* 6364136223846793005 &+ 1442695040888963407; return Int(h >> 33) % n }
+
+        // Sport words, so a lifter never reads as a swimmer.
+        let verbs: [String]
+        let nouns: [String]
+        switch discipline {
+        case .run, .trailRun: verbs = ["runs", "jogs", "moves"]; nouns = ["miles", "splits", "strides", "pace", "kms"]
+        case .ride:           verbs = ["rides", "spins"];        nouns = ["watts", "miles", "gears"]
+        case .strength:       verbs = ["lifts", "trains"];       nouns = ["reps", "sets", "plates", "iron"]
+        case .swimming:       verbs = ["swims"];                 nouns = ["laps", "meters"]
+        case .walk:           verbs = ["walks"];                 nouns = ["steps", "miles"]
+        case .rowing:         verbs = ["rows"];                  nouns = ["meters", "splits"]
+        case .yoga, .pilates: verbs = ["flows"];                 nouns = ["mats", "breath"]
+        default:              verbs = ["trains", "moves"];       nouns = ["reps", "sweat"]
+        }
+        let verb = verbs[roll(verbs.count)]
+        let noun = nouns[roll(nouns.count)]
+        // Two-digit tails that read like a person chose them (birth year, a race number), never a
+        // sequential index.
+        let yr = 82 + roll(23)
+        let num = [7, 13, 21, 26, 42, 55, 88, 99, 100, 262][roll(10)]
+
+        switch roll(18) {
+        case 0:  return "\(f)\(verb)"
+        case 1:  return "\(f)\(noun)"
+        case 2:  return "\(f).\(l)"
+        case 3:  return "\(f)\(l)"
+        case 4:  return "\(f)_\(li)"
+        case 5:  return "\(fi)\(l)"
+        case 6:  return "\(f)\(yr)"
+        case 7:  return "\(l)\(noun)"
+        case 8:  return "\(verb)with\(f)"
+        case 9:  return "\(f)\(String(l.prefix(3)))"
+        case 10: return "its\(f)"
+        case 11: return "\(f)\(num)"
+        case 12: return "\(fi)\(li)\(num)"
+        case 13: return "\(noun)and\(f)"
+        case 14: return "\(f)\(l.suffix(2))\(roll(9))"
+        case 15: return "the\(f)\(li)"
+        case 16: return "\(f)_\(num)"
+        default: return "\(f)\(li)\(yr)"
+        }
+    }
+
+    /// FNV-1a — a hash that does not touch the athlete rng stream.
+    private static func handleHash(_ s: String) -> UInt64 {
+        var h: UInt64 = 1469598103934665603
+        for b in s.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+        return h
+    }
+
+    private static func athlete(index i: Int, now: Date, handleOverride: String? = nil) -> CommunityAthlete {
         var rng = SeededRNG(i &* 2654435761)
         let first = rng.pick(firstNames)
         let last = rng.pick(lastNames)
         let name = "\(first) \(last)"
-        let handle = "\(first.lowercased())\(last.prefix(1).lowercased())\(i + 10)"
         // ~78% US so the map is majority-US; real cities + tight jitter keep dots on land. The pick is
         // power-biased toward the front of the (roughly big-metro-first) list — real communities clump
         // in big cities; a flat pick made Boise as common as New York.
         let city = rng.int(0...99) < 78 ? pickBiased(usCities, &rng) : pickBiased(worldCities, &rng)
         let discipline = rng.pick(disciplines)
+        // Handle derived from a SEPARATE hash, never from `rng`: the name/city/discipline draws are
+        // load-bearing sequential state, and spending a draw here would reshuffle every athlete's
+        // city and sport.
+        let handle = handleOverride ?? Self.handle(first: first, last: last, discipline: discipline, salt: i)
 
         // Bodies of work follow a power curve, not a flat spread: most people are early (a real
         // "from your first 5K" community has beginners), streaks cluster low with a thin long tail.
@@ -105,6 +193,9 @@ enum CommunityGenerator {
     static func historyPosts(handle: String, name: String, city: String, primary: WorkoutType,
                              count: Int, now: Date) -> [FeedItem] {
         var rng = SeededRNG(handle.utf8.reduce(11) { ($0 &* 131 &+ Int($1)) & 0x7FFF_FFFF })
+        // Where in the city's loop pool this athlete starts, so neighbours in the same city don't
+        // all open their grid on the same street loop.
+        let offset = handle.utf8.reduce(7) { ($0 &* 17 &+ Int($1)) & 0xFFFF }
         // A stable per-athlete discipline mix led by THEIR OWN sport — a swimmer's or lifter's grid
         // full of runs contradicted their feed post, bio, and discipline split (the loudest
         // non-runner fake tell). ~62% primary, the rest plausible cross-training for that sport.
@@ -117,7 +208,8 @@ enum CommunityGenerator {
             // Unique, deterministic id-space far away from the feed posts' indices.
             let index = 500_000 + (handle.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }) * 100 + j
             return makePost(index: index, name: name, handle: handle, city: city,
-                            discipline: discipline, lat: 0, lon: 0, date: date, now: now, rng: &rng)
+                            discipline: discipline, lat: 0, lon: 0, date: date, now: now, rng: &rng,
+                            routeSlot: j, routeOffset: offset)
         }
     }
 
@@ -141,7 +233,12 @@ enum CommunityGenerator {
 
     private static func makePost(index i: Int, name: String, handle: String, city: String,
                                  discipline: WorkoutType, lat: Double, lon: Double, date: Date,
-                                 now: Date, rng: inout SeededRNG) -> FeedItem {
+                                 now: Date, rng: inout SeededRNG,
+                                 // Which slot of the city's loop pool this post takes. nil keeps the
+                                 // old per-post roll (the wall, where 400 posts over ~195 loops
+                                 // already spread themselves); a grid passes its running index so
+                                 // one athlete cycles the pool instead of clustering one shape.
+                                 routeSlot: Int? = nil, routeOffset: Int = 0) -> FeedItem {
         let id = UUID(uuidString: "00000000-0000-0000-0001-\(String(format: "%012d", i))")!
         let caption = rng.int(0...2) == 0 ? nil : rng.pick(captions(for: discipline))
         let style = feedStyles[rng.int(0...(feedStyles.count - 1))]
@@ -158,8 +255,14 @@ enum CommunityGenerator {
         // routes — at 14% two glyph tiles per screenful read as a pattern, not an exception.
         let structured = discipline == .run && rng.int(0...99) < 8
         let mapless = structured || discipline == .trailRun
-        let loop = (discipline.isGPS && !mapless)
-            ? CommunityRoutes.loop(city: city, discipline: discipline, rng: &rng) : nil
+        let loop: CommunityRoutes.Loop? = {
+            guard discipline.isGPS, !mapless else { return nil }
+            if let routeSlot {
+                return CommunityRoutes.loop(city: city, discipline: discipline,
+                                            slot: routeSlot, offset: routeOffset)
+            }
+            return CommunityRoutes.loop(city: city, discipline: discipline, rng: &rng)
+        }()
         let (title, stat, pr) = structured ? workoutContent(rng: &rng)
                                            : content(for: discipline, routeKm: loop?.km, rng: &rng)
         // NO stock photos on seeded posts (owner call 2026-07-30, reversing 2026-07-29): the
@@ -453,7 +556,7 @@ enum CommunityGenerator {
     /// Repeats = weight. Run-DOMINANT (~65% run/trail, owner call 2026-07-29 — this is a running
     /// app and the wall should read like one): city runs with real street-loop maps, structured
     /// track/tempo sessions, trail runs with climb. The rest is the plausible cross-training a
-    /// running community actually posts. Rowing rides on the featured @devonrows.
+    /// running community actually posts. Rowing rides on the featured rower (@ergmornings).
     private static let disciplines: [WorkoutType] = [
         .run, .run, .run, .run, .run, .run, .run, .run, .run, .run, .run,
         .trailRun,

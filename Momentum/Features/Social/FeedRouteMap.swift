@@ -34,11 +34,15 @@ enum FeedRouteSnapshots {
     static func image(post: UUID, coordinates: [CLLocationCoordinate2D],
                       style: MapStyleOption, scheme: ColorScheme, size: CGSize,
                       urgent: Bool = false, routeWidth: CGFloat = 3,
-                      endpointDiameter: CGFloat? = nil) async -> UIImage? {
+                      endpointDiameter: CGFloat? = nil,
+                      insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26)) async -> UIImage? {
         // nil = no start/finish marks, which is what a GRID tile wants (owner call 2026-07-30);
         // full views opt in. It's part of the cache key for the same reason `routeWidth` is: the
         // wall and the pager render the same post differently and must not share an image.
-        let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))|e\(endpointDiameter.map { Int($0) } ?? 0)"
+        // `size` is part of the key too: the profile COVER renders the same post wide and short
+        // (the whole run in a 2:1 band) while the grid renders it 3:4. Without the size in the key
+        // whichever landed first was served to both, and the cover got a portrait image to crop.
+        let key = "\(post.uuidString)|\(style.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))|e\(endpointDiameter.map { Int($0) } ?? 0)|s\(Int(size.width))x\(Int(size.height))|i\(Int(insets.top))-\(Int(insets.left))-\(Int(insets.bottom))-\(Int(insets.right))"
         if let hit = cache[key] { return hit }
         if let quietUntil, Date() < quietUntil { return nil }   // breaker open — no new engines
         return await withCheckedContinuation { continuation in
@@ -55,6 +59,7 @@ enum FeedRouteSnapshots {
                 active += 1
                 let data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
                                                            styleURI: style.styleURI(for: scheme),
+                                                           insets: insets,
                                                            routeWidth: routeWidth,
                                                            endpointDiameter: endpointDiameter)
                 active -= 1

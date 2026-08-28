@@ -33,7 +33,8 @@ struct SessionDetailSheet: View {
             structuredMemo.key = key
             structuredMemo.value = StructuredWorkoutBuilder.build(
                 from: session, p5kSPerKm: profile?.plan?.p5kSPerKm,
-                raceDistanceM: profile?.raceDistanceM)
+                raceDistanceM: profile?.raceDistanceM,
+                goalRacePaceSPerKm: profile?.plan?.goalRacePaceSPerKm)
         }
         return structuredMemo.value
     }
@@ -122,10 +123,7 @@ struct SessionDetailSheet: View {
         }
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
-        .background {
-            Capsule().fill(done ? AnyShapeStyle(IridescentMaterial().opacity(0.3)) : AnyShapeStyle(Theme.surface))
-            Capsule().stroke(Theme.hairline)
-        }
+        .modifier(StatusChipSurface(done: done))
     }
 
     // MARK: Targets
@@ -164,10 +162,7 @@ struct SessionDetailSheet: View {
                             .monospacedDigit().foregroundStyle(Theme.inkSecondary)
                     }
                     .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
-                        RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
-                    }
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
                 }
             }
         }
@@ -200,7 +195,7 @@ struct SessionDetailSheet: View {
 
     private var cardioChips: [String] {
         var out: [String] = []
-        if let rt = session.runType { out.append(rt.rawValue.capitalized) }
+        if let rt = session.runType { out.append(rt.planTitle) }
         if let d = session.targetDistanceM, d > 0 { out.append(Formatters.distance(meters: d, unit: distanceUnit)) }
         if let p = session.targetPaceSPerKm, p > 0 { out.append("~\(Formatters.pace(secPerKm: p, unit: distanceUnit))") }
         if let dur = session.targetDurationS, dur > 0 { out.append(Formatters.duration(s: dur)) }
@@ -219,10 +214,7 @@ struct SessionDetailSheet: View {
         Text(text)
             .font(.rounded(Theme.FontSize.body, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
             .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
     }
 
     private func exerciseRow(_ ex: PlannedExercise) -> some View {
@@ -233,10 +225,7 @@ struct SessionDetailSheet: View {
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
     }
 
     private func note(_ text: String) -> some View {
@@ -337,7 +326,7 @@ struct SessionDetailSheet: View {
                         .font(.rounded(Theme.FontSize.body, weight: .bold))
                         .frame(maxWidth: .infinity).frame(height: 52)
                         .foregroundStyle(Theme.background)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
                 }
                 .buttonStyle(.plain)
             }
@@ -351,10 +340,7 @@ struct SessionDetailSheet: View {
                     .font(.rounded(Theme.FontSize.body, weight: .bold))
                     .frame(maxWidth: .infinity).frame(height: 50)
                     .foregroundStyle(Theme.ink)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                    }
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             }
             .buttonStyle(.plain)
 
@@ -374,7 +360,7 @@ struct SessionDetailSheet: View {
                     .font(.rounded(Theme.FontSize.body, weight: .semibold))
                     .frame(maxWidth: .infinity).frame(height: 48)
                     .foregroundStyle(.red)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             }
             .buttonStyle(.plain)
         }
@@ -385,10 +371,7 @@ struct SessionDetailSheet: View {
             Label(title, systemImage: systemImage)
                 .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
                 .frame(maxWidth: .infinity).frame(height: 50)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -429,7 +412,7 @@ struct SessionDetailSheet: View {
                     }
                     .padding(Theme.Space.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 }
             }
         }
@@ -441,6 +424,21 @@ struct SessionDetailSheet: View {
                 .frame(width: 52, alignment: .leading).padding(.top, 3)
             Text(text).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// The status chip: a raised capsule while planned; the earned iridescent wash once done.
+private struct StatusChipSurface: ViewModifier {
+    let done: Bool
+    func body(content: Content) -> some View {
+        if done {
+            content.background {
+                Capsule().fill(IridescentMaterial().opacity(0.3))
+                Capsule().stroke(Theme.hairline)
+            }
+        } else {
+            content.raised(Capsule())
         }
     }
 }

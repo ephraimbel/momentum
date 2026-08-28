@@ -107,19 +107,9 @@ final class PhoneWatchSync: NSObject {
 
     private static func title(for s: PlannedSession) -> String {
         if s.discipline == .strength { return "Strength" }
-        switch s.runType {
-        case .long: return "Long run"
-        case .easy: return "Easy run"
-        case .recovery: return "Recovery run"
-        case .tempo: return "Tempo"
-        case .intervals: return "Intervals"
-        case .race: return "Race"
-        case .fartlek: return "Fartlek"
-        case .hills: return "Hills"
-        case .strides: return "Strides"
-        case .progression: return "Progression"
-        case .freeRun, nil: return s.discipline == .cycling ? "Ride" : "Run"
-        }
+        // One vocabulary, phone and watch (2026-08-28) — `RunType.planTitle`.
+        if let rt = s.runType, rt != .freeRun { return rt.planTitle }
+        return s.discipline == .cycling ? "Ride" : "Run"
     }
 
     private static func detail(for s: PlannedSession, unit: DistanceUnit) -> String {

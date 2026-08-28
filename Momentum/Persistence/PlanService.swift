@@ -233,6 +233,7 @@ enum PlanService {
             liftingExperience: level(Discipline.strength.rawValue),
             raceDistanceM: p.raceDistanceM,
             currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
+            goalFinishTimeS: p.goalFinishTimeS, targetWeeklyVolumeM: p.targetWeeklyRunVolumeM,
             hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
             strengthSplit: StrengthSplitStyle(rawValue: p.strengthSplit) ?? .coach,
             muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
@@ -291,6 +292,7 @@ enum PlanService {
         trainingPlan.disciplines = profile.disciplines
         trainingPlan.raceDate = profile.raceDate
         trainingPlan.p5kSPerKm = plan.p5kSPerKm
+        trainingPlan.goalRacePaceSPerKm = plan.goalRacePaceSPerKm
         // Persist the macrocycle (§6.1) exactly as the generator periodized it — base → build →
         // peak → taper, with deloads as recovery. One source of truth: `GeneratedWeek.phase`.
         trainingPlan.weekPhases = plan.weeks.map(\.phase.rawValue)

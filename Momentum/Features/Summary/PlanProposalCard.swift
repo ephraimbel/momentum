@@ -111,8 +111,7 @@ struct PlanProposalCard: View {
     }
 
     @ViewBuilder private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+        Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func apply(_ p: PlanCoaching.Proposal) {

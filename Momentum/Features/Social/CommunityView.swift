@@ -13,6 +13,7 @@ struct CommunityView: View {
     /// Saved-route count for the wall strip's library door (the door hides at zero).
     @Query private var savedRoutes: [SavedRoute]
     @Environment(FollowStore.self) private var follows
+    @Environment(NudgeStore.self) private var nudges
     @Environment(ModerationStore.self) private var moderation
     @Environment(RemoteFeedStore.self) private var remoteFeed
     @Environment(PaywallController.self) private var paywall
@@ -23,6 +24,14 @@ struct CommunityView: View {
     @State private var lastPublishedPro: Bool?
     @AppStorage("community.feedScope") private var scopeRaw = CommunityScope.everyone.rawValue
     @State private var selectedAthlete: CommunityAthlete?
+    /// "+N" on the following row pushes the full list. Its own destination TYPE: ProfileScreen
+    /// already declares a `FollowingListView` destination on this stack, and SwiftUI ignores a
+    /// second declaration for the same type further down.
+    private struct FollowingPush: Identifiable, Hashable { let id = 0 }
+    @State private var showingFollowing: FollowingPush?
+    /// "Your day" with nothing shared today → share the latest workout (Aura's "select activity
+    /// to share: Today"). The composer is the story composer.
+    @State private var sharingToday: Workout?
     /// Fresh community posts minted by pull-to-refresh (CommunityPulse) — session-scoped.
     @State private var pulsed: [FeedItem] = []
     /// The in-place athlete-search face. Owned by the HOST (ProfileScreen's header magnifier
@@ -32,6 +41,9 @@ struct CommunityView: View {
     /// A tapped tile → the community pager opens on it (Identifiable for `.fullScreenCover(item:)`).
     private struct PagerStart: Identifiable { let id: UUID }
     @State private var immersive: PagerStart?
+    /// A ring tap: that person's day (posts in the last 24h, else their latest) in the pager.
+    private struct StoryStart: Identifiable { let id: String; let items: [FeedItem] }
+    @State private var story: StoryStart?
     /// Instagram-style progressive reveal (owner ask 2026-07-29): the wall renders a WINDOW of
     /// the assembled feed and grows it a page at a time when you reach the bottom — thousands of
     /// posts without ever materializing thousands of tiles.
@@ -154,8 +166,31 @@ struct CommunityView: View {
         // full-resolution photos and needs no signing round trip).
         let localIDs = Set(local.map(\.id))
         let remote = remoteFeed.items.filter { !localIDs.contains($0.id) }.filter(moderation.isVisible)
-        guard !remote.isEmpty else { return local }
-        return (local + remote).sorted { $0.date > $1.date }
+        let merged = remote.isEmpty ? local : (local + remote).sorted { $0.date > $1.date }
+        return Self.mediaFirst(merged)
+    }
+
+    /// The wall's first impression is media (2026-08-25 realism pass): a post with no route, no
+    /// muscle map and no photo renders as a sport glyph on a wash, and two of those in the top
+    /// row read as placeholder art. Date order is kept; glyph-only posts just can't occupy the
+    /// first two rows while a media post exists to take the slot.
+    static func mediaFirst(_ items: [FeedItem]) -> [FeedItem] {
+        let lead = 6
+        guard items.count > lead else { return items }
+        func hasMedia(_ i: FeedItem) -> Bool {
+            (i.routeLatLon?.count ?? 0) > 1 || (i.muscles?.values.contains { $0 > 0 } ?? false) || !i.photosData.isEmpty
+        }
+        var head: [FeedItem] = [], deferred: [FeedItem] = [], rest: [FeedItem] = []
+        for item in items {
+            if head.count < lead {
+                if hasMedia(item) { head.append(item) } else { deferred.append(item) }
+            } else {
+                rest.append(item)
+            }
+        }
+        // Not enough media posts to fill the lead? Let the deferred ones back in, in order.
+        while head.count < lead, !deferred.isEmpty { head.append(deferred.removeFirst()) }
+        return head + deferred + rest
     }
 
     var body: some View {
@@ -178,6 +213,11 @@ struct CommunityView: View {
         .background(Theme.background)
         .navigationBarHidden(true)
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
+        .navigationDestination(item: $showingFollowing) { _ in FollowingListView() }
+        .sheet(item: $sharingToday) { w in
+            ShareCardView(workout: w, weightUnit: WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg,
+                          distanceUnit: DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto)
+        }
         #if DEBUG
         .navigationDestination(isPresented: $debugSavedRoutes) { SavedRoutesView() }
         #endif
@@ -192,6 +232,11 @@ struct CommunityView: View {
             CommunityPager(items: pagerSlice(from: start.id), startID: start.id,
                            ownHandle: profile?.handle)
                 .navigationTransition(.zoom(sourceID: start.id, in: tileZoom))
+        }
+        .fullScreenCover(item: $story) { start in
+            if let first = start.items.first {
+                CommunityPager(items: start.items, startID: first.id, ownHandle: profile?.handle)
+            }
         }
         .task(id: feedKey) {
             // Assemble off the render path — runs on appear and whenever an input signature moves.
@@ -209,6 +254,10 @@ struct CommunityView: View {
             guard assembledOnce, lastAssembledKey == feedKey else { return }
             items = assembleFeed()
             Self.sessionFeed = items
+        }
+        .task {
+            // Who follows back + any nudges that landed while the app was away (throttled).
+            await nudges.refresh(in: modelContext)
         }
         .task(id: scopeRaw) {
             // Refetch whenever the scope changes — Following and Everyone are different server
@@ -250,6 +299,18 @@ struct CommunityView: View {
                             ?? CommunityDirectory.all().first
                     }
                 }
+                // --athlete-profile-stale: the first directory athlete with NO post in the last
+                // 24h, followed on open — the Nudge pill's only legal state, screenshot-verifiable.
+                if args.contains("--athlete-profile-stale") {
+                    Self.didOpenDebugAthlete = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        let stale = CommunityDirectory.all().first {
+                            ($0.posts.map(\.date).max()).map { Date().timeIntervalSince($0) > 86_400 } ?? true
+                        }
+                        if let stale, !follows.isFollowing(stale.handle) { follows.toggle(stale.handle) }
+                        selectedAthlete = stale
+                    }
+                }
                 // --athlete-profile-strength: first GENERATED strength-primary athlete — verifies the
                 // non-runner profile coherence (sport-led grid, workouts-logged hero, no distance claim).
                 if args.contains("--athlete-profile-strength") {
@@ -260,6 +321,33 @@ struct CommunityView: View {
                     }
                 }
             }
+            // --open-ring: tap the first ringed face on the Following row (their day in the
+            // pager); --open-your-day: the "Your day" face; --open-following-more: the "+N" face.
+            // Taps on the row are unreliable in the sim; these drive the same handlers.
+            if args.contains("--open-ring") || args.contains("--open-your-day") || args.contains("--open-following-more") {
+                Task { @MainActor in
+                    for _ in 0..<30 {
+                        if !items.isEmpty {
+                            try? await Task.sleep(for: .milliseconds(800))
+                            if args.contains("--open-your-day") {
+                                let mine = items.filter { $0.authorHandle == ownHandle && !ownHandle.isEmpty }
+                                if !mine.isEmpty { story = StoryStart(id: "you", items: Array(mine.prefix(5))) }
+                                else if let latest = workouts.first { sharingToday = latest }
+                            } else if args.contains("--open-following-more") {
+                                showingFollowing = FollowingPush()
+                            } else if let person = followedPeople.first(where: \.ringed) {
+                                let posts = day(of: person.handle)
+                                if !posts.isEmpty { story = StoryStart(id: person.handle, items: posts) }
+                            }
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(300))
+                    }
+                }
+            }
+            // --community-friends: land on the Friends scope (the empty-follows state is the one
+            // the header used to vanish on).
+            if args.contains("--community-friends") { scopeRaw = CommunityScope.following.rawValue }
             if args.contains("--find-athletes") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { searching = true }
             }
@@ -344,11 +432,28 @@ struct CommunityView: View {
     private var gridFace: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                // The page header ALWAYS renders (2026-08-25): find people → the faces you follow,
+                // ringed when they trained today → Explore. It used to live inside the non-empty
+                // branch, so opening Friends with nobody followed took the search field, the ring
+                // row and the scope tabs off screen with the wall — the one state where finding
+                // people matters most had no way to find people, and the header jumped.
+                followingRow
+                    .padding(.top, Theme.Space.md)
+                HStack {
+                    Text("Explore")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Spacer()
+                    savedRoutesDoor
+                }
+                .padding(.horizontal, Theme.Space.md)
+                .padding(.top, Theme.Space.lg)
+                CommunityScopeTabs(scopeRaw: $scopeRaw)
+
                 if items.isEmpty {
                     // No flash of the empty state during the very first assembly pass.
                     if assembledOnce {
                         emptyState
-                            .padding(.top, Theme.Space.xxl)
+                            .padding(.top, Theme.Space.xl)
                             .padding(.horizontal, Theme.Space.md)
                     }
                 } else {
@@ -404,10 +509,6 @@ struct CommunityView: View {
                 }
             }
             #endif
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            CommunityScopeTabs(scopeRaw: $scopeRaw)
-                .overlay(alignment: .trailing) { savedRoutesDoor.padding(.trailing, Theme.Space.sm) }
         }
         .refreshable {
             pulsed = CommunityPulse.refreshed(pulsed)
@@ -481,6 +582,60 @@ struct CommunityView: View {
 
     /// The feed from the tapped post onward — from the FULL well, not the reveal window, so the
     /// pager keeps going past what the wall had rendered.
+    // MARK: Following row
+
+    private var ownHandle: String { profile?.handle ?? "" }
+
+    /// Trained in the last 24h — your own ring, the same rule the profile hero uses.
+    private var youTrainedToday: Bool {
+        guard let w = workouts.first else { return false }
+        return Date().timeIntervalSince(w.startedAt.addingTimeInterval(w.durationS)) < 86_400
+    }
+
+    /// A followed athlete's posts through the 24h window; falls back to their newest post so a
+    /// tap always shows *something* of theirs rather than a dead ring.
+    private func day(of handle: String) -> [FeedItem] {
+        let theirs = items.filter { $0.authorHandle == handle }
+        let pool = theirs.isEmpty ? (CommunityDirectory.athlete(handle: handle)?.posts ?? []) : theirs
+        let recent = pool.filter { Date().timeIntervalSince($0.date) < 86_400 }
+        let chosen = recent.isEmpty ? Array(pool.prefix(1)) : recent
+        return chosen.sorted { $0.date > $1.date }
+    }
+
+    private var followedPeople: [FollowingRow.Person] {
+        follows.following.filter { $0 != ownHandle }.map { handle in
+            let athlete = CommunityDirectory.athlete(handle: handle)
+            let latest = items.lazy.filter { $0.authorHandle == handle }.map(\.date).max()
+                ?? athlete?.posts.map(\.date).max()
+            let ringed = latest.map { Date().timeIntervalSince($0) < 86_400 } ?? false
+            let label = athlete?.name.split(separator: " ").first.map(String.init) ?? handle
+            return FollowingRow.Person(handle: handle, label: label, ringed: ringed, lastActive: latest,
+                                       avatarData: athlete?.avatarData,
+                                       imageName: athlete?.communityAvatarAsset,
+                                       preset: athlete?.communityPreset)
+        }
+    }
+
+    private var followingRow: some View {
+        FollowingRow(
+            you: .init(handle: ownHandle, label: "Your day", ringed: youTrainedToday,
+                       avatarData: profile?.avatarData),
+            people: followedPeople,
+            onFind: { withAnimation(.easeOut(duration: 0.2)) { searching = true } },
+            onYou: {
+                // Your day: your newest shared post, in the same pager everyone else's opens in.
+                let mine = items.filter { $0.authorHandle == ownHandle && !ownHandle.isEmpty }
+                if !mine.isEmpty { story = StoryStart(id: "you", items: Array(mine.prefix(5))) }
+                else if let latest = workouts.first { sharingToday = latest }
+            },
+            onPerson: { person in
+                let posts = day(of: person.handle)
+                if !posts.isEmpty { story = StoryStart(id: person.handle, items: posts) }
+                else { openAthlete(person.handle) }
+            },
+            onMore: { showingFollowing = FollowingPush() })
+    }
+
     private func pagerSlice(from id: UUID) -> [FeedItem] {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return items }
         return Array(items[index...])
@@ -518,10 +673,10 @@ struct CommunityView: View {
             } label: {
                 Text("Find athletes")
                     .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.background)
-                    .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.sm)
-                    .background(Capsule().fill(Theme.ink))
+                    .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.sm + 2)
+                    .raised(Capsule(), tone: .ink)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RaisedPressStyle())
         }
         .frame(maxWidth: .infinity)
         .padding(Theme.Space.xl)

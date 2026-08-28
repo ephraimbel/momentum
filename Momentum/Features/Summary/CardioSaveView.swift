@@ -284,7 +284,7 @@ struct CardioSaveView: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// Correct the discipline if it was logged as the wrong sport (Run ↔ Walk ↔ Hike ↔ Ride).

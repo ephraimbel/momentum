@@ -58,7 +58,15 @@ struct TodayView: View {
     @State private var goalKind: GoalKind = .open
     @State private var goalValue = 3.0
     @State private var viewport: Viewport = .idle
-    @State private var locator = LocationService()
+    /// THE shared location service (2026-08-28). Today used to own a private `LocationService`,
+    /// so the permission the athlete granted at onboarding's "Map your runs" beat — and the fix
+    /// that came with it — landed on an instance this map never read: they finished onboarding
+    /// and arrived at a zoomed-out world map. One service, one grant, one fix.
+    private var locator: any LocationServing { services.location }
+    /// True while the map is still on the neutral "not located yet" camera. Guards the auto-centre
+    /// below so a late grant can never yank a camera the athlete is panning — we only take the
+    /// camera when we've never located them.
+    @State private var awaitingFirstFix = false
     /// Where the map opens for an athlete we haven't located yet — no stored fix, no permission.
     /// Deliberately NOT a city: this used to be hardcoded to San Francisco, so the first frame of the
     /// product showed a stranger's neighbourhood to everyone in London, Lagos or Tokyo — a guess the
@@ -335,12 +343,18 @@ struct TodayView: View {
             // already granted — otherwise Mapbox would prompt on arrival, so we sit on a static camera
             // (last-known, else a neutral default) until they grant it via Start/recenter.
             if case .idle = viewport {
-                if let coord = lastKnownCoordinate {
+                switch TodayMapOpening.decide(fix: locator.lastLocation,
+                                              history: lastKnownCoordinate,
+                                              authorized: locator.isAuthorized) {
+                case .athlete(let coord):
                     viewport = .camera(center: coord, zoom: 13.5, pitch: explorePitch)
-                } else if locator.isAuthorized {
+                    awaitingFirstFix = false
+                case .followPuck:
                     viewport = .followPuck(zoom: 14, pitch: explorePitch)
-                } else {
+                    awaitingFirstFix = false
+                case .unlocated:
                     viewport = Self.unlocatedViewport
+                    awaitingFirstFix = true
                 }
             }
             runAppearDeepLinks()
@@ -379,9 +393,24 @@ struct TodayView: View {
         .onChange(of: activity) { if isCardio { mapWasShown = true } }
         // Follow the athlete's puck the moment a fix lands — but never while zoomed out to the globe.
         .onChange(of: locator.lastLocation?.latitude) {
-            if !worldMode, !marketingHero, locator.lastLocation != nil {
+            guard !worldMode, !marketingHero, locator.lastLocation != nil else { return }
+            if awaitingFirstFix {
+                // The first fix after a grant: ARRIVE there. Animating from the zoom-3 fallback
+                // reads as "the globe popped up and flew somewhere" — the exact thing the
+                // unlocated camera exists to avoid.
+                awaitingFirstFix = false
+                viewport = .followPuck(zoom: 15, pitch: explorePitch)
+            } else {
                 withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: explorePitch) }
             }
+        }
+        // Permission granted while this map was already on screen (the athlete finished the
+        // onboarding location beat, or returned from Settings): take the camera to them at once.
+        .onChange(of: locator.isAuthorized) {
+            guard locator.isAuthorized, awaitingFirstFix, !worldMode, !marketingHero else { return }
+            awaitingFirstFix = false
+            viewport = .followPuck(zoom: 14, pitch: explorePitch)
+            locator.refreshLocation()
         }
         // A persisted Pro style with no entitlement (lapse, restore on a new device) self-heals
         // back to the free default rather than rendering a locked look.
@@ -833,7 +862,7 @@ struct TodayView: View {
         // (strength/running) for analytics, but the confirm sheet must say what it actually is.
         // A plain run keeps its quality label; engine-prescribed sessions have no sportType.
         if let wt = s.workoutType {
-            return wt == .run ? "\(s.runType?.rawValue.capitalized ?? "Easy") Run" : wt.title
+            return wt == .run ? (s.runType?.planTitle ?? "Easy run") : wt.title
         }
         if s.discipline == .strength {
             // The split label wins ("Push Day"); pre-label plans keep the count heuristic.
@@ -841,7 +870,7 @@ struct TodayView: View {
             return s.strengthTargets.count >= 5 ? "Full Body" : "Strength"
         }
         switch s.discipline {
-        case .running: return "\(s.runType?.rawValue.capitalized ?? "Easy") Run"
+        case .running: return s.runType?.planTitle ?? "Easy run"
         case .cycling: return "Ride"
         case .walking: return "Walk"
         case .strength: return "Strength"

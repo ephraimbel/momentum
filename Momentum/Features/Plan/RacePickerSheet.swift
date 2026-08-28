@@ -247,7 +247,7 @@ struct RacePickerSheet: View {
                     .lineLimit(1).minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity).frame(height: 52)
                     .foregroundStyle(Theme.background)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
             }
             .buttonStyle(.plain)
             Text("\(distance.label) · \(date.formatted(.dateTime.month(.abbreviated).day().year()))")

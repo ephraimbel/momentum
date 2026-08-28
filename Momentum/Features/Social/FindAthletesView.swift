@@ -122,8 +122,7 @@ struct FindAthletesView: View {
                 }
             }
             .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-            .background(Capsule().fill(Theme.surface))
-            .overlay(Capsule().stroke(Theme.hairline))
+            .raised(Capsule())
             if embedded {
                 Button("Cancel") { searching = false; onCancel?() }
                     .font(.rounded(Theme.FontSize.body, weight: .semibold))
@@ -151,6 +150,7 @@ struct FindAthletesView: View {
                     // (avatarData) still show; seeded community falls back to its preset look (a clean
                     // graphic, not a photo — the 2026-07-15 call was about faces) or the monogram.
                     AvatarView(photo: athlete.avatarData, name: athlete.name, size: 42,
+                               imageName: athlete.communityAvatarAsset,
                                preset: athlete.communityPreset)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(athlete.name)

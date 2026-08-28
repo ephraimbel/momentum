@@ -59,7 +59,7 @@ struct TimeInZonesCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(Theme.Space.md)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(a11ySummary(zones: zones, dist: dist))
                 .id("timeInZones")

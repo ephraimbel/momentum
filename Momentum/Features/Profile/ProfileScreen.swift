@@ -23,6 +23,7 @@ struct ProfileScreen: View {
     @Environment(FollowStore.self) private var follows
     @Environment(Services.self) private var services
     @Environment(\.modelContext) private var context
+    @Environment(AppRouter.self) private var router   // the empty state's one door: Today
 
     /// The athlete's REAL follower count, refreshed from the backend per appearance. Stays 0 for
     /// guests/offline — a brand-new community account genuinely has no followers yet, and this
@@ -30,11 +31,8 @@ struct ProfileScreen: View {
     @State private var followerCount = 0
     @State private var editing = false
     @State private var showingAwards = false
-    #if DEBUG
-    /// `--following-list`: push the follow graph for screenshot verification (the social line is
-    /// a tap target simctl can't reliably hit).
+    /// Pushes the follow graph — from the hero's followers line, or `--following-list` in DEBUG.
     @State private var showingFollowList = false
-    #endif
     // Persisted rather than @State so the Grid/Highlights face the athlete chose is still the one
     // they get on the next launch (it dates from the era of two live instances, where per-instance
     // @State meant picking Highlights on the tab and then seeing Grid again via Today's avatar).
@@ -55,7 +53,10 @@ struct ProfileScreen: View {
     @MainActor private static var didAutoOpenFollowList = false
     #endif
     // --share-card: open the share composer on the latest workout for sim verification.
-    @State private var debugSharing = ProcessInfo.processInfo.arguments.contains("--share-card")
+    // Armed AFTER the launch beat (see onAppear): set at init it raced the first-run priming /
+    // recovery dialog for the presentation slot and lost silently ("while a presentation is in
+    // progress").
+    @State private var debugSharing = false
     // --analytics-lab: preview the Pro Trends analytics section in isolation for sim verification.
     @State private var debugAnalytics = ProcessInfo.processInfo.arguments.contains("--analytics-lab")
     #endif
@@ -188,7 +189,7 @@ struct ProfileScreen: View {
                 // The community wall wearing this screen's chrome: ProfileScreen's header
                 // (magnifier + slider + gear) stacks above the grid's own Friends | Global tabs.
                 CommunityView(searching: $communitySearching)
-                    .safeAreaInset(edge: .top) { header }
+                    .safeAreaInset(edge: .top, spacing: 0) { header }
             } else {
                 profileBody
             }
@@ -244,18 +245,11 @@ struct ProfileScreen: View {
             // just above the grid and moves off-screen as you scroll (user preference 2026-07-22),
             // rather than sticking under the profile header as a mini-header.
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
-                Group {
-                    identity
-                    if let profile, !profile.bio.isEmpty {
-                        // Centered under the identity block, TikTok-style (owner call 2026-07-30) —
-                        // matches the community athlete pages so the two profile faces stay twins.
-                        Text(profile.bio)
-                            .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity, alignment: .center).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.horizontal, Theme.Space.md)
+                // Everything above the grid is the identity block (owner call 2026-08-25: the
+                // Share Aura structure in our theme — media cover, left-aligned PFP with the 24h
+                // ring, trio beside it, name/handle/bio, chips, two pills). It runs edge to edge
+                // so the cover can sit under the status bar; the grid below is untouched.
+                identity
 
                 if stats.totalWorkouts == 0 {
                     firstRunCard
@@ -279,13 +273,12 @@ struct ProfileScreen: View {
                     }
                 }
             }
-            .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
             }
         }
         .background(Theme.background)
         .navigationBarHidden(true)
-        .safeAreaInset(edge: .top) { header }
+        .safeAreaInset(edge: .top, spacing: 0) { header }
         #if DEBUG
         // --profile-scroll-badges: bring the trophy case on screen for sim verification.
         .onAppear {
@@ -308,6 +301,9 @@ struct ProfileScreen: View {
             }
             // --profile-edit: open the edit sheet (preset-avatar strip verification — the Edit
             // button is unreachable by simctl).
+            if ProcessInfo.processInfo.arguments.contains("--share-card") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { debugSharing = true }
+            }
             if ProcessInfo.processInfo.arguments.contains("--profile-edit") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { editing = true }
             }
@@ -395,9 +391,7 @@ struct ProfileScreen: View {
             shelfForAwardCount = earnedCount
         }
         .navigationDestination(isPresented: $showingAwards) { AwardsGalleryView() }
-        #if DEBUG
         .navigationDestination(isPresented: $showingFollowList) { FollowingListView() }
-        #endif
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
                                   weightUnit: weightUnit, distanceUnit: distanceUnit,
@@ -418,137 +412,76 @@ struct ProfileScreen: View {
 
     /// Quiet chrome only — no screen title. The athlete's name IS the page title; a "Profile"
     /// headline above it just said the same thing twice.
+    /// The top bar, shared by BOTH faces so the slider and the gear never move (owner, 2026-08-27:
+    /// switching Profile ↔ Community made them "slightly move up and get smaller"). The two
+    /// faces used to draw this through different code — the profile through the hero's chrome,
+    /// the community through a bare 32pt row at a different inset — so they could not match.
+    /// Now one `ProfileTopBar` at one inset, one control size, with only the leading slot
+    /// swapping (share on the profile, search on the community); the capsule and the gear are
+    /// literally the same views in the same frame across the flip.
     private var header: some View {
-        HStack(spacing: Theme.Space.md) {
-            // No back chevron: this is a tab root, always. (It used to carry one for the pushed
-            // Today-avatar copy — see the type doc.)
-            // The community face's subtle search entry (owner ask 2026-07-29): a quiet magnifier in
-            // the leading slot that opens the in-place search bar.
-            if CommunityAccess.enabled, face == .community {
-                Button {
-                    withAnimation(.easeOut(duration: 0.2)) { communitySearching = true }
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                        .frame(width: 32, height: 32)
+        ProfileTopBar(
+            leading: {
+                if face == .community {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) { communitySearching = true }
+                    } label: { ProfileHeroStyle.chromeButton("magnifyingglass", size: 17) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Search athletes")
+                } else if let card = shareCardImage {
+                    ShareLink(item: card, preview: SharePreview("\(displayName) on Momentum", image: card)) {
+                        ProfileHeroStyle.chromeButton("square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Share profile")
+                } else {
+                    Color.clear.frame(width: 44, height: 44)
                 }
-                .accessibilityLabel("Search athletes")
-            }
-            Spacer()
-            NavigationLink { SettingsView() } label: {
-                Image(systemName: "gearshape.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 32, height: 32)
-            }
-            .accessibilityLabel("Settings")
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.top, Theme.Space.xs).padding(.bottom, Theme.Space.xs)
-        .overlay {
-            // Profile ↔ Community — the top-center slider (owner call 2026-07-29). An overlay so
-            // the magnifier/gear row's layout never shifts when community flips on; centered in
-            // the full row, exactly where a navigation title would sit.
-            if CommunityAccess.enabled {
-                SegmentedCapsule(items: ProfileFace.allCases, selection: faceBinding,
-                                 scale: .compact) { $0.rawValue }
-            }
-        }
-        .background(Theme.background)
+            },
+            center: {
+                if CommunityAccess.enabled {
+                    SegmentedCapsule(items: ProfileFace.allCases, selection: faceBinding,
+                                     scale: .compact) { $0.rawValue }
+                }
+            },
+            trailing: {
+                NavigationLink { SettingsView() } label: {
+                    ProfileHeroStyle.chromeButton("gearshape.fill", size: 17)
+                }
+                .accessibilityLabel("Settings")
+            })
     }
 
-    // MARK: Identity
+    // MARK: Identity — the shared ProfileHero (twin of AthleteProfileView's)
+
+    /// Trained in the last 24 hours — the ring on the PFP. In the solo view it is your own honest
+    /// presence signal; on other athletes it is the social one, same rule.
+    private var trainedToday: Bool {
+        guard let w = workouts.first else { return false }
+        return Date().timeIntervalSince(w.startedAt.addingTimeInterval(w.durationS)) < 86_400
+    }
 
     private var identity: some View {
-        VStack(spacing: Theme.Space.md) {
-            VStack(spacing: Theme.Space.sm) {
-                AvatarView(photo: profile?.avatarData, name: displayName, size: 76)
-                // The edit affordance lives LITERALLY under the photo it edits (owner call
-                // 2026-07-29), and quietly — caption scale, tertiary ink, hairline. The identity
-                // below is the content; this is just the door.
-                Button { editing = true } label: {
-                    Text("Edit profile")
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .padding(.horizontal, Theme.Space.md)
-                        .padding(.vertical, 5)
-                        .background(Capsule().stroke(Theme.hairline, lineWidth: 1))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(PressableScaleStyle(scale: 0.97))
-                .accessibilityLabel("Edit profile")
-            }
-            VStack(spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(displayName).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.7)   // long names shrink; the seal stays put
-                    // Verified Pro — the same checkmark the feed shows everyone else.
-                    if paywall.isEntitled(to: .fullPlan) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundStyle(Theme.purple)
-                            .accessibilityLabel("Verified Pro")
-                    }
-                }
-                // The @handle — the identity the community knows you by (claimed at onboarding,
-                // changeable in Edit Profile), in exactly the position athlete pages show theirs,
-                // with your optional location beside it in their exact grammar (dot + pin). Blank
-                // until you fill it in: nobody gets placed by a default.
-                HStack(spacing: 6) {
-                    let handle = profile?.handle ?? ""
-                    if !handle.isEmpty {
-                        Text("@\(handle)")
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                            .foregroundStyle(Theme.inkTertiary)
-                    }
-                    if let location = profile.flatMap(SocialPrivacy.publicLocation) {
-                        if !handle.isEmpty {
-                            Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
-                        }
-                        Label(location, systemImage: "mappin.and.ellipse")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
-                }
-            }
-            // Followers · Following returned with the community launch (owner call 2026-07-29,
-            // reversing the solo-era removal) and sits ABOVE the athletic trio (owner call, same
-            // day — the social identity leads, the training ledger follows). A quiet, tappable
-            // line; the numbers are REAL (the local follow set; followers stay 0 until the
-            // backend serves a true list — never fabricated on your own profile).
-            if CommunityAccess.enabled {
-                NavigationLink { FollowingListView() } label: {
-                    HStack(spacing: 5) {
-                        Text("\(followerCount)").font(.rounded(Theme.FontSize.body, weight: .bold))
-                            .monospacedDigit().foregroundStyle(Theme.ink)
-                        Text("Followers").font(.rounded(Theme.FontSize.body, weight: .medium))
-                            .foregroundStyle(Theme.inkTertiary)
-                        Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
-                        Text("\(follows.following.count)").font(.rounded(Theme.FontSize.body, weight: .bold))
-                            .monospacedDigit().foregroundStyle(Theme.ink)
-                        Text("Following").font(.rounded(Theme.FontSize.body, weight: .medium))
-                            .foregroundStyle(Theme.inkTertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(followerCount) followers, \(follows.following.count) following")
-            }
-            statTrio
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    /// The athlete's own ledger (solo-first, 2026-07-16 — followers/following left with the
-    /// community back-burner): volume, distance, achievement. Bare numbers on the canvas,
-    /// hairline-divided — no boxed card competing with the grid below.
-    private var statTrio: some View {
-        HStack(spacing: 0) {
-            trioCell("\(stats.totalWorkouts)", "Workouts")
-            trioDivider
-            trioCell(distanceTotalText, distanceUnitLabel)
-            trioDivider
-            trioCell("\(records.count)", "PRs")
-        }
-        .padding(.horizontal, Theme.Space.xl)
+        ProfileHero(
+            ringed: trainedToday,
+            trio: [("\(stats.totalWorkouts)", "Workouts"), (distanceTotalText, distanceUnitLabel), ("\(records.count)", "PRs")],
+            name: displayName,
+            isPro: paywall.isEntitled(to: .fullPlan),
+            handle: profile?.handle ?? "",
+            location: profile.flatMap(SocialPrivacy.publicLocation),
+            bio: profile?.bio ?? "",
+            followLine: CommunityAccess.enabled
+                ? .init(followers: followerCount, following: follows.following.count) { showingFollowList = true }
+                : nil,
+            chips: identityChips,
+            chrome: { EmptyView() },   // the bar is `header`, shared with the community face
+            avatar: { AvatarView(photo: profile?.avatarData, name: displayName, size: ProfileHeroStyle.avatarSize) },
+            pills: {
+                // One pill (owner call 2026-08-27): sharing already lives in the top-left chrome
+                // button, so the second "Share profile" pill was the same door twice.
+                Button { editing = true } label: { ProfileHeroStyle.pill("Edit profile") }
+                    .buttonStyle(PressableScaleStyle(scale: 0.97))
+                    .accessibilityLabel("Edit profile")
+            })
     }
 
     /// Lifetime GPS distance in the athlete's display unit, whole numbers ("312").
@@ -560,18 +493,61 @@ struct ProfileScreen: View {
         distanceUnit.resolved() == .imperial ? "Miles" : "Kilometers"
     }
 
-    private func trioCell(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
-                .foregroundStyle(Theme.inkTertiary)
+    /// Identity chips from data we already hold: the goal race (lavender — it is the thing
+    /// happening) and the athlete's disciplines (neutral). Never filters, never a scroller.
+    private var identityChips: [ProfileHeroStyle.Chip] {
+        var chips: [ProfileHeroStyle.Chip] = []
+        if let profile {
+            if let m = profile.raceDistanceM, let date = profile.raceDate, date > Date() {
+                let day = date.formatted(.dateTime.month(.abbreviated).day())
+                chips.append(.init(id: "race", text: "\(RacePredictor.label(forRaceM: m)) · \(day)", accent: true))
+            }
+            for raw in profile.disciplines {
+                guard let d = Discipline(rawValue: raw) else { continue }
+                chips.append(.init(id: "d-\(raw)", text: d.rawValue.capitalized))
+            }
         }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
+        return chips
     }
 
-    private var trioDivider: some View {
-        Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 28)
+    /// The profile header as a Paper card, rendered on demand for the share sheet. Cached per
+    /// (stats, name) so scrolling never re-renders it.
+    @State private var shareCardCache: (key: Int, image: Image)?
+    private var shareCardImage: Image? {
+        var h = Hasher()
+        h.combine(displayName); h.combine(stats.totalWorkouts); h.combine(records.count)
+        h.combine(distanceTotalText)
+        let key = h.finalize()
+        if let c = shareCardCache, c.key == key { return c.image }
+        let renderer = ImageRenderer(content: ProfileShareCard(
+            name: displayName, handle: profile?.handle ?? "", avatar: profile?.avatarData,
+            rows: [("\(stats.totalWorkouts)", "Workouts"), (distanceTotalText, distanceUnitLabel),
+                   ("\(records.count)", "PRs")],
+            chips: identityChips.map(\.text)))
+        renderer.scale = 3
+        guard let ui = renderer.uiImage else { return nil }
+        let img = Image(uiImage: ui)
+        DispatchQueue.main.async { shareCardCache = (key, img) }
+        return img
+    }
+
+    /// Today's prescription, when the coach has written one — the empty state names it instead of
+    /// asking for "a workout" from an athlete who already knows what today is.
+    private var todaysPlannedBrief: String? {
+        guard let plan = profile?.plan else { return nil }
+        let cal = Calendar.current
+        guard let session = plan.sessions.first(where: { cal.isDateInToday($0.date) }) else { return nil }
+        return PlanCoaching.brief(for: session)
+    }
+
+    /// What the empty state's button says it will do — the planned sport, else a plain first run.
+    private var firstRunTitle: String {
+        guard let plan = profile?.plan else { return "Start your first workout" }
+        let cal = Calendar.current
+        guard let session = plan.sessions.first(where: { cal.isDateInToday($0.date) }) else {
+            return "Start your first workout"
+        }
+        return "Start \(WorkoutType.forPlanned(session).title.lowercased())"
     }
 
     private var displayName: String {
@@ -581,22 +557,19 @@ struct ProfileScreen: View {
 
     // MARK: First-run (no workouts yet)
 
+    /// The profile before the first workout — see `ProfileEmptyState`. It replaced a flat card
+    /// with an icon and two lines of grey text (owner call 2026-08-28): the page's whole job on
+    /// day one is to show what it will become and give exactly one way to begin.
     private var firstRunCard: some View {
-        VStack(spacing: Theme.Space.sm) {
-            Image(systemName: "figure.run.circle").font(.system(size: 34, weight: .light)).foregroundStyle(Theme.inkTertiary)
-            Text("Your story starts here").font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-            Text("Log your first workout and your distance, streak, muscle map, and records fill in.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        ProfileEmptyState(plannedBrief: todaysPlannedBrief, startTitle: firstRunTitle) {
+            Haptics.medium()
+            router.pendingTab = .today
         }
-        .frame(maxWidth: .infinity).padding(.vertical, Theme.Space.xl).padding(.horizontal, Theme.Space.lg)
-        .background(card)
     }
 
     // MARK: Building blocks
 
     private var card: some View {
-        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 }

@@ -570,8 +570,7 @@ struct FuelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .animation(Motion.standard, value: r)
         .animation(Motion.standard, value: tip)
         .accessibilityLabel("Fueling readout")
@@ -720,14 +719,14 @@ struct FuelView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 6)
-        .background(fieldShape.fill(Theme.surface))
+        // The raised white field (glass pass 2026-08-27) — the composer is the page's one
+        // input, so it wears the same material as every field in the app.
+        .raised(fieldShape)
         .overlay {
             if composerGlow {
                 // Leaf view: keeps the 45 Hz `voice.level` read out of THIS page's body.
                 DictationGlowStroke(shape: fieldShape, voice: voice,
                                     restingOpacity: draft.isEmpty ? 0.65 : 1)
-            } else {
-                fieldShape.stroke(Theme.hairline)
             }
         }
         .shadow(color: (Theme.iridescent.first ?? .clear).opacity(composerGlow ? 0.35 : 0),
@@ -1135,8 +1134,7 @@ struct FuelView: View {
         // and a glass of…"). At 250 a clipped chip is rare and the next chip still peeks in from
         // the edge — the scroll affordance.
         .frame(maxWidth: 250)
-        .background(Capsule().fill(Theme.surface))
-        .overlay(Capsule().stroke(Theme.hairline))
+        .raised(Capsule())
     }
 
     /// One tap re-logs a usual: numbers and items copy over, the clock is now, and the old note
@@ -1244,8 +1242,7 @@ struct FuelView: View {
                         }
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             }
             .animation(Motion.standard, value: rows.map(\.id))
         }
@@ -1500,8 +1497,7 @@ private struct FuelReadoutSheet: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// Every daily floor as a live gauge cell — the number, its floor, and a hairline progress
@@ -1944,8 +1940,7 @@ struct MealDetailSheet: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .animation(Motion.standard, value: verdict.score)
     }
 
@@ -2009,8 +2004,7 @@ struct MealDetailSheet: View {
                 }
             }
             .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 
@@ -2063,8 +2057,7 @@ struct MealDetailSheet: View {
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
             totalsFooter
         }
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .animation(Motion.standard, value: items.map(\.id))
     }
 
@@ -2255,8 +2248,7 @@ struct MealDetailSheet: View {
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
             numberRow("Sodium", unit: "mg", text: $sodium)
         }
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func numberRow(_ label: String, unit: String, text: Binding<String>) -> some View {
@@ -2287,8 +2279,7 @@ struct MealDetailSheet: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Eaten at")
     }

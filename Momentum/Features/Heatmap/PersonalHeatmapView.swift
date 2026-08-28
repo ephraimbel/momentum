@@ -14,6 +14,8 @@ struct PersonalHeatmapView: View {
 
     @State private var cells: [HeatCell] = []
     @AppStorage(MapStyleOption.storageKey) private var style: MapStyleOption = .realistic
+    /// The card on History previews THIS view, so both must resolve the same basemap.
+    @Environment(\.colorScheme) private var colorScheme
     @State private var totalMeters = 0.0
     @State private var activityCount = 0
     @State private var loaded = false
@@ -23,7 +25,7 @@ struct PersonalHeatmapView: View {
             if cells.isEmpty {
                 Color.clear.overlay { if loaded { emptyState } }
             } else {
-                HeatmapMapView(cells: cells, style: style).ignoresSafeArea()
+                HeatmapMapView(cells: cells, style: style.uriStyle(for: colorScheme)).ignoresSafeArea()
             }
             topBar
             if !cells.isEmpty { statsBar }

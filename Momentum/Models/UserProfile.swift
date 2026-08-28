@@ -19,6 +19,9 @@ final class UserProfile {
     /// athlete where they are (not an experience-tier default). Both in meters (SI); nil until answered.
     var weeklyRunVolumeM: Double?
     var longestRunM: Double?
+    /// The most the athlete is willing to run per week (meters) — the plan's volume ceiling.
+    /// nil → the coach builds to what the goal needs. Optional so existing stores migrate silently.
+    var targetWeeklyRunVolumeM: Double?
     /// Hybrid (run + lift) emphasis — biases the run/lift day split. `HybridPriority` raw value; nil →
     /// inferred from the goal.
     var hybridPriority: String?
@@ -73,6 +76,10 @@ final class UserProfile {
     var bio: String = ""
     /// The athlete's chosen profile photo; nil → an initials avatar. Stored outside the row (blob).
     @Attribute(.externalStorage) var avatarData: Data?
+    /// The profile cover behind the PFP, chosen by the athlete (owner ask 2026-08-26). nil means
+    /// "follow my training": the hero falls back to the newest workout's own visual, which is what
+    /// every profile did before this existed.
+    @Attribute(.externalStorage) var coverData: Data?
     var city: String = ""
     /// How precisely location may ever be shown publicly. Off by default.
     var locationGranularity: String = LocationGranularity.off.rawValue

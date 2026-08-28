@@ -17,6 +17,7 @@ struct EditProfileView: View {
     @Environment(Services.self) private var services
 
     @State private var pickedAvatar: PhotosPickerItem?
+
     /// The preset chosen this visit (ring in the strip). Cleared when a photo is picked or removed.
     @State private var selectedPreset: AvatarPreset?
     @State private var saveFailed = false
@@ -32,6 +33,10 @@ struct EditProfileView: View {
     @State private var heightCm: Double?
     @State private var bodyMassKg: Double?
     @State private var avatarData: Data?
+    /// The sports on the profile chips — and what the plan engine builds around. Never empty:
+    /// the last one can't be turned off.
+    @State private var disciplines: Set<String>
+
 
     init(profile: UserProfile) {
         self.profile = profile
@@ -44,6 +49,8 @@ struct EditProfileView: View {
         _heightCm = State(initialValue: profile.heightCm)
         _bodyMassKg = State(initialValue: profile.bodyMassKg)
         _avatarData = State(initialValue: profile.avatarData)
+        _disciplines = State(initialValue: Set(profile.disciplines))
+
     }
 
     var body: some View {
@@ -52,6 +59,7 @@ struct EditProfileView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     avatarPicker
                     section("YOU") { AnyView(identityCard) }
+                    section("SPORTS") { AnyView(sportsCard) }
                     section("ABOUT YOU") { AnyView(aboutCard) }
                 }
                 .padding(Theme.Space.lg)
@@ -70,6 +78,7 @@ struct EditProfileView: View {
                 Text("Something went wrong writing to storage. Your edits are still here — try Done again.")
             }
             .onChange(of: pickedAvatar) { _, item in Task { await loadAvatar(item) } }
+
             #if DEBUG
             // --pick-preset <case> [--pick-preset-save]: stage a preset look (and optionally Done)
             // for sim verification — the sheet's tiles are unreachable by simctl, and the window's
@@ -182,6 +191,43 @@ struct EditProfileView: View {
 
     // MARK: About you (sex drives the anatomy figure; height/weight tune your targets)
 
+    /// The chips the profile hero shows (owner ask 2026-08-27: "users should be able to edit those").
+    /// Same capsule look as the hero's chips, ink-filled when on. Wraps; never a scroller.
+    private var sportsCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            FlowLayout(spacing: Theme.Space.sm) {
+                ForEach(Discipline.allCases, id: \.self) { d in
+                    let on = disciplines.contains(d.rawValue)
+                    Button {
+                        if on {
+                            // Keep at least one: a plan with no sport is not a plan.
+                            guard disciplines.count > 1 else { Haptics.medium(); return }
+                            disciplines.remove(d.rawValue)
+                        } else {
+                            disciplines.insert(d.rawValue)
+                        }
+                        Haptics.selection()
+                    } label: {
+                        Text(d.rawValue.capitalized)
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                            .foregroundStyle(on ? Theme.background : Theme.inkSecondary)
+                            .padding(.horizontal, Theme.Space.md - 2).padding(.vertical, Theme.Space.chipV + 1)
+                            .background(Capsule().fill(on ? Theme.ink : Theme.surface))
+                            .overlay(Capsule().stroke(on ? Theme.ink : Theme.hairline, lineWidth: 1))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(PressableScaleStyle(scale: 0.96))
+                    .accessibilityLabel("\(d.rawValue.capitalized), \(on ? "on" : "off")")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            Text("These show on your profile and shape your plan.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        }
+        .padding(Theme.Space.md)
+        .background(card)
+    }
+
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             Text("SEX").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1).foregroundStyle(Theme.inkTertiary)
@@ -293,8 +339,7 @@ struct EditProfileView: View {
     private var divider: some View { Divider().overlay(Theme.hairline) }
     private var card: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 
@@ -313,6 +358,9 @@ struct EditProfileView: View {
         profile.heightCm = heightCm
         profile.bodyMassKg = bodyMassKg
         profile.avatarData = avatarData
+        // Written in the enum's order so the chips read the same on every profile.
+        profile.disciplines = Discipline.allCases.map(\.rawValue).filter { disciplines.contains($0) }
+
         // A failed write must not dismiss as if it saved — the staged edits would silently
         // revert on next launch while the sheet closed looking done.
         do { try context.save() } catch {

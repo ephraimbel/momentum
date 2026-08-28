@@ -762,10 +762,11 @@ enum PlanCoaching {
         if let shape = structuredShape(session, unit: distanceUnit, dropLeadingType: dropLeadingType) {
             return shape
         }
-        // GPS: a run keeps its quality label (Easy/Tempo/Long); ride/walk/etc. use the sport name.
+        // GPS: a run keeps its plain session name (Easy run / Steady run / Long run — never the
+        // raw enum, which put "Tempo" on the Today deck); ride/walk/etc. use the sport name.
         let label: String = {
             if let wt = session.workoutType, wt != .run { return wt.title }
-            return session.runType?.rawValue.capitalized ?? "Session"
+            return session.runType?.planTitle ?? "Session"
         }()
         let dist = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? ""
         let lead = (dropLeadingType && !dist.isEmpty) ? dist : "\(label) \(dist)"

@@ -389,7 +389,7 @@ private struct ExerciseSection: View {
     var body: some View {
         ExerciseContent(vm: vm, exercise: exercise, onSuperset: onSuperset)
             .padding(Theme.Space.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card)
                 .stroke(isDone ? Theme.success.opacity(0.35) : .clear, lineWidth: 1))
             .animation(Motion.standard, value: isDone)
@@ -438,7 +438,7 @@ private struct SupersetSection: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card)
             .stroke(isDone ? Theme.success.opacity(0.35) : Theme.hairline, lineWidth: 1))
         .animation(Motion.standard, value: isDone)

@@ -33,6 +33,9 @@ struct ProgressScreen: View {
         #endif
         return .trends
     }()
+    /// The History segment's sport filter. Survives segment flips (it's this view's state), and
+    /// every History memo keys on it — see `monthGroups` and `historyDigest`.
+    @State private var historyFilter: HistoryFilter = .all
     @State private var correcting: LearnedItem?
     @State private var showVO2Info = false
     @State private var showLogWorkout = false
@@ -1167,72 +1170,69 @@ struct ProgressScreen: View {
 
     // MARK: - History (clean session feed)
 
+    /// History — the log (refined 2026-08-28 to the paywall's level of finish). Structure:
+    /// this month's summary → sport filter → the personal map → sticky month sections of rows.
     private var history: some View {
-        // Free tier: the last 30 days (PRD §10 "limited history"); everything older is Pro.
+        // Free tier: the last 30 days (PRD §10 "limited history"); everything older is Pro. The
+        // sport filter is applied FIRST so the lock line counts what this filter is hiding, not
+        // the whole store ("12 earlier runs", never "12 earlier workouts" while showing runs).
         let hasFullHistory = paywallController.isEntitled(to: .fullHistory)
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
-        let visible = hasFullHistory ? workouts : workouts.filter { $0.startedAt >= cutoff }
-        let lockedCount = workouts.count - visible.count
+        let filtered = historyFilter == .all ? workouts : workouts.filter(historyFilter.matches)
+        let visible = hasFullHistory ? filtered : filtered.filter { $0.startedAt >= cutoff }
+        let lockedCount = filtered.count - visible.count
+        let chips = HistoryFilter.available(in: workouts)
+        let currentMonthKey = Self.monthKey(Date())
         return ScrollView {
-            // Lazy: a long history otherwise realizes every month section (and decodes every route
-            // thumbnail) up front. Sections now materialize as they scroll into view.
-            LazyVStack(alignment: .leading, spacing: Theme.Space.md) {
-                // A strip of three zeros isn't a summary, it's furniture — day one gets the one
-                // honest line at the bottom of this stack instead.
+            // Lazy + pinned headers: a long history otherwise realizes every month section (and
+            // decodes every route thumbnail) up front, and the month you're scrolling through
+            // stays named at the top of the screen.
+            LazyVStack(alignment: .leading, spacing: Theme.Space.md, pinnedViews: [.sectionHeaders]) {
                 if !workouts.isEmpty {
-                    historySummary().reveal(0, once: "history.summary")
+                    // The card's eyebrow names the filter when one is on, so a filtered number
+                    // can never be mistaken for the month's whole total.
+                    HistorySummaryCard(digest: historyDigest(historyFilter),
+                                       title: historyFilter == .all
+                                           ? Date().formatted(.dateTime.month(.wide))
+                                           : "\(Date().formatted(.dateTime.month(.wide))) · \(historyFilter.title)",
+                                       distanceUnit: distanceUnit)
+                        .reveal(0, once: "history.summary")
+                    HistoryFilterChips(options: chips, selection: $historyFilter)
+                        .reveal(0.03, once: "history.filters")
                 }
-                // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a tab).
-                // Rescued from the retired standalone History screen during the lean-cleanup pass.
+                // The personal heatmap lives HERE as a look-back card (decided 2026-06 — never a
+                // tab). It maps every route, so it ignores the sport filter by design.
                 HeatmapHistoryCard(workouts: workouts, distanceUnit: distanceUnit)
-                    .reveal(0.04, once: "history.heatmap")
+                    .reveal(0.06, once: "history.heatmap")
                 // No `.reveal` on the month sections: the LazyVStack discards row state past its
-                // retention window, so the reveal re-fired from blank on EVERY scroll-back — content
-                // flashed in both directions. The entrance stagger stays on the summary + heatmap.
+                // retention window, so the reveal re-fired from blank on EVERY scroll-back —
+                // content flashed in both directions. The entrance stagger stays above.
                 ForEach(monthGroups(visible), id: \.key) { group in
-                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                        monthHeader(group.key, group.items)
+                    Section {
                         VStack(spacing: 0) {
                             ForEach(Array(group.items.enumerated()), id: \.element.id) { i, w in
-                                if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                                if i > 0 {
+                                    Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                                        .padding(.leading, 68)   // inset past the thumbnail
+                                }
                                 workoutFeedRow(w)
                             }
                         }
                         .padding(.horizontal, Theme.Space.md)
                         .background(card)
+                    } header: {
+                        // The current month's numbers are already the card at the top of the
+                        // page; repeating them here was the page's one duplicated sentence.
+                        HistoryMonthHeader(title: group.key,
+                                           summary: group.key == currentMonthKey ? nil : monthSummary(group.items))
                     }
                 }
-                if lockedCount > 0 {
-                    Button { paywallController.present(for: .fullHistory) } label: {
-                        HStack(spacing: Theme.Space.md) {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.ink)
-                                .frame(width: 32, height: 32)
-                                .background(Circle().fill(Theme.surface))
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("\(lockedCount) earlier workout\(lockedCount == 1 ? "" : "s")")
-                                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                                Text("Unlock your full history with Pro")
-                                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                            }
-                            Spacer()
-                            Text("PRO")
-                                .font(.rounded(10, weight: .heavy)).tracking(1.4).foregroundStyle(Theme.inkOnFixedLight)
-                                .padding(.horizontal, 9).padding(.vertical, 4)
-                                .background(Capsule().fill(Theme.proLavender))
-                        }
-                        .padding(Theme.Space.md)
-                        .background(card)
-                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(lockedCount) earlier workouts locked — unlock your full history with Pro")
-                }
-                if workouts.isEmpty {
-                    Text("Your sessions land here as you train.")
+                if lockedCount > 0 { historyLock(lockedCount) }
+                if visible.isEmpty {
+                    Text(workouts.isEmpty ? HistoryFilter.all.emptyLine : historyFilter.emptyLine)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         .frame(maxWidth: .infinity).padding(.top, Theme.Space.xl)
+                        .transition(.opacity)
                 }
             }
             .padding(Theme.Space.md)
@@ -1240,76 +1240,75 @@ struct ProgressScreen: View {
         }
     }
 
-    /// A month divider that earns its line: the month, and what the month actually came to.
-    /// A bare "JULY 2026" is a label; scrolling back through a year of them told the athlete
-    /// nothing they didn't already know from the row dates. Distance leads (the number they'd
-    /// quote), sessions follow; a distance-free month (all strength) simply drops the first half.
-    private func monthHeader(_ key: String, _ items: [Workout]) -> some View {
-        let meters = items.compactMap { $0.gps?.distanceM }.reduce(0, +)
-        let sessions = "\(items.count) session\(items.count == 1 ? "" : "s")"
-        let summary = meters > 0
-            ? "\(Formatters.distance(meters: meters, unit: distanceUnit)) · \(sessions)"
-            : sessions
-        return HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
-            Text(key.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold))
-                .tracking(0.8).foregroundStyle(Theme.inkSecondary)
-            Spacer(minLength: Theme.Space.sm)
-            Text(summary)
-                .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-                .foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.8)
+    /// The Pro line under a filtered history — it counts what the CURRENT filter is hiding.
+    private func historyLock(_ lockedCount: Int) -> some View {
+        let noun = historyFilter == .all ? "workout" : historyFilter.title.lowercased().hasSuffix("s")
+            ? String(historyFilter.title.dropLast()).lowercased() : historyFilter.title.lowercased()
+        return Button { paywallController.present(for: .fullHistory) } label: {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Theme.surface))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(lockedCount) earlier \(noun)\(lockedCount == 1 ? "" : "s")")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Unlock your full history with Pro")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
+                Spacer()
+                Text("PRO")
+                    .font(.rounded(10, weight: .heavy)).tracking(1.4).foregroundStyle(Theme.inkOnFixedLight)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(Capsule().fill(Theme.proLavender))
+            }
+            .padding(Theme.Space.md)
+            .background(card)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 2)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(key)
-        .accessibilityValue(summary)
-        .accessibilityAddTraits(.isHeader)
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(lockedCount) earlier \(noun)s locked — unlock your full history with Pro")
     }
 
-    /// This-month summary strip: sessions, distance, PRs. Memoized (same non-observed-box pattern
-    /// as `monthGroups` — the month filter + GPS-distance faults ran on every History body pass);
-    /// the cache holds only display strings, never model refs.
-    private final class HistorySummaryMemo {
-        var token = 0
-        var sessions = ""; var distance = ""; var distanceLabel = ""; var prs = ""
+    /// What a past month came to: distance (when it ran), sessions, and PRs when it earned any.
+    private func monthSummary(_ items: [Workout]) -> String {
+        let meters = items.compactMap { $0.gps?.distanceM }.reduce(0, +)
+        var parts: [String] = []
+        if meters > 0 { parts.append(Formatters.distance(meters: meters, unit: distanceUnit)) }
+        parts.append("\(items.count) session\(items.count == 1 ? "" : "s")")
+        if let ids = prBadgeIDs {
+            let prs = items.filter { ids.contains($0.id) }.count
+            if prs > 0 { parts.append("\(prs) PR\(prs == 1 ? "" : "s")") }
+        }
+        return parts.joined(separator: " · ")
     }
-    @State private var summaryMemo = HistorySummaryMemo()
-    private func historySummary() -> some View {
+
+    /// This month's digest, memoized (the same non-observed-box pattern as `monthGroups` — the
+    /// month filter + GPS-distance faults ran on every History body pass). The token carries the
+    /// FILTER as well as the content: without it, switching to Runs kept showing every sport's
+    /// numbers in the card above the filtered list.
+    private final class HistoryDigestMemo {
+        var token = 0
+        var digest = HistoryDigest.empty
+    }
+    @State private var digestMemo = HistoryDigestMemo()
+    private func historyDigest(_ filter: HistoryFilter) -> HistoryDigest {
         var h = Hasher()
-        h.combine(aggregateKey); h.combine(distanceUnit)
+        h.combine(aggregateKey); h.combine(filter.rawValue)
         let token = h.finalize()
-        let memo = summaryMemo
+        let memo = digestMemo
         if memo.token != token {
-            let month = Calendar.current.dateInterval(of: .month, for: Date())
-            let mine = workouts.filter { month?.contains($0.startedAt) ?? false }
-            let far = Formatters.wholeDistance(meters: mine.compactMap { $0.gps?.distanceM }.reduce(0, +),
-                                               unit: distanceUnit)
-            memo.sessions = "\(mine.count)"
-            memo.distance = "\(far.value)"
-            memo.distanceLabel = "\(far.unit) this month"
-            // Month-scoped like its siblings — the lifetime improvement-event count here read
-            // as "47 PRs this month" to a two-year athlete.
-            memo.prs = "\((profiles.first?.prs ?? []).filter { month?.contains($0.achievedAt) ?? false }.count)"
+            memo.digest = HistoryDigest.build(workouts: filter == .all ? workouts : workouts.filter(filter.matches),
+                                              prDates: (profiles.first?.prs ?? []).map(\.achievedAt))
             memo.token = token
         }
-        return HStack(spacing: 0) {
-            summaryCell(memo.sessions, "Sessions")
-            Divider().frame(height: 34).overlay(Theme.hairline)
-            summaryCell(memo.distance, memo.distanceLabel)
-            Divider().frame(height: 34).overlay(Theme.hairline)
-            summaryCell(memo.prs, "PRs")
-        }
-        .padding(.vertical, Theme.Space.sm)
-        .frame(maxWidth: .infinity)
-        .background(card)
+        return memo.digest
     }
 
-    private func summaryCell(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.display(19, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(0.4).foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity)
+    /// The month bucket a date belongs to — one formatter for the groups AND the "is this the
+    /// current month" check, so the two can never disagree about what "August 2026" is called.
+    static func monthKey(_ date: Date, calendar: Calendar = .current) -> String {
+        date.formatted(.dateTime.month(.wide).year())
     }
 
     /// Workouts grouped by month, newest first. Memoized (non-observed box, token-guarded like
@@ -1326,6 +1325,9 @@ struct ProgressScreen: View {
         var h = Hasher()
         h.combine(aggregateKey)
         h.combine(source.count)
+        // …and the FILTER (2026-08-28): the count alone collided across filters — twelve runs and
+        // twelve lifts share a token, and the second filter rendered the first one's sections.
+        h.combine(historyFilter.rawValue)
         let token = h.finalize()
         if monthMemo.token == token { return monthMemo.groups }
         let sorted = source.sorted { $0.startedAt > $1.startedAt }
@@ -1345,31 +1347,10 @@ struct ProgressScreen: View {
 
     private func workoutFeedRow(_ w: Workout) -> some View {
         NavigationLink { WorkoutDetailView(workout: w) } label: {
-            HStack(spacing: Theme.Space.md) {
-                feedThumb(w)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: Theme.Space.xs) {
-                        Text(feedTitle(w)).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink).lineLimit(1)
-                        Spacer(minLength: Theme.Space.xs)
-                        if feedIsPR(w) {
-                            Text("PR").font(.rounded(9, weight: .bold)).tracking(0.4).foregroundStyle(Theme.ink)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Capsule().fill(IridescentMaterial()).opacity(0.85))
-                        }
-                    }
-                    Text(feedSubtitle(w)).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    HStack(spacing: Theme.Space.md) {
-                        ForEach(feedStats(w), id: \.self) { s in
-                            Text(s).font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
-                        }
-                    }
-                    .padding(.top, 3)
-                }
-            }
-            .padding(.vertical, Theme.Space.sm)
-            .contentShape(Rectangle())
+            HistoryRow(title: feedTitle(w), subtitle: feedSubtitle(w), stats: feedStats(w),
+                       isPR: feedIsPR(w), thumb: AnyView(feedThumb(w)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableScaleStyle(scale: 0.99))
     }
 
     private func feedThumb(_ w: Workout) -> some View { HistoryFeedThumb(workout: w) }

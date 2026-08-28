@@ -200,7 +200,7 @@ struct StrengthSaveView: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// The 1–10 effort scale, identical to the timed editor's (unified 2026-08-14).

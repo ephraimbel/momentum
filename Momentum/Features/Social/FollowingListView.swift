@@ -107,8 +107,12 @@ struct FollowingListView: View {
                 HStack(spacing: Theme.Space.sm) {
                     // Presets and monograms, not the synthetic face assets — the same "no stock
                     // photos in a list" call the athlete search follows (2026-07-15).
+                    // imageName FIRST: a face-wearing athlete must look the same here as in the
+                    // feed and on their profile — passing only the preset made one person read as
+                    // two different people across surfaces (2026-08-25).
                     AvatarView(photo: person.athlete?.avatarData,
                                name: person.displayName ?? person.handle, size: 42,
+                               imageName: person.athlete?.communityAvatarAsset,
                                preset: person.athlete?.communityPreset)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(person.displayName ?? "@\(person.handle)")
@@ -268,6 +272,7 @@ struct AthleteFollowListView: View {
             Button { selected = person } label: {
                 HStack(spacing: Theme.Space.sm) {
                     AvatarView(photo: person.avatarData, name: person.name, size: 42,
+                               imageName: person.communityAvatarAsset,
                                preset: person.communityPreset)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(person.name)

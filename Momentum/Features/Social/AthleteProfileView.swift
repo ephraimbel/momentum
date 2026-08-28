@@ -13,6 +13,7 @@ struct AthleteProfileView: View {
     var weightUnit: WeightUnit = .default()
 
     @Environment(FollowStore.self) private var follows
+    @Environment(NudgeStore.self) private var nudges
     @Environment(ModerationStore.self) private var moderation
     @Environment(Services.self) private var services
     @Environment(\.dismiss) private var dismiss
@@ -35,31 +36,21 @@ struct AthleteProfileView: View {
         ScrollViewReader { scroll in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.lg) {
-                Group {
-                    identity
-                    if !athlete.bio.isEmpty {
-                        // Centered under the identity block, TikTok-style (owner call 2026-07-30) —
-                        // the whole header is a centered column, so a left-flushed bio read as a bug.
-                        Text(athlete.bio)
-                            .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity, alignment: .center).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.horizontal, Theme.Space.md)
+                // The shared ProfileHero — the same block the athlete's own profile leads with.
+                identity
 
                 // The same two-face layout as the athlete's own profile: their training is the hero.
-                Section {
+                // One child, not a Section: the stack's 24pt spacing between a Section header and
+                // its content read as a gap between the tab strip and the first tile row.
+                VStack(spacing: 0) {
+                    ProfileGridTabBar(tab: $gridTab)
                     switch gridTab {
                     case .grid: postGrid
                     case .highlights: highlightsContent
                     }
-                } header: {
-                    ProfileGridTabBar(tab: $gridTab)
                 }
                 Color.clear.frame(height: 1).id("athlete-face-end")
             }
-            .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.xxl)
         }
         .background(Theme.background)
@@ -87,7 +78,6 @@ struct AthleteProfileView: View {
         }
         #endif
         }
-        .safeAreaInset(edge: .top) { header }
         .navigationDestination(item: $graphFace) { face in
             AthleteFollowListView(athlete: athlete, initialFace: face)
         }
@@ -108,117 +98,99 @@ struct AthleteProfileView: View {
         }
     }
 
-    // MARK: Header — the same quiet chrome as ProfileScreen (back + actions, no duplicate title)
+    // MARK: Hero — the shared ProfileHero (twin of ProfileScreen's)
 
-    private var header: some View {
-        HStack(spacing: Theme.Space.md) {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
-            }
-            .accessibilityLabel("Back")
-            Spacer()
-            Menu {
-                Button { confirmingReport = true } label: { Label("Report", systemImage: "flag") }
-                Button(role: .destructive) {
-                    moderation.block(athlete.handle)
-                    if follows.isFollowing(athlete.handle) { follows.toggle(athlete.handle) }   // also unfollow
-                    Haptics.medium()
-                    dismiss()
-                } label: { Label("Block \(athlete.name)", systemImage: "hand.raised") }
-            } label: {
-                Image(systemName: "ellipsis").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 32, height: 32)
-            }
-            .accessibilityLabel("More")
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.top, Theme.Space.xs).padding(.bottom, Theme.Space.xs)
-        .background(Theme.background)
+    /// Trained in the last 24h — the ring. Derived from their latest post, so it is only ever as
+    /// true as what they actually shared.
+    private var trainedToday: Bool {
+        guard let latest = (gridPosts.isEmpty ? athlete.posts : gridPosts).map(\.date).max() else { return false }
+        return Date().timeIntervalSince(latest) < 86_400
     }
 
-    // MARK: Identity — mirrors ProfileScreen.identity
+    /// Disciplines they actually post, most frequent first — identity, not filters.
+    private var chips: [ProfileHeroStyle.Chip] {
+        let posts = gridPosts.isEmpty ? athlete.posts : gridPosts
+        var counts: [WorkoutType: Int] = [:]
+        for p in posts { counts[p.type, default: 0] += 1 }
+        return counts.sorted { $0.value > $1.value }.prefix(3)
+            .map { .init(id: $0.key.rawValue, text: $0.key.title) }
+    }
 
     private var identity: some View {
-        VStack(spacing: Theme.Space.md) {
-            AvatarView(photo: athlete.avatarData, name: athlete.name, size: 76,
-                       imageName: athlete.communityAvatarAsset, preset: athlete.communityPreset)
-            VStack(spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(athlete.name).font(.display(26, weight: .black)).foregroundStyle(Theme.ink)
-                    // Sample members seal by the same deterministic draw their bylines use, so a
-                    // sealed post never opens an unsealed profile (or vice versa). Real network
-                    // athletes stay unsealed until the server actually knows their entitlement.
-                    if athlete.isSample, CommunityGenerator.isPro(handle: athlete.handle) { proSeal }
-                }
-                HStack(spacing: 6) {
-                    Text("@\(athlete.handle)")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                    if let location = athlete.location {
-                        Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
-                        Label(location, systemImage: "mappin.and.ellipse")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    }
-                }
-            }
-            socialLine
-            statsTrio
-            followButton
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    /// The same quiet "N Followers · M Following" line the athlete's OWN profile leads with,
-    /// in the same position (above the trio) — one identity structure everywhere (owner call
-    /// 2026-07-29), and TAPPABLE like the own profile's (owner ask 2026-07-30): it pushes this
-    /// athlete's Followers|Following lists. Sample athletes carry deterministic sample counts;
-    /// real network athletes show only counts we actually know.
-    private var socialLine: some View {
-        Button { graphFace = .followers } label: {
-            HStack(spacing: 5) {
-                Text("\(followerCount)").font(.rounded(Theme.FontSize.body, weight: .bold))
-                    .monospacedDigit().foregroundStyle(Theme.ink)
-                Text("Followers").font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
-                Circle().fill(Theme.inkTertiary).frame(width: 2.5, height: 2.5)
-                Text("\(followingCount)").font(.rounded(Theme.FontSize.body, weight: .bold))
-                    .monospacedDigit().foregroundStyle(Theme.ink)
-                Text("Following").font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(followerCount) followers, \(followingCount) following")
-        .accessibilityHint("Shows \(athlete.name)'s followers and following")
-    }
-
-    /// Workouts · distance · streak — the athletic ledger in the own profile's exact trio grammar
-    /// (different content, same structure).
-    private var statsTrio: some View {
         let dist = Formatters.wholeDistance(meters: athlete.totalDistanceM, unit: distanceUnit)
-        return HStack(spacing: 0) {
-            trioCell("\(athlete.totalWorkouts)", "Workouts")
-            trioDivider
-            trioCell("\(dist.value)", dist.unit)
-            trioDivider
-            trioCell("\(athlete.dayStreak)", "Streak")
-        }
-        .padding(.horizontal, Theme.Space.xl)
-    }
-
-    private func trioCell(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.display(20, weight: .heavy)).monospacedDigit().foregroundStyle(Theme.ink)
-            Text(label.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
-                .foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var trioDivider: some View {
-        Rectangle().fill(Theme.hairline).frame(width: 0.5, height: 28)
+        let following = follows.isFollowing(athlete.handle)
+        return ProfileHero(
+            ringed: trainedToday,
+            trio: [("\(athlete.totalWorkouts)", "Workouts"), ("\(dist.value)", dist.unit), ("\(athlete.dayStreak)", "Streak")],
+            name: athlete.name,
+            // Sample members seal by the same deterministic draw their bylines use; real network
+            // athletes stay unsealed until the server actually knows their entitlement.
+            isPro: athlete.isSample && CommunityGenerator.isPro(handle: athlete.handle),
+            handle: athlete.handle,
+            location: athlete.location,
+            bio: athlete.bio,
+            followLine: .init(followers: followerCount, following: followingCount) { graphFace = .followers },
+            chips: chips,
+            chrome: {
+                ProfileTopBar(
+                    leading: {
+                        Button { dismiss() } label: {
+                            ProfileHeroStyle.chromeButton("chevron.left", size: 17)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back")
+                    },
+                    center: { EmptyView() },
+                    trailing: {
+                        Menu {
+                            Button { confirmingReport = true } label: { Label("Report", systemImage: "flag") }
+                            Button(role: .destructive) {
+                                moderation.block(athlete.handle)
+                                if follows.isFollowing(athlete.handle) { follows.toggle(athlete.handle) }   // also unfollow
+                                Haptics.medium()
+                                dismiss()
+                            } label: { Label("Block \(athlete.name)", systemImage: "hand.raised") }
+                        } label: {
+                            ProfileHeroStyle.chromeButton("ellipsis")
+                        }
+                        .accessibilityLabel("More")
+                    })
+            },
+            avatar: {
+                AvatarView(photo: athlete.avatarData, name: athlete.name,
+                           size: ProfileHeroStyle.avatarSize,
+                           imageName: athlete.communityAvatarAsset, preset: athlete.communityPreset)
+            },
+            pills: {
+                // Follow is the page's one primary action (filled ink); once following it goes
+                // quiet glass, exactly where "Edit profile" sits on your own page.
+                Button { follows.toggle(athlete.handle); Haptics.light() } label: {
+                    ProfileHeroStyle
+                        .pill(following ? "Following" : "Follow", style: following ? .glass : .ink)
+                }
+                .buttonStyle(PressableScaleStyle(scale: 0.97))
+                .accessibilityLabel(following ? "Following \(athlete.name). Tap to unfollow." : "Follow \(athlete.name)")
+                // Nudge: a mutual with no ring today (they haven't trained) can be nudged once.
+                // Care, not pressure — it never appears on someone who already moved today.
+                if following, !trainedToday, nudges.canNudge(athlete.handle, isSample: athlete.isSample) || nudges.nudgedToday(athlete.handle) {
+                    let sent = nudges.nudgedToday(athlete.handle)
+                    Button { if !sent { nudges.nudge(athlete.handle, isSample: athlete.isSample) } } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: sent ? "checkmark" : "hand.wave.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(sent ? "Nudged" : "Nudge")
+                        }
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                        .foregroundStyle(sent ? Theme.inkTertiary : Theme.ink)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .momentumGlass()
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(PressableScaleStyle(scale: 0.97))
+                    .disabled(sent)
+                    .accessibilityLabel(sent ? "Nudged \(athlete.name) today" : "Nudge \(athlete.name)")
+                }
+            })
     }
 
     /// Sample counts come from the SHARED derivation (`sampleFollowerCount` — the same numbers
@@ -234,41 +206,6 @@ struct AthleteProfileView: View {
 
     private var followingCount: Int {
         athlete.isSample ? athlete.sampleFollowingCount : (remoteCounts?.following ?? 0)
-    }
-
-    /// Sits exactly where "Edit profile" sits on the athlete's own page — the one action pill
-    /// under the identity. Filled ink while unfollowed (it IS the page's action), hairline once
-    /// following (the quiet state, like Edit).
-    private var followButton: some View {
-        let following = follows.isFollowing(athlete.handle)
-        return Button { follows.toggle(athlete.handle); Haptics.light() } label: {
-            Text(following ? "Following" : "Follow")
-                .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                .foregroundStyle(following ? Theme.ink : Theme.background)
-                .padding(.horizontal, Theme.Space.xl)
-                .padding(.vertical, 8)
-                .background {
-                    if following {
-                        Capsule().stroke(Theme.hairline, lineWidth: 1)
-                    } else {
-                        Capsule().fill(Theme.ink)
-                    }
-                }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(PressableScaleStyle(scale: 0.97))
-        .accessibilityLabel(following ? "Following \(athlete.name). Tap to unfollow." : "Follow \(athlete.name)")
-    }
-
-    /// The purple Verified-Pro seal — the SAME mark the athlete's own profile and every feed
-    /// byline use (owner call 2026-07-30; replaces the old iridescent "Momentum" pill, which was
-    /// the pre-redesign badge language). Sized to sit beside the 26pt display name exactly as on
-    /// the own-profile header.
-    private var proSeal: some View {
-        Image(systemName: "checkmark.seal.fill")
-            .font(.system(size: 19, weight: .semibold))
-            .foregroundStyle(Theme.purple)
-            .accessibilityLabel("Verified Pro")
     }
 
     // MARK: Grid — their posts in the SAME edge-to-edge wall the community and own profile use
@@ -498,8 +435,7 @@ struct AthleteProfileView: View {
     }
 
     private var card: some View {
-        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 }
 

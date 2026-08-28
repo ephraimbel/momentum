@@ -16,6 +16,9 @@ final class CardioViewModel {
     /// Optional structured session (warm-up → reps → cool-down) to guide in real time (R1). nil → a
     /// plain free/easy run with just the hero metrics.
     let structured: StructuredWorkout?
+    /// The plan's prescribed pace for a *non-structured* planned run (easy/long). Drives the
+    /// opening line and the drift nudge; structured sessions carry per-step targets instead.
+    let targetPaceSPerKm: Double?
     /// When recording actually began (set in `start()`, i.e. right after the countdown).
     private(set) var startedAt = Date()
 
@@ -78,31 +81,147 @@ final class CardioViewModel {
     /// The athlete's max HR (Tanaka estimate or measured) — used to band live BPM into a zone.
     let maxHR: Int?
     private var hrReadings: [Int] = []
+    /// True once any live BPM has shown this run — drives the honest "--" placeholder when the
+    /// source later goes stale (see `Readout.hrStale`). Nothing observes it directly.
+    @ObservationIgnored private var hrSeen = false
 
-    private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
-    private var lastUnitCount = 0
-    private var lastBoundaryElapsedS: TimeInterval = 0
     private var lastAnnouncedPaused = false
-    private var goalAnnounced = false
 
     // Structured-workout guidance (R1). The tracker is pure; a 1 Hz task advances it and voices the
     // transitions. nil for a plain run.
     private(set) var tracker: StructuredRunTracker?
     private var structuredTask: Task<Void, Never>?
     private var structuredCompleteAnnounced = false
-    private var lastPaceNudgeAt: TimeInterval = 0
-    private var lastEncouragementAt: TimeInterval = 0
-    private var encouragementCount = 0    // cycles the deterministic encouragement lines
     private var lastCountdownSecond = 0   // last whole-second countdown tick fired for the current step
+    private var introTask: Task<Void, Never>?
+
+    // MARK: Coach cue pipeline
+    //
+    // Every coaching line, spoken or shown, goes through `cue(_:priority:)`. The judgement (what
+    // to say, when it may be said) is the pure `LiveRunCoach` + `CoachCueGate` pair, clocked by
+    // the moving-time clock so a whole run replays in a unit test; this class only owns the
+    // wall-clock tasks (the on-screen dwell, the parked milestone), the voice and the haptics.
+    // ONE on-screen line at a time that fades on its own. The coach never stacks.
+    typealias CuePriority = CoachCueGate.Priority
+    private var coach: LiveRunCoach
+    private var gate = CoachCueGate()
+    /// The one line on screen right now (nil once it has faded). Bound by the live screen.
+    private(set) var coachLine: String?
+    private var coachLineTask: Task<Void, Never>?
+    private var pendingCueTask: Task<Void, Never>?
+
+    // MARK: Readout — the live pages' numbers, formatted ONCE per fix
+    //
+    // Everything the stats page and the map peek display, as finished strings. Rebuilt per
+    // accepted fix, on every pause/resume/GPS-loss flip, once a second by the structured tick and
+    // every 2 s by the watchdog (so sensor staleness shows even when fixes stop — a tunnel must
+    // never freeze "HEART RATE 154" on screen) — but PUBLISHED only when something actually
+    // changed, so the pages never format pace, convert units or do Date math inside a SwiftUI
+    // body — and never observe `snapshot` directly (which also carries the whole route).
+    // The clock is the one number NOT here: it ticks on its own TimelineView (`LiveClockText`).
+    struct Readout: Equatable {
+        var distance = "0"            // numeral only, display units
+        var distanceUnit = "mi"
+        var pace = "--:--"            // current pace (speed on a ride)
+        var paceUnit: String? = "/mi"
+        var avgPace = "--:--"
+        var avgPaceUnit: String? = "/mi"
+        var paceLabel = "Pace"        // "Speed" on a ride
+        var bpm: Int?
+        var zone: String?             // "Z2" ("--" while a once-live monitor is stale)
+        /// A monitor WAS live this run but the reading is stale/absent now (strap dropout, Watch
+        /// out of range). The page keeps the row and shows the "--" placeholder — never the last
+        /// number (a reading nobody took), and never a mid-run layout jump from the row unmounting.
+        var hrStale = false
+        var cadence: Int?
+        var gpsWord = "Searching"
+        var gpsLost = false
+        var isPaused = false
+        var pausedWord: String?       // "Paused" / "Auto-paused"
+        var goalProgress = 0.0        // 0…1 toward `goalMeters` (0 without a goal)
+    }
+    private(set) var readout = Readout()
+
+    /// Rebuild the readout from the engine snapshot + sensors; publish only on change.
+    private func refreshReadout() {
+        let r = makeReadout()
+        if r != readout { readout = r }
+    }
+
+    private func makeReadout() -> Readout {
+        var r = Readout()
+        let imperial = distanceUnit.resolved() == .imperial
+        r.distanceUnit = imperial ? "mi" : "km"
+        r.distance = Formatters.distance(meters: distanceM, unit: distanceUnit)
+            .components(separatedBy: " ").first ?? "0"
+        let t = elapsed()
+        let cycling = type.discipline == .cycling
+        let cur = Self.currentPaceCell(smoothedPaceSPerKm: snapshot?.smoothedPaceSPerKm ?? 0,
+                                       gpsLost: gpsLost, cycling: cycling, unit: distanceUnit)
+        let avg = cycling
+            ? Self.split(Formatters.speed(ms: t > 0 ? distanceM / t : 0, unit: distanceUnit))
+            : Self.split(Formatters.pace(secPerKm: distanceM > 0 ? t / (distanceM / 1000) : 0,
+                                         unit: distanceUnit))
+        if cycling { r.paceLabel = "Speed" }
+        r.pace = cur.value; r.paceUnit = cur.unit
+        r.avgPace = avg.value; r.avgPaceUnit = avg.unit
+        r.bpm = bpm
+        r.zone = hrZone
+        // Staleness is the source's call (`HeartRateServing.bpm` goes nil when the reading is no
+        // longer "your heart rate right now") — this only remembers that HR was ever live so the
+        // row can hold its place with a placeholder instead of vanishing.
+        if r.bpm != nil { hrSeen = true }
+        r.hrStale = r.bpm == nil && hrSeen
+        if r.hrStale, maxHR != nil { r.zone = "--" }   // the zone cell goes honest with it
+        r.cadence = type.discipline == .cycling ? nil : cadence
+        r.gpsLost = gpsLost
+        // "Start now" with no fix yet: honest "Searching", never a "Weak" reading nobody took.
+        r.gpsWord = (lastAccuracyM == nil && !gpsLost) ? "Searching"
+            : gpsLost ? "Lost" : gpsStrength > 0.66 ? "Strong" : gpsStrength > 0.33 ? "OK" : "Weak"
+        r.isPaused = isPaused
+        r.pausedWord = isPaused ? (state == .autoPaused ? "Auto-paused" : "Paused") : nil
+        r.goalProgress = goalMeters.map { $0 > 0 ? min(1, distanceM / $0) : 0 } ?? 0
+        return r
+    }
+
+    /// What the CURRENT pace (or speed) cell reads. Pure, so the honesty rule below is testable
+    /// without standing up a recorder.
+    ///
+    /// A GPS outage freezes the engine's smoothed pace at its last value, and current pace is a
+    /// claim about *right now* — so it reads the placeholder rather than a number nobody took (the
+    /// same call as HR's `hrStale` and the "Searching" signal word). On a ride the frozen value is
+    /// worse than stale: `speed(ms: 0)` formats as "0.0", which asserts the athlete has STOPPED.
+    /// AVERAGE pace/speed is deliberately NOT blanked — the distance is real and the clock is real,
+    /// so it honestly degrades through the outage. The unit rides along with the placeholder so the
+    /// row keeps its width (no mid-run reflow when the signal drops), as the HR cell holds its place.
+    nonisolated static func currentPaceCell(smoothedPaceSPerKm: Double, gpsLost: Bool, cycling: Bool,
+                                            unit: DistanceUnit) -> (value: String, unit: String?) {
+        let imperial = unit.resolved() == .imperial
+        let smoothed = gpsLost ? 0 : smoothedPaceSPerKm
+        guard smoothed > 0, smoothed.isFinite else {
+            return cycling ? ("--", imperial ? "mph" : "km/h") : ("--:--", imperial ? "/mi" : "/km")
+        }
+        return cycling ? split(Formatters.speed(ms: 1000 / smoothed, unit: unit))
+                       : split(Formatters.pace(secPerKm: smoothed, unit: unit))
+    }
+
+    /// "5:12 /km" → ("5:12", "/km") so the unit can ride small beside the numeral.
+    nonisolated static func split(_ s: String) -> (value: String, unit: String?) {
+        let parts = s.components(separatedBy: " ")
+        let unit = parts.dropFirst().joined(separator: " ")
+        return (parts.first ?? s, unit.isEmpty ? nil : unit)
+    }
 
     init(type: WorkoutType, container: ModelContainer, distanceUnit: DistanceUnit = .auto,
          goalMeters: Double? = nil, structured: StructuredWorkout? = nil,
+         targetPaceSPerKm: Double? = nil,
          voice: (any VoiceCoachServing)? = nil, motion: (any MotionServing)? = nil,
          heartRate: (any HeartRateServing)? = nil, maxHR: Int? = nil) {
         self.type = type
         self.distanceUnit = distanceUnit
         self.goalMeters = goalMeters
         self.structured = structured
+        self.targetPaceSPerKm = targetPaceSPerKm
         self.voice = voice
         self.motion = motion ?? MotionService()
         self.heartRate = heartRate ?? LiveHeartRateSource()
@@ -112,6 +231,8 @@ final class CardioViewModel {
         self.store = store
         self.engine = GPSTrackingEngine(type: type, sink: store)
         self.tracker = structured.map { StructuredRunTracker(steps: $0.steps) }
+        self.coach = LiveRunCoach(unit: distanceUnit, goalMeters: goalMeters, targetPaceSPerKm: targetPaceSPerKm,
+                                  speaksSplitPace: type.discipline != .cycling)
     }
 
     /// Open the location stream and watch signal quality without recording yet. Fixes report
@@ -148,6 +269,7 @@ final class CardioViewModel {
                 }
                 self.syncPauseClock()
                 self.sampleCadence()
+                self.refreshReadout()
                 self.pushLiveActivityIfDue()
                 self.announceMilestonesIfNeeded()
                 self.announcePauseIfChanged()
@@ -155,21 +277,58 @@ final class CardioViewModel {
         }
     }
 
-    /// Speak each completed km/mi with its split pace, and the goal once (voice coach). Suppressed for
-    /// structured sessions — those get their own per-step rep/recovery cues instead of mile splits.
-    private func announceMilestonesIfNeeded() {
-        guard voice != nil, structured == nil else { return }
-        let count = Int(distanceM / unitMeters)
-        if count > lastUnitCount {
-            lastUnitCount = count
-            let now = elapsed()
-            let splitS = now - lastBoundaryElapsedS
-            lastBoundaryElapsedS = now
-            voice?.announce(CoachingCueBuilder.milestone(unitCount: count, splitSecPerUnit: splitS, unit: distanceUnit))
+    /// Route a coaching line to the screen (one at a time, fading) and the voice coach (Pro).
+    /// Returns false when the line was dropped (an ambient cue inside the spacing window) so the
+    /// caller doesn't burn a cooldown on words nobody heard.
+    @discardableResult
+    func cue(_ text: String, priority: CuePriority) -> Bool {
+        cue(CoachCueGate.Line(text: text, priority: priority))
+    }
+
+    @discardableResult
+    private func cue(_ line: CoachCueGate.Line) -> Bool {
+        let now = elapsed()
+        switch gate.admit(line, at: now) {
+        case .deliver:
+            pendingCueTask?.cancel()
+            deliver(line, at: now)
+            return true
+        case let .park(delayS):
+            // Worth waiting for: say it when the window closes (unless a pause voids it first).
+            pendingCueTask?.cancel()
+            pendingCueTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delayS))
+                guard !Task.isCancelled, let self, !self.isPaused else { return }
+                let t = self.elapsed()
+                if let p = self.gate.takePending(at: t) { self.deliver(p, at: t) }
+            }
+            return true
+        case .drop:
+            return false
         }
-        if let goal = goalMeters, goal > 0, !goalAnnounced, distanceM >= goal {
-            goalAnnounced = true
-            voice?.announce(CoachingCueBuilder.goalReached())
+    }
+
+    private func deliver(_ line: CoachCueGate.Line, at now: TimeInterval) {
+        coach.spoke(line, stepIndex: tracker?.index, at: now)
+        coachLine = line.text
+        voice?.announce(line.text)
+        coachLineTask?.cancel()
+        coachLineTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(CoachCueGate.dwellS))
+            guard !Task.isCancelled, let self, self.coachLine == line.text else { return }
+            self.coachLine = nil
+        }
+    }
+
+    /// Each completed km/mi with its split, plus the goal-run beats (halfway, last unit, goal) and
+    /// the drift nudge on a plan-paced run. Suppressed for structured sessions, which get their own
+    /// per-step cues instead of mile splits.
+    private func announceMilestonesIfNeeded() {
+        guard structured == nil else { return }
+        for line in coach.plannedFix(distanceM: distanceM, elapsedS: elapsed(),
+                                     smoothedPaceSPerKm: snapshot?.smoothedPaceSPerKm ?? 0,
+                                     paused: isPaused, gpsLost: gpsLost) {
+            cue(line)
         }
     }
 
@@ -198,6 +357,7 @@ final class CardioViewModel {
         workoutId = ActiveWorkoutMarker.pendingID
         snapshot = await engine.snapshot()
         armed = true
+        refreshReadout()
         // Light up the lock screen / Dynamic Island for the live run (PRD §23).
         liveActivity.start(title: type.title, symbol: type.systemImage, state: liveState())
         // GPS-lost watchdog: `ingest` can only react to fixes that arrive, so a dropout (tunnel,
@@ -218,25 +378,49 @@ final class CardioViewModel {
                     // bookkeeping stays in sync (a direct update would re-force on the next tick).
                     self.pushLiveActivityIfDue()
                 }
+                // The readout is otherwise rebuilt per accepted fix — so with no fixes (tunnel,
+                // location denied) the sensor numbers would freeze at their entering values:
+                // "HEART RATE 154" for a whole outage after the strap went stale. This slow tick
+                // keeps the panel honest then (HR/zone/cadence reflect staleness; a reading nobody
+                // took is never shown). Gated on the fixes actually having stopped, so a healthy
+                // run's page stays at exactly the fix rate; publishes only on change regardless.
+                if self.lastFixAt.map({ Date().timeIntervalSince($0) > 3 }) ?? true {
+                    self.refreshReadout()
+                }
             }
         }
         // Kick off guided-workout tracking: announce the first step and advance it once a second,
         // independent of GPS-fix cadence so timed recoveries count down while you stand still.
         if let step = tracker?.current {
             Haptics.medium()   // the "go" cue at step one, matching every later transition
-            // The coach's opening line — the day's shape before the first step is called.
-            if let structured { voice?.announce(CoachingCueBuilder.workoutIntro(structured)) }
-            voice?.announce(CoachingCueBuilder.stepStart(step))
+            // The coach's opening line (the day's shape) leads; the first step is called a few
+            // seconds later so the two never stack on screen or in the ear.
+            if let structured { cue(CoachingCueBuilder.workoutIntro(structured), priority: .transition) }
+            introTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                // Same silence-while-paused rule as every other cue path (`plannedFix`,
+                // `structuredTick`, the parked-cue task): a pause inside this 5 s window already
+                // cancelled the task via `syncPauseClock`; the `isPaused` check is the backstop.
+                guard !Task.isCancelled, let self, !self.isPaused, self.tracker?.index == 0 else { return }
+                self.cue(CoachingCueBuilder.stepStart(step), priority: .transition)
+            }
             structuredTask = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self else { break }
                     self.tickStructured()
+                    // The panel's numbers must stay honest between fixes too (a timed recovery
+                    // while standing still, a tunnel, a strap dropout): re-derive the readout every
+                    // tick. Publishes only on change, so a healthy fix-fed run pays nothing extra.
+                    self.refreshReadout()
                     // Step flips must reach the lock screen even between GPS fixes (a timed
                     // recovery while standing still) — the push itself stays throttled.
                     self.pushLiveActivityIfDue()
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
+        } else if let intro = coach.plannedIntro() {
+            // A planned easy/long run: "14 miles today. Hold about 9:40 per mile." up front, once.
+            cue(intro)
         }
     }
 
@@ -252,14 +436,16 @@ final class CardioViewModel {
         if t.advance(distanceM: d, elapsedS: e) {
             tracker = t
             lastCountdownSecond = 0                   // fresh step — re-arm the 3-2-1 countdown
+            coach.stepChanged()
+            introTask?.cancel()                       // the step call supersedes a pending intro tail
             if t.isComplete { announceStructuredComplete() }
             else if let step = t.current {
                 Haptics.medium()
-                voice?.announce(CoachingCueBuilder.stepStart(step))
+                cue(CoachingCueBuilder.stepStart(step), priority: .transition)
             }
             return
         }
-        tracker = t
+        if t != tracker { tracker = t }
         // Don't coach a paused athlete: pace reads are stale and time isn't advancing.
         guard !isPaused else { return }
         // A 3-2-1 haptic countdown as any *timed* step (a rep or a recovery) nears its end, so the
@@ -279,41 +465,27 @@ final class CardioViewModel {
         guard var t = tracker, !t.isComplete else { return }
         t.skip(distanceM: distanceM, elapsedS: structuredElapsed())
         tracker = t
+        lastCountdownSecond = 0
+        coach.stepChanged()
+        introTask?.cancel()
         Haptics.medium()
         if t.isComplete { announceStructuredComplete() }
-        else if let step = t.current { voice?.announce(CoachingCueBuilder.stepStart(step)) }
+        else if let step = t.current { cue(CoachingCueBuilder.stepStart(step), priority: .transition) }
     }
 
     private func announceStructuredComplete() {
         guard !structuredCompleteAnnounced else { return }
         structuredCompleteAnnounced = true
         Haptics.celebration()
-        voice?.announce(CoachingCueBuilder.workoutComplete())
+        cue(CoachingCueBuilder.workoutComplete(), priority: .transition)
     }
 
-    /// A throttled pace nudge inside a work step when you drift outside the target band, plus a far
-    /// sparser word of encouragement when you're holding it. Held off for the first ~10 s of a step
-    /// so the smoothed pace (EMA) has caught up from the previous step's effort — otherwise a rep
-    /// would open with a spurious "pick it up".
+    /// The in-step word (nudge / one "on pace" per step) — the coach decides, this just routes it.
     private func maybeNudgePace(at now: TimeInterval) {
-        guard voice != nil, let t = tracker, now - t.anchorElapsedS > 10 else { return }
-        let a = stepAdherence
-        switch a {
-        case .tooFast, .tooSlow:
-            guard now - lastPaceNudgeAt > 25 else { return }
-            lastPaceNudgeAt = now
-            voice?.announce(CoachingCueBuilder.paceNudge(a))
-        case .onPace:
-            // Encouragement is earned and rare: ~30 s into the step actually holding pace, at most
-            // every 2½ minutes, and never on the heels of a correction — silence stays the norm.
-            guard now - t.anchorElapsedS > 30,
-                  now - lastEncouragementAt > 150,
-                  now - lastPaceNudgeAt > 45 else { return }
-            lastEncouragementAt = now
-            voice?.announce(CoachingCueBuilder.encouragement(encouragementCount))
-            encouragementCount += 1
-        case .noTarget:
-            break
+        guard let t = tracker else { return }
+        if let line = coach.structuredTick(stepIndex: t.index, stepAnchorElapsedS: t.anchorElapsedS,
+                                           adherence: stepAdherence, elapsedS: now, paused: isPaused) {
+            cue(line)
         }
     }
 
@@ -322,6 +494,7 @@ final class CardioViewModel {
         pumpTask?.cancel()
         structuredTask?.cancel()
         watchdogTask?.cancel()
+        cancelCoachTasks()
         location.stop()
         motion.stop()
         heartRate.stop()
@@ -353,8 +526,8 @@ final class CardioViewModel {
         return "Z\(HeartRateZones.zone(forBpm: b, maxHR: m))"
     }
 
-    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); pushLiveActivityIfDue(); announcePauseIfChanged() }
-    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); pushLiveActivityIfDue(); announcePauseIfChanged() }
+    func pause() async { await engine.pause(); snapshot = await engine.snapshot(); syncPauseClock(); refreshReadout(); pushLiveActivityIfDue(); announcePauseIfChanged() }
+    func resume() async { await engine.resume(); snapshot = await engine.snapshot(); syncPauseClock(); refreshReadout(); pushLiveActivityIfDue(); announcePauseIfChanged() }
 
     /// Push to the Live Activity at most every `liveActivityUpdateS`, or immediately when the
     /// paused state flips or a guided step transitions (those changes must never wait out the
@@ -397,7 +570,17 @@ final class CardioViewModel {
     /// clock (any pause, manual or auto) and a manual-only clock for structured guidance.
     private func syncPauseClock() {
         if isPaused {
-            if pauseStartedAt == nil { pauseStartedAt = Date() }
+            if pauseStartedAt == nil {
+                pauseStartedAt = Date()
+                // A parked milestone must not surface mid-pause, nor dump the instant you resume:
+                // the moment has passed. Ambient nudges re-evaluate themselves on the next fix.
+                pendingCueTask?.cancel()
+                // The intro's delayed step call (5 s after GO) follows the same rule: pausing at
+                // the gun drops it — it neither speaks mid-pause nor fires on resume. The step
+                // banner still names the step, and the intro already gave the session's shape.
+                introTask?.cancel()
+                gate.clearPending()
+            }
         } else if let started = pauseStartedAt {
             pausedTotalS += Date().timeIntervalSince(started)
             pauseStartedAt = nil
@@ -411,10 +594,18 @@ final class CardioViewModel {
         }
     }
 
+    private func cancelCoachTasks() {
+        introTask?.cancel()
+        pendingCueTask?.cancel()
+        coachLineTask?.cancel()
+        gate.clearPending()
+    }
+
     func finish() async -> UUID? {
         pumpTask?.cancel()
         structuredTask?.cancel()
         watchdogTask?.cancel()
+        cancelCoachTasks()
         location.stop()
         motion.stop()
         heartRate.stop()
@@ -502,9 +693,21 @@ final class CardioViewModel {
 
     var state: GPSTrackingEngine.State { snapshot?.state ?? .idle }
 
+    /// The route as map coordinates. Maintained incrementally: only points newer than the last
+    /// read are transformed, so the per-fix cost is O(new) rather than O(route) — the old
+    /// whole-route map ran once per fix for the entire session (O(n²) over hours). The cache is
+    /// invisible to Observation; readers still key off `snapshot` / `routePointCount`.
     var coordinates: [CLLocationCoordinate2D] {
-        (snapshot?.route ?? []).map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let route = snapshot?.route ?? []
+        if route.count < coordinateCache.count || route.isEmpty {
+            coordinateCache = route.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        } else if route.count > coordinateCache.count {
+            coordinateCache.append(contentsOf: route[coordinateCache.count...]
+                .map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) })
+        }
+        return coordinateCache
     }
+    @ObservationIgnored private var coordinateCache: [CLLocationCoordinate2D] = []
 
     /// Read THIS when only the count matters (change-detection keys). `coordinates` copies the
     /// whole route into a fresh array per read — keying `onChange` on it re-copied a 90-minute

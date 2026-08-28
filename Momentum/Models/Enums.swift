@@ -153,6 +153,26 @@ enum RunType: String, Codable, Sendable, CaseIterable {
     // progression run that finishes fast. Single-word raw values display cleanly via `.capitalized`.
     case fartlek, hills, strides, progression
 
+    /// The athlete-facing name (2026-08-28, owner call: a plan is a simple thing to follow).
+    /// Coach jargon stays out of the app's mouth — a tempo is a "Steady run", intervals are
+    /// "Repeats". The raw values are storage and never displayed. Library workouts keep their
+    /// own titles; this is what a PLAN calls a session.
+    var planTitle: String {
+        switch self {
+        case .easy: "Easy run"
+        case .long: "Long run"
+        case .tempo: "Steady run"
+        case .intervals: "Repeats"
+        case .recovery: "Recovery run"
+        case .race: "Race day"
+        case .freeRun: "Run"
+        case .fartlek: "Easy run with pick-ups"
+        case .hills: "Hill repeats"
+        case .strides: "Pick-ups"
+        case .progression: "Progression run"
+        }
+    }
+
     /// The quality (hard) sessions — used for recovery scheduling, pace recalibration, and Pace Insights.
     var isQuality: Bool {
         switch self {

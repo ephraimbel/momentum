@@ -123,10 +123,7 @@ struct AddSessionSheet: View {
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
             .padding(Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
         .buttonStyle(.plain)
@@ -199,10 +196,8 @@ struct AddSessionSheet: View {
             }
             .foregroundStyle(on ? .white : Theme.ink)
             .frame(width: 54, height: 66)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.purple : Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline)
-            }
+            .background { if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.purple) } }
+            .modifier(PickRaise(on: on))
             .scaleEffect(on ? 1.04 : 1)
         }
         .buttonStyle(.plain)
@@ -245,10 +240,8 @@ struct AddSessionSheet: View {
             }
             .foregroundStyle(on ? .white : Theme.ink)
             .frame(maxWidth: .infinity).frame(height: 44)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.purple : Theme.surface)
-                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-            }
+            .background { if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.purple) } }
+            .modifier(PickRaise(on: on))
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
         .buttonStyle(.plain)
@@ -425,5 +418,13 @@ struct AddSessionSheet: View {
         }
         Haptics.success()
         onDone()
+    }
+}
+
+/// Picker chips: raised white at rest; the lavender fill carries its own weight when picked.
+private struct PickRaise: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content } else { content.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)) }
     }
 }

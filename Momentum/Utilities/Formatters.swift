@@ -130,6 +130,17 @@ enum Formatters {
             : String(format: "%d:%02d", m, sec)
     }
 
+    /// A SPAN of time rather than a clock reading — "23h 41m", "45m", "12s". `duration` is right
+    /// for one session (h:mm:ss is how a stopwatch reads); a month's total in that form ("23:40:37")
+    /// reads as a time of day, which is what the History summary was doing.
+    static func compactDuration(s: Double) -> String {
+        let total = Int(max(0, s).rounded())
+        let h = total / 3600, m = (total % 3600) / 60
+        if h > 0 { return m > 0 ? "\(h)h \(m)m" : "\(h)h" }
+        if m > 0 { return "\(m)m" }
+        return "\(total)s"
+    }
+
     // MARK: Race countdown — one rule everywhere: days inside two weeks, weeks beyond
     /// "Race day" / "5 days to go" / "12 weeks to go". Every countdown surface (Plan header, race
     /// projection card, reveal) speaks this unit scheme so the same race never reads as "84 days"

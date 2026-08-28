@@ -29,7 +29,11 @@ struct OversizedButton: View {
             .font(.rounded(Theme.FontSize.body + 1, weight: .semibold))
             .frame(maxWidth: .infinity)
             .frame(height: 58)
-            .foregroundStyle(kind == .filled ? .white : Theme.ink)
+            // The label on the ink capsule is `Theme.background`, not `.white`: the capsule is
+            // `Theme.ink`, which is near-white in dark mode — a hard-coded white label vanished
+            // into it (owner report 2026-08-28, "Start run"). Adaptive: white on ink in light,
+            // charcoal on the white capsule in dark — the same token the collapsed Start pill uses.
+            .foregroundStyle(kind == .filled ? Theme.background : Theme.ink)
             .modifier(Backdrop(kind: kind))
             .contentShape(Capsule())
         }

@@ -848,7 +848,7 @@ private struct SessionDisclosureRow: View {
         if session.discipline == .strength {
             return session.strengthTargets.count >= 5 ? "Full body" : "Strength"
         }
-        return session.runType?.rawValue.capitalized ?? "Session"
+        return session.runType?.planTitle ?? "Session"
     }
 
     private var detail: String {

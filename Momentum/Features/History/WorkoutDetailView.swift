@@ -149,10 +149,7 @@ struct WorkoutDetailView: View {
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
             }
             .padding(Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
         .buttonStyle(.plain)

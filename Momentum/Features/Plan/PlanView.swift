@@ -7,6 +7,7 @@ import SwiftData
 /// moves with a one-line note. No red, no guilt.
 struct PlanView: View {
     @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     @Environment(PaywallController.self) private var paywall
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router   // workoutLaunch — the shell-level recorder
@@ -34,7 +35,6 @@ struct PlanView: View {
     /// body pass (the TabView content builder runs eagerly), and a `CLLocationManager` per pass
     /// for a one-shot authorization ask was pure launch cost (perf audit 2026-08-13). Held in
     /// @State so the manager outlives the authorization prompt it raises.
-    @State private var locator: LocationService?
     @State private var showSettings = false
     @State private var showNewPlan = false
     /// "Plan it myself" confirmation — dropping the coach's prescriptions deserves one honest ask.
@@ -270,9 +270,8 @@ struct PlanView: View {
         if t.isStrengthStyle { router.workoutLaunch = .strength(type: t, planned: session) }
         else if t.isTimed { router.workoutLaunch = .timed(type: t) }
         else {
-            let loc = locator ?? LocationService()
-            locator = loc
-            loc.requestAuthorization()
+            // The SHARED service (2026-08-28) — one grant, seen by every surface incl. Today's map.
+            services.location.requestAuthorization()
             router.workoutLaunch = .cardio(type: t, goalMeters: session.targetDistanceM, planned: session, guideRoute: [])
         }
     }
@@ -337,10 +336,7 @@ struct PlanView: View {
                 Spacer(minLength: 0)
             }
             .padding(Theme.Space.md).frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Your week, sequenced. \(insight)")
         }
@@ -549,10 +545,10 @@ struct PlanView: View {
             presentAdd(for: isCurrentWeek ? Date() : weekStart)
         } label: {
             Image(systemName: "plus").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.background)
-                .frame(width: 40, height: 40).background(Circle().fill(Theme.ink))
+                .frame(width: 40, height: 40).raised(Circle(), tone: .ink)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RaisedPressStyle(scale: 0.92))
         .accessibilityLabel("Add session")
     }
 
@@ -659,11 +655,16 @@ struct PlanView: View {
             VStack(spacing: 4) {
                 // Width-capped inside a full-width tap column: short blocks would otherwise
                 // stretch each bar to ~46 pt slabs that read as a loading skeleton, not a chart.
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(selected ? AnyShapeStyle(Theme.purple)
-                                   : AnyShapeStyle(Theme.ink.opacity(isPast ? 0.28 : 0.15)))
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(selected
+                          ? AnyShapeStyle(LinearGradient(colors: [Theme.purple, Theme.purple.opacity(0.65)],
+                                                         startPoint: .top, endPoint: .bottom))
+                          : AnyShapeStyle(LinearGradient(colors: [Theme.ink.opacity(isPast ? 0.30 : 0.16),
+                                                                  Theme.ink.opacity(isPast ? 0.18 : 0.08)],
+                                                         startPoint: .top, endPoint: .bottom)))
                     .frame(maxWidth: 26)
                     .frame(height: h)
+                    .shadow(color: selected ? Theme.purple.opacity(0.35) : .clear, radius: 6, y: 3)
                 // Every bar carries its week number — the one job the chips did that heights
                 // can't. The current calendar week wears the board's own "today" convention (an
                 // ink pill, like the date column below) instead of the chips' floating dot, so
@@ -744,13 +745,16 @@ struct PlanView: View {
                 HStack(spacing: Theme.Space.sm) {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.hairline.opacity(0.7))
+                            Capsule().fill(Theme.ink.opacity(0.07))
                             Capsule()
-                                .fill(done == total ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink))
-                                .frame(width: max(5, geo.size.width * CGFloat(frac)))
+                                .fill(done == total ? AnyShapeStyle(IridescentMaterial())
+                                                    : AnyShapeStyle(LinearGradient(colors: [Theme.purple, Theme.iridescent[0]],
+                                                                                   startPoint: .leading, endPoint: .trailing)))
+                                .frame(width: max(6, geo.size.width * CGFloat(frac)))
+                                .shadow(color: Theme.purple.opacity(done == total ? 0 : 0.35), radius: 4, y: 1)
                         }
                     }
-                    .frame(height: 5)
+                    .frame(height: 6)
                     Text("\(done) of \(total)")
                         .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
                         .foregroundStyle(Theme.inkTertiary)
@@ -984,7 +988,7 @@ struct PlanView: View {
                     Spacer(minLength: 0)
                     Text("Apply").font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.background)
                         .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
-                        .background(Capsule().fill(Theme.ink))
+                        .raised(Capsule(), tone: .ink)
                 }
                 .padding(Theme.Space.md)
                 .background {
@@ -1035,7 +1039,7 @@ struct PlanView: View {
                 Text("Build my next block")
                     .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.background)
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
-                    .background(Capsule().fill(Theme.ink))
+                    .raised(Capsule(), tone: .ink)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Build my next block")
@@ -1083,10 +1087,7 @@ struct PlanView: View {
                 }
             }
         }
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
@@ -1284,7 +1285,7 @@ struct PlanView: View {
         if let wt = session.workoutType, wt != .run, !wt.isStrengthStyle { return wt.title.uppercased() }
         if let rt = session.runType {
             if rt == .race { return "RACE DAY" }        // the season's crown — never "RACE RUN"
-            return rt == .intervals ? "INTERVALS" : "\(rt.rawValue.uppercased()) RUN"
+            return rt.planTitle.uppercased()
         }
         return nil
     }
@@ -1370,7 +1371,7 @@ struct PlanView: View {
                     Text("Build my plan")
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
                         .padding(.horizontal, Theme.Space.xl).padding(.vertical, 14)
-                        .background(Capsule().fill(Theme.ink))
+                        .raised(Capsule(), tone: .ink)
                 }
                 .buttonStyle(.plain)
                 .padding(.top, Theme.Space.sm)
@@ -1427,8 +1428,7 @@ struct PlanView: View {
 
     private var card: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 }

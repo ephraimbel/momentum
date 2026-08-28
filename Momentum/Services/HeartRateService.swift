@@ -79,7 +79,15 @@ final class HeartRateService: HeartRateServing {
     private func startSimulated() {
         simulatedTask = Task { [weak self] in
             var tick = 0
+            let outage = LocationService.isOutage
             while !Task.isCancelled {
+                // `--ui-test-outage`: the strap/Watch goes quiet with the GPS feed. No new
+                // readings land, so the last one ages through the real 60 s staleness gate and
+                // `bpm` goes nil — exercising the live screen's honest "--" placeholder.
+                if outage, tick >= Int(LocationService.outageAtS) {
+                    try? await Task.sleep(for: .seconds(1))
+                    continue
+                }
                 // 96 bpm at the line → ~90 s ramp toward ~158 with a slow ±4 wander.
                 let ramp = min(1.0, Double(tick) / 90)
                 let value = Int((96 + 62 * ramp + 4 * sin(Double(tick) / 23)).rounded())

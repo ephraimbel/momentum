@@ -846,7 +846,7 @@ struct LogActivityView: View {
         case .easy: return "easy run"
         case .recovery: return "recovery run"
         case .freeRun, nil: return "session"
-        case .some(let rt): return "\(rt.rawValue) session"
+        case .some(let rt): return rt.planTitle.lowercased()
         }
     }
 

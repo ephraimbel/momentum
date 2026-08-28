@@ -99,7 +99,7 @@ struct WorkoutPhotoSection: View {
             }
             .foregroundStyle(Theme.ink)
             .frame(maxWidth: .infinity).frame(height: 56)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [5])))
         }
         .buttonStyle(.plain)

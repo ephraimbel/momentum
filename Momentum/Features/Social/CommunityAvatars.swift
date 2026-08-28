@@ -17,13 +17,20 @@ import Foundation
 ///
 /// Real network athletes (Supabase) never come through here — they carry their own `avatarData`.
 enum CommunityAvatars {
-    /// Bundled pool sizes — assets are named `commf-00…` (female-presenting) and `commm-00…`
-    /// (male-presenting) in `Assets.xcassets`. Keep in sync with the imagesets on disk. Every face is
-    /// an **adult** (fetched only from the 26-35/35-50/50+ age buckets, then hand-scanned to pull any
-    /// youthful outliers) — this is an all-adults app, so no child/teen portraits ship. Regenerate
-    /// with `scripts/fetch_adults.sh` + a contiguous re-number if the pool ever changes.
-    static let femaleCount = 164
-    static let maleCount = 155
+    /// Bundled pool: `commreal-m-00…` / `commreal-f-00…` in `Assets.xcassets`. Every face is a
+    /// real photograph the owner supplied, and every one is an ADULT — this is an all-adults app,
+    /// so no child/teen portraits ship. Keep `realMaleCount` / `realFemaleCount` in sync with the
+    /// imagesets on disk.
+    /// Real photographs the owner supplied (2026-08-27), gender-matched by name. Handed out in
+    /// directory order, so the athletes people actually see — the featured eight first — wear a
+    /// real face; everyone behind them gets a curated preset look.
+    ///
+    /// The 319 SYNTHETIC (thispersondoesnotexist) faces were deleted the same day: restored on
+    /// 08-25 to fix an all-monogram community, then judged by the owner to read obviously fake,
+    /// which is worse than an honest graphic. **Do not re-add generated faces** — grow this pool
+    /// with real photographs instead.
+    static let realFemaleCount = 9
+    static let realMaleCount = 14
 
     /// The community first-name universe skews to a fixed pool (CommunityGenerator.firstNames) plus the
     /// eight featured athletes — every one classified here so the face bucket matches the name. A name
@@ -51,18 +58,34 @@ enum CommunityAvatars {
         var faces: [String: String] = [:]
         var presets: [String: AvatarPreset] = [:]
         var f = 0, m = 0
+        // The featured eight lead every surface (the wall's first rows, the seeded follows, the
+        // ring row) — they ALWAYS wear a face (2026-08-25 realism pass): a running-man glyph or a
+        // "T" monogram on the community's most-seen athletes read as placeholder art.
+        let featured = Set(CommunityDirectory.featured().map(\.handle))
         for athlete in CommunityDirectory.all() where athlete.isSample {
-            let roll = stableHash("mix:" + athlete.handle) % 100
+            // The featured eight lead every surface, so they must not ALL wear the same kind of
+            // avatar: all-photo reads like a stock gallery, all-preset reads unfinished. Roughly
+            // half of them are forced into the photo branch and the rest take the normal roll, so
+            // Suggested alternates real photographs with the app's own curated looks — which is
+            // what a real directory looks like (owner call 2026-08-27).
+            let roll = featured.contains(athlete.handle) && stableHash("face:" + athlete.handle) % 100 < 50
+                ? 0 : stableHash("mix:" + athlete.handle) % 100
+            var wearsFace = false
             if roll < 42 {
-                if isFemale(athlete.name), f < femaleCount {
-                    faces[athlete.handle] = String(format: "commf-%02d", f); f += 1; continue
-                }
-                if !isFemale(athlete.name), m < maleCount {
-                    faces[athlete.handle] = String(format: "commm-%02d", m); m += 1; continue
+                if isFemale(athlete.name), f < realFemaleCount {
+                    faces[athlete.handle] = String(format: "commreal-f-%02d", f)
+                    f += 1; wearsFace = true
+                } else if !isFemale(athlete.name), m < realMaleCount {
+                    faces[athlete.handle] = String(format: "commreal-m-%02d", m)
+                    m += 1; wearsFace = true
                 }
                 // Pool spent — fall through to a preset look rather than a monogram.
             }
-            if roll < 78 {
+            // Every face-wearer ALSO carries a preset as a backstop. `AvatarView` prefers the
+            // imageName and only reads the preset when `UIImage(named:)` misses — which is what
+            // silently turned the whole community into monograms when the imagesets were pruned
+            // from the bundle (2026-07-16 → found 2026-08-25). Graceful degradation, by design.
+            if wearsFace || roll < 78 {
                 let h = stableHash("preset:" + athlete.handle)
                 presets[athlete.handle] = weightedPresets[Int(h % UInt64(weightedPresets.count))]
             }

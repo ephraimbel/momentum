@@ -111,6 +111,16 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     /// Realistic's night preset, so Realistic renders as Standard day here regardless, as before.)
     func styleURI(for _: ColorScheme) -> StyleURI { styleURI }
 
+    /// The style a URI-only LIVE surface (the heatmap) should render for this appearance. A
+    /// `StyleURI` can't carry Realistic's night preset, so in dark mode the two DEFAULT styles
+    /// — Realistic and Light — fall back to Dark, the same pairing every other map makes
+    /// (2026-08-28: the History map card was a bright white tile on a dark page). A style the
+    /// athlete deliberately picked always renders as chosen.
+    func uriStyle(for scheme: ColorScheme) -> MapStyleOption {
+        guard scheme == .dark, self == .realistic || self == .standard else { return self }
+        return .dark
+    }
+
     /// True when a baked snapshot of this style comes back DARK or photographic. Overlay ink on a
     /// route card keys off this: the pale basemaps take fixed dark ink, these take white-with-a-halo
     /// (the treatment that survives any luminance). Satellite counts even though imagery varies —

@@ -30,12 +30,7 @@ struct ShareVisibilityRow: View {
                 .foregroundStyle(Theme.ink)
                 .padding(.horizontal, boxed ? Theme.Space.md : 0).padding(.vertical, boxed ? 10 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background {
-                    if boxed { RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface) }
-                }
-                .overlay {
-                    if boxed { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-                }
+                .modifier(BoxedRaise(on: boxed))
                 .contentShape(Rectangle())
             }
             .accessibilityLabel("Workout visibility, \(privacy.label)")
@@ -53,5 +48,12 @@ struct ShareVisibilityRow: View {
         case .friends: "People who follow you see your title, stats, and photos — never your exact start point."
         case .public: "Anyone on Momentum sees your title, stats, and photos — never your exact start point."
         }
+    }
+}
+
+private struct BoxedRaise: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)) } else { content }
     }
 }

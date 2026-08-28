@@ -63,6 +63,8 @@
 	<string>momentum uses the microphone so you can speak instead of typing — a meal, a workout, a question for your coach.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>momentum uses motion data to measure cadence and steps.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>momentum saves the share cards you make to your photo library.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions.</string>
 	<key>NSSupportsLiveActivities</key>

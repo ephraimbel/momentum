@@ -16,7 +16,10 @@ struct StatGrid: View {
     var leading: Bool = false
 
     var body: some View {
-        HStack(spacing: 0) {
+        // Leading strips are content-sized (the feed/pager caption column), so a wide value
+        // ("12,400 lb") used to run straight into the next cell's number. A real gap, not a
+        // hairline alone, is what keeps two numbers from reading as one (2026-08-25).
+        HStack(spacing: leading ? Theme.Space.md : 0) {
             ForEach(Array(cells.enumerated()), id: \.element.id) { index, cell in
                 if index > 0 { divider }
                 VStack(alignment: leading ? .leading : .center, spacing: 3) {

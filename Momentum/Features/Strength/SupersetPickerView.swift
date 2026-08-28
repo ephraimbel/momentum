@@ -75,7 +75,7 @@ struct SupersetPickerView: View {
                                 .foregroundStyle(Theme.inkTertiary)
                         }
                         .padding(Theme.Space.md)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -115,7 +115,7 @@ struct SupersetPickerView: View {
                 .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
                 .foregroundStyle(Theme.inkTertiary)
             VStack(spacing: 0) { content() }
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
     }

@@ -96,6 +96,7 @@ struct StrengthSummaryContent: View {
             CountUpHero(target: volume,
                         format: { Int($0.rounded()).formatted() },
                         label: "Volume (\(weightUnit == .lb ? "lb" : "kg"))",
+                        unit: weightUnit == .lb ? "lb" : "kg",
                         delay: revealDelay)
                 .reveal(revealDelay)
             if let competenceText { EarnedLine(text: competenceText).reveal(revealDelay + 0.14) }
@@ -172,8 +173,7 @@ struct StrengthSummaryContent: View {
             }
             .padding(Theme.Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 
@@ -242,7 +242,7 @@ struct StrengthSummaryContent: View {
                                         .font(.rounded(10, weight: .heavy)).tracking(0.6)
                                         .foregroundStyle(Theme.background)
                                         .padding(.horizontal, 6).padding(.vertical, 2)
-                                        .background(Capsule().fill(Theme.ink))
+                                        .raised(Capsule(), tone: .ink)
                                 }
                             }
                             Text(subtitle)
@@ -281,7 +281,7 @@ struct StrengthSummaryContent: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// The expanded set-by-set story — ordinal, weight × reps, and a bar sized by set volume;

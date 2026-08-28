@@ -109,10 +109,7 @@ struct WorkoutLibrarySheet: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         .accessibilityElement(children: .combine)
         .accessibilityHint("Shows the full workout")
@@ -263,10 +260,7 @@ struct WorkoutLibraryDetail: View {
             }
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func estimateLine(_ workout: StructuredWorkout) -> some View {
@@ -358,10 +352,7 @@ struct WorkoutLibraryDetail: View {
                 }
                 .padding(Theme.Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             }
         }
     }
@@ -434,7 +425,7 @@ struct WorkoutLibraryDetail: View {
                 .font(.rounded(Theme.FontSize.body, weight: .bold))
                 .foregroundStyle(Theme.background)
                 .frame(maxWidth: .infinity).frame(height: 56)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
         }
         .buttonStyle(.plain)
         .disabled(adding)

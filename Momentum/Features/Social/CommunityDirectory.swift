@@ -73,20 +73,20 @@ enum CommunityDirectory {
                             mapStyle: style, baseReactions: reactions, aiRead: ai)
         }
 
-        let maya = CommunityAuthor("mayaruns", "Maya Rivera", "Austin, TX")
-        let theo = CommunityAuthor("coachtheo", "Theo Bennett", nil)
-        let lin = CommunityAuthor("linrides", "Lin Chen", "Portland, OR")
-        let priya = CommunityAuthor("priyalifts", "Priya N.", nil)
-        let marcus = CommunityAuthor("marcusswims", "Marcus Hill", "Miami, FL")
-        let sofia = CommunityAuthor("sofiatrails", "Sofia A.", "Boulder, CO")
-        let devon = CommunityAuthor("devonrows", "Devon K.", nil)
-        let amara = CommunityAuthor("amarawalks", "Amara O.", "Seattle, WA")
+        let maya = CommunityAuthor("sub3maya", "Maya Rivera", "Austin, TX")
+        let theo = CommunityAuthor("bennettbuilt", "Theo Bennett", nil)
+        let lin = CommunityAuthor("chenvelo", "Lin Chen", "Portland, OR")
+        let priya = CommunityAuthor("priya.hybrid", "Priya N.", nil)
+        let marcus = CommunityAuthor("marcush2o", "Marcus Hill", "Miami, FL")
+        let sofia = CommunityAuthor("vertsofia", "Sofia A.", "Boulder, CO")
+        let devon = CommunityAuthor("ergmornings", "Devon K.", nil)
+        let amara = CommunityAuthor("amara_onestep", "Amara O.", "Seattle, WA")
 
         return [
             CommunityAthlete(handle: maya.handle, name: maya.name, location: maya.location,
                 bio: "Marathoner chasing a sub-3. Coffee, then miles.",
                 totalWorkouts: 312, dayStreak: 21, totalDistanceM: 4_120_000, lat: 30.27, lon: -97.74,
-                posts: [post(1, maya, .run, ago(1.5), "Sunrise tempo", "Negative split the whole way. Felt strong.", "6.2 mi · 48:20", mapless: true, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
+                posts: [post(1, maya, .run, ago(1.5), "Sunrise miles", "Negative split the whole way. Felt strong.", city: "Austin, TX", targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")]),
             CommunityAthlete(handle: theo.handle, name: theo.name, location: theo.location,
                 bio: "Strength coach. Big believer in boring consistency.",
                 totalWorkouts: 540, dayStreak: 9, totalDistanceM: 180_000, lat: 40.78, lon: -73.97,

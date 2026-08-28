@@ -119,7 +119,7 @@ struct PostCommentsView: View {
                 .lineLimit(1...4)
                 .focused($composing)
                 .padding(.horizontal, Theme.Space.md).padding(.vertical, 8)
-                .background(Capsule().fill(Theme.surface)).overlay(Capsule().stroke(Theme.hairline))
+                .raised(Capsule())
             Button { send() } label: {
                 Image(systemName: "arrow.up.circle.fill").font(.system(size: 30))
                     .foregroundStyle(canSend ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.inkTertiary))

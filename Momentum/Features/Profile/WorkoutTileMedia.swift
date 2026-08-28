@@ -142,7 +142,10 @@ struct WorkoutTileMedia: View {
     /// resolution.
     private func decodedPhoto() async -> UIImage? {
         guard let data = workout.heroPhotoData else { return nil }
-        return style == .tile ? await ImageDownsampler.thumbnail(data, maxPixel: 480) : UIImage(data: data)
+        switch style {
+        case .tile:      return await ImageDownsampler.thumbnail(data, maxPixel: 480)
+        case .immersive: return UIImage(data: data)
+        }
     }
 
     /// The route walk faults every GPS sample and Kalman-smooths it — done on the MainActor it
@@ -203,11 +206,12 @@ struct WorkoutTileMedia: View {
 
     @ViewBuilder
     private func routeMedia(_ coords: [CLLocationCoordinate2D]) -> some View {
-        if style == .immersive {
+        switch style {
+        case .immersive:
             RouteMapView(coordinates: coords, style: workout.gps?.mapStyle ?? .persisted,
                          interactive: true,
                          cameraHandle: mapCameraHandle)
-        } else {
+        case .tile:
             ZStack {
                 Theme.background
                 RouteSilhouette(coords: coords)

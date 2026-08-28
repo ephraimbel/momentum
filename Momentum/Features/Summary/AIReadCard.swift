@@ -55,10 +55,7 @@ struct AIReadCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityHint("Unlock the AI coach read with Pro")
@@ -98,10 +95,7 @@ struct AIReadCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Coach read")
         .accessibilityValue(read?.narrative ?? "")

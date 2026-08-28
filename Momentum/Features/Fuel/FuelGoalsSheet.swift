@@ -89,8 +89,7 @@ struct FuelGoalsSheet: View {
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
             goalRow(.custom, "Custom", "Your numbers, your call, protein-led. Training burn still adds on top.")
         }
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// The default option wears the plan the athlete actually made: "Fuel for the Austin
@@ -184,8 +183,7 @@ struct FuelGoalsSheet: View {
             .padding(.horizontal, Theme.Space.md)
             .padding(.vertical, 10)
         }
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private var weightLabel: String {
@@ -248,8 +246,7 @@ struct FuelGoalsSheet: View {
             Rectangle().fill(Theme.hairline).frame(height: 0.5)
             numberRow("Sodium", unit: "mg", text: $customSodium)
         }
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func numberRow(_ label: String, unit: String, text: Binding<String>) -> some View {
@@ -340,8 +337,7 @@ struct FuelGoalsSheet: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .animation(Motion.standard, value: r)
     }
 

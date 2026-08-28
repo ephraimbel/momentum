@@ -30,7 +30,7 @@ struct PlateCalculatorView: View {
                         .foregroundStyle(Theme.inkTertiary)
                 }
                 .padding()
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
 
                 if let result {
                     VStack(spacing: Theme.Space.sm) {

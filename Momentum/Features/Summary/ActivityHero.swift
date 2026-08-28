@@ -367,10 +367,10 @@ struct KeyStatsGrid: View {
                         Text(stat.label.uppercased())
                             .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
                             .foregroundStyle(Theme.inkTertiary)
-                        Text(stat.value)
-                            .font(.display(24, weight: .heavy)).monospacedDigit()
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(1).minimumScaleFactor(0.7)
+                        // "7:51 /mi" → 7:51 with /mi raised (the StatNumeral grammar); values
+                        // with no unit ("34:55", "142") stay whole.
+                        StatNumeral(value: Self.split(stat.value).value, unit: Self.split(stat.value).unit,
+                                    size: 24, unitInk: Theme.inkSecondary)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(stat.label), \(stat.value)")
@@ -378,6 +378,13 @@ struct KeyStatsGrid: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "4.45 mi" → ("4.45", "mi"); "7:51 /mi" → ("7:51", "/mi"); "142" → ("142", nil).
+    static func split(_ value: String) -> (value: String, unit: String?) {
+        let parts = value.split(separator: " ", maxSplits: 1).map(String.init)
+        guard parts.count == 2, parts[0].first?.isNumber == true else { return (value, nil) }
+        return (parts[0], parts[1])
     }
 }
 

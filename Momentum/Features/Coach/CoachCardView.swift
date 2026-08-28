@@ -116,7 +116,7 @@ struct CoachCardView: View {
                         .font(.rounded(Theme.FontSize.caption, weight: .bold))
                         .foregroundStyle(Theme.background)
                         .padding(.horizontal, Theme.Space.lg).padding(.vertical, 8)
-                        .background(Capsule().fill(Theme.ink))
+                        .raised(Capsule(), tone: .ink)
                 }
                 .buttonStyle(.plain)
                 Button { Haptics.light(); onDecline() } label: {
@@ -132,10 +132,7 @@ struct CoachCardView: View {
             .padding(.top, 2)
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// A tight/too-short race: the Apply button is honest that it's the athlete's call.
@@ -193,10 +190,7 @@ struct CoachCardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Theme.Space.md)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                    }
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -235,10 +229,7 @@ struct CoachCardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Theme.Space.md)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                    }
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -262,10 +253,7 @@ struct CoachCardView: View {
                     .foregroundStyle(Theme.ink)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, Theme.Space.sm)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                    }
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -289,10 +277,7 @@ struct CoachCardView: View {
                     .foregroundStyle(Theme.ink)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, Theme.Space.sm)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                    }
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -313,10 +298,7 @@ struct CoachCardView: View {
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, Theme.Space.sm)
-                        .background {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                        }
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -354,15 +336,12 @@ struct CoachCardView: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .bold))
                     .foregroundStyle(Theme.background)
                     .padding(.horizontal, Theme.Space.lg).padding(.vertical, 8)
-                    .background(Capsule().fill(Theme.ink))
+                    .raised(Capsule(), tone: .ink)
             }
             .buttonStyle(.plain)
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     /// Tomorrow through the intent bridge's 18-month horizon.
@@ -417,10 +396,7 @@ struct CoachCardView: View {
                 }
             }
         }
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     // MARK: Info cards (explain plan / week recap / race plan — their numbers, the engine's words)
@@ -469,10 +445,7 @@ struct CoachCardView: View {
             .padding(.top, 2)
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private var footerTitle: String {
@@ -524,10 +497,7 @@ struct CoachCardView: View {
             }
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     // MARK: Nav card (deep link — no mutation)
@@ -547,10 +517,7 @@ struct CoachCardView: View {
                     .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
             .padding(Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
         .buttonStyle(.plain)
     }

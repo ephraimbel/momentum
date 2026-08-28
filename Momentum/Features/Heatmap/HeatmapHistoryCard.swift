@@ -7,6 +7,11 @@ struct HeatmapHistoryCard: View {
     let workouts: [Workout]
     var distanceUnit: DistanceUnit = .auto
 
+    /// The athlete's own map style — the card is a preview of `PersonalHeatmapView`, so it must
+    /// render in the same basemap. It used to hardcode `.standard` (Light), which put a bright
+    /// white tile in the middle of a dark-mode page and disagreed with the page it opened.
+    @AppStorage(MapStyleOption.storageKey) private var style: MapStyleOption = .realistic
+    @Environment(\.colorScheme) private var colorScheme
     @State private var result: HeatmapSource.Result?
     /// Session cache: the History branch is destroyed on every segment flip, so an uncached build
     /// re-faulted + re-binned the entire GPS history per visit and the card popped in late,
@@ -55,7 +60,7 @@ struct HeatmapHistoryCard: View {
 
     private func card(_ r: HeatmapSource.Result) -> some View {
         ZStack(alignment: .bottomLeading) {
-            HeatmapMapView(cells: r.cells, style: .standard)
+            HeatmapMapView(cells: r.cells, style: style.uriStyle(for: colorScheme))
                 .frame(height: 200)
                 .allowsHitTesting(false)               // the whole card is the tap target
             LinearGradient(colors: [.clear, .black.opacity(0.5)], startPoint: .center, endPoint: .bottom)

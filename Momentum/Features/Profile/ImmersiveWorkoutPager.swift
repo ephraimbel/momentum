@@ -120,6 +120,12 @@ private struct ImmersiveWorkoutPage: View {
     /// Camera line to the route map (routes only): shows the re-center control once the athlete
     /// pinch-explores away from the fitted overview, and answers its tap.
     @State private var mapCamera = RouteMapCameraHandle()
+    /// Measured height of the top-right control column, so the media counter pill can sit BELOW
+    /// it whatever it holds. It used to be a hard-coded 52 — one 36pt share button plus a gap —
+    /// and when Edit joined the column (2026-08-22) the pencil landed squarely on the "1/3" pill
+    /// on every multi-photo post. The default is the two-button column (36 + 8 + 36) so the very
+    /// first frame is already right; the re-center control growing the column moves the pill down.
+    @State private var controlColumnHeight: CGFloat = 80
 
     /// The cover rule applied to your own posts: the session's visual (live route map, muscle
     /// map) is page one and photos page behind it — flipped by "Photo as cover". In a paged
@@ -138,8 +144,11 @@ private struct ImmersiveWorkoutPage: View {
         ZStack {
             let pages = mediaPages
             if pages.count > 1 {
-                // The counter pill sits BELOW the top-right share control's row.
-                FullBleedMediaPager(pages: pages, pillTopPadding: topInset + 52)
+                // The counter pill sits BELOW the whole top-right control column (measured), with
+                // the same gap the column's buttons keep between themselves.
+                FullBleedMediaPager(pages: pages,
+                                    pillTopPadding: topInset + Theme.Space.sm + controlColumnHeight + Theme.Space.sm)
+                    .animation(.easeOut(duration: 0.25), value: controlColumnHeight)
             } else {
                 WorkoutTileMedia(workout: workout, style: .immersive,
                                  distanceUnit: distanceUnit, mapCameraHandle: mapCamera)
@@ -212,6 +221,7 @@ private struct ImmersiveWorkoutPage: View {
                 }
             }
             .animation(.easeOut(duration: 0.25), value: mapCamera.isExplored)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlColumnHeight = $0 }
         }
     }
 

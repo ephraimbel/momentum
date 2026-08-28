@@ -309,7 +309,7 @@ struct BarcodeScanView: View {
             Text(title)
                 .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
                 .frame(maxWidth: .infinity).frame(height: 50)
-                .background(Capsule().fill(Theme.ink))
+                .raised(Capsule(), tone: .ink)
         }
         .buttonStyle(.plain)
     }

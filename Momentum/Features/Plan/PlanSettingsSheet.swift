@@ -28,6 +28,8 @@ struct PlanSettingsSheet: View {
     @State private var goalHours: Int
     @State private var goalMinutes: Int
     @State private var intensity: PlanIntensity
+    /// The athlete's weekly-mileage ceiling (meters); nil = the coach builds to the goal.
+    @State private var targetWeekly: Double?
     @State private var hybridPriority: HybridPriority
     @State private var strengthSplit: StrengthSplitStyle
     @State private var days: Int
@@ -52,6 +54,7 @@ struct PlanSettingsSheet: View {
         _goalHours = State(initialValue: goalS.map { Int($0) / 3600 } ?? 4)
         _goalMinutes = State(initialValue: goalS.map { (Int($0) % 3600) / 60 } ?? 0)
         _intensity = State(initialValue: profile.planIntensity.flatMap(PlanIntensity.init(rawValue:)) ?? .balanced)
+        _targetWeekly = State(initialValue: profile.targetWeeklyRunVolumeM)
         _hybridPriority = State(initialValue: profile.hybridPriority.flatMap(HybridPriority.init(rawValue:)) ?? .balanced)
         _strengthSplit = State(initialValue: StrengthSplitStyle(rawValue: profile.strengthSplit) ?? .coach)
         _days = State(initialValue: profile.daysPerWeek)
@@ -79,6 +82,7 @@ struct PlanSettingsSheet: View {
             || newRaceDate != profile.raceDate.map { Calendar.current.startOfDay(for: $0) }
             || newGoalFinishTimeS != profile.goalFinishTimeS
             || intensity.rawValue != (profile.planIntensity ?? PlanIntensity.balanced.rawValue)
+            || targetWeekly != profile.targetWeeklyRunVolumeM
             || (hybrid && hybridPriority.rawValue != (profile.hybridPriority ?? HybridPriority.balanced.rawValue))
             || (lifting && strengthSplit.rawValue != profile.strengthSplit)
     }
@@ -108,7 +112,9 @@ struct PlanSettingsSheet: View {
                                       weeksAvailable: weeks,
                                       experience: experience,
                                       injuryProne: !profile.injuryHistory.isEmpty,
-                                      daysPerWeek: days)   // the BUFFERED picker value — verdict updates live
+                                      daysPerWeek: days,   // the BUFFERED picker value — verdict updates live
+                                      intensity: intensity,
+                                      targetWeeklyVolumeM: targetWeekly)
     }
 
     var body: some View {
@@ -120,6 +126,7 @@ struct PlanSettingsSheet: View {
                     if racing { raceSection }
                     if hybrid { balanceSection }
                     intensitySection
+                    if racing { ceilingSection }
                     daysSection
                     sessionSection
                     if lifting { splitSection }
@@ -182,10 +189,7 @@ struct PlanSettingsSheet: View {
                 .textInputAutocapitalization(.words)
                 .submitLabel(.done)
                 .padding(Theme.Space.md)
-                .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                    RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-                }
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 
@@ -377,7 +381,7 @@ struct PlanSettingsSheet: View {
         section("HOW HARD TO PUSH") {
             VStack(spacing: Theme.Space.sm) {
                 ForEach(PlanIntensity.allCases) { level in
-                    SelectionCard(title: level.label, subtitle: level.riskNote ?? level.subtitle,
+                    SelectionCard(title: level.label, subtitle: level.subtitle,
                                   isSelected: intensity == level,
                                   iridescent: level == .podium) {
                         intensity = level
@@ -393,6 +397,49 @@ struct PlanSettingsSheet: View {
                 }
             }
         }
+    }
+
+    // MARK: Mileage ceiling (2026-08-28)
+
+    private var metersPerUnit: Double {
+        (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved() == .metric ? 1_000 : 1609.344
+    }
+    private var unitLabel: String {
+        (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved() == .metric ? "km" : "mi"
+    }
+    /// Ceiling choices in the athlete's unit: the coach's call, then four steps above their
+    /// current weekly volume. The current cap is always offered so an odd value isn't lost.
+    private var ceilingChoices: [Int] {
+        let weekly = Int(((profile.weeklyRunVolumeM ?? 0) / metersPerUnit / 5).rounded()) * 5
+        var out = [0] + [10, 20, 30, 40].map { weekly + $0 }
+        if let t = targetWeekly {
+            let v = Int((t / metersPerUnit).rounded())
+            if !out.contains(v) { out.append(v); out.sort() }
+        }
+        return out
+    }
+    private var ceilingSection: some View {
+        section("BUILD UP TO") {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                segmented(ceilingChoices, current: targetWeekly.map { Int(($0 / metersPerUnit).rounded()) } ?? 0,
+                          label: { $0 == 0 ? "Coach" : "\($0)" }) { v in
+                    targetWeekly = v == 0 ? nil : Double(v) * metersPerUnit
+                }
+                Text(ceilingNote)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+    private var ceilingNote: String {
+        if let need = feasibility?.weeklyCapShortfallM {
+            let n = Int((need / metersPerUnit).rounded())
+            return "Your cap is under this goal's usual \(n) \(unitLabel) a week. We hold at your cap."
+        }
+        return targetWeekly == nil
+            ? "The most you're willing to run in a week (\(unitLabel)). Left to us, the plan builds to what your goal needs."
+            : "The plan will not build past this. Every recovery guardrail still applies below it."
     }
 
     private var daysSection: some View {
@@ -424,8 +471,7 @@ struct PlanSettingsSheet: View {
 
     private var cardBackground: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 
@@ -482,6 +528,7 @@ struct PlanSettingsSheet: View {
         profile.raceDate = newRaceDate
         profile.goalFinishTimeS = newGoalFinishTimeS
         profile.planIntensity = intensity.rawValue
+        profile.targetWeeklyRunVolumeM = targetWeekly
         if hybrid { profile.hybridPriority = hybridPriority.rawValue }
         if lifting { profile.strengthSplit = strengthSplit.rawValue }
         if rebuild {

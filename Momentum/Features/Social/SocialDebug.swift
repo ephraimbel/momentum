@@ -24,7 +24,9 @@ enum SocialDebug {
             return Set(all.enumerated().compactMap { i, h in i.isMultiple(of: 8) ? h : nil })
         }
         guard args.contains("--seed-follows") else { return [] }
-        return ["mayaruns", "coachtheo", "joonw973"]
+        // Featured handles only: generated handles are creative now and can change, and a stale
+        // one here silently seeds zero follows.
+        return ["sub3maya", "bennettbuilt", "chenvelo"]
     }
     #endif
 }

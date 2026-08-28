@@ -153,7 +153,7 @@ struct CardioSummaryContent: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
@@ -301,6 +301,7 @@ struct CardioSummaryContent: View {
             CountUpHero(target: distanceTarget,
                         format: Formatters.steadyNumeral(target: distanceTarget),
                         label: isImperial ? "Miles" : "Kilometers",
+                        unit: isImperial ? "mi" : "km",
                         delay: revealDelay)
                 .reveal(revealDelay)
             if let line = competenceLine {

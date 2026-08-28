@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 import SwiftUI
 import SwiftData
 
@@ -84,7 +85,16 @@ final class Services {
 @MainActor
 protocol LocationServing: AnyObject {
     var isAuthorized: Bool { get }
+    /// The last one-shot fix, if we have one. On the protocol (2026-08-28) so every surface can
+    /// share the SAME service: onboarding's location grant has to reach Today's map, and it can't
+    /// if each screen owns a private `LocationService` whose `lastLocation` nobody else sees.
+    var lastLocation: CLLocationCoordinate2D? { get }
     func requestAuthorization()
+    /// Ask for a single fresh fix — used to open/recenter the home map on the athlete.
+    func refreshLocation()
+    /// The most-recent coordinate the system knows, however stale — for framing non-critical UI
+    /// (map-style previews) around the athlete's area. Never used for tracking (no accuracy gate).
+    var lastCoordinate: CLLocationCoordinate2D? { get }
     /// Live stream of raw fixes; the engine's `GPSProcessor` applies the accept gate.
     func fixes() -> AsyncStream<GPSProcessor.Fix>
     func stop()

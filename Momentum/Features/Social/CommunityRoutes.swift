@@ -59,6 +59,20 @@ enum CommunityRoutes {
         return pool[rng.int(0...(pool.count - 1))]
     }
 
+    /// The bundled loop at `slot` in the city's pool, offset so different athletes start at
+    /// different places in it. Only 3 run loops ship per city, so re-rolling per post clustered
+    /// the SAME shape several times in one athlete's grid (5x "5.7 mi" with identical geometry —
+    /// found 2026-08-26 filming a profile). Rotating instead spreads the pool evenly and makes an
+    /// adjacent repeat impossible, while every polyline stays a bundled street loop point-for-point
+    /// (`everyRouteFollowsBundledStreetGeometry` — the guarantee that no route crosses water).
+    static func loop(city: String, discipline: WorkoutType, slot: Int, offset: Int) -> Loop? {
+        guard let entry = byCity[city] else { return nil }
+        let pool = isRide(discipline) ? entry.ride : entry.run
+        guard !pool.isEmpty else { return nil }
+        let i = ((slot &+ offset) % pool.count + pool.count) % pool.count
+        return pool[i]
+    }
+
     /// The full bundle, exposed for the realism-audit tests: every routed post's polyline must be
     /// one of these street-fetched loops, which is what makes over-water routes impossible.
     static var auditCities: [String] { Array(byCity.keys) }

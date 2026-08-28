@@ -48,10 +48,7 @@ struct SessionPaceReviewCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pace review: \(a.verdict.rawValue). \(a.headline). \(a.detail)")
         }

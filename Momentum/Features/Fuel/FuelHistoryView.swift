@@ -177,8 +177,7 @@ struct FuelHistoryView: View {
                     }
                 }
             }
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface.opacity(0.6)))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 

@@ -92,10 +92,7 @@ struct NotificationsView: View {
                 }
             }
         }
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
@@ -127,7 +124,7 @@ struct NotificationsView: View {
     private func destination(for kind: AppNotification.Kind) -> Destination? {
         switch kind {
         case .coaching: .coach
-        case .reminder, .streak: .today
+        case .reminder, .streak, .nudge: .today
         case .achievement: .progress
         case .system: nil
         }

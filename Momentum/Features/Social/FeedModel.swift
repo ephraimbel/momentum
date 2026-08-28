@@ -142,7 +142,9 @@ enum FeedAssembler {
     static func statLine(_ w: Workout, weightUnit: WeightUnit, distanceUnit: DistanceUnit) -> String {
         if w.type.isStrengthStyle, let s = w.strength {
             let vol = weightUnit == .lb ? s.totalVolumeKg * Formatters.lbPerKg : s.totalVolumeKg
-            return "\(Int(vol)) \(weightUnit == .lb ? "lb" : "kg") · \(s.totalSets) sets · \(Formatters.duration(s: w.durationS))"
+            // `.formatted()`, never raw Int interpolation — every other surface (and every seeded
+            // post) groups thousands, so "15608 lb" on the wall read as a different app.
+            return "\(Int(vol).formatted()) \(weightUnit == .lb ? "lb" : "kg") · \(s.totalSets) sets · \(Formatters.duration(s: w.durationS))"
         } else if let gps = w.gps, gps.distanceM > 0 {
             return "\(Formatters.distance(meters: gps.distanceM, unit: distanceUnit)) · \(Formatters.duration(s: w.durationS))"
         }

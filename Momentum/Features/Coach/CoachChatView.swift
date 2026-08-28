@@ -214,8 +214,7 @@ struct CoachChatView: View {
                     }
                     .padding(.horizontal, Theme.Space.md)
                     .padding(.vertical, 9)
-                    .background(Capsule().fill(Theme.surface))
-                    .overlay(Capsule().stroke(Theme.hairline))
+                    .raised(Capsule())
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -380,7 +379,7 @@ struct CoachChatView: View {
                         .foregroundStyle(Theme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(Theme.Space.md)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                         .contextMenu { copyButton(msg.text) }
                     if let vm, let payload = msg.card {
                         CoachCardView(
@@ -412,7 +411,7 @@ struct CoachChatView: View {
                     .foregroundStyle(Theme.background)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(Theme.Space.md)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
                     .contextMenu { copyButton(msg.text) }
             }
         }
@@ -429,7 +428,7 @@ struct CoachChatView: View {
             BrandMark(size: 26)
             TypingDots()
                 .padding(Theme.Space.md)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             Spacer(minLength: Theme.Space.xl)
         }
     }

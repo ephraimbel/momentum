@@ -47,7 +47,7 @@ struct RacePredictionCard: View {
                 }
             }
             .padding(Theme.Space.md).frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(IridescentMaterial().opacity(0.5), lineWidth: 1))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Projected \(label) finish \(Formatters.duration(s: finish))"
@@ -72,8 +72,7 @@ struct PaceInsightCard: View {
             Spacer(minLength: 0)
         }
         .padding(Theme.Space.md).frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(result.headline). \(result.detail)")
     }

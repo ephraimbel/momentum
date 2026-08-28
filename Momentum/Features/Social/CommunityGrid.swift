@@ -184,7 +184,7 @@ private struct FeedTile: View {
 /// decode off-main, and route posts show the instant silhouette then crossfade to the shared
 /// `FeedRouteSnapshots` render (cached, throttled — never a live map engine per cell; that's the
 /// mistake the card feed already made and fixed).
-private struct FeedTileMedia: View {
+struct FeedTileMedia: View {
     let item: FeedItem
     var onInkContext: ((InkContext) -> Void)? = nil
     /// Mapped ONCE at view creation. `item.routeCoordinates` walks every point per call, and the

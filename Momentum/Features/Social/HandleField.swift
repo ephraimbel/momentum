@@ -37,14 +37,9 @@ struct HandleField: View {
                     .accessibilityLabel("Handle")
                 statusIcon
             }
-            .padding(.horizontal, boxed ? Theme.Space.md : 0)
-            .padding(.vertical, boxed ? Theme.Space.md : 12)
-            .background {
-                if boxed { RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface) }
-            }
-            .overlay {
-                if boxed { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-            }
+            .padding(.horizontal, boxed ? 20 : 0)
+            .padding(.vertical, boxed ? 18 : 12)
+            .modifier(BoxedRaise(on: boxed))
             statusLine
         }
         .task(id: handle) { await check() }
@@ -90,8 +85,7 @@ struct HandleField: View {
                                     .font(.rounded(Theme.FontSize.caption, weight: .semibold))
                                     .foregroundStyle(Theme.ink)
                                     .padding(.horizontal, Theme.Space.sm).padding(.vertical, 5)
-                                    .background(Capsule().fill(Theme.surface))
-                                    .overlay(Capsule().stroke(Theme.hairline))
+                                    .raised(Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -128,5 +122,14 @@ struct HandleField: View {
         case .some(false): availability = .taken
         case .none: availability = .unknown
         }
+    }
+}
+
+/// The boxed handle field wears the app's raised white material (glass pass 2026-08-27);
+/// the inline variant stays bare.
+private struct BoxedRaise: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content.raised(RoundedRectangle(cornerRadius: 20, style: .continuous)) } else { content }
     }
 }

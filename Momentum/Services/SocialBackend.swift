@@ -56,6 +56,13 @@ protocol SocialBackending: AnyObject {
     /// so the display is always `fetched + (locally following ? 1 : 0)` and a tap moves the
     /// number instantly and exactly, acknowledged or not. nil = unknown (offline/dark), never 0.
     func followCounts(of handle: String) async -> (followers: Int, following: Int)?
+    // Nudges (2026-08-25) — see NudgeStore. All three are guest/offline-safe: false / nil.
+    /// Send a nudge; true only when the server took a NEW row (mutuals only, one per day).
+    func nudge(handle: String) async -> Bool
+    /// Unseen nudges for the viewer, marked seen server-side in the same call.
+    func pullNudges() async -> [NudgeHit]?
+    /// Handles that follow the viewer back — whom they may nudge.
+    func mutualHandles() async -> Set<String>?
     func setReaction(postID: UUID, reacted: Bool) async
     func pushComment(_ comment: Comment) async
     func deleteComment(id: UUID) async
@@ -181,6 +188,9 @@ class StubSocialBackend: SocialBackending {
     func pullFollowers() async -> [AthleteHit]? { nil }
     func followCounts() async -> (followers: Int, following: Int)? { nil }
     func followCounts(of handle: String) async -> (followers: Int, following: Int)? { nil }
+    func nudge(handle: String) async -> Bool { false }
+    func pullNudges() async -> [NudgeHit]? { nil }
+    func mutualHandles() async -> Set<String>? { nil }
     func setReaction(postID: UUID, reacted: Bool) async {}
     func pushComment(_ comment: Comment) async {}
     func deleteComment(id: UUID) async {}
@@ -474,6 +484,34 @@ final class SupabaseSocialBackend: SocialBackending {
             }
             return true
         } catch { return false }
+    }
+
+    // MARK: Nudges
+
+    func nudge(handle: String) async -> Bool {
+        guard let client, await session() != nil else { return false }
+        struct Params: Encodable { let _handle: String }
+        do {
+            let ok: Bool = try await client.rpc("nudge", params: Params(_handle: handle)).execute().value
+            return ok
+        } catch { return false }
+    }
+
+    func pullNudges() async -> [NudgeHit]? {
+        guard let client, await session() != nil else { return nil }
+        struct Row: Decodable { let id: UUID; let from_handle: String; let from_name: String; let created_at: Date }
+        do {
+            let rows: [Row] = try await client.rpc("pull_nudges").execute().value
+            return rows.map { NudgeHit(id: $0.id, fromHandle: $0.from_handle, fromName: $0.from_name, createdAt: $0.created_at) }
+        } catch { return nil }
+    }
+
+    func mutualHandles() async -> Set<String>? {
+        guard let client, await session() != nil else { return nil }
+        do {
+            let rows: [String] = try await client.rpc("mutual_handles").execute().value
+            return Set(rows.filter { !$0.isEmpty })
+        } catch { return nil }
     }
 
     func pullFollowing() async -> Set<String>? {
