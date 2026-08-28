@@ -452,6 +452,11 @@ struct HealthSheetMock: View {
 struct OnboardingCTA: View {
     let title: String
     var isEnabled = true
+    /// The beat is waiting on something the athlete can't see — a permission round-trip, a
+    /// HealthKit read. Shows a spinner in place of the label and refuses further taps, so the
+    /// button never sits there looking dead while work is genuinely in flight (owner ask
+    /// 2026-08-28: onboarding must never feel stuck). Same treatment the auth CTA uses.
+    var inFlight = false
     let action: () -> Void
 
     var body: some View {
@@ -459,16 +464,21 @@ struct OnboardingCTA: View {
             Haptics.medium()   // the primary step has weight; picks are selection ticks, back is light
             action()
         } label: {
-            Text(title)
-                .font(.rounded(19, weight: .semibold))
-                .frame(maxWidth: .infinity).frame(height: 62)
-                .foregroundStyle(Theme.background)
-                .raised(Capsule(), tone: .ink)
-                .contentShape(Capsule())
+            ZStack {
+                Text(title)
+                    .font(.rounded(19, weight: .semibold))
+                    .opacity(inFlight ? 0 : 1)
+                if inFlight { ProgressView().tint(Theme.background) }
+            }
+            .frame(maxWidth: .infinity).frame(height: 62)
+            .foregroundStyle(Theme.background)
+            .raised(Capsule(), tone: .ink)
+            .contentShape(Capsule())
         }
         .buttonStyle(RaisedPressStyle())
         .opacity(isEnabled ? 1 : 0.35)
-        .disabled(!isEnabled)
+        .disabled(!isEnabled || inFlight)
+        .animation(.easeOut(duration: 0.15), value: inFlight)
     }
 }
 

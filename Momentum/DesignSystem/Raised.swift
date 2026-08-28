@@ -99,6 +99,55 @@ struct RaisedSurface: ViewModifier {
     }
 }
 
+// MARK: - Sunken wells (the inverse)
+
+/// The material turned inside out, for things you type INTO rather than press: a well cut into
+/// the surface. Every cue from `RaisedSurface` is inverted — the fill darkens toward the TOP
+/// instead of the bottom, the rim shades along the top edge and catches light along the bottom,
+/// an inner shadow falls from the top lip, and there is no drop shadow at all, because a recess
+/// sits in the page rather than on it.
+///
+/// This exists because the auth fields wore `.raised(...)`, the same material as the buttons
+/// beside them, so a text field looked like something to tap rather than something to fill
+/// (owner call 2026-08-28). Depth is the affordance: raised = act, sunken = enter.
+struct SunkenSurface: ViewModifier {
+    let shape: RaisedShape
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let dark = scheme == .dark
+        // Darker at the top: a recess catches less light where the lip overhangs it.
+        let fill: LinearGradient = dark
+            ? LinearGradient(colors: [Color(hex: "201F1D"), Color(hex: "2A2926")], startPoint: .top, endPoint: .bottom)
+            : LinearGradient(colors: [Color(hex: "ECECEF"), Color(hex: "F6F6F8")], startPoint: .top, endPoint: .bottom)
+        return content
+            .background {
+                shape.any
+                    .fill(fill
+                        // The lip's shadow falling INTO the well, then the light pooling on the
+                        // floor at the bottom. Both inner: an outer shadow would lift it back out.
+                        .shadow(.inner(color: .black.opacity(dark ? 0.55 : 0.13), radius: 3, y: 2))
+                        .shadow(.inner(color: .white.opacity(dark ? 0.05 : 0.85), radius: 2, y: -1.5)))
+            }
+            // `strokeBorder` insets the line, so the rim sits INSIDE the well rather than
+            // straddling its edge — and it needs the concrete shape, since `AnyShape` isn't
+            // insettable. Same switch the raised rim uses, for the same reason.
+            .overlay { rim(dark: dark) }
+    }
+
+    /// Shade along the TOP edge, light along the bottom — the exact inverse of the raised rim.
+    @ViewBuilder private func rim(dark: Bool) -> some View {
+        let style = LinearGradient(colors: dark ? [.black.opacity(0.45), .white.opacity(0.07)]
+                                                : [.black.opacity(0.09), .white.opacity(0.9)],
+                                   startPoint: .top, endPoint: .bottom)
+        switch shape {
+        case .rounded(let r): RoundedRectangle(cornerRadius: r, style: .continuous).strokeBorder(style, lineWidth: 1)
+        case .capsule: Capsule().strokeBorder(style, lineWidth: 1)
+        case .circle: Circle().strokeBorder(style, lineWidth: 1)
+        }
+    }
+}
+
 extension View {
     func raised(_ shape: RaisedShape, tone: RaisedSurface.Tone = .white, selected: Bool = false) -> some View {
         modifier(RaisedSurface(shape: shape, tone: tone, selected: selected))
@@ -114,6 +163,10 @@ extension View {
     func raised(_ shape: Circle, tone: RaisedSurface.Tone = .white, selected: Bool = false) -> some View {
         raised(RaisedShape.circle, tone: tone, selected: selected)
     }
+
+    /// A well cut into the surface — for fields you type into. See `SunkenSurface`.
+    func sunken(_ shape: RaisedShape) -> some View { modifier(SunkenSurface(shape: shape)) }
+    func sunken(_ shape: RoundedRectangle) -> some View { modifier(SunkenSurface(shape: .rounded(OnboardingStyle.cardRadius))) }
 }
 
 /// Press feel for raised things: they sink a hair and lose a touch of light, like a real key.

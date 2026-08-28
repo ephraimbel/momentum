@@ -779,7 +779,11 @@ struct OnboardingFlow: View {
                 .bottomFade(from: 0.45)
                 .reveal(0.16)
             Spacer(minLength: 0)
-            OnboardingCTA(title: "Continue") {
+            // `inFlight` is the same latch that blocks the double tap: after the system sheet is
+            // answered there are still two HealthKit reads before the step advances, and on a
+            // device with real Health data that wait is not instant. Without the spinner the
+            // athlete taps Continue, dismisses iOS's sheet, and then watches a dead button.
+            OnboardingCTA(title: "Continue", inFlight: healthRequestInFlight) {
                 // One-shot: when permission is already determined the awaits return instantly
                 // with no system sheet to swallow taps, and a double-tap advanced two steps.
                 guard !healthRequestInFlight else { return }
@@ -1428,7 +1432,9 @@ struct OnboardingFlow: View {
                 .reveal(0.16)
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.xs) {
-                OnboardingCTA(title: "Turn on reminders") {
+                // Same reasoning as the Health beat: the notification prompt is a system
+                // round-trip the athlete can't see into.
+                OnboardingCTA(title: "Turn on reminders", inFlight: remindersAdvanced) {
                     // One-shot — a fast double-tap called goNext() twice and skipped a step.
                     guard !remindersAdvanced else { return }
                     remindersAdvanced = true

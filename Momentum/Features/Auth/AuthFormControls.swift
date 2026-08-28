@@ -21,10 +21,11 @@ extension View {
             .foregroundStyle(Theme.ink)
             .frame(height: 56)
             .padding(.horizontal, 20)
-            // The raised white field (glass pass 2026-08-27) — the same material as every
-            // onboarding card, so the account page reads as the flow's last step, not a form
-            // from another app. Focus = the lavender ring, the app's "happening now" accent.
-            .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
+            // A SUNKEN well, not the raised card material (owner call 2026-08-28). The fields
+            // used to wear the same surface as the buttons beside them, so a thing you type into
+            // looked like a thing you press. Depth is the affordance: raised = act, sunken = enter.
+            // Focus = the lavender ring, the app's "happening now" accent.
+            .sunken(.rounded(OnboardingStyle.cardRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
                     .strokeBorder(Theme.purple, lineWidth: 1.5)
