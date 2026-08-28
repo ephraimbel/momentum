@@ -125,6 +125,9 @@ final class CoachChatUITests: XCTestCase {
         app.launchArguments = ["--seed-demo"]
         app.launch()
 
+        // The coach button lives behind the corner "More" disc (2026-08-27) — open the fan first.
+        let more = app.buttons["More"].firstMatch
+        if more.waitForExistence(timeout: 12) { more.tap() }
         let button = app.buttons["Ask your coach"].firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 12), "the Today header should show the coach button")
         button.tap()

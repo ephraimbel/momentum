@@ -120,6 +120,19 @@ struct SleepReportTests {
 
     // MARK: Debt
 
+    @Test func inBedOnlyNightsAreNotSleepMeasurements() throws {
+        // Phone-only bedtime tracking writes in-bed time and no asleep duration. Headlining that
+        // as "slept 0h 00m" — and banking 8 h of debt a night for it — is the fake number the
+        // specimen state exists to avoid. Such nights are skipped; with nothing else, nil.
+        #expect(build([night(daysAgo: 0, asleepH: 0, inBedS: 8 * 3_600)]) == nil)
+        let r = try #require(build([
+            night(daysAgo: 0, asleepH: 0, inBedS: 8 * 3_600),   // last night: the phone alone
+            night(daysAgo: 1, asleepH: 7.0),                     // the night before: watch worn
+        ]))
+        #expect(r.date == morning(1))                  // headlines the last MEASURED night
+        #expect(abs(r.debt14H - 1.0) < 0.000_1)        // the phone-only night adds no debt
+    }
+
     @Test func debtSumsShortfallsOverPresentNightsOnly() throws {
         // Four present nights in the window: 6.5 (−1.5), 7.0 (−1.0), 8.5 (surplus — clamps to
         // 0, never banks credit), 6.0 (−2.0) → debt = 4.5 h vs the 8 h default need. The ten

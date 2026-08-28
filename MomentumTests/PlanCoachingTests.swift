@@ -1008,8 +1008,9 @@ struct PlanCoachingTests {
         s.targetPaceSPerKm = 300
         let full = PlanCoaching.brief(for: s, distanceUnit: .metric)
         let bare = PlanCoaching.brief(for: s, distanceUnit: .metric, dropLeadingType: true)
-        #expect(full.hasPrefix("Tempo "))
-        #expect(!bare.hasPrefix("Tempo"))
+        // The plain session name, never the raw enum (2026-08-28 vocabulary pass).
+        #expect(full.hasPrefix("Steady run "))
+        #expect(!bare.hasPrefix("Steady run"))
         #expect(bare.contains("6 km"))
         #expect(bare.contains("5:00"))
 

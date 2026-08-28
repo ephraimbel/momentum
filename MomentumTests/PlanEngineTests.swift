@@ -324,18 +324,20 @@ struct PlanEngineTests {
     // MARK: Race-distance tailoring
 
     @Test func raceDistanceShapesLongRun() {
-        func peakLong(_ raceM: Double) -> Double {
+        func peakLong(_ raceM: Double) -> (Double, Double) {
             var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
             inp.raceDistanceM = raceM
             let plan = PlanEngine.generate(profile: inp, catalog: catalog,
                                            startDate: Date(timeIntervalSinceReferenceDate: 0))
-            return plan.weeks.flatMap(\.sessions).filter { $0.runType == .long }.map { $0.targetDistanceM ?? 0 }.max() ?? 0
+            let long = plan.weeks.flatMap(\.sessions).filter { $0.runType == .long }.map { $0.targetDistanceM ?? 0 }.max() ?? 0
+            return (long, plan.weeks.map(\.runVolumeM).max() ?? 0)
         }
-        // A marathon's longest run dwarfs a 5K's — and never exceeds the engine's clamp.
-        let fiveK = peakLong(5_000), marathon = peakLong(42_195)
+        // A marathon's longest run dwarfs a 5K's — and never exceeds the engine's clamp (the long
+        // run tracks the peak WEEK as well as the race, 2026-08-28).
+        let (fiveK, fiveKWeek) = peakLong(5_000), (marathon, _) = peakLong(42_195)
         #expect(marathon > fiveK)
         #expect(marathon <= 32_000 + 1)
-        #expect(fiveK <= PlanEngine.longRunPeak(forRaceM: 5_000) + 1)
+        #expect(fiveK <= PlanEngine.longRunPeak(forRaceM: 5_000, weekVolumeM: fiveKWeek) + 1)
     }
 
     @Test func shortRaceUsesSpeedLongRaceUsesThreshold() {
@@ -503,7 +505,8 @@ struct PlanEngineTests {
     }
 
     @Test func basePhaseIsPyramidal() {
-        // No VO₂ or race-pace sharpening while the foundation is laid — tempo/hills/fartlek only.
+        // Base is steady work only (2026-08-28: a plan's base is easy volume plus steady runs —
+        // nothing fast, nothing complicated). Cruise reps are the same steady dose in pieces.
         var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
         inp.raceDistanceM = 5_000
         inp.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 15,
@@ -514,19 +517,20 @@ struct PlanEngineTests {
         // Threshold cruise reps are pyramidal-compliant (they're the tempo dose in absorbable
         // pieces — the oversized-tempo swap); VO₂/race-pace sharpening stays out of base.
         #expect(baseHard.allSatisfy {
-            [.tempo, .hills, .fartlek].contains($0.runType)
+            $0.runType == .tempo
                 || ($0.runType == .intervals && ($0.intervals?.contains("threshold") ?? false))
         })
     }
 
     @Test func qualityRepsProgressAcrossTheBlock() {
-        // Progressive overload, not rotation: the same menu slot prescribes more reps later in the
-        // block (weeks 0 and 8 both land on the 400s entry of the 4-item build menu).
-        let early = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 5_000, level: .some, p5k: 300)
-        let late = PlanEngine.qualityWorkout(weekIndex: 8, raceDistanceM: 5_000, level: .some, p5k: 300)
-        let earlyReps = StructuredWorkoutBuilder.parseIntervals(early.intervals)?.reps ?? 0
-        let lateReps = StructuredWorkoutBuilder.parseIntervals(late.intervals)?.reps ?? 0
-        #expect(earlyReps == 6 && lateReps == 8)
+        // Progressive overload, not rotation: the same menu slot prescribes more later in the
+        // block (weeks 1 and 9 both land on the repeats entry of the 4-item build menu).
+        let early = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 5_000, level: .some, p5k: 300)
+        let late = PlanEngine.qualityWorkout(weekIndex: 9, raceDistanceM: 5_000, level: .some, p5k: 300)
+        func reps(_ s: String?) -> Int {
+            StructuredWorkoutBuilder.parseIntervals(s)?.reps ?? StructuredWorkoutBuilder.parseTimeReps(s)?.reps ?? 0
+        }
+        #expect(reps(late.intervals) > reps(early.intervals), "\(early.intervals ?? "-") → \(late.intervals ?? "-")")
     }
 
     // MARK: Muscle focus
@@ -600,17 +604,17 @@ struct PlanEngineTests {
     // MARK: Workout variety
 
     @Test func qualityWorkoutRotatesAndCarriesRepPace() {
-        // Two consecutive weeks produce different quality work — no "6×400 @ 5K" every week.
+        // Consecutive weeks alternate the two plain hard days — steady run, then repeats.
         let w0 = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 5000, level: .some, p5k: 300)
         let w1 = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 5000, level: .some, p5k: 300)
         #expect(w0.type != w1.type || w0.intervals != w1.intervals)
-        // "@ 5K" reps override to race pace (the base intervals zone is vVO₂max, faster than 5K).
-        #expect(w0.paceOverride == 300)
-        // The VO₂ week uses the base interval zone — no override needed.
+        #expect(w0.type == .tempo)                       // the steady run leads the rotation
+        #expect(w1.type == .intervals)
+        // Timed repeats run at the interval zone; no override needed.
         #expect(w1.paceOverride == nil)
         #expect(PlanEngine.pace(.intervals, p5k: 300) < 300)
-        // A half-marathon plan emphasizes threshold (Daniels T), not raw speed.
-        let half = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 21_097, level: .some, p5k: 300)
+        // A half-marathon plan's repeats are comfortably hard (Daniels T), not raw speed.
+        let half = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 21_097, level: .some, p5k: 300)
         #expect(half.paceOverride == PlanEngine.pace(.tempo, p5k: 300))
     }
 
@@ -656,12 +660,12 @@ struct PlanEngineTests {
         // No auto-generated plan — clean OR injured — ever forces a hill.
         #expect(!runTypes([]).types.contains(.hills))
         #expect(!runTypes([.shins]).types.contains(.hills))
-        // The flat power fartlek that replaced it says a hill is welcome but optional.
-        #expect(runTypes([]).notes.contains { $0.lowercased().contains("hill") && $0.lowercased().contains("flat") })
+        // …and a plan never even MENTIONS hills (2026-08-28): hill sessions live in the library.
+        #expect(!runTypes([]).notes.contains { $0.lowercased().contains("hill") })
     }
 
     @Test func hamstringInjuryAvoidsMaxSpeedWork() {
-        // A hamstring history drops sprint-fast 400s and strides; threshold cruise reps take over.
+        // A hamstring history drops fast reps; comfortably-hard kilometre repeats take over.
         var inp = inputs(disciplines: [.running], goal: .raceDistance, days: 4)
         inp.raceDistanceM = 5_000
         inp.injuryHistory = [.hamstring]
@@ -706,6 +710,66 @@ struct PlanEngineTests {
         // Running-priority weights the week toward runs; lifting-priority away from them.
         #expect(runDays(.running) > runDays(.lifting))
         #expect(runDays(.balanced) >= runDays(.lifting))
+    }
+
+    /// The full run/lift table, pinned. This exists because the old code derived LIFT days first
+    /// and `.rounded()` is half-away-from-zero, so every tie went to the gym: "Balanced" produced
+    /// 1 run / 2 lift on a 3-day week and was bit-identical to "Lifting comes first" on 3 and 5
+    /// days. The relative-ordering assertions above could not see it (both were 2 at five days).
+    /// Assert the ACTUAL counts, at every day count an athlete can pick.
+    @Test func hybridSplitTableIsPinned() {
+        func split(_ priority: HybridPriority?, days: Int) -> (run: Int, lift: Int) {
+            var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: days)
+            inp.hybridPriority = priority
+            let week = PlanEngine.generate(profile: inp, catalog: catalog,
+                                           startDate: Date(timeIntervalSinceReferenceDate: 0)).weeks[0]
+            return (week.sessions.filter { $0.discipline == .running }.count,
+                    week.sessions.filter { $0.discipline == .strength }.count)
+        }
+        // days:                     2       3       4       5       6       7
+        let expected: [HybridPriority: [(Int, Int)]] = [
+            .running:  [(1, 1), (2, 1), (3, 1), (3, 2), (4, 2), (5, 2)],
+            .balanced: [(1, 1), (2, 1), (2, 2), (3, 2), (3, 3), (4, 3)],
+            .lifting:  [(1, 1), (1, 2), (2, 2), (2, 3), (2, 4), (3, 4)],
+        ]
+        for (priority, rows) in expected {
+            for (i, want) in rows.enumerated() {
+                let days = i + 2
+                let got = split(priority, days: days)
+                #expect(got.run == want.0, "\(priority) \(days)d: run days")
+                #expect(got.lift == want.1, "\(priority) \(days)d: lift days")
+            }
+        }
+        // Balanced means balanced: never fewer runs than lifts, at any day count.
+        for days in 2...7 {
+            let s = split(.balanced, days: days)
+            #expect(s.run >= s.lift, "balanced \(days)d gave \(s.run) run / \(s.lift) lift")
+        }
+        // The three choices must actually differ where it matters, not collapse into each other.
+        for days in [3, 5, 7] {
+            #expect(split(.balanced, days: days) != split(.lifting, days: days))
+        }
+        // Every hybrid week keeps at least one run and at least one lift (2+ days).
+        for days in 2...7 {
+            for p in HybridPriority.allCases {
+                let s = split(p, days: days)
+                #expect(s.run >= 1 && s.lift >= 1, "\(p) \(days)d: \(s)")
+            }
+        }
+    }
+
+    /// A hybrid athlete must never be handed a week whose only run is a lone easy run:
+    /// `cardioSessions` gates the long run at runDays >= 2, so a 1-run week has no long run at all.
+    /// Only "Lifting comes first" on a 3-day week may sit there, and that is an explicit choice.
+    @Test func balancedHybridAlwaysEarnsALongRun() {
+        for days in 3...7 {
+            var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: days)
+            inp.hybridPriority = .balanced
+            let week = PlanEngine.generate(profile: inp, catalog: catalog,
+                                           startDate: Date(timeIntervalSinceReferenceDate: 0)).weeks[0]
+            #expect(week.sessions.filter { $0.discipline == .running }.count >= 2,
+                    "balanced \(days)d week must carry enough runs for a long run")
+        }
     }
 
     @Test func hybridWeekAttachesSequencingRationale() {
@@ -774,7 +838,7 @@ struct PlanEngineTests {
         let after = raceWeek?.sessions.filter { $0.dayOffset >= race.dayOffset && $0.runType != .race } ?? []
         #expect(after.isEmpty)
         let dayBefore = raceWeek?.sessions.filter { $0.dayOffset == race.dayOffset - 1 } ?? []
-        #expect(dayBefore.allSatisfy { $0.runType == .strides && !$0.isHardRun })
+        #expect(dayBefore.allSatisfy { $0.runType == .easy && !$0.isHardRun })
     }
 
     @Test func raceSessionPaceRederivesAtGoalDistance() {
@@ -802,11 +866,12 @@ struct PlanEngineTests {
         for week in plan.weeks where week.phase == .base || week.isTaper {
             #expect(!week.sessions.contains { $0.runType == .long && ($0.intervals?.contains("race pace") ?? false) })
         }
-        // The block grows with the calendar and never exceeds the marathon cap (8 km).
+        // The block grows with the calendar: 8 km in the general build, up to 16 km in the
+        // race-specific block (Pfitzinger's marathon-pace long runs, 2026-08-28).
         let kms = finishLongs.compactMap { s in
             StructuredWorkoutBuilder.parseRaceFinish(s.intervals).map { $0 / 1000 }
         }
-        #expect(kms.allSatisfy { $0 >= 2 && $0 <= 8 })
+        #expect(kms.allSatisfy { $0 >= 2 && $0 <= 16 })
         #expect((kms.last ?? 0) >= (kms.first ?? 0))                  // later blocks are never smaller
 
         // A 5K plan never gets one — race-pace finishes are a long-race tool.
@@ -833,13 +898,15 @@ struct PlanEngineTests {
 
     // MARK: Deload keeps a touch of turnover
 
-    @Test func deloadWeekKeepsStridesNotQuality() {
+    @Test func deloadWeekIsAllEasy() {
         let plan = PlanEngine.generate(profile: inputs(disciplines: [.running], goal: .endurance, days: 4),
                                        catalog: catalog, startDate: Date(timeIntervalSinceReferenceDate: 0))
         let deload = plan.weeks.first { $0.isDeload }
         let sessions = deload?.sessions ?? []
         #expect(!sessions.contains { $0.isHardRun })                  // no quality — the week absorbs
-        #expect(sessions.contains { $0.runType == .strides })         // but the legs stay awake
+        // A plan's down week is simply easy running (2026-08-28: no strides in a plan).
+        #expect(!sessions.isEmpty)
+        #expect(sessions.filter { $0.discipline == .running }.allSatisfy { $0.runType != .strides })
     }
 
     // MARK: Post-race recovery lead-in (the reverse taper)
@@ -1001,8 +1068,9 @@ struct PlanEngineTests {
         let taper = PlanEngine.qualityWorkout(weekIndex: 9, raceDistanceM: 10_000, level: .some,
                                               p5k: 300, phase: .taper)
         #expect(taper.intervals?.contains("race pace") ?? false)
-        // 5K plans keep their speed menu (regression guard on the new band boundary).
-        #expect(buildQuality(5_000).contains { $0.intervals?.contains("@ 5K") ?? false })
+        // 5K plans keep their speed menu (regression guard on the new band boundary). In the
+        // race-specific block the reps are labelled "@ race pace" (for a 5K that IS 5K pace).
+        #expect(buildQuality(5_000).contains { ($0.intervals?.contains("@ 5K") ?? false) || ($0.intervals?.contains("race pace") ?? false) })
     }
 
     // MARK: Long-run caps + plateau wave
@@ -1049,12 +1117,12 @@ struct PlanEngineTests {
         // A 90 km/wk athlete's tempo allocation (~16 km) far exceeds ~25 min at T — the prescription
         // becomes cruise intervals (same dose, absorbable pieces). weekIndex 1 lands the long-race
         // build menu's tempo slot.
-        let big = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 42_195, level: .experienced,
+        let big = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 42_195, level: .experienced,
                                             p5k: 240, weeklyVolumeM: 90_000, qualityDistanceM: 16_000)
         #expect(big.type == .intervals)
         #expect(big.intervals?.contains("threshold") ?? false)
-        // A modest allocation keeps the classic continuous tempo.
-        let small = PlanEngine.qualityWorkout(weekIndex: 1, raceDistanceM: 42_195, level: .experienced,
+        // A modest allocation keeps the classic continuous steady run.
+        let small = PlanEngine.qualityWorkout(weekIndex: 0, raceDistanceM: 42_195, level: .experienced,
                                               p5k: 240, weeklyVolumeM: 40_000, qualityDistanceM: 5_000)
         #expect(small.type == .tempo)
     }

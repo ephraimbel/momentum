@@ -106,4 +106,32 @@ struct LiveSmootherTests {
         #expect(smoother.tail.count == 2)   // same pass-through rule as smooth(_:) under 3 points
         #expect(smoother.allChunks.isEmpty)
     }
+
+    /// `ingest` is generic over RandomAccessCollection and the live path hands it slices — nothing
+    /// guarantees a zero-based `startIndex`. Positions must be read relative to the collection's
+    /// OWN start: with absolute `route[consumed...]` arithmetic, a suffix slice (`coords[5...]`,
+    /// startIndex 5) silently re-reads the wrong elements — or traps. Every other test wraps its
+    /// input in `Array(...)`, so this is the one covering the non-zero-based path.
+    @Test func nonZeroBasedSliceIsReadByPositionNotAbsoluteIndex() {
+        let route = makeRoute(points: 120, seed: 33)
+        let logical = Array(route.dropFirst(5))   // the run the smoother is being fed, as an Array
+
+        var byArray = RouteSmoothing.LiveSmoother()
+        for i in 1...logical.count { _ = byArray.ingest(Array(logical[0..<i])) }
+
+        var bySlice = RouteSmoothing.LiveSmoother()
+        for i in 6...route.count {
+            let slice = route[5..<i]              // ArraySlice, startIndex 5 — NOT zero-based
+            #expect(slice.startIndex == 5)
+            _ = bySlice.ingest(slice)
+        }
+
+        let a = reconstruct(chunks: byArray.allChunks, tail: byArray.tail)
+        let b = reconstruct(chunks: bySlice.allChunks, tail: bySlice.tail)
+        #expect(a.count == b.count)
+        for (p, q) in zip(a, b) {
+            #expect(abs(p.latitude - q.latitude) < 1e-12)
+            #expect(abs(p.longitude - q.longitude) < 1e-12)
+        }
+    }
 }

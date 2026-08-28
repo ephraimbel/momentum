@@ -62,7 +62,51 @@ final class ProfileGridUITests: XCTestCase {
         dump(app, "verify_pager_next")
         app.swipeUp()
         dump(app, "verify_pager_next2")
-        close.tap()
+        // Re-resolve Close AFTER the swipes: the pager renders a Close per page, so `firstMatch`
+        // can bind one that has scrolled off the top (seen at y = -804, "not hittable"). Tap
+        // whichever one is actually on screen.
+        let onScreenClose = app.buttons.matching(NSPredicate(format: "label == %@", "Close"))
+            .allElementsBoundByIndex.first(where: \.isHittable) ?? close
+        onScreenClose.tap()
         XCTAssertTrue(gridTab.waitForExistence(timeout: 5), "Didn't return to the grid after closing.")
+    }
+
+    /// The media counter pill sits BELOW the top-right control column — never under the Edit
+    /// pencil. Owner report 2026-08-27: "1/3" rendered directly beneath the pencil on every
+    /// multi-photo post, because the pill's offset was a hard-coded one-button height from before
+    /// Edit joined the column. The seeded strength post carries two photos, so its pager shows a
+    /// "1/3" pill beside a share + edit column: the exact screen from the report.
+    func testMediaCounterClearsTheControlColumn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--profile-tab", "--profile-open-strength"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
+                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+
+        // The pager renders chrome per page and neighbours may be realized off-screen — judge
+        // only the elements actually on screen.
+        let screen = app.frame
+        func onScreen(_ q: XCUIElementQuery) -> XCUIElement? {
+            q.allElementsBoundByIndex.first { screen.contains($0.frame) && $0.frame.height > 0 }
+        }
+        XCTAssertTrue(app.buttons["Edit activity"].firstMatch.waitForExistence(timeout: 8),
+                      "Immersive pager didn't open on the strength post.")
+        let counterQuery = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH 'Media 1 of'"))
+        XCTAssertTrue(counterQuery.firstMatch.waitForExistence(timeout: 5),
+                      "No media counter — the seeded strength post should carry photos.")
+        guard let edit = onScreen(app.buttons.matching(identifier: "Edit activity")),
+              let pill = onScreen(counterQuery) else {
+            return XCTFail("Edit control or media counter not on screen.")
+        }
+        dump(app, "verify_pager_counter")
+        XCTAssertFalse(edit.frame.intersects(pill.frame),
+                       "Edit pencil overlaps the media counter: \(edit.frame) vs \(pill.frame)")
+        XCTAssertGreaterThanOrEqual(pill.frame.minY, edit.frame.maxY,
+                                    "Counter pill must sit below the whole control column.")
     }
 }

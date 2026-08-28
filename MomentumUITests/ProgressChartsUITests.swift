@@ -12,15 +12,43 @@ final class ProgressChartsUITests: XCTestCase {
     /// a long sectioned report — content low on the page isn't in the accessibility snapshot until
     /// it nears the viewport.
     @discardableResult
+    /// Scrolls until the element is on screen and HITTABLE, not merely present: a lazily built
+    /// page reports `exists` for cards a screen below the fold, and a tap at their coordinate
+    /// then lands on nothing (bit us 2026-08-27 when the This-week strip grew into a tile grid).
     private func swipeUntilFound(_ element: XCUIElement, in app: XCUIApplication, attempts: Int = 12) -> Bool {
-        var found = element.waitForExistence(timeout: 3)
+        var found = element.waitForExistence(timeout: 3) && element.isHittable
         var tries = 0
         while !found && tries < attempts {
             app.swipeUp()
-            found = element.exists
+            found = element.exists && element.isHittable
             tries += 1
         }
+        // Not below us — it may be ABOVE (the walker revisits the distance card after Totals).
+        tries = 0
+        while !found && tries < attempts {
+            app.swipeDown()
+            found = element.exists && element.isHittable
+            tries += 1
+        }
+        if found { settle(element, in: app) }
         return found
+    }
+
+    /// Nudge a found card into the screen's middle band with a small precise drag: `isHittable`
+    /// is true while a card's top rides under the pinned header (or its bottom under the tab
+    /// bar), and the header-strip taps below then land on chrome instead of the card.
+    private func settle(_ element: XCUIElement, in app: XCUIApplication) {
+        let screen = app.frame
+        for _ in 0..<3 {
+            let f = element.frame
+            var dy: CGFloat = 0
+            if f.minY < 200 { dy = 220 - f.minY }                       // drag content DOWN
+            else if f.maxY > screen.maxY - 140 { dy = -(f.maxY - (screen.maxY - 160)) }   // drag UP
+            guard abs(dy) > 8 else { return }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
+            usleep(400_000)
+        }
     }
 
     func testWeeklyChartsShowValues() {
@@ -67,9 +95,14 @@ final class ProgressChartsUITests: XCTestCase {
         // year-long windows, stats, the explainer prose. Tap the DISTANCE card's header strip:
         // the plot area keeps its scrub gesture, so a dead-center tap could pin a bar instead.
         XCTAssertTrue(swipeUntilFound(distance, in: app), "Distance chart lost after scrolling.")
-        distance.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
-        XCTAssertTrue(app.navigationBars["Weekly distance"].waitForExistence(timeout: 6),
-                      "Distance card tap didn't open its detail sheet.")
+        // Retry once, like the steps section below: right after the scroll settles the page can
+        // still be finishing an entrance, and a single tap in that window can land on nothing.
+        var distanceOpened = false
+        for _ in 0..<2 where !distanceOpened {
+            distance.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+            distanceOpened = app.navigationBars["Weekly distance"].waitForExistence(timeout: 8)
+        }
+        XCTAssertTrue(distanceOpened, "Distance card tap didn't open its detail sheet.")
         XCTAssertTrue(app.buttons["past year"].waitForExistence(timeout: 4),
                       "Detail sheet's 1Y range missing.")
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -110,6 +143,34 @@ final class ProgressChartsUITests: XCTestCase {
         stepsShot.lifetime = .keepAlways
         add(stepsShot)
         app.buttons["Done"].tap()
+    }
+
+    /// The Progress page carries the profile's consistency grid (owner call 2026-08-28) in place of
+    /// the eight-week pill calendar, and its tap opens the depth sheet. Pins the ONE VoiceOver
+    /// summary element on Progress and the door it opens.
+    func testProgressConsistencyCardOpensItsDetail() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--progress-tab", "--progress-scroll-calendar"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+
+        let card = app.buttons.matching(NSPredicate(format: "label == %@ AND value CONTAINS[c] %@",
+                                                    "Consistency", "days active")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "Consistency grid not on Progress.")
+        card.tap()
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 8), "Consistency detail sheet didn't open.")
+        XCTAssertTrue(app.staticTexts["BEST STREAK"].waitForExistence(timeout: 4),
+                      "Detail sheet is missing its numbers.")
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "consistency-detail-sheet"; shot.lifetime = .keepAlways; add(shot)
+        done.tap()
     }
 
     /// The consistency heatmap collapses its 112 color-only cells into ONE VoiceOver element with an

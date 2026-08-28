@@ -151,8 +151,19 @@ struct SocialFollowTests {
     @Test func directoryLookupAndIntegrity() {
         let athletes = CommunityDirectory.all()
         #expect(athletes.count >= 5)
-        #expect(CommunityDirectory.athlete(handle: "mayaruns")?.name == "Maya Rivera")
+        // Look the featured athlete up through her CURRENT handle rather than a literal: handles
+        // are seeded content and changed once already (2026-08-27), and the stale literal here
+        // silently started resolving to a GENERATED "Maya Bauer" who had taken the freed handle —
+        // a green-looking assertion about the wrong person.
+        let maya = CommunityDirectory.featured().first { $0.name == "Maya Rivera" }
+        #expect(maya != nil, "featured directory lost Maya Rivera")
+        if let maya {
+            #expect(CommunityDirectory.athlete(handle: maya.handle)?.name == "Maya Rivera")
+        }
         #expect(CommunityDirectory.athlete(handle: "nobody") == nil)
+        // Handles are unique across the whole directory — the generator's collision pass is what
+        // keeps a creative handle from shadowing someone in `byHandle`.
+        #expect(Set(athletes.map(\.handle)).count == athletes.count, "duplicate handles in the directory")
         // Every seeded post belongs to a directory athlete (feed ↔ profile can't diverge).
         let handles = Set(athletes.map(\.handle))
         for post in CommunityFeed.seed() {

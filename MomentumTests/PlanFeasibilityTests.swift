@@ -31,8 +31,11 @@ struct PlanFeasibilityTests {
         #expect(f.weeksNeeded > f.weeksAvailable)
         #expect(!f.options.isEmpty)                                  // honest paths forward
         #expect(f.recommended == .aggressive)                       // if they insist, push — but flagged
-        #expect(f.options.contains { $0.localizedCaseInsensitiveContains("later") })
-        #expect(f.options.contains { $0.localizedCaseInsensitiveContains("half") })
+        // Owner call 2026-08-28: the race has a date and the goal is the goal. We never suggest
+        // moving the race, running a shorter one, or aiming slower; the moves are theirs to make.
+        let banned = ["later", "half", "realistic", "move"]
+        #expect(!f.options.contains { o in banned.contains { o.localizedCaseInsensitiveContains($0) } })
+        #expect(f.options.allSatisfy { $0.count <= 48 })              // short enough to read on a card
     }
 
     // MARK: Frequency honesty (days/week is a real constraint, not a preference)
@@ -105,7 +108,10 @@ struct PlanFeasibilityTests {
         // Achievable time is faster than current (some improvement) but nowhere near the fantasy goal.
         #expect(realistic < 1500)          // faster than the current 25:00
         #expect(realistic > 1080)          // but not the fantasy 18:00
-        #expect(f.options.contains { $0.localizedCaseInsensitiveContains("realistic") })
+        // The number is computed (the coach and the reveal use it); the verdict's moves never
+        // ask the athlete to aim slower (owner call 2026-08-28).
+        #expect(!f.options.isEmpty)
+        #expect(!f.options.contains { $0.localizedCaseInsensitiveContains("realistic") })
     }
 
     @Test func closeButBehindIsTight() {

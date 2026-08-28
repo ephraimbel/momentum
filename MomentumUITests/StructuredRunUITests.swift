@@ -71,6 +71,101 @@ final class StructuredRunUITests: XCTestCase {
                       "After the last step the 'Workout complete' state should show.")
     }
 
+    /// Pausing within 5 s of GO must silence the intro's delayed step call ("Warm up. Ease in."):
+    /// it fires from a wall-clock task armed at GO, and it used to bypass the paused guard every
+    /// other cue path enforces — speaking mid-pause. It must also stay dropped on resume (the
+    /// parked-cue rule: the moment has passed, nothing dumps the instant you resume).
+    ///
+    /// Named to run FIRST in this class (alphabetical): after the interval test the app is killed
+    /// mid-run, and the next launch spends seconds filing the recovered save — enough for the
+    /// Pause tap to slip past the 5 s window and trip the timing skip below.
+    func testAtTheGunPauseSilencesTheIntroStepCall() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--ui-test-route", "--ui-test-structured-run"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+
+        // Absorb any crash-recovery UX left by a previous suite ending the app mid-run — it has
+        // TWO forms (the "Unfinished … found" alert with Save it/Discard, or the recovered save
+        // screen), presents asynchronously, and races the deferred structured launch: left in
+        // place it consumes the timing-critical Pause tap below (a chronic skip in suite order).
+        // File it inside a fixed grace window, then RELAUNCH clean — probing "is the recorder
+        // up?" proves nothing, because the alert can land after the recorder is already showing.
+        var needsRelaunch = false
+        let probe = Date().addingTimeInterval(6)
+        while Date() < probe {
+            let discard = app.alerts.buttons["Discard"]
+            if discard.exists { discard.tap(); needsRelaunch = true; break }
+            let done = app.buttons["Done"].firstMatch
+            if done.exists, app.buttons["Share your run"].exists { done.tap(); needsRelaunch = true; break }
+            usleep(250_000)
+        }
+        if needsRelaunch {
+            app.terminate()
+            app.launch()
+        }
+
+        // Reach tracking, tapping "Start now" along the way if the gate is still showing.
+        let pause = app.buttons["Pause"]
+        let startNow = app.buttons["Start now"]
+        let deadline = Date().addingTimeInterval(30)
+        while !pause.exists && Date() < deadline {
+            if startNow.exists && startNow.isHittable { startNow.tap() }
+            usleep(200_000)
+        }
+        XCTAssertTrue(pause.waitForExistence(timeout: 5), "Tracking never began.")
+
+        // Pause IMMEDIATELY — inside the 5 s window before the intro's step call fires. One brief
+        // settle first: tapping into the pager's mount transition can land on nothing.
+        let trackingSeenAt = Date()
+        usleep(250_000)
+        pause.tap()
+        if !app.buttons["Resume"].waitForExistence(timeout: 3), pause.exists {
+            // On a pristine simulator a first-run permission alert can appear right here; the
+            // interruption monitor dismisses it but CONSUMES the tap. One re-tap covers it (the
+            // timing skip below still guards the window).
+            pause.tap()
+        }
+        XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 4),
+                      "Pause tap was not received.")
+        let pausedWithinS = Date().timeIntervalSince(trackingSeenAt)
+        // Only a pause that landed inside the 5 s intro window exercises the guard; on a machine
+        // too loaded to get there in time, skip rather than mis-assert against a legitimate cue.
+        try XCTSkipIf(pausedWithinS > 4.0,
+                      "Pause landed \(Int(pausedWithinS))s after tracking — outside the 5 s intro window.")
+
+        // Sit paused through the moment the tail would have fired (5 s after GO), plus margin.
+        sleep(6)
+        let stepCall = app.staticTexts["Warm up. Ease in."]
+        XCTAssertFalse(stepCall.exists,
+                       "The intro step call surfaced MID-PAUSE — the 5 s intro tail bypassed the "
+                       + "paused guard every other cue path enforces.")
+        let pausedShot = XCTAttachment(screenshot: app.screenshot())
+        pausedShot.name = "paused-at-gun-no-step-call"
+        pausedShot.lifetime = .keepAlways
+        add(pausedShot)
+
+        // And it stays dropped on resume — parked-cue semantics, never a deferred announcement.
+        app.buttons["Resume"].tap()
+        XCTAssertTrue(pause.waitForExistence(timeout: 4), "Resume tap was not received.")
+        sleep(3)
+        XCTAssertFalse(stepCall.exists,
+                       "The intro step call fired ON RESUME — it must be dropped like a parked cue, "
+                       + "not deferred.")
+
+        // Leave no mid-run marker for whatever launches next: finish the run (marker clears there).
+        app.buttons["Finish"].firstMatch.tap()
+        let sheetFinish = app.sheets.buttons["Finish"]
+        if sheetFinish.waitForExistence(timeout: 6) { sheetFinish.tap() }
+        _ = app.buttons["activityDone"].waitForExistence(timeout: 15)
+    }
+
     // MARK: Helpers
 
     private func currentTitle(_ app: XCUIApplication) -> String {

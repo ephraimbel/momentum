@@ -25,6 +25,9 @@ final class TodayHeaderUITests: XCTestCase {
 
     func testBellOpensNotificationsInbox() {
         let app = launch()
+        // The header controls live behind the corner "More" disc (2026-08-27) — open the fan first.
+        let more = app.buttons["More"].firstMatch
+        if more.waitForExistence(timeout: 10) { more.tap() }
         let bell = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Notifications'")).firstMatch
         XCTAssertTrue(bell.waitForExistence(timeout: 15), "Bell missing from header.")
         bell.tap()
@@ -69,7 +72,13 @@ final class TodayHeaderUITests: XCTestCase {
     }
 
     func testRecenterButtonResponds() {
-        let app = launch()
+        // Pinned to a cardio sport: the map controls live behind `isCardio`, and the bare
+        // `--seed-demo` launch inherits whatever sport TODAY'S PLAN implies. On a strength day
+        // the recenter button correctly does not exist, so this test passed or failed on the
+        // calendar rather than on the code (found 2026-08-26).
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--today-sport", "run"]
+        app.launch()
         let recenter = app.buttons["Recenter on my location"].firstMatch
         XCTAssertTrue(recenter.waitForExistence(timeout: 15), "Recenter button missing.")
         recenter.tap()

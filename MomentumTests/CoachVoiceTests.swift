@@ -159,6 +159,12 @@ struct CoachVoiceTests {
             CoachingCueBuilder.workoutComplete(),
             CoachingCueBuilder.milestone(unitCount: 3, splitSecPerUnit: 525, unit: .imperial),
             CoachingCueBuilder.paceNudge(.tooFast), CoachingCueBuilder.paceNudge(.tooSlow),
+            CoachingCueBuilder.paceDrift(.tooFast), CoachingCueBuilder.paceDrift(.tooSlow),
+            CoachingCueBuilder.halfway(remainingMeters: 11265, unit: .imperial),
+            CoachingCueBuilder.halfway(remainingMeters: 4000, unit: .metric),
+            CoachingCueBuilder.finalStretch(unit: .imperial), CoachingCueBuilder.finalStretch(unit: .metric),
+            CoachingCueBuilder.runIntro(goalMeters: 22530, targetPaceSPerKm: 360, unit: .imperial) ?? "",
+            CoachingCueBuilder.runIntro(goalMeters: 8000, targetPaceSPerKm: nil, unit: .metric) ?? "",
         ]
         cues += (0..<3).map { CoachingCueBuilder.encouragement($0) }
         cues += [

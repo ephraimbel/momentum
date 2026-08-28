@@ -196,8 +196,8 @@ struct WorkoutLibraryTests {
         #expect(headline("long-racefinish") == "Long 16 km · last 5 km @ race pace")
         #expect(headline("runwalk").hasPrefix("Run/walk 2:1"))
         // Continuous sessions keep the distance-and-pace form — there it's the truth.
-        #expect(headline("tempo").hasPrefix("Tempo "))
-        #expect(headline("progression").hasPrefix("Progression "))
+        #expect(headline("tempo").hasPrefix("Steady run "))
+        #expect(headline("progression").hasPrefix("Progression run "))
     }
 
     @Test func grammarRoundTripsExactly() {

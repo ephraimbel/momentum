@@ -38,10 +38,14 @@ final class OnboardingPaywallUITests: XCTestCase {
         cont.tap()
     }
 
+    // The tour's CTA is a STORE fact: "Try now" only while an intro trial exists, "Continue"
+    // otherwise (8a22e8e, trial retired 2026-08-20). The walkers match either so they pin the
+    // hand-off, not the offer. (The primer's own Continue sits under the cover by then.)
+
     /// Walks the two-page flow (2026-08-05) from its device-tour opener to the checkout page.
     /// No system prompts on the way — the tour never asks for permissions; onboarding already did.
     private func advanceToCheckout(_ app: XCUIApplication) {
-        let tryNow = app.buttons["Try now"]
+        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
         XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Didn't land on the paywall's tour page.")
         tryNow.tap()
     }
@@ -55,7 +59,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         launchToPaywall(app)
 
         // The tour page: no X here (user call 2026-08-06) — Restore is the only chrome.
-        let tryNow = app.buttons["Try now"]
+        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
         XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Paywall didn't follow the location primer.")
         XCTAssertFalse(app.buttons["Close"].exists,
                        "The tour page must NOT carry the close button — the X is checkout-only.")
@@ -80,7 +84,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20),
                       "The app didn't come back up after the relaunch.")
-        XCTAssertFalse(app.buttons["Try now"].exists || app.buttons["Retry"].exists,
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch.exists || app.buttons["Retry"].exists,
                        "The wall re-raised after being closed — the X must clear the gate flag.")
     }
 
@@ -152,7 +156,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         XCTAssertTrue(primerContinue.waitForExistence(timeout: 10), "The primer must offer Continue.")
         primerContinue.tap()
 
-        XCTAssertTrue(app.buttons["Try now"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch.waitForExistence(timeout: 10),
                       "Paywall didn't follow the location primer.")
 
         // Force-quit AT the wall, then come back with no onboarding deep link at all.

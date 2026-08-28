@@ -14,10 +14,13 @@ struct MuscleGradingTests {
         #expect(MuscleMapGrading.session.intensity(3, maxVal: 0) == 0)   // degenerate map
     }
 
-    @Test func sessionGradingKeepsTheRichRelativeBurn() {
+    @Test func sessionGradingShowsTheDifference() {
         let light = MuscleMapGrading.session.intensity(1, maxVal: 10)
         let top = MuscleMapGrading.session.intensity(10, maxVal: 10)
-        #expect(light >= 0.62)          // even a light muscle reads richly lit post-session
+        // Contrast (owner call 2026-08-28): a lightly worked muscle must read clearly dimmer
+        // than the session's top muscle — the old 0.62 floor made every body look fully lit.
+        #expect(light < 0.4 && light > 0.2)
+        #expect(MuscleMapGrading.session.intensity(5, maxVal: 10) < 0.6)
         #expect(light < top)
         #expect(top == 1.0)
     }

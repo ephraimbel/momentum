@@ -7,13 +7,13 @@ struct CoachingCueBuilderTests {
     @Test func milestoneSpeaksUnitAndSplitPaceImperial() {
         // 525 s/mi = 8:45 per mile.
         let cue = CoachingCueBuilder.milestone(unitCount: 3, splitSecPerUnit: 525, unit: .imperial)
-        #expect(cue == "Mile 3. 8 minutes 45 seconds per mile.")
+        #expect(cue == "Mile 3. 8:45 per mile.")
     }
 
     @Test func milestoneSpeaksUnitAndSplitPaceMetric() {
         // 302 s/km = 5:02 per km.
         let cue = CoachingCueBuilder.milestone(unitCount: 5, splitSecPerUnit: 302, unit: .metric)
-        #expect(cue == "Kilometer 5. 5 minutes 2 seconds per kilometer.")
+        #expect(cue == "Kilometer 5. 5:02 per kilometer.")
     }
 
     @Test func milestoneOmitsPaceWhenUnknown() {
@@ -66,6 +66,27 @@ struct CoachingCueBuilderTests {
         let surge = WorkoutStep(kind: .work, target: .duration(60), paceSPerKm: 290,
                                 toleranceSPerKm: 25, repIndex: 2, repTotal: 8, title: "Surge")
         #expect(CoachingCueBuilder.stepStart(surge) == "Surge 2 of 8. 1 minute strong. Go.")
+    }
+
+    @Test func plannedRunIntroSaysTheDistanceUpFront() {
+        // "14 miles today. Hold about 9:40 per mile." (22.53 km ≈ 14.0 mi; 360 s/km ≈ 9:39 /mi, "about" snaps to 5 s)
+        #expect(CoachingCueBuilder.runIntro(goalMeters: 14 * Formatters.metersPerMile, targetPaceSPerKm: 360, unit: .imperial)
+                == "14 miles today. Hold about 9:40 per mile.")
+        #expect(CoachingCueBuilder.runIntro(goalMeters: 8000, targetPaceSPerKm: nil, unit: .metric)
+                == "8 kilometers today.")
+        #expect(CoachingCueBuilder.runIntro(goalMeters: 1000, targetPaceSPerKm: nil, unit: .metric)
+                == "1 kilometer today.")
+        #expect(CoachingCueBuilder.runIntro(goalMeters: nil, targetPaceSPerKm: 360, unit: .metric) == nil)
+    }
+
+    @Test func goalRunBeatsReadNaturally() {
+        #expect(CoachingCueBuilder.halfway(remainingMeters: 7 * Formatters.metersPerMile, unit: .imperial)
+                == "Halfway. 7 miles to go.")
+        #expect(CoachingCueBuilder.halfway(remainingMeters: 2500, unit: .metric) == "Halfway. 2.5 kilometers to go.")
+        #expect(CoachingCueBuilder.finalStretch(unit: .imperial) == "Last mile.")
+        #expect(CoachingCueBuilder.finalStretch(unit: .metric) == "Last kilometer.")
+        #expect(CoachingCueBuilder.paceDrift(.onPace).isEmpty)
+        #expect(!CoachingCueBuilder.paceDrift(.tooFast).isEmpty)
     }
 
     @Test func fixedCuesAreConciseAndClaimFree() {

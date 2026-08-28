@@ -282,6 +282,12 @@ struct PlanProfessionalAuditTests {
         // Ramp capped at balanced: week-over-week growth ≤ ~8% (+ rounding slack).
         let m = metrics(plan)
         for i in 1..<m.count where !m[i].isDeload && !m[i].isTaper && !m[i - 1].isDeload && m[i - 1].totalM > 0 {
+            // The tune-up time trial replaces a quality session with a short race effort, so its
+            // week runs light by design; the step back up out of it is not a ramp.
+            let outOfTimeTrial = m[i - 1].sessions.contains {
+                $0.runType == .race || ($0.intervals ?? "").localizedCaseInsensitiveContains("time trial")
+            }
+            if outOfTimeTrial { continue }
             let ratio = m[i].totalM / m[i - 1].totalM
             #expect(ratio <= 1.12, "w\(m[i].index) ramps \(ratio)× despite injury history")
         }

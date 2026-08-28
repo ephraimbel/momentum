@@ -20,6 +20,9 @@ final class MapStyleUITests: XCTestCase {
         app.launchArguments = ["--seed-demo"]
         app.launch()
 
+        // Map style lives behind the corner "More" disc on Today (2026-08-27) — open the fan first.
+        let more = app.buttons["More"].firstMatch
+        if more.waitForExistence(timeout: 20) { more.tap() }
         let layers = app.buttons["Map style"]
         XCTAssertTrue(layers.waitForExistence(timeout: 20), "Layers button not on Today.")
         layers.tap()
@@ -47,6 +50,9 @@ final class MapStyleUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--seed-demo"]
         app.launch()
+        // Fresh launch, folded fan — open it again before reaching for Map style.
+        let moreAgain = app.buttons["More"].firstMatch
+        if moreAgain.waitForExistence(timeout: 20) { moreAgain.tap() }
         XCTAssertTrue(layers.waitForExistence(timeout: 20))
         layers.tap()
         XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5))

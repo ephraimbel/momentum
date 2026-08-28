@@ -110,7 +110,8 @@ struct PlanEngineInvariantTests {
                 // since clean-distance snapping can round a capped long run up to the next round
                 // km/mi (e.g. an 18.99 km half-cap reads as a clean "19 km"). Coaching-irrelevant.
                 if let raceM = inputs.raceDistanceM, s.runType == .long || s.runType == .progression {
-                    #expect((s.targetDistanceM ?? 0) <= PlanEngine.longRunPeak(forRaceM: raceM, podium: podiumActive) + 1_000,
+                    let peakWeek = plan.weeks.map(\.runVolumeM).max()
+                    #expect((s.targetDistanceM ?? 0) <= PlanEngine.longRunPeak(forRaceM: raceM, podium: podiumActive, weekVolumeM: peakWeek) + 1_000,
                             "\(label) w\(week.index): long run above cap")
                 }
                 // The auto-plan never requires terrain — hills are library-only (2026-07-24), so no
@@ -137,15 +138,20 @@ struct PlanEngineInvariantTests {
         // 2× for no-race blocks) and never past it — and never more than 3.5× the start regardless.
         if hasRunning, let seeded = inputs.currentWeeklyVolumeM, seeded > 0 {
             let maxVol = plan.weeks.map(\.runVolumeM).max() ?? 0
-            // Podium raises the readiness peak ~20% and adds a ~3 km optional shakeout per
-            // training week (stacked on the capped volume, plus clean-distance rounding drift
-            // across a 6-session week) — deliberate and bounded, so the tolerance names it.
+            // Podium adds a ~3 km optional shakeout per training week (stacked on the capped
+            // volume, plus clean-distance rounding drift across a 6-session week) — deliberate
+            // and bounded, so the tolerance names it. The ceiling is the goal-driven peak
+            // (2026-08-28): tier-scaled, goal-time floored, capped by the athlete's own ceiling;
+            // injury history holds the tier at Balanced exactly as the engine does.
             let shakeoutAllowance = podiumActive ? 4_500.0 : 0
+            let peakTier: PlanIntensity = (inputs.injuryHistory.isEmpty || inputs.intensity == .gentle) ? inputs.intensity : .balanced
             let ceiling = inputs.raceDistanceM.map {
-                max(seeded, PlanFeasibility.peakWeeklyVolumeM(distanceM: $0, experience: inputs.runningExperience)
-                        * (podiumActive ? 1.2 : 1.0))
+                max(seeded, PlanFeasibility.peakWeeklyVolumeM(distanceM: $0, experience: inputs.runningExperience,
+                                                              intensity: peakTier, goalFinishTimeS: inputs.goalFinishTimeS,
+                                                              currentWeeklyM: seeded, targetWeeklyM: inputs.targetWeeklyVolumeM))
             } ?? seeded * 2.0
-            #expect(maxVol <= ceiling + shakeoutAllowance + 10, "\(label): volume ceiling breached (\(maxVol) vs \(ceiling))")
+            // ×1.03: clean-distance snapping rounds a few sessions up to the next whole mile/km.
+            #expect(maxVol <= ceiling * 1.03 + shakeoutAllowance + 10, "\(label): volume ceiling breached (\(maxVol) vs \(ceiling))")
             #expect(maxVol <= seeded * 3.5 + shakeoutAllowance + 10, "\(label): asked to more than 3.5× the starting load")
         }
     }

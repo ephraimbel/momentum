@@ -229,6 +229,68 @@ struct HealthServiceHelpersTests {
 
     // MARK: Ambient netting (DayStrain input)
 
+    // MARK: The live morning feed (`recoverySignals` reads through these)
+
+    @Test func morningValueTakesTodayThenYesterdayThenNothing() {
+        let now = at(day: 5, 21)   // an EVENING read — the clock must not change the answer
+        let hist = [(day: day(3), value: 40.0), (day: day(4), value: 44.0), (day: day(5), value: 48.0)]
+        #expect(HealthService.recentMorningValue(hist, now: now, calendar: cal) == 48)
+        // One missed sync forgiven: yesterday's morning still counts …
+        #expect(HealthService.recentMorningValue(Array(hist.prefix(2)), now: now, calendar: cal) == 44)
+        // … two days stale is absent, never "recent".
+        #expect(HealthService.recentMorningValue(Array(hist.prefix(1)), now: now, calendar: cal) == nil)
+        #expect(HealthService.recentMorningValue([], now: now, calendar: cal) == nil)
+        // A key filed under tomorrow (an afternoon spot-check pushed forward by the night rule)
+        // is never "this morning".
+        #expect(HealthService.recentMorningValue([(day: day(6), value: 30)], now: now, calendar: cal) == nil)
+    }
+
+    @Test func lastNightIsWholeWhateverTheClockSays() throws {
+        // A stage-tracked night is dozens of short segments. The retired 18-hour window, read at
+        // 21:00, reached back only to 03:00 and dropped every segment that ended before it — four
+        // hours of a 23:00 bedtime — so an evening recompute cratered the sleep pillar.
+        var segs: [SleepSegment] = []
+        let kinds: [SleepSegment.Kind] = [.core, .deep, .core, .rem]
+        var t = at(day: 0, 23), i = 0
+        while t < at(day: 1, 7) {
+            let next = min(t.addingTimeInterval(20 * 60), at(day: 1, 7))
+            segs.append(.init(start: t, end: next, kind: kinds[i % 4], source: "watch"))
+            t = next; i += 1
+        }
+        let evening = try #require(HealthService.lastNightAsleepHours(from: segs, now: at(day: 1, 21), calendar: cal))
+        #expect(abs(evening - 8) < 0.000_1)
+        // One number per morning: 07:30, 21:00 and 23:30 all read the same night.
+        #expect(HealthService.lastNightAsleepHours(from: segs, now: at(day: 1, 7, 30), calendar: cal) == evening)
+        #expect(HealthService.lastNightAsleepHours(from: segs, now: at(day: 1, 23, 30), calendar: cal) == evening)
+    }
+
+    @Test func lastNightIgnoresInBedOnlyNapsInProgressAndOlderNights() {
+        // Phone-only bedtime tracking (in-bed, no asleep) is not a sleep measurement → nil, never 0 h.
+        let inBed = [SleepSegment(start: at(day: 0, 22, 45), end: at(day: 1, 7, 5), kind: .inBed, source: "phone")]
+        #expect(HealthService.lastNightAsleepHours(from: inBed, now: at(day: 1, 9), calendar: cal) == nil)
+        // An early bedtime already underway (ended after 15:00 → filed under tomorrow) is not
+        // "last night" — the old window counted an evening nap as the whole night's sleep.
+        let nap = [SleepSegment(start: at(day: 1, 17), end: at(day: 1, 18, 30), kind: .asleep, source: "watch")]
+        #expect(HealthService.lastNightAsleepHours(from: nap, now: at(day: 1, 21), calendar: cal) == nil)
+        // And the night before last is not last night.
+        let older = [SleepSegment(start: at(day: 0, 23), end: at(day: 1, 7), kind: .asleep, source: "watch")]
+        #expect(HealthService.lastNightAsleepHours(from: older, now: at(day: 2, 9), calendar: cal) == nil)
+    }
+
+    @Test func overnightVitalsKeyToTheWakeMorningNotTheSampleStart() {
+        // Respiratory rate is written only during sleep. Keyed on the sample's start, one night
+        // split across two dates (23:40 → yesterday, 02:10 → today) and a baseline counted twice
+        // the nights it had; keyed by night, every reading lands on the morning the athlete woke.
+        let samples = [(date: at(day: 0, 23, 40), value: 14.0),
+                       (date: at(day: 1, 2, 10), value: 16.0),
+                       (date: at(day: 1, 6, 30), value: 15.0)]
+        let byNight = HealthService.medianPerNight(samples, calendar: cal)
+        #expect(byNight.count == 1)
+        #expect(byNight[0] == (day: day(1), value: 15))
+        // The day-keyed reduction is what it was — and demonstrably splits the night.
+        #expect(HealthService.medianPerDay(samples, calendar: cal).count == 2)
+    }
+
     @Test func noWorkoutMeansEverythingIsAmbient() {
         let sum = HealthService.ambientSum([
             (start: at(day: 0, 9), end: at(day: 0, 9, 30), value: 400, source: "phone"),

@@ -1,30 +1,14 @@
 import XCTest
 
-/// The Community tab (docs/SOCIAL-LAYER.md, 2026-07-09) end-to-end in the sim: the feed renders
-/// badged community posts under the Following|Everyone scope bar, a community byline pushes that
-/// athlete's profile (with Follow), and the post-workout save screen carries the share moment
-/// (visibility picker + what-others-see hint).
+/// The community home (2026-08-25, the Share Aura structure in our theme), end to end in the sim:
+/// Find people → the Following row (ringed faces, "Your day" first) → Explore with the Friends |
+/// Global scope tabs and the wall. A ring opens that person's day in the pager; Find people opens
+/// the in-place search.
 final class CommunityFeedUITests: XCTestCase {
 
-    override func setUp() {
-        super.setUp()
-        continueAfterFailure = false
-    }
+    override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    func testFeedScopesAndBylineNavigation() throws {
-        throw XCTSkip("""
-            Written for the PRE-REDESIGN card feed (Following|Everyone scope bar, post-body cards, \
-            --community-tab). Community shipped again 2026-07-29 as the grid wall inside Profile, so \
-            these steps address surfaces that no longer exist — the skip reason is the stale design, \
-            not a back-burnered feature. Live coverage: FollowFlowUITests (follow graph end to end). \
-            Rewriting search + post-detail against the wall is open work.
-            """)
-        let app = XCUIApplication()
-        // --ui-test-social keeps feed maps as instant silhouettes; XCTest's accessibility snapshot
-        // realizes every lazy row, and a fleet of live Mapbox renders times the queries out.
-        app.launchArguments = ["--seed-demo", "--community-tab", "--reset-social", "--ui-test-social"]
-        // Without a monitor, the notifications permission alert (seeded plan reminders) blocks
-        // element resolution mid-test and XCTest's blind dismissal taps land on the tab bar.
+    private func monitor() {
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let button = alert.buttons[label]
@@ -32,142 +16,71 @@ final class CommunityFeedUITests: XCTestCase {
             }
             return false
         }
-        app.launch()
-        app.tap()   // flush the notifications permission alert through the monitor up front
-        sleep(1)
-
-        // Everyone scope (default): community posts present, each with a tappable byline (the badge
-        // lives inside the byline button, so the button's "View …'s profile" label is the anchor).
-        XCTAssertTrue(app.buttons["Everyone"].waitForExistence(timeout: 30), "Scope bar not found.")
-        app.buttons["Everyone"].tap()   // harmless re-select
-        let bylines = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'View '"))
-        XCTAssertTrue(bylines.firstMatch.waitForExistence(timeout: 10),
-                      "No community bylines — community posts missing from Everyone.")
-        attach(app, name: "community-everyone")
-
-        // A community byline opens that athlete's profile (Follow lives there).
-        bylines.firstMatch.tap()
-        // The follow button carries the athlete's name in its label ("Follow Maya Rivera").
-        let follow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Follow'")).firstMatch
-        if !follow.waitForExistence(timeout: 10) {
-            let dump = XCTAttachment(string: app.debugDescription)
-            dump.name = "hierarchy-after-byline-tap"; dump.lifetime = .keepAlways; add(dump)
-            XCTFail("Byline tap did not open an athlete profile.")
-        }
-        attach(app, name: "athlete-profile-from-feed")
-        app.navigationBars.buttons.firstMatch.tap()   // back to the feed
-
-        // Following scope with no follows: the no-shame empty state routes into athlete search.
-        app.buttons["Following"].tap()
-        XCTAssertTrue(app.staticTexts["Your people will show up here"].waitForExistence(timeout: 5),
-                      "Following empty state not shown with zero follows.")
-        attach(app, name: "community-following-empty")
-        app.buttons["Find athletes"].firstMatch.tap()
-        XCTAssertTrue(app.textFields["Search by name or @handle"].waitForExistence(timeout: 5),
-                      "'Find athletes' did not open the athlete search.")
-    }
-
-    /// Athlete search: name/@handle queries surface matches with a working Follow; and tapping a
-    /// post's body opens the full-page reading view (fullScreenCover, 2026-07-10 — the sheet
-    /// presentation was clipping the post on device).
-    func testSearchFollowAndFullPagePostDetail() throws {
-        throw XCTSkip("""
-            Written for the PRE-REDESIGN card feed (Following|Everyone scope bar, post-body cards, \
-            --community-tab). Community shipped again 2026-07-29 as the grid wall inside Profile, so \
-            these steps address surfaces that no longer exist — the skip reason is the stale design, \
-            not a back-burnered feature. Live coverage: FollowFlowUITests (follow graph end to end). \
-            Rewriting search + post-detail against the wall is open work.
-            """)
-        let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--community-tab", "--reset-social", "--ui-test-social"]
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
-                let button = alert.buttons[label]
-                if button.exists { button.tap(); return true }
-            }
-            return false
-        }
-        app.launch()
-        app.tap()   // flush the notifications permission alert through the monitor up front
-        sleep(1)
-
-        // Wait for the feed to settle before the first real tap — the magnifier exists from the
-        // first frame, but tapping while the alert/monitor dance is live invalidates the event.
-        XCTAssertTrue(app.buttons["Everyone"].waitForExistence(timeout: 30), "Community did not load.")
-
-        // Header magnifier → search sheet, seeded suggestions up front.
-        app.buttons["Find athletes"].firstMatch.tap(after: 20)
-        let field = app.textFields["Search by name or @handle"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "Search field missing.")
-        XCTAssertTrue(app.staticTexts["SUGGESTED"].exists, "Empty-query suggestions missing.")
-        field.tap()
-        field.typeText("Maya Rivera")
-        XCTAssertTrue(app.staticTexts["Maya Rivera"].waitForExistence(timeout: 5),
-                      "Name search did not surface the featured athlete.")
-        app.buttons["Follow Maya Rivera"].firstMatch.tap(after: 3)
-        XCTAssertTrue(app.buttons["Unfollow Maya Rivera"].waitForExistence(timeout: 3),
-                      "Follow from search results did not stick.")
-        attach(app, name: "find-athletes-results")
-        app.buttons["Done"].tap()
-
-        // @handle search matches too (the strip-@ path).
-        app.buttons["Find athletes"].firstMatch.tap(after: 5)
-        field.tap(after: 3)
-        field.typeText("@coachtheo")
-        XCTAssertTrue(app.staticTexts["Theo Bennett"].waitForExistence(timeout: 5),
-                      "@handle search did not surface the athlete.")
-        app.buttons["Done"].tap()
-
-        // Post body → full-page reading view (Done closes it).
-        let postBody = app.buttons.matching(identifier: "post-body").firstMatch
-        postBody.tap(after: 10)
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 8), "Post detail did not open.")
-        attach(app, name: "post-detail-full-page")
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["Everyone"].waitForExistence(timeout: 5), "Did not return to the feed.")
-    }
-
-    func testSaveScreenCarriesTheShareMoment() throws {
-        throw XCTSkip("""
-            Written for the PRE-REDESIGN card feed (Following|Everyone scope bar, post-body cards, \
-            --community-tab). Community shipped again 2026-07-29 as the grid wall inside Profile, so \
-            these steps address surfaces that no longer exist — the skip reason is the stale design, \
-            not a back-burnered feature. Live coverage: FollowFlowUITests (follow graph end to end). \
-            Rewriting search + post-detail against the wall is open work.
-            """)
-        let app = XCUIApplication()
-        // `--ui-test-strength` opens Today in strength; `--ui-test-route` self-authorizes location.
-        app.launchArguments = ["--seed-demo", "--ui-test-strength", "--ui-test-route"]
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
-                let button = alert.buttons[label]
-                if button.exists { button.tap(); return true }
-            }
-            return false
-        }
-        app.launch()
-        app.tap()   // trigger the interruption monitor if a permission alert is up
-
-        // Log one set so Finish enables (same path as StrengthLogUITests).
-        app.buttons["Start workout"].firstMatch.tap(after: 20)
-        app.staticTexts["Barbell Bench Press"].firstMatch.tap(after: 15)
-        app.buttons["Add 1"].firstMatch.tap(after: 5)
-        app.buttons["Log set"].firstMatch.tap(after: 15)
-        app.buttons["Finish"].firstMatch.tap(after: 5)
-
-        // The save screen: declared-intent prompt + the visibility picker with its plain-words hint.
-        let visibility = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Workout visibility'")).firstMatch
-        XCTAssertTrue(visibility.waitForExistence(timeout: 15), "Save screen has no visibility picker.")
-        XCTAssertTrue(app.textFields["How did it go — and why did this one matter?"]
-            .waitForExistence(timeout: 5), "Save screen is missing the declared-intent prompt.")
-        attach(app, name: "save-share-moment")
     }
 
     private func attach(_ app: XCUIApplication, name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = name
-        shot.lifetime = .keepAlways
-        add(shot)
+        shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    /// The base launch: community face, a few known follows, silhouette maps (accessibility
+    /// snapshots realize every lazy row; live Mapbox renders time the queries out).
+    private func launch(_ extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--profile-tab", "--profile-community", "--reset-social",
+                               "--ui-test-social", "--seed-follows"] + extra
+        monitor()
+        app.launch()
+        return app
+    }
+
+    func testHomeReadsTopDown() throws {
+        let app = launch()
+
+        XCTAssertTrue(app.buttons["Find people"].waitForExistence(timeout: 30), "Find people field missing.")
+        XCTAssertTrue(app.buttons["Find athletes to follow"].exists, "Add-person glass circle missing.")
+        XCTAssertTrue(app.staticTexts["Following"].exists, "Following heading missing.")
+        // "Your day" leads the row (ringed when the athlete trained today: label carries the state).
+        let you = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Your day'")).firstMatch
+        XCTAssertTrue(you.exists, "'Your day' face missing.")
+        // A seeded follow shows as a face labelled by first name.
+        let maya = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Maya'")).firstMatch
+        XCTAssertTrue(maya.exists, "Followed athlete's face missing from the row.")
+        XCTAssertTrue(app.staticTexts["Explore"].exists, "Explore heading missing.")
+        XCTAssertTrue(app.buttons["Friends"].exists && app.buttons["Global"].exists, "Scope tabs missing.")
+        attach(app, name: "community-home")
+
+        // Friends scope: only followed athletes' posts; the wall still renders tiles.
+        app.buttons["Friends"].tap()
+        let tile = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'mi' OR label CONTAINS[c] 'lb' OR label CONTAINS ':'")).firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 10), "Friends wall rendered no tiles.")
+        attach(app, name: "community-friends")
+    }
+
+    func testRingOpensTheirDayInThePager() throws {
+        // --open-ring drives the first ringed face's handler (taps on the row are unreliable in
+        // the sim); the pager's Close and a byline prove the day opened.
+        let app = launch(["--open-ring"])
+        XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 30), "Ring did not open the pager.")
+        let byline = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'View '")).firstMatch
+        XCTAssertTrue(byline.waitForExistence(timeout: 5), "Pager page has no byline.")
+        attach(app, name: "community-ring-pager")
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.buttons["Find people"].waitForExistence(timeout: 5), "Did not return to the home.")
+    }
+
+    func testFindPeopleOpensInPlaceSearch() throws {
+        let app = launch()
+        app.buttons["Find people"].tap(after: 30)
+        let field = app.textFields["Search by name or @handle"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Find people did not open the search.")
+        field.tap()
+        field.typeText("@bennettbuilt")
+        XCTAssertTrue(app.staticTexts["Theo Bennett"].waitForExistence(timeout: 5),
+                      "@handle search did not surface the athlete.")
+        attach(app, name: "community-search")
+        app.buttons["Cancel search"].tap()
+        XCTAssertTrue(app.buttons["Find people"].waitForExistence(timeout: 5), "Cancel did not return to the home.")
     }
 }
 
