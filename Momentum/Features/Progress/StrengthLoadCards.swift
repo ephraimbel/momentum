@@ -127,6 +127,7 @@ struct RadialMuscleWheel: View {
                     let base = angle(for: l.region)
                     let lit = litRings(l)
                     let leader = l.region == topRegion
+                    let share = maxValue > 0 ? value(l) / maxValue : 0
                     ForEach(0..<Self.rings, id: \.self) { ring in
                         // Centre-line radius of this ring; the stroke's round caps make the
                         // segment a soft pill, and the cap eats into the angular gap, so the
@@ -138,7 +139,7 @@ struct RadialMuscleWheel: View {
                                 endAngle: .degrees(base + 30 - Self.gapDegrees / 2 - capDeg),
                                 radius: r)
                             .trim(from: 0, to: grown ? 1 : 0.001)
-                            .stroke(fill(on: on, ring: ring, leader: leader),
+                            .stroke(fill(on: on, ring: ring, leader: leader, share: share),
                                     style: StrokeStyle(lineWidth: ringW, lineCap: .round))
                             .animation(.spring(response: 0.7, dampingFraction: 0.86)
                                         .delay(0.05 * Double(ring) + 0.03 * Double(StrengthTrends.BodyRegion.allCases.firstIndex(of: l.region) ?? 0)),
@@ -158,13 +159,21 @@ struct RadialMuscleWheel: View {
         .accessibilityLabel(loads.map { "\($0.region.displayName) \(label($0))" }.joined(separator: ", "))
     }
 
-    private func fill(on: Bool, ring: Int, leader: Bool) -> AnyShapeStyle {
-        guard on else { return AnyShapeStyle(Theme.ink.opacity(0.055)) }
+    /// The wheel reads like the muscle map (owner call 2026-08-28): every region is lavender,
+    /// and the colour gets STRONGER with volume rather than switching from grey to lit. A lit
+    /// ring's strength is the region's share of the biggest region, ramped outward ring by ring;
+    /// unlit rings keep a faint lavender track so the whole wheel is one graph, not six grey
+    /// stubs. The leader alone wears the iridescent burn, the earned top of the scale. Before
+    /// this, lit rings were ink grey and a region at 35% of the max looked untrained.
+    private func fill(on: Bool, ring: Int, leader: Bool, share: Double) -> AnyShapeStyle {
+        guard on else { return AnyShapeStyle(Theme.purple.opacity(0.07)) }
         if leader {
             let alpha = [0.5, 0.66, 0.83, 1.0][ring]
             return AnyShapeStyle(AngularGradient(colors: Theme.iridescent + [Theme.iridescent[0]], center: .center).opacity(alpha))
         }
-        return AnyShapeStyle(Theme.ink.opacity([0.18, 0.34, 0.54, 0.8][ring]))
+        let ramp = [0.55, 0.7, 0.85, 1.0][ring]
+        let strength = 0.3 + 0.7 * min(max(share, 0), 1)
+        return AnyShapeStyle(Theme.purple.opacity(strength * ramp))
     }
 
     private func labelPoint(center: CGPoint, angle: Double, radius: CGFloat) -> CGPoint {

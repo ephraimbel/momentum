@@ -458,6 +458,57 @@ enum DemoSeed {
                 context.insert(w)
             }
         }
+        // --seed-strength-heavy: a big lifting week on top of the demo, so the muscle-load wheel
+        // lights EVERY region (chest, back, shoulders, arms, core, legs) with real volume rather
+        // than the four compound lifts' silhouette. Four sessions inside the trailing 7 days the
+        // wheel reads, each a real split, weights an experienced lifter would move.
+        if ProcessInfo.processInfo.arguments.contains("--seed-strength-heavy") {
+            let all = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
+            func lift(_ name: String) -> Exercise? { all.first { $0.name == name && !$0.isCustom } }
+            // (name, kg, reps) — 4 working sets each.
+            // Regions balanced on purpose: the wheel grades each ring against the BIGGEST region,
+            // so a legs-heavy week leaves chest and shoulders looking empty even at real volumes.
+            // Everything here sits between ~60% and 100% of the largest region.
+            let push: [(String, Double, Int)] = [("Barbell Bench Press", 105, 8), ("Incline Dumbbell Press", 38, 10),
+                                                 ("Overhead Press", 62, 8), ("Dumbbell Shoulder Press", 30, 10),
+                                                 ("Lateral Raise", 16, 15), ("Triceps Pushdown", 34, 12),
+                                                 ("Hanging Knee Raise", 16, 15)]
+            let pull: [(String, Double, Int)] = [("Barbell Deadlift", 130, 5), ("Barbell Row", 90, 8),
+                                                 ("Lat Pulldown", 78, 10), ("Seated Cable Row", 72, 10),
+                                                 ("Pull-Up", 20, 8), ("Dumbbell Curl", 22, 12),
+                                                 ("Lying Leg Raise", 10, 15)]
+            let legs: [(String, Double, Int)] = [("Barbell Back Squat", 100, 6), ("Romanian Deadlift", 80, 8),
+                                                 ("Walking Lunge", 24, 12), ("Calf Raise", 60, 15),
+                                                 ("Dumbbell Curl", 20, 12), ("Triceps Pushdown", 32, 12),
+                                                 ("Hanging Knee Raise", 16, 15)]
+            let full: [(String, Double, Int)] = [("Barbell Bench Press", 100, 8), ("Incline Dumbbell Press", 36, 10),
+                                                 ("Barbell Row", 85, 8), ("Overhead Press", 58, 8),
+                                                 ("Lateral Raise", 14, 15), ("Barbell Hip Thrust", 90, 10),
+                                                 ("Dumbbell Curl", 20, 12), ("Lying Leg Raise", 10, 15)]
+            let days: [(Double, [(String, Double, Int)])] = [(1.2, push), (2.9, pull), (4.6, legs), (6.3, full)]
+            for (daysAgo, plan) in days {
+                let start = Date().addingTimeInterval(-daysAgo * 86_400)
+                let session = StrengthSession()
+                var volume = 0.0, sets = 0
+                for (name, kg, reps) in plan {
+                    guard let ex = lift(name) else { continue }
+                    let row = WorkoutExercise(); row.exercise = ex
+                    row.sets = (0..<4).map { _ in
+                        let e = SetEntry(); e.weightKg = kg; e.reps = reps
+                        e.isComplete = true; e.type = .working
+                        volume += kg * Double(reps); sets += 1
+                        return e
+                    }
+                    session.exercises.append(row)
+                }
+                session.totalVolumeKg = volume
+                session.totalSets = sets
+                let w = Workout(); w.type = .strength; w.startedAt = start
+                w.durationS = 62 * 60; w.elapsedS = w.durationS
+                w.strength = session
+                context.insert(w)
+            }
+        }
         // --seed-trail-run: the Lady Bird Lake loop, finished this morning, so it is the newest
         // run and the post-run page opens on a trace that follows a real trail.
         if ProcessInfo.processInfo.arguments.contains("--seed-trail-run") {
