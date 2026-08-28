@@ -180,7 +180,7 @@ private struct AutoPlayTick: Equatable {
 /// and fanned corners render unclipped into the charcoal.
 // Assets live in Assets.xcassets/PaywallShots — 720×1565 LIGHT captures (2026-08-28) from the
 // `momentum-shots` sim with the dense seed: Today, plan, trends, strength, readiness, coach, the
-// post-run page, fuel, the profile grid.
+// post-run page and fuel. The profile grid is out (owner call 2026-08-28).
 struct PaywallShowcase: View {
     /// Device height in points; everything else scales off it.
     var height: CGFloat = 440
@@ -200,8 +200,8 @@ struct PaywallShowcase: View {
     // gauges, the post-run page and the record book replace vitals, sleep, the log and the globe.
     private static let slides = [
         "PaywallShotToday", "PaywallShotPlan", "PaywallShotProgress",
-        "PaywallShotStrength", "PaywallShotReadiness", "PaywallShotCoach",
-        "PaywallShotPostRun", "PaywallShotFuel", "PaywallShotProfile",
+        "PaywallShotStrength", "PaywallShotReadiness", "PaywallShotVitals",
+        "PaywallShotCoach", "PaywallShotPostRun", "PaywallShotFuel",
     ]
 
     var body: some View {
@@ -337,7 +337,7 @@ struct PaywallShowcase: View {
     ///
     /// Keyed on the asset NAME, never the index: reordering `slides` must not silently re-point
     /// this at the wrong screens.
-    private static let wearableShots: Set<String> = ["PaywallShotReadiness"]
+    private static let wearableShots: Set<String> = ["PaywallShotReadiness", "PaywallShotVitals"]
 
     private var noteForSlide: String? {
         let i = slide ?? 0
