@@ -178,8 +178,9 @@ private struct AutoPlayTick: Equatable {
 /// The 2026-08-05 "never page the whole phone" lesson was about TabView clipping the drop
 /// shadow to a seam — this deck pages in a ScrollView with `scrollClipDisabled()`, so shadows
 /// and fanned corners render unclipped into the charcoal.
-// Assets live in Assets.xcassets/PaywallShots — 1080px-wide dark captures supplied by the owner
-// (2026-08-05): Today's 3D map, the plan board, readiness, coach zones, fuel, the globe.
+// Assets live in Assets.xcassets/PaywallShots — 720×1565 LIGHT captures (2026-08-28) from the
+// `momentum-shots` sim with the dense seed: Today, plan, trends, strength, readiness, coach, the
+// post-run page, fuel, the profile grid.
 struct PaywallShowcase: View {
     /// Device height in points; everything else scales off it.
     var height: CGFloat = 440
@@ -194,10 +195,13 @@ struct PaywallShowcase: View {
     /// 2026-08-15). Idle is the only phase in which the show may take a turn.
     @State private var scrollPhase: ScrollPhase = .idle
 
+    // Re-cast 2026-08-28 (owner: "our new cool screens like strength and progression, instead
+    // of fitness and freshness"): LIGHT captures from a data-rich seed. Strength, the readiness
+    // gauges, the post-run page and the record book replace vitals, sleep, the log and the globe.
     private static let slides = [
         "PaywallShotToday", "PaywallShotPlan", "PaywallShotProgress",
-        "PaywallShotVitals", "PaywallShotSleep", "PaywallShotCoach",
-        "PaywallShotLog", "PaywallShotFuel", "PaywallShotGlobe",
+        "PaywallShotStrength", "PaywallShotReadiness", "PaywallShotCoach",
+        "PaywallShotPostRun", "PaywallShotFuel", "PaywallShotProfile",
     ]
 
     var body: some View {
@@ -224,10 +228,12 @@ struct PaywallShowcase: View {
                     forward = direction
                     withAnimation(.easeInOut(duration: 0.55)) { slide = i + (direction ? 1 : -1) }
                 }
+            slideNote
             pageDots
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("A tour of the app's screens")
+        .accessibilityLabel(noteForSlide.map { "A tour of the app's screens. \($0)" }
+                            ?? "A tour of the app's screens")
         .accessibilityAdjustableAction { direction in
             let n = Self.slides.count
             let i = slide ?? 0
@@ -322,6 +328,37 @@ struct PaywallShowcase: View {
             .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
     }
 
+    /// Two of the nine slides show screens that only fill in with a wearable. Everywhere else the
+    /// app is scrupulous about this — `SpecimenOverlay` ghosts those cards and stamps them
+    /// EXAMPLE, `WearableFootnote` states the requirement in plain words — and the tour was the
+    /// one surface that showed them with no qualifier at all. It runs on the ONBOARDING wall,
+    /// where by definition nobody has a night of data yet, so it is the single highest-traffic
+    /// place the promise gets made. Same vocabulary as the footnote, so page and promise agree.
+    ///
+    /// Keyed on the asset NAME, never the index: reordering `slides` must not silently re-point
+    /// this at the wrong screens.
+    private static let wearableShots: Set<String> = ["PaywallShotReadiness"]
+
+    private var noteForSlide: String? {
+        let i = slide ?? 0
+        guard Self.slides.indices.contains(i),
+              Self.wearableShots.contains(Self.slides[i]) else { return nil }
+        return "With a wearable — Apple Watch, Garmin, Oura or Whoop"
+    }
+
+    /// The qualifier under the deck. Height is reserved with a blank line rather than conditionally
+    /// inserted: the show auto-advances every 3s, and a line that appears and vanishes would walk
+    /// the dots (and the CTA below them) up and down the page on a timer.
+    private var slideNote: some View {
+        Text(noteForSlide ?? " ")
+            .font(.rounded(Theme.FontSize.label, weight: .semibold))
+            .foregroundStyle(Theme.inkTertiary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .opacity(noteForSlide == nil ? 0 : 1)
+            .animation(reduceMotion ? nil : Motion.standard, value: noteForSlide)
+    }
+
     /// Nine dots, the current one stretched — quiet, monochrome.
     private var pageDots: some View {
         HStack(spacing: 5) {
@@ -405,7 +442,7 @@ struct PaywallCheckout: View {
         .interactiveDismissDisabled(working || hard)
     }
 
-    /// Compact primary action — 48pt, quieter than the 56pt OversizedButton so the content above
+    /// Compact primary action — 54pt, quieter than the 56pt OversizedButton so the content above
     /// keeps the visual weight.
     private var cta: some View {
         Button {
@@ -435,7 +472,7 @@ struct PaywallCheckout: View {
                     if product.trialDays > 0 {
                         NotificationService.scheduleTrialReminder(
                             trialDays: product.trialDays,
-                            renewText: "\(product.priceText)/\(product.isAnnual ? "year" : "month")")
+                            renewText: "\(product.priceText)/\(product.isAnnual ? "year" : "week")")
                     }
                 case .cancelled:
                     break                                   // they changed their mind — say nothing
@@ -450,13 +487,13 @@ struct PaywallCheckout: View {
             // button holds its shape and weight while the store round-trip runs.
             ZStack {
                 Text(ctaTitle)
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .font(.rounded(17, weight: .medium))
                     .opacity(working ? 0 : 1)
                 ProgressView()
                     .tint(Theme.background)
                     .opacity(working ? 1 : 0)
             }
-            .frame(maxWidth: .infinity).frame(height: 50)
+            .frame(maxWidth: .infinity).frame(height: 54)
             .foregroundStyle(Theme.background)
             .background(Capsule().fill(Theme.ink))
             .contentShape(Capsule())
@@ -473,7 +510,7 @@ struct PaywallCheckout: View {
         guard paywall.pricingIsLive else { return "Retry" }
         return product.trialDays > 0
             ? "Start my \(product.trialDays)-day free trial"
-            : "Continue · \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
+            : "Continue · \(product.priceText)\(product.isAnnual ? "/year" : "/week")"
     }
 
     /// One tiny line: honest renewal terms + the required links, nothing taller.
@@ -498,7 +535,7 @@ struct PaywallCheckout: View {
         // The fine print is the one place a wrong number is actually a claim about what we'll
         // charge — never build it from placeholder pricing.
         guard paywall.pricingIsLive else { return "Pricing unavailable · cancel anytime" }
-        let per = product.isAnnual ? "yr" : "mo"
+        let per = product.isAnnual ? "yr" : "wk"
         if product.trialDays > 0 {
             return "\(product.trialDays) days free, then \(product.priceText)/\(per) · cancel anytime"
         }

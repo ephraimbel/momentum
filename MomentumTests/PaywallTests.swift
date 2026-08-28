@@ -79,16 +79,34 @@ struct PaywallTests {
         // intro offers were deleted in every territory; the placeholder must agree so DEBUG and
         // production tell the same story.
         #expect(offering.annual.trialDays == 0)
-        #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 50)   // 49.96% ($59.99 vs 12 × $9.99), rounded to nearest 5%
+        #expect(offering.weekly.trialDays == 0)
+        #expect(offering.annualSavingsPercent == 80)   // 79.13% ($64.99 vs 52 × $5.99), rounded to nearest 5%
     }
 
-    /// Mass-market pricing (2026-07-29): half Runna's annual, under Strava's — the hard paywall
-    /// makes the annual price the conversion funnel, so it must read as "I can actually do this."
-    @Test func pricingIsTheCompetitivePair() {
+    /// Weekly-anchored pricing (owner call 2026-08-28, replacing $9.99/mo + $59.99/yr): a $5.99
+    /// week is the entry plan and the yearly sits ~80% under its run-rate, sold at its own weekly
+    /// number ($1.25/wk). The pair must stay derivable from the two constants — a hand-written
+    /// badge or per-week string is how these fall out of step with what the store charges.
+    @Test func pricingIsTheWeeklyAnchoredPair() {
         let offering = PaywallOffering.standard
-        #expect(offering.monthly.priceText == "$9.99")
-        #expect(offering.annual.priceText == "$59.99")
-        #expect(offering.monthly.period == .monthly)
+        #expect(offering.weekly.priceText == "$5.99")
+        #expect(offering.annual.priceText == "$64.99")
+        #expect(offering.weekly.period == .weekly)
+        #expect(offering.annual.period == .annual)
+        // The yearly's headline: its own per-week price, derived — never typed.
+        #expect(offering.annual.perWeekText == "$1.25 / wk")
+        // The entry plan never advertises a per-week equivalent — it IS the weekly price.
+        #expect(offering.weekly.perWeekText == nil)
+    }
+
+    /// The badge follows the numbers, in both directions — the guard that stops a price change
+    /// from leaving a stale "SAVE 75%" on screen.
+    @Test func savingsBadgeTracksLivePrices() {
+        var offering = PaywallOffering.standard
+        offering.weeklyPriceValue = 5.99
+        offering.annualPriceValue = 155.74            // exactly half the run-rate
+        #expect(offering.annualSavingsPercent == 50)
+        offering.annualPriceValue = 311.48            // no saving at all
+        #expect(offering.annualSavingsPercent == 0)
     }
 }

@@ -9,11 +9,11 @@ import SuperwallKit
 /// A subscription product to offer (PRD §10). Price strings come from the store (RevenueCat) once
 /// wired; until then these are the PRD's planned prices so the paywall is fully testable offline.
 struct PaywallProduct: Identifiable, Sendable, Equatable {
-    enum Period: Sendable, Equatable { case monthly, annual }
+    enum Period: Sendable, Equatable { case weekly, annual }
     let id: String              // RevenueCat / StoreKit product identifier
     let period: Period
     let priceText: String       // localized total, e.g. "$14.99"
-    let perMonthText: String?   // annual only, e.g. "$10.00 / mo"
+    let perWeekText: String?    // annual only, e.g. "$3.60 / wk" — the yearly's headline number
     let trialDays: Int          // 0 = none
 
     var isAnnual: Bool { period == .annual }
@@ -27,45 +27,54 @@ enum PurchaseOutcome: Equatable, Sendable {
     case failed(String)
 }
 
-/// The `default` RevenueCat offering: monthly + annual (PRD §10).
+/// The `default` RevenueCat offering: weekly + annual (PRD §10; pricing switched 2026-08-28).
 struct PaywallOffering: Sendable, Equatable {
-    let monthly: PaywallProduct
+    let weekly: PaywallProduct
     let annual: PaywallProduct
     /// Numeric prices behind the display strings — planned by default, replaced with the store's
     /// real values by `loadOffering()` so the savings badge always reflects what's actually charged.
-    var monthlyPriceValue: Double = monthlyPrice
+    var weeklyPriceValue: Double = weeklyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Shipped pricing (decision 2026-07-29, matches the website): $9.99/mo with no trial and
-    /// $59.99/yr with a 7-day free trial (trial on ANNUAL ONLY — owner call 2026-07-30; the trial
-    /// is the annual's nudge, monthly stays the plain commitment-free option). Deliberately
-    /// mass-market — half Runna's annual (~$119.99), a notch under Strava's (~$79.99) — because the
-    /// hard paywall makes the annual price the conversion funnel; the marketing line is "a full
-    /// adaptive plan for under $5 a month". These two numbers are the **single source**: the
-    /// monthly/annual `priceText`, the annual per-month, and `annualSavingsPercent` all derive from
-    /// them, so the savings label can never fall out of step with a price change. Live store prices
-    /// (loadOffering) replace the display strings once RevenueCat is wired.
-    static let monthlyPrice = 9.99
-    static let annualPrice = 59.99
+    /// Shipped pricing (owner call 2026-08-28, replacing $9.99/mo + $59.99/yr): the entry plan
+    /// is **weekly** and the yearly is priced **~80% under the weekly run-rate**, displayed at its
+    /// own per-week number. $5.99 × 52 = $311.48 against $64.99 is 79.1% — a clean yearly price, a
+    /// clean **$1.25 a week**, and a badge that rounds to **SAVE 80%**.
+    ///
+    /// The three numbers have to agree, and only two of them are free: pick the yearly and the
+    /// weekly falls out of it, along with the badge. $79.99 was considered and rejected — it is
+    /// only 74.3% off, so it would have to wear "SAVE 75%".
+    ///
+    /// Monthly is gone from the offering. Existing monthly subscribers keep their price and their
+    /// entitlement — removing a product from an offering never cancels or re-prices a live sub —
+    /// so `Period` keeps only the two plans we now SELL.
+    ///
+    /// These two numbers are the **single source**: both `priceText`s, the annual's per-week line
+    /// and `annualSavingsPercent` all derive from them, so the badge can never fall out of step
+    /// with a price change. Live store prices (`loadOffering`) replace the strings once
+    /// RevenueCat is wired — the weekly product must be in the SAME subscription group as the
+    /// annual, or upgrades/downgrades won't work.
+    static let weeklyPrice = 5.99
+    static let annualPrice = 64.99
 
     static let standard = PaywallOffering(
-        monthly: .init(id: "momentum_pro_monthly", period: .monthly,
-                       priceText: money(monthlyPrice), perMonthText: nil, trialDays: 0),
+        weekly: .init(id: "momentum_pro_weekly", period: .weekly,
+                      priceText: money(weeklyPrice), perWeekText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
                       priceText: money(annualPrice),
                       // No trial (owner call 2026-08-20: trial retired — the soft paywall IS the
                       // trial; the yearly sells on the savings badge instead). The live path still
                       // reads the store's intro offer, so this stays honest either way.
-                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 0))
+                      perWeekText: "\(money(annualPrice / 52)) / wk", trialDays: 0))
 
-    /// Percent saved by paying yearly instead of 12× monthly, **rounded to the nearest 5%** for a
+    /// Percent saved by paying yearly instead of 52× weekly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
-    /// (live once the store loads), never a hand-written label. Currently **50%**: $59.99 vs
-    /// 12 × $9.99 = $119.88 is 49.96%, which rounds to 50%.
+    /// (live once the store loads), never a hand-written label. Currently **80%**: $64.99 vs
+    /// 52 × $5.99 = $311.48 is 79.13%, which rounds to 80%.
     var annualSavingsPercent: Int {
-        let monthlyYear = 12 * monthlyPriceValue
-        guard monthlyYear > 0 else { return 0 }
-        let raw = (monthlyYear - annualPriceValue) / monthlyYear * 100
+        let weeklyYear = 52 * weeklyPriceValue
+        guard weeklyYear > 0 else { return 0 }
+        let raw = (weeklyYear - annualPriceValue) / weeklyYear * 100
         return Int((raw / 5).rounded()) * 5   // nearest 5% → a round badge, not "38.85%"
     }
 
@@ -425,7 +434,7 @@ final class PaywallController: PaywallServing {
 
     private func loadOffering() async {
         guard let current = try? await Purchases.shared.offerings().current,
-              let m = current.monthly?.storeProduct, let a = current.annual?.storeProduct else { return }
+              let w = current.weekly?.storeProduct, let a = current.annual?.storeProduct else { return }
         // StoreKit expresses a 7-day trial as (value: 1, unit: .week) — convert to DAYS, or the
         // badge/CTA read "1-day free trial" (shipped-bug class: .value read without .unit).
         // Read per-product, never hardcoded: the store is the truth for which plan carries an
@@ -442,18 +451,18 @@ final class PaywallController: PaywallServing {
             @unknown default: return p.value
             }
         }
-        // Annual per-month in the product's own locale/currency (falls back to the plain formatter).
-        let perMonth: String = {
-            let monthly = a.price / 12
-            if let s = a.priceFormatter?.string(from: monthly as NSDecimalNumber) { return "\(s) / mo" }
-            return "\(PaywallOffering.money(NSDecimalNumber(decimal: monthly).doubleValue)) / mo"
+        // Annual per-WEEK in the product's own locale/currency (falls back to the plain formatter).
+        let perWeek: String = {
+            let weekly = a.price / 52
+            if let s = a.priceFormatter?.string(from: weekly as NSDecimalNumber) { return "\(s) / wk" }
+            return "\(PaywallOffering.money(NSDecimalNumber(decimal: weekly).doubleValue)) / wk"
         }()
         offering = PaywallOffering(
-            monthly: .init(id: m.productIdentifier, period: .monthly,
-                           priceText: m.localizedPriceString, perMonthText: nil, trialDays: trialDays(of: m)),
+            weekly: .init(id: w.productIdentifier, period: .weekly,
+                          priceText: w.localizedPriceString, perWeekText: nil, trialDays: trialDays(of: w)),
             annual: .init(id: a.productIdentifier, period: .annual,
-                          priceText: a.localizedPriceString, perMonthText: perMonth, trialDays: trialDays(of: a)),
-            monthlyPriceValue: NSDecimalNumber(decimal: m.price).doubleValue,
+                          priceText: a.localizedPriceString, perWeekText: perWeek, trialDays: trialDays(of: a)),
+            weeklyPriceValue: NSDecimalNumber(decimal: w.price).doubleValue,
             annualPriceValue: NSDecimalNumber(decimal: a.price).doubleValue)
         pricingIsLive = true   // only now are the numbers on screen the store's
     }

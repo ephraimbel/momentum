@@ -1,6 +1,12 @@
 {
-  "images" : [
-    { "filename" : "coach.png", "idiom" : "universal" }
+  "images": [
+    {
+      "filename": "coach.png",
+      "idiom": "universal"
+    }
   ],
-  "info" : { "author" : "xcode", "version" : 1 }
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
 }

@@ -70,7 +70,7 @@ struct OnboardingPaywallFlow: View {
         }
         // Warm-charcoal dark moment, same non-leaking mechanism as PaywallView (never
         // `.preferredColorScheme` — it flows up to the hosting window and sticks after dismiss).
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, .light)   // bright wall (owner call 2026-08-27), matching the light setup before it
         .interactiveDismissDisabled(true)   // the X is the one dismissal — it must clear the gate flag
         .alert("Nothing to restore", isPresented: $nothingToRestore) {
             Button("OK", role: .cancel) {}
@@ -232,10 +232,10 @@ struct OnboardingPaywallFlow: View {
             .buttonStyle(.plain)
             Group {
                 if paywall.pricingIsLive {
-                    let perMonth = offering.annual.perMonthText ?? ""
+                    let perWeek = offering.annual.perWeekText ?? ""
                     // Middot, not parentheses — every other price line in the paywall separates
                     // clauses with "·", and this footer shouldn't be the odd one out.
-                    Text("Just \(offering.annual.priceText) per year · \(perMonth)")
+                    Text("Just \(perWeek) · \(offering.annual.priceText) billed yearly")
                 } else {
                     Text("Pricing unavailable · cancel anytime")
                 }

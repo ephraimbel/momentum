@@ -11,8 +11,8 @@ settings:
     SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "1.4.0"      # 2026-08-20: 1.3.0 (build 27) went READY_FOR_SALE — this sweep ships as 1.4.0. Must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version. (1.4.0 record creation needs the owner or an approved ASC write.)
-    CURRENT_PROJECT_VERSION: "33"   # build 33 (v1.4.0) — supersedes 32 (never uploaded). ⚠️ 33 is LOAD-BEARING, not just a bump: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it (the rateUs beat is gone from 33, sliding `account` 25 → 24), so shipping this sweep under any other build number silently mislabels every funnel row. Carries: the nested paywall host, post-activity editing, the auth-form rebuild, the week-strip and route-framing fixes.
+    MARKETING_VERSION: "1.5.0"      # 2026-08-28: 1.4.0 (build 33) is the shipped record; the glass-pass + weekly-pricing sweep ships as 1.5.0. Must match the ASC version record EXACTLY — a build carries this string and can only attach to the matching version, so the 1.5.0 record has to exist in App Store Connect before upload.
+    CURRENT_PROJECT_VERSION: "34"   # build 34 (v1.5.0). ⚠️ The build number is LOAD-BEARING for analytics: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it, and 34 keeps 33's step order (no beats added or removed in this sweep). Carries: the raised-glass design pass app-wide, the light onboarding + Marquee paywall, the Health gauges and their tap-throughs, and weekly-anchored pricing.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
 
@@ -96,6 +96,7 @@ targets:
         NSSpeechRecognitionUsageDescription: "momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions."
         NSHealthShareUsageDescription: "momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
+        NSPhotoLibraryAddUsageDescription: "momentum saves the share cards you make to your photo library."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
         # Portrait-locked (2026-08-06 user call): no landscape anywhere — the app is a phone-in-hand

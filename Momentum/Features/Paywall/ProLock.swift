@@ -47,81 +47,55 @@ private struct ProLockModifier: ViewModifier {
         }
     }
 
-    /// The unlock card, in the brand's own voice (revamp 2026-08-20): a lavender-washed panel with
-    /// a lock emblem in the plan-chip language (tint fill, deep glyph, purple hairline), a serif
-    /// headline, the ink CTA pill, and a quiet trial line. The card glows lavender instead of
-    /// casting a gray shadow — brand, not gloom — and the whole card is the tap target.
+    /// The unlock card, minimal (owner call 2026-08-28: "simple, aesthetic, minimal, Bevel
+    /// level"). One raised white card in the app's own material, an ink lock disc, a plain
+    /// Inter title, one line of why, the ink CTA, a quiet fact. No lavender wash, no purple
+    /// stroke, no brand glow, no serif — the previous card was a small poster; this is a control.
     private var unlockCard: some View {
-        Button { paywall.present(for: feature) } label: {
-            VStack(spacing: Theme.Space.sm) {
-                // The lock emblem: a tinted circle wearing the PRO pill like a medal ribbon.
-                ZStack {
-                    Circle()
-                        .fill(Theme.purpleTint)
-                        .frame(width: 56, height: 56)
-                        .overlay(Circle().stroke(Theme.purple.opacity(0.25)))
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Theme.purpleDeep)
-                        .offset(y: -1)
-                }
-                .overlay(alignment: .bottom) {
-                    Text("PRO")
-                        .font(.rounded(9, weight: .heavy)).tracking(1.4)
-                        .foregroundStyle(Theme.inkOnFixedLight)   // fixed dark: the badge is always light
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.proLavender))
-                        .overlay(Capsule().stroke(Theme.background, lineWidth: 2))
-                        .offset(y: 8)
-                }
-                .padding(.bottom, 6)
-                .accessibilityHidden(true)
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        return Button { paywall.present(for: feature) } label: {
+            VStack(spacing: 8) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.background)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Theme.ink))
+                    .padding(.bottom, 4)
+                    .accessibilityHidden(true)
 
                 Text(feature.lockTitle)
-                    .font(.serif(22, weight: .semibold))
+                    .font(.rounded(17, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
 
                 Text(feature.lockBlurb)
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .font(.rounded(13, weight: .regular))
                     .foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text("Unlock with Pro")
-                    .font(.rounded(Theme.FontSize.caption, weight: .bold))
-                    .foregroundStyle(Theme.background)       // inverts in dark mode — never invisible
+                    .font(.rounded(15, weight: .semibold))
+                    .foregroundStyle(Theme.background)   // the raised ink is fixed-dark in both modes
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity)
-                    .background(Capsule().fill(Theme.ink))
+                    .raised(Capsule(), tone: .ink)
                     .padding(.top, 8)
 
-                Text("7-day free trial")
+                // A STORE fact, never a hardcoded promise: reads the live intro offer; placeholder
+                // pricing says nothing numeric.
+                Text(paywall.pricingIsLive && paywall.offering.annual.trialDays > 0
+                     ? "\(paywall.offering.annual.trialDays)-day free trial" : "Cancel anytime")
                     .font(.rounded(11, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
+                    .padding(.top, 2)
             }
-            .padding(.vertical, Theme.Space.lg + Theme.Space.xs)
-            .padding(.horizontal, Theme.Space.xl)
-            .frame(maxWidth: 258)
-            .background {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Theme.background)
-                    // A breath of lavender falling from the top edge — wash, never a wall.
-                    .overlay(alignment: .top) {
-                        LinearGradient(colors: [Theme.purpleTint.opacity(0.75), .clear],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: 110)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            }
-            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Theme.purple.opacity(0.22)))
-            // The brand glow: a wide soft lavender ambience plus a tight contact shadow for lift.
-            .shadow(color: Theme.purple.opacity(0.20), radius: 32, y: 14)
-            .shadow(color: .black.opacity(0.07), radius: 8, y: 3)
-            .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .padding(.vertical, 22)
+            .padding(.horizontal, 22)
+            .frame(maxWidth: 248)
+            .raised(shape)
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .padding(Theme.Space.lg)

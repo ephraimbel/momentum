@@ -1,6 +1,12 @@
 {
-  "images" : [
-    { "filename" : "fuel.png", "idiom" : "universal" }
+  "images": [
+    {
+      "filename": "fuel.png",
+      "idiom": "universal"
+    }
   ],
-  "info" : { "author" : "xcode", "version" : 1 }
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
 }
