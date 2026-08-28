@@ -169,6 +169,36 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Perspective (the 2D/3D toggle)
+
+/// The camera's tilt as the athlete's own call — a 2D/3D button on the map, persisted app-wide
+/// (owner ask 2026-08-28). `nil` (never chosen) keeps each style's own default (`explorePitch`), so
+/// nothing changes until the athlete taps; an explicit choice then overrides every style.
+enum MapPerspective: String, CaseIterable, Sendable {
+    case flat, tilted
+    static let storageKey = "com.momentum.mapPerspective"
+    /// The tilt an explicit 3D choice applies to a style that has none of its own.
+    static let tiltedPitch: CGFloat = 45
+    /// The live-run follow camera's tilt: flat unless the athlete chose 3D. A follow camera over a
+    /// pitched basemap re-renders terrain and buildings on every GPS fix, so on the run it is
+    /// opt-in — never a style's default.
+    var pitch: CGFloat { self == .tilted ? Self.tiltedPitch : 0 }
+}
+
+extension MapStyleOption {
+    /// The explore camera's tilt under the athlete's perspective choice: an explicit 2D flattens
+    /// every style, an explicit 3D tilts every style (a style with a deeper tilt of its own — 3D
+    /// Satellite's 55° — keeps it, so 3D never means LESS 3D than before), and no choice keeps the
+    /// style's default.
+    func explorePitch(_ perspective: MapPerspective?) -> CGFloat {
+        switch perspective {
+        case .flat: 0
+        case .tilted: max(explorePitch, MapPerspective.tiltedPitch)
+        case nil: explorePitch
+        }
+    }
+}
+
 // MARK: - Preview snapshots
 
 /// Renders one static preview image per (style, area) via Mapbox's `Snapshotter` and caches it for
@@ -273,11 +303,15 @@ struct MapLayersButton: View {
     @State private var showPicker = false
     #endif
 
+    /// Inside a shared glass rail (Today's vertical control stack) the button draws no glass of
+    /// its own — the rail is the surface.
+    var bare = false
+
     var body: some View {
         // A map glyph, not the 3D-layers stack — this button picks the MAP's look (user call 2026-07-16).
         Image(systemName: "map").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
             .frame(width: 44, height: 44)
-            .momentumGlass(in: Circle())
+            .modifier(OptionalGlass(on: !bare))
             .mapSafeTap("Map style") { showPicker = true }
         .sheet(isPresented: $showPicker) {
             MapStylePickerSheet(style: $style, previewCenter: previewCenter)
@@ -412,5 +446,14 @@ private struct StylePreviewCell: View {
         .accessibilityLabel(locked ? "\(option.label) — locked, unlock with Pro"
                                    : "\(option.label)\(selected ? ", selected" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Glass circle when `on`, nothing otherwise — so one control can live alone on the map or
+/// inside a shared rail.
+struct OptionalGlass: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on { content.momentumGlass(in: Circle()) } else { content }
     }
 }

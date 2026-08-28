@@ -45,6 +45,10 @@ enum Theme {
     /// it only on fixed-appearance surfaces.
     static let inkOnFixedLight = Color(hex: "16151A")
 
+    /// The quiet inset fill under glyph discs, steppers and unit tracks — a hair off the canvas
+    /// in light, a hair ABOVE it in dark (a fixed light grey there was a bright blob).
+    static let tintedField = Color("tintedField")
+
     // MARK: Spacing (base 4pt)
     enum Space {
         static let xxs = 2.0, xs = 4.0, sm = 8.0, md = 16.0, lg = 24.0, xl = 32.0, xxl = 48.0

@@ -29,17 +29,18 @@ struct Card<Content: View>: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         switch style {
         case .surface:
-            ZStack {
-                shape.fill(Theme.surface)
-                if let iridescent {
-                    shape
-                        .fill(LinearGradient(colors: Theme.iridescent,
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .opacity(iridescent.value)
+            // The raised material (glass pass 2026-08-27): top-lit white on light, the surface
+            // tone with a hairline on dark; the earned wash, when asked for, rides on top.
+            Color.clear
+                .raised(shape)
+                .overlay {
+                    if let iridescent {
+                        shape
+                            .fill(LinearGradient(colors: Theme.iridescent,
+                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .opacity(iridescent.value)
+                    }
                 }
-                shape.stroke(Theme.hairline)
-            }
-            .elevation(Theme.Elevation.card)
         case .glass:
             Color.clear
                 .momentumGlass(in: shape, iridescent: iridescent)

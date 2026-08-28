@@ -82,8 +82,7 @@ struct MetricDetailSheet: View {
                             .foregroundStyle(Theme.ink)
                             .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                                .fill(Theme.surface).overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)))
+                            .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
                     }
 
                     ForEach(Array(explainer.sections.enumerated()), id: \.offset) { i, section in
@@ -126,8 +125,7 @@ struct MetricDetailSheet: View {
                             }
                             .padding(Theme.Space.md)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                                .fill(Theme.surface).overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)))
+                            .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
                         }
                         .accessibilityLabel("Source: \(source.label). Opens in your browser.")
                     }

@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// A tappable selection card (PRD §5.5) — used by onboarding, the sport picker, and settings
-/// sheets. Press uses the lively spring + selection haptic (§6.2); the selected state speaks the
-/// app's lavender selection language (rebrand 2026-08-16, extended to onboarding 2026-08-20) —
-/// EXCEPT the iridescent Podium card, whose committed state stays ink under its earned ring.
+/// A tappable selection card (PRD §5.5) — used by the sport picker and settings sheets (the
+/// onboarding flow has its own `ChoiceCard`, same grammar). Press uses the lively spring +
+/// selection haptic (§6.2). Glass pass 2026-08-27: raised white, an ink hairline + filled check
+/// when picked, the glyph disc turning lavender-tint — the lavender FILL selection language
+/// (2026-08-16) retired app-wide with it. Podium keeps its earned iridescent ring.
 struct SelectionCard: View {
     let title: String
     var subtitle: String? = nil
@@ -19,9 +20,10 @@ struct SelectionCard: View {
     var iridescent: Bool = false
     let action: () -> Void
 
-    /// Content color on the selected fill: white on the lavender card, the adaptive background
-    /// tone on Podium's ink card.
-    private var selectedContent: Color { iridescent ? Theme.background : .white }
+    /// Content color when selected. The card no longer fills with color (glass pass 2026-08-27:
+    /// raised white, ink hairline when picked), so content stays ink everywhere; Podium keeps the
+    /// same ink-on-white read under its earned ring.
+    private var selectedContent: Color { Theme.ink }
 
     var body: some View {
         Button {
@@ -31,18 +33,19 @@ struct SelectionCard: View {
             HStack(spacing: Theme.Space.md) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(isSelected ? Theme.purpleDeep : Theme.ink)
                         .frame(width: 40, height: 40)
-                        .background(Circle().fill(isSelected ? selectedContent.opacity(0.16) : Theme.background))
+                        .background(Circle().fill(isSelected ? Theme.purpleTint : Theme.surface))
                         .symbolEffect(.bounce, value: isSelected)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.rounded(Theme.FontSize.body, weight: .bold))
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold))
                     if let subtitle {
                         Text(subtitle)
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                            .foregroundStyle(isSelected ? selectedContent.opacity(0.75) : Theme.inkTertiary)
+                            .font(.rounded(Theme.FontSize.caption + 1, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
                     }
                 }
                 Spacer(minLength: 0)
@@ -64,32 +67,25 @@ struct SelectionCard: View {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(selectedContent)
+                        .foregroundStyle(Theme.background, Theme.ink)
                         .transition(.scale(scale: 0.4).combined(with: .opacity))
                 }
             }
-            .foregroundStyle(isSelected ? selectedContent : Theme.ink)
+            .foregroundStyle(Theme.ink)
             .padding(Theme.Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card)
-                    .fill(isSelected ? (iridescent ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.purple))
-                                     : AnyShapeStyle(Theme.surface))
+            // Raised white; the pick is an ink hairline + the filled check. Podium wears its
+            // earned iridescent ring instead (`.strokeBorder` so the ring stays inside the frame
+            // and the host scroll view never clips it; IridescentMaterial is static under Reduce
+            // Motion by design).
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous),
+                    selected: isSelected && !iridescent)
+            .overlay {
                 if iridescent {
-                    // The glow stays through selection — the ink fill + iridescent ring reads as
-                    // "committed", not a lost highlight. `.strokeBorder` (not `.stroke`) draws the
-                    // whole 2pt ring INSIDE the card's frame, so the side edges are never clipped by
-                    // the scroll view that hosts these cards. IridescentMaterial is static under
-                    // Reduce Motion by design.
-                    RoundedRectangle(cornerRadius: Theme.Radius.card)
+                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                         .strokeBorder(IridescentMaterial(), lineWidth: 2)
-                } else {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card)
-                        .strokeBorder(isSelected ? Color.clear : Theme.hairline, lineWidth: 1)
                 }
             }
-            // A soft outer glow — kept modest so the small bloom the host scroll view can't clip
-            // stays imperceptible, while the inset `.strokeBorder` above carries the visible ring.
             .shadow(color: iridescent ? Theme.iridescent[0].opacity(0.4) : .clear, radius: 6)
         }
         .buttonStyle(PressableScaleStyle())
@@ -106,6 +102,7 @@ struct PressableScaleStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
+            .brightness(configuration.isPressed ? -0.03 : 0)   // sinks AND loses a touch of light, like a key
             .animation(Motion.lively, value: configuration.isPressed)
     }
 }

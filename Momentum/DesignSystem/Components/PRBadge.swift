@@ -19,10 +19,7 @@ struct PRBadge: View {
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, Theme.Space.sm)
         .padding(.vertical, 6)
-        .background {
-            Capsule().fill(Theme.surface)
-            Capsule().stroke(Theme.hairline, lineWidth: 1)
-        }
+        .raised(Capsule())
         .overlay {
             if celebrate && !reduceMotion {
                 Capsule()

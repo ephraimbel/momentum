@@ -29,9 +29,15 @@ struct SegmentedCapsule<Value: Hashable>: View {
         var fills: Bool { self == .page }
     }
 
+    /// Lavender is the app-wide default (rebrand 2026-08-16). `.ink` is for pages that carry
+    /// their colour in the DATA — Progress asked for it (owner call 2026-08-28: "too much
+    /// purple on Trends"): there the pill is chrome, and chrome stays monochrome.
+    enum Tone { case lavender, ink }
+
     let items: [Value]
     @Binding var selection: Value
     var scale: Scale = .page
+    var tone: Tone = .lavender
     /// The visible text for a segment.
     let title: (Value) -> String
     /// A spoken label when the visible text is an abbreviation ("1M" → "Last month").
@@ -50,10 +56,7 @@ struct SegmentedCapsule<Value: Hashable>: View {
             }
         }
         .padding(scale.trackPadding)
-        .background {
-            Capsule().fill(Theme.surface)
-            Capsule().stroke(Theme.hairline)
-        }
+        .raised(Capsule())
     }
 
     private func segment(_ item: Value) -> some View {
@@ -67,7 +70,7 @@ struct SegmentedCapsule<Value: Hashable>: View {
             Text(title(item))
                 .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
                 .lineLimit(1).fixedSize(horizontal: scale == .compact, vertical: false)
-                .foregroundStyle(on ? .white : Theme.inkSecondary)
+                .foregroundStyle(on ? (tone == .ink ? Theme.background : .white) : Theme.inkSecondary)
                 .padding(.horizontal, scale.horizontalPadding)
                 .padding(.vertical, scale.verticalPadding)
                 .frame(maxWidth: scale.fills ? .infinity : nil)
@@ -79,7 +82,7 @@ struct SegmentedCapsule<Value: Hashable>: View {
                         // Lavender marks selected (rebrand 2026-08-16) — ink pills act, the
                         // brand color says "you are here". White label holds 4.3:1 on #7C63F0
                         // in both appearances (the hex doesn't re-anodize in dark).
-                        Capsule().fill(Theme.purple)
+                        Capsule().fill(tone == .ink ? Theme.ink : Theme.purple)
                             .matchedGeometryEffect(id: "segmented.pill", in: pill)
                     }
                 }

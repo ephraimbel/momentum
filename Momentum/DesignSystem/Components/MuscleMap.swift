@@ -75,13 +75,19 @@ enum MuscleMapGrading: Equatable {
     /// `.weeklyVolume` deliberately ignores it (one easy week must not read as a fully-lit body).
     func intensity(_ value: Double, maxVal: Double) -> Double {
         guard value > 0 else { return 0 }
+        // Contrast rule (owner call 2026-08-28): the difference must be VISIBLE on the body. The
+        // old ramps compressed the range (session floor 0.62; a muscle at a third of the leader
+        // still rendered ~60%), so a legs-heavy month read as a fully lit body. Both scales now
+        // open up: the leader burns full, a muscle at half the leader is clearly dimmer, a touch
+        // is a faint tint.
         switch self {
         case .session:
             guard maxVal > 0 else { return 0 }
-            return 0.62 + 0.38 * min(1, value / maxVal)
+            // ~0.30 at a tenth of the top muscle, 0.5 at half, 1.0 at the top.
+            return 0.28 + 0.72 * pow(min(1, value / maxVal), 1.4)
         case .weeklyVolume:
-            // Perceptual ramp: ~1 set/wk ≈ 0.33, 3 ≈ 0.51, 5 ≈ 0.66, 10+ = 1.0.
-            return 0.20 + 0.80 * pow(min(1, value / Self.fullBurnWeeklySets), 0.8)
+            // ~1 set/wk ≈ 0.14, 3 ≈ 0.28, 5 ≈ 0.42, 10+ = 1.0 — sustained volume earns the burn.
+            return 0.10 + 0.90 * pow(min(1, value / Self.fullBurnWeeklySets), 1.5)
         }
     }
 }
@@ -426,9 +432,10 @@ enum MuscleActivation {
 
     /// Lower-body contribution from foot sports (running/walking/hiking) — endurance work drives the
     /// posterior chain, so the athlete figure reflects a runner's training, not only gym work. Scaled
-    /// by distance in "set-equivalents per km" tuned so a strong running week reads like a solid leg
-    /// block; walks/hikes count at half (same chain, lighter load). Weights are relative — the map
-    /// normalizes to the top muscle — so what matters is the distribution, not the absolute numbers.
+    /// by distance in "set-equivalents per km" tuned to the panel's ABSOLUTE yardstick
+    /// (`MuscleMapGrading.fullBurnWeeklySets` = 10): ~20 km of running a week burns the calves
+    /// full, quads just behind, hamstrings and glutes lighter, core a touch. Walks/hikes count at
+    /// half (same chain, lighter load).
     static func fromEndurance(workouts: [Workout]) -> [MuscleGroup: Double] {
         let perKm: [MuscleGroup: Double] = [.calves: 0.5, .quads: 0.45, .hamstrings: 0.35, .glutes: 0.35, .core: 0.15]
         var total: [MuscleGroup: Double] = [:]
@@ -447,6 +454,19 @@ enum MuscleActivation {
         var total = from(workouts: workouts)
         for (m, v) in fromEndurance(workouts: workouts) { total[m, default: 0] += v }
         return total
+    }
+
+    /// The Athlete Panel's number: weekly working-set-equivalents per muscle over a trailing window
+    /// — the in-window `combined` total ÷ the window's EXACT length in weeks. The figure grades
+    /// this absolutely (`.weeklyVolume`), so the divisor is what makes 7D, 1M, 3M and 6M one
+    /// yardstick. A 30-day window is 4.29 weeks; dividing by a whole 4 (the old integer
+    /// `activationDays / 7`) read the same training ~7% brighter at 1M and 3M than at 7D, when the
+    /// panel's own rule is "brighter only where the athlete actually trains more." Untrained
+    /// muscles are simply absent — the figure leaves them unlit. Pure and unit-tested.
+    static func weeklyRate(workouts: [Workout], days: Int, now: Date = Date()) -> [MuscleGroup: Double] {
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        let weeks = max(1, Double(days) / 7)     // a sub-week window is never scaled UP
+        return combined(workouts: workouts.filter { $0.startedAt >= cutoff }).mapValues { $0 / weeks }
     }
 }
 

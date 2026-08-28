@@ -19,36 +19,40 @@ struct OversizedButton: View {
 
     var body: some View {
         Button {
-            Haptics.light()
+            Haptics.medium()   // the primary action has weight (glass pass 2026-08-27)
             action()
         } label: {
             HStack(spacing: Theme.Space.sm) {
                 if let systemImage { Image(systemName: systemImage) }
                 Text(title)
             }
-            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+            .font(.rounded(Theme.FontSize.body + 1, weight: .semibold))
             .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .foregroundStyle(kind == .filled ? Theme.background : Theme.ink)
-            .background { backdrop }
+            .frame(height: 58)
+            .foregroundStyle(kind == .filled ? .white : Theme.ink)
+            .modifier(Backdrop(kind: kind))
+            .contentShape(Capsule())
         }
-        .buttonStyle(PressableScaleStyle())
+        .buttonStyle(RaisedPressStyle())
         .opacity(isEnabled ? 1 : 0.35)
         .disabled(!isEnabled)
     }
 
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.card) }
-
-    @ViewBuilder private var backdrop: some View {
-        switch kind {
-        case .filled:
-            shape.fill(Theme.ink)
-        case .outline:
-            shape.fill(Color.clear).overlay { shape.stroke(Theme.ink, lineWidth: 1.5) }
-        case .glass:
-            shape.fill(Color.clear)
-                .momentumGlass(in: shape)
-                .overlay { shape.stroke(Theme.ink, lineWidth: 1.5) }
+    /// Capsules, all three (the pill law): filled = the raised ink capsule; outline and glass keep
+    /// their see-through / blurred grounds for the map-floating sites, with an ink hairline.
+    private struct Backdrop: ViewModifier {
+        let kind: Kind
+        func body(content: Content) -> some View {
+            switch kind {
+            case .filled:
+                content.raised(Capsule(), tone: .ink)
+            case .outline:
+                content.background(Capsule().fill(Color.clear))
+                    .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1.5))
+            case .glass:
+                content.background(Capsule().fill(Color.clear).momentumGlass(in: Capsule()))
+                    .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1.5))
+            }
         }
     }
 }

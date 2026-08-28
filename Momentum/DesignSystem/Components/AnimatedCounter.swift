@@ -28,6 +28,9 @@ struct CountUpHero: View {
     let format: (Double) -> String
     let label: String
     var size: CGFloat = Theme.FontSize.heroNumber
+    /// The raised-unit grammar (2026-08-25, `StatNumeral`): when set, the unit sits small on the
+    /// number's cap line (4.45ᵐⁱ) and the caption below is dropped — the unit already says it.
+    var unit: String? = nil
     var duration: Double = 0.9
     /// Hold the tally until this many seconds after appear — so a hero sitting under a celebration
     /// beat doesn't count up behind it and be sitting finished by the time the beat lifts.
@@ -38,19 +41,29 @@ struct CountUpHero: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.xs) {
-            AnimatedCounter(value: shown, format: format)
-                .font(.display(size, weight: .bold))
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-            Text(label.uppercased())
-                .font(.rounded(Theme.FontSize.label, weight: .bold))
-                .tracking(1.2)
-                .foregroundStyle(Theme.inkTertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                AnimatedCounter(value: shown, format: format)
+                    .font(.display(size, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                if let unit {
+                    Text(unit)
+                        .font(.rounded(size * 0.32, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .baselineOffset(size * 0.46)
+                }
+            }
+            if unit == nil {
+                Text(label.uppercased())
+                    .font(.rounded(Theme.FontSize.label, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.inkTertiary)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
-        .accessibilityValue(format(target))
+        .accessibilityValue("\(format(target)) \(unit ?? "")")
         .onAppear {
             guard !reduceMotion else { shown = target; return }
             withAnimation(.easeOut(duration: duration).delay(delay)) { shown = target }
