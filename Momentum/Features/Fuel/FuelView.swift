@@ -67,6 +67,10 @@ struct FuelView: View {
     @State private var voice = VoiceTranscriber()
     @State private var voiceBase = ""
     @State private var showScanner = false
+    /// The "Enjoying momentum?" soft-ask, raised after a logged meal that clears a rating
+    /// milestone. Fuel is a core loop of its own — an athlete who only ever logs food reaches the
+    /// same 1st/5th/15th moments a runner does (`AppReview`).
+    @State private var showRatingPrompt = false
     @State private var barcodeDemoShown = false   // DEBUG --barcode-demo latch (see onAppear)
     @State private var healthDemoShown = false    // DEBUG --fuel-health latch (same pattern)
     @State private var mealDetailShown = false    // DEBUG --meal-detail latch (same pattern)
@@ -76,6 +80,9 @@ struct FuelView: View {
     @FocusState private var composing: Bool
     @Environment(PaywallController.self) private var paywall
     @Environment(\.scenePhase) private var scenePhase
+    /// The native App Store ask, reached only through the styled pre-prompt below — same contract
+    /// as the post-workout card in `WorkoutRunner`.
+    @Environment(\.requestReview) private var requestReview
     private let estimator = FuelEstimator()
     /// How many times the journal will re-fire an estimate on its own before it rests. A meal the
     /// model can't parse must not cost an API call on every tab visit for the rest of its life; the
@@ -272,6 +279,25 @@ struct FuelView: View {
             .fullScreenCover(isPresented: $showScanner) {
                 BarcodeScanView { product, servings in
                     logScanned(product, servings: servings)
+                }
+            }
+            // Its OWN host: this page already chains several presentations, and from the fourth
+            // onward a cover on the same chain can silently fail to present (the same trap
+            // RootView documents). The positive branch latches `recordRated` — Apple never tells
+            // us whether a review was written, so tapping through is the only signal there is.
+            .background {
+                Color.clear.fullScreenCover(isPresented: $showRatingPrompt) {
+                    RatingPromptView(
+                        onRate: {
+                            AppReview.recordRated()
+                            showRatingPrompt = false
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .seconds(0.6))
+                                requestReview()
+                            }
+                        },
+                        onDismiss: { showRatingPrompt = false })
+                    .presentationBackground(.clear)
                 }
             }
             #if DEBUG
@@ -808,7 +834,21 @@ struct FuelView: View {
             try? context.save()
             refreshDerived()
         }
+        mealLogged()
         Haptics.success()
+    }
+
+    /// One logged meal: count it, then — a beat later, once the row has animated into the journal
+    /// — raise the rating card if this log cleared a milestone. The delay keeps the ask off the
+    /// logging moment itself, and the guards keep it from covering a sheet the athlete opened.
+    private func mealLogged() {
+        AppReview.recordMealLogged()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.1))
+            guard editing == nil, !showingGoals, !showingHistory,
+                  !showingHealth, !showScanner, !showingReadout else { return }
+            if AppReview.shouldRequestReview() { showRatingPrompt = true }
+        }
     }
 
     private var canLog: Bool {
@@ -866,6 +906,7 @@ struct FuelView: View {
             try? context.save()
             refreshDerived()
         }
+        mealLogged()
         // One event, one haptic. A local resolve never also fires the estimate's `Haptics.light()`
         // — two taps back to back read as a stutter, not as speed.
         Haptics.success()
@@ -1149,6 +1190,7 @@ struct FuelView: View {
             try? context.save()
             refreshDerived()
         }
+        mealLogged()   // a re-logged usual is still the athlete using the app
         Haptics.success()
     }
 
@@ -1369,6 +1411,7 @@ struct FuelView: View {
                         try? context.save()
                         refreshDerived()
                     }
+                    mealLogged()
                     Haptics.success()
                 } label: { Label("Log it again", systemImage: "plus.circle") }
             }

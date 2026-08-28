@@ -3,21 +3,48 @@ import XCTest
 /// Guideline 5.6.3 — "don't require or encourage customers to submit a rating." This app was once
 /// rejected for a rating beat in onboarding.
 ///
-/// A rating beat shipped again anyway from 2026-07-26 (deliberately, at the owner's direction) as
-/// the last screen before the paywall, and this test was weakened to accommodate it. It was
-/// **removed 2026-08-22** during the conversion-funnel work: it asked for a rating from someone who
-/// had never used the app, and it sat directly between the plan reveal and the checkout, spending
-/// the athlete's patience at the exact moment the flow needed it. So the original assertion is
-/// restored, and it is the strong one — **no rating ask anywhere in onboarding.**
+/// A rating STEP shipped again from 2026-07-26 and was **removed 2026-08-22**: it asked for a
+/// rating from someone who had never used the app, and it sat directly between the plan reveal and
+/// the checkout, spending the athlete's patience at the exact moment the flow needed it.
 ///
-/// The only rating ask that ships is the engagement-gated pre-prompt after a first saved workout
-/// (`AppReview.shouldRequestReview` + `RatingPromptView`). If someone proposes an onboarding rating
-/// beat again, this test is the argument against it.
+/// Since 2026-08-28 onboarding carries one quiet LINK — "Leave a review to help more runners join
+/// momentum", above the plan reveal's CTA (owner call, made with this history spelled out). The
+/// line between that and the thing Apple rejected is the whole point of this test, so it is drawn
+/// here rather than left to memory:
+///
+///  • a link the athlete may tap is allowed; a card raised over them is not,
+///  • it must never call `requestReview()` — no system sheet before the first workout exists,
+///  • nothing may block or gate Continue on it,
+///  • and no rating surface may appear on ANY later beat (notifications, location, the paywall
+///    hand-off), which is where the removed step used to live.
+///
+/// The engagement-gated pre-prompt (`AppReview.shouldRequestReview` + `RatingPromptView`) still
+/// belongs only to the earned moments after a saved workout or a logged meal.
 final class OnboardingNoRatingUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    func testNoRatingAskAnywhereInOnboarding() {
+    /// The reveal's line is a link, and it is the ONLY rating surface in the flow: no modal card,
+    /// and Continue works whether or not it is ever tapped.
+    func testTheRevealsReviewLineIsALinkAndNotAPrompt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-reveal", "--reveal-runs"]
+        app.launch()
+
+        let line = app.buttons["Leave a review for momentum on the App Store"]
+        XCTAssertTrue(line.waitForExistence(timeout: 20), "Expected the reveal's review line.")
+        // A card raised over the athlete is the 5.6.3 shape. A line sitting under the CTA is not.
+        XCTAssertFalse(app.buttons["Rate momentum"].exists,
+                       "Onboarding must never raise the rating CARD — only the quiet line.")
+        XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists,
+                       "The engagement pre-prompt belongs to the earned moments, not onboarding.")
+        // Nothing about the ask may gate the flow.
+        let cta = app.buttons["This looks great"]
+        XCTAssertTrue(cta.exists, "The reveal's CTA must stand on its own.")
+        XCTAssertTrue(cta.isHittable, "Continue must never wait on the review line.")
+    }
+
+    func testNoRatingAskAnywhereAfterTheReveal() {
         let app = XCUIApplication()
         // Land on the notifications step — the first beat after the plan reveal, so everything from
         // here to the paywall is the stretch a rating beat would ever have lived in.

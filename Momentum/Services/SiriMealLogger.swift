@@ -72,6 +72,7 @@ enum SiriMealLogger {
             context.delete(meal)   // never hand back a receipt for a write that didn't land
             return nil
         }
+        AppReview.recordMealLogged()   // counted only once the write actually landed
         return receipt(for: meal, resolved: resolved)
     }
 

@@ -54,7 +54,7 @@ struct RatingPromptView: View {
                 .multilineTextAlignment(.center)
                 .padding(.top, Theme.Space.lg)
 
-            Text("A quick rating helps more runners find their plan.")
+            Text("Leave a review to help more runners join momentum.")
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)

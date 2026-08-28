@@ -254,6 +254,7 @@ struct FuelHistoryView: View {
                         context.insert(copy)
                         try? context.save()
                     }
+                    AppReview.recordMealLogged()
                     Haptics.success()
                 } label: { Label("Log again today", systemImage: "arrow.uturn.up") }
             }

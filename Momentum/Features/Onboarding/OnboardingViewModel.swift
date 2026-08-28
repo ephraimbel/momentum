@@ -186,8 +186,15 @@ final class OnboardingViewModel {
         // never used the app, and it sat in the worst possible seat — the last screen before the
         // checkout, spending the athlete's patience immediately before spending their money. It was
         // also the exact thing this app was rejected for under App Review 5.6.3. The rating ask now
-        // lives only where engagement justifies it: the soft pre-prompt after a first saved workout
-        // (`AppReview.shouldRequestReview` + `RatingPromptView`). Do not re-add one here.
+        // lives only where engagement justifies it: the soft pre-prompt after a saved workout or a
+        // logged meal (`AppReview.shouldRequestReview` + `RatingPromptView`). Do not re-add a
+        // rating STEP here.
+        //
+        // What onboarding does carry, from 2026-08-28 (owner call, made with the 5.6.3 history
+        // spelled out): one quiet line above the plan reveal's CTA — "Leave a review to help more
+        // runners join momentum" — in `PlanRevealView.reviewLine`. It is a link the athlete may
+        // tap, not a prompt raised over them, and it never fires `requestReview()`; see the note
+        // there for why that distinction is the whole of the risk.
         // `account` is the LAST beat, AFTER the paywall (user call 2026-07-27): the sign-in/sign-up
         // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
         // someone. Setup now runs local-only (guest) and the account is offered once there's a plan

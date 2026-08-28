@@ -18,6 +18,10 @@ struct PlanRevealView: View {
     @State private var calloutIn = false    // peak callout pops once the pen reaches it
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openURL) private var openURL
+    /// The review line is spent once — tapping it hands the athlete to the App Store, and the row
+    /// settles into a thank-you rather than sitting there asking twice.
+    @State private var reviewTapped = false
 
     private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
 
@@ -57,6 +61,45 @@ struct PlanRevealView: View {
 
     private var planWeekCount: Int { derived.weekCount }
     private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] { derived.weeksGrouped }
+
+    /// A quiet, opt-in line above the reveal's CTA (owner call 2026-08-28, after the risk was
+    /// spelled out): "Leave a review to help more runners join momentum."
+    ///
+    /// It is deliberately NOT `requestReview()`. Guideline 5.6.3 is about the app *prompting*
+    /// someone who hasn't used it yet, and this beat is before the first workout exists — a system
+    /// sheet here is the precise thing the app was rejected for. A line the athlete chooses to tap,
+    /// which then navigates to the App Store, is user-initiated navigation rather than a prompt:
+    /// nothing is raised over them, and Continue is unaffected whether they tap it or not. It also
+    /// leaves all three native prompts unspent for the earned moments (`AppReview`) later.
+    ///
+    /// Tapping it latches `recordRated`, so someone sent to write a review here is never asked
+    /// again after their first workout or meal.
+    @ViewBuilder
+    private var reviewLine: some View {
+        if reviewTapped {
+            Text("Thanks for helping momentum grow.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
+                .transition(.opacity)
+        } else {
+            Button {
+                Haptics.light()
+                AppReview.recordRated()
+                withAnimation(Motion.standard) { reviewTapped = true }
+                if let url = URL(string: "https://apps.apple.com/app/id6790830947?action=write-review") {
+                    openURL(url)
+                }
+            } label: {
+                Text("Leave a review to help more runners join momentum")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Leave a review for momentum on the App Store")
+        }
+    }
 
     var body: some View {
         // The outer reader respects the safe area, so it can tell the full-bleed scroll below how
@@ -119,18 +162,23 @@ struct PlanRevealView: View {
         #endif
         }
         .safeAreaInset(edge: .bottom) {
-            OnboardingCTA(title: "This looks great") { onContinue() }
+            VStack(spacing: Theme.Space.sm) {
+                reviewLine
+                OnboardingCTA(title: "This looks great") { onContinue() }
+            }
                 .reveal(0.4)
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
                 .padding(.bottom, Theme.Space.sm)
-                // ONE fade, owned by the button: clear → canvas rising above it, bled past the
+                // ONE fade, owned by the inset: clear → canvas rising above it, bled past the
                 // column and under the home indicator. (A separate scroll-edge overlay plus an
                 // opaque button background left a hairline seam between the two while scrolling —
-                // owner report 2026-08-27.)
+                // owner report 2026-08-27.) It reaches full canvas by 0.35 rather than 0.55: the
+                // inset grew a review line above the button, and at the old stop the plan's
+                // mileage stats were still scrolling through those words.
                 .background {
                     LinearGradient(stops: [.init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 0),
-                                           .init(color: OnboardingStyle.canvas(colorScheme), location: 0.55),
+                                           .init(color: OnboardingStyle.canvas(colorScheme), location: 0.35),
                                            .init(color: OnboardingStyle.canvas(colorScheme), location: 1)],
                                    startPoint: .top, endPoint: .bottom)
                         .padding(.top, -Theme.Space.xl)

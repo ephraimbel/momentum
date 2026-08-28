@@ -73,6 +73,9 @@ struct WorkoutRunner: ViewModifier {
             .fullScreenCover(isPresented: $showRatingPrompt) {
                 RatingPromptView(
                     onRate: {
+                        // Terminal: Apple never tells us whether a review was actually written, so
+                        // tapping through IS the signal — this install is done being asked.
+                        AppReview.recordRated()
                         showRatingPrompt = false
                         Task { @MainActor in
                             try? await Task.sleep(for: .seconds(0.6))
