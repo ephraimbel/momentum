@@ -23,6 +23,10 @@ struct PlanRevealView: View {
     @State private var curveGleam = 0.0     // a highlight running the drawn curve, after the pen
     @State private var tileSheen = 0.0      // light crossing the stat tiles, left to right
     @State private var stripFill = 0.0      // the first week's day dots lighting in order
+    @State private var checkDraw = 0.0      // the PLAN READY tick drawing itself
+    @State private var chipsIn = 0.0        // "built around you" arriving one chip at a time
+    /// The celebration haptic, held so it can be cancelled if the page goes away mid-sequence.
+    @State private var celebrate: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.requestReview) private var requestReview
@@ -259,9 +263,10 @@ struct PlanRevealView: View {
     private var hero: some View {
         VStack(spacing: Theme.Space.md) {
             HStack(spacing: 7) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white, Theme.purple)
+                // Drawn, not stamped. This badge is the first thing on the page and its whole job
+                // is to say "done" — so it does the gesture rather than asserting it. An SF Symbol
+                // that fades in says the same words with none of the meaning.
+                DrawnCheck(progress: checkDraw).frame(width: 14, height: 14)
                 Text("PLAN READY")
                     .font(.rounded(11, weight: .bold)).tracking(1.6)
                     .foregroundStyle(Theme.inkSecondary)
@@ -375,10 +380,14 @@ struct PlanRevealView: View {
                             gleam: curveGleam)
                     .frame(height: 170)
                 if !data.caption.isEmpty {
+                    // "Peaks at 13.5 mi in week 6" is the pill's own sentence, so it arrives WITH
+                    // the pill. Reading the caption before the chart has said anything is reading
+                    // the answer before the question.
                     Text(data.caption)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium))
                         .foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .opacity(calloutIn ? 1 : 0)
                 }
             }
             .padding(Theme.Space.md + 4)
@@ -479,13 +488,19 @@ struct PlanRevealView: View {
     private var reflectionChips: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
             sectionLabel("BUILT AROUND YOU")
+            // One at a time, in order. These are the athlete's own answers handed back to them,
+            // and a block of them appearing at once reads as a list that was already written.
+            // Arriving one after another reads as the plan being assembled out of what they said.
             FlowLayout(spacing: 10) {
-                ForEach(vm.reflections(), id: \.self) { chip in
+                ForEach(Array(vm.reflections().enumerated()), id: \.element) { i, chip in
+                    let lit = min(1, max(0, (chipsIn - Double(i) * 0.09) / 0.34))
                     Text(chip)
                         .font(.rounded(14, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(Theme.ink)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .raised(Capsule())
+                        .scaleEffect(0.88 + 0.12 * lit)
+                        .opacity(lit)
                 }
             }
         }
@@ -673,20 +688,35 @@ struct PlanRevealView: View {
             shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
             // Every band ends off its own view, so the finished frame is simply the still page.
             nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1
+            checkDraw = 1; chipsIn = 1
+            Haptics.celebration()
             return
         }
-        withAnimation(.easeOut(duration: 1.1).delay(0.3)) {
-            shownWeeks = Double(planWeekCount)
-            shownDays = Double(vm.daysPerWeek)
-            shownSessions = Double(totalSessions)
-        }
+        // The three counters land in the SAME ORDER the light crosses them. They used to share one
+        // animation and finish together while the sheen was still travelling, so the row's two
+        // motions disagreed with each other — the kind of half-beat that reads as cheap without
+        // anyone being able to say why.
+        withAnimation(.easeOut(duration: 1.1).delay(0.30)) { shownWeeks = Double(planWeekCount) }
+        withAnimation(.easeOut(duration: 1.1).delay(0.41)) { shownDays = Double(vm.daysPerWeek) }
+        withAnimation(.easeOut(duration: 1.1).delay(0.52)) { shownSessions = Double(totalSessions) }
         withAnimation(Motion.pen(1.4).delay(0.35)) { curveIn = 1 }
+        withAnimation(.easeOut(duration: 0.55).delay(0.20)) { checkDraw = 1 }
         withAnimation(.easeInOut(duration: 0.95).delay(0.55)) { nameSheen = 1 }
         withAnimation(.easeInOut(duration: 1.25).delay(1.05)) { tileSheen = 1 }
         withAnimation(.spring(response: 0.5, dampingFraction: 0.7).delay(1.5)) { calloutIn = true }
         withAnimation(.easeInOut(duration: 0.9).delay(1.8)) { curveGleam = 1 }
         withAnimation(.easeOut(duration: 0.75).delay(2.0)) { stripFill = 1 }
-        Haptics.celebration()
+        withAnimation(.easeOut(duration: 0.5).delay(2.15)) { chipsIn = 1 }
+        // The celebration belongs to the MOMENT, not to the function call. It used to fire here,
+        // synchronously — at t=0, against a blank page with every counter still reading zero, a
+        // full second and a half before the plan's peak was called out. A success haptic with
+        // nothing on screen to succeed at is just a buzz.
+        celebrate?.cancel()
+        celebrate = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.55))
+            guard !Task.isCancelled else { return }
+            Haptics.celebration()
+        }
     }
 }
 
@@ -1180,5 +1210,33 @@ private struct PeakBeacon: View {
         }
         .frame(width: 34, height: 34)
         .allowsHitTesting(false)
+    }
+}
+
+/// The PLAN READY tick, drawn rather than stamped: the disc scales in, then the stroke runs
+/// through it. Two beats inside one 0…1 so the mark is never ahead of the surface it is written on.
+private struct DrawnCheck: View {
+    let progress: Double
+
+    /// The disc takes the first third, the stroke the rest — a tick that draws onto nothing looks
+    /// like a rendering error for the first few frames.
+    private var disc: Double { min(1, progress / 0.34) }
+    private var stroke: Double { max(0, (progress - 0.30) / 0.70) }
+
+    var body: some View {
+        GeometryReader { geo in
+            let s = min(geo.size.width, geo.size.height)
+            ZStack {
+                Circle().fill(Theme.purple).scaleEffect(disc)
+                Path { p in
+                    p.move(to: CGPoint(x: s * 0.28, y: s * 0.52))
+                    p.addLine(to: CGPoint(x: s * 0.44, y: s * 0.68))
+                    p.addLine(to: CGPoint(x: s * 0.73, y: s * 0.34))
+                }
+                .trim(from: 0, to: stroke)
+                .stroke(.white, style: StrokeStyle(lineWidth: s * 0.14, lineCap: .round, lineJoin: .round))
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
