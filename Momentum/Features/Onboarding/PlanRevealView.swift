@@ -424,6 +424,24 @@ struct PlanRevealView: View {
         RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
     }
 
+    /// What each tile is actually counting, drawn as quiet texture under its number.
+    private func ghost(for label: String) -> RevealTileGhost.Kind? {
+        switch label {
+        case "WEEKS": .weeks(weekly.values)
+        case "DAYS A WEEK": .days(trainingWeekdays)
+        case "SESSIONS": .sessions(totalSessions)
+        default: nil
+        }
+    }
+
+    /// The weekday indices (0 = Monday) the athlete actually trains, read off week one rather than
+    /// assumed from the count — a 4-day athlete's four days are a specific four.
+    private var trainingWeekdays: Set<Int> {
+        guard let first = weeksGrouped.first else { return [] }
+        let cal = Calendar.current
+        return Set(first.sessions.map { (cal.component(.weekday, from: $0.date) + 5) % 7 })
+    }
+
     private func statTile(_ value: Double, _ label: String, _ index: Int,
                           _ format: @escaping (Double) -> String) -> some View {
         VStack(spacing: 4) {
@@ -433,6 +451,14 @@ struct PlanRevealView: View {
                 .lineLimit(1).minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity).frame(height: 84)
+        .background(alignment: .bottom) {
+            if let kind = ghost(for: label) {
+                // Sized to the strip of tile that the number and its label DON'T use. At 22pt the
+                // drawing ran up through the label and read as damage rather than as texture.
+                RevealTileGhost(kind: kind, draw: tileLight(index))
+                    .frame(height: 12).padding(.horizontal, 14).padding(.bottom, 7)
+            }
+        }
         .raised(tileShape())
         .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
     }
@@ -731,10 +757,13 @@ private struct VolumeCurve: View {
                         .overlay(Circle().stroke(Theme.purple, lineWidth: 2.5))
                         .position(pointAlong(curve, progress))
                 }
-                // Peak: dot + pill.
+                // Peak: dot + pill. The dot is the ONE thing on this page that keeps moving —
+                // a slow beacon on the block's summit, which is exactly what motion is reserved
+                // for here (the peak is the achievement the whole plan is shaped around). Every
+                // other light on the reveal travels once and stops; a second looping thing would
+                // turn considered into busy.
                 let p = pts[peakIndex]
-                Circle().fill(.white).frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(Theme.purple, lineWidth: 3))
+                PeakBeacon(active: calloutIn)
                     .position(p)
                     .opacity(calloutIn ? 1 : 0)
                 Text(peakLabel)
@@ -1026,5 +1055,130 @@ private struct SessionDisclosureRow: View {
             return Formatters.distance(meters: dist, unit: distanceUnit)
         }
         return session.discipline.rawValue.capitalized
+    }
+}
+
+// MARK: - Tile ghosts
+
+/// The quiet texture under a stat tile's number: a small, TRUE drawing of the thing the number
+/// counts. Six weeks are six ticks at the block's real heights, four days a week are the athlete's
+/// four actual weekdays, twenty-four sessions are twenty-four marks.
+///
+/// The paywall's grammar is that every tile is an illustration of its own subject, and this is that
+/// idea kept honest: a number with a picture of itself underneath reads as considered, a number
+/// with decoration underneath reads as filler. Held at a whisper (ink at 0.06–0.13) so it is
+/// texture the eye finds on the second look, never a second chart competing with the first.
+private struct RevealTileGhost: View {
+    enum Kind {
+        case weeks([Double])        // the block's real weekly volumes
+        case days(Set<Int>)         // 0 = Monday
+        case sessions(Int)
+    }
+
+    let kind: Kind
+    /// 0…1, left to right, sharing the tile's own light so the drawing arrives with it.
+    let draw: Double
+
+    private var on: Color { Theme.ink.opacity(0.11) }
+    private var off: Color { Theme.ink.opacity(0.05) }
+
+    var body: some View {
+        switch kind {
+        case .weeks(let values): weeks(values)
+        case .days(let set): days(set)
+        case .sessions(let n): sessions(n)
+        }
+    }
+
+    /// Reveal fraction for the item at `i` of `n`, so the row fills in the same direction the
+    /// tile's light travels.
+    private func lit(_ i: Int, _ n: Int) -> Double {
+        min(1, max(0, (draw * 1.25 - Double(i) / Double(max(n, 1))) * 4))
+    }
+
+    private func weeks(_ values: [Double]) -> some View {
+        let maxV = max(values.max() ?? 1, 0.0001)
+        let peak = values.firstIndex(of: values.max() ?? 0) ?? 0
+        return GeometryReader { geo in
+            let h = geo.size.height
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(Array(values.enumerated()), id: \.offset) { i, v in
+                    RoundedRectangle(cornerRadius: 1, style: .continuous)
+                        .fill(i == peak ? on : off)
+                        .frame(height: max(3, h * (0.30 + 0.70 * v / maxV)))
+                        .scaleEffect(y: lit(i, values.count), anchor: .bottom)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        }
+    }
+
+    /// The only ghost that carries a PATTERN rather than a quantity — which of the seven days —
+    /// so it needs more separation than the others. At the shared 0.11/0.05 all seven dots read as
+    /// one grey row and "4 of 7" was invisible.
+    private func days(_ set: Set<Int>) -> some View {
+        HStack(spacing: 4) {
+            ForEach(0..<7, id: \.self) { i in
+                Circle()
+                    .fill(Theme.ink.opacity(set.contains(i) ? 0.20 : 0.045))
+                    .frame(height: 5)
+                    .scaleEffect(lit(i, 7))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+    }
+
+    /// Two rows, so twenty-odd marks stay legible at tile width. Capped at 30: past that the marks
+    /// stop being countable and become a smear, and an uncountable count is worse than none.
+    private func sessions(_ n: Int) -> some View {
+        let shown = min(n, 30)
+        let perRow = Int(ceil(Double(shown) / 2))
+        return VStack(spacing: 2.5) {
+            ForEach(0..<2, id: \.self) { row in
+                HStack(spacing: 2.5) {
+                    ForEach(0..<perRow, id: \.self) { col in
+                        let i = row * perRow + col
+                        Circle()
+                            .fill(i < shown ? on : .clear)
+                            .frame(height: 3.5)
+                            .scaleEffect(lit(i, shown))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+    }
+}
+
+/// The peak week's marker: the same white dot with a purple rim the chart always had, plus a halo
+/// that breathes out and fades, once every few seconds.
+///
+/// Slow on purpose. A fast pulse on a data point reads as "loading"; one that takes three and a
+/// half seconds to open and dissolve reads as a light left on at the summit. Reduce Motion holds
+/// the dot with no halo at all — the halo carries no information, so there is nothing to preserve.
+private struct PeakBeacon: View {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let period: Double = 3.5
+
+    var body: some View {
+        ZStack {
+            if active, !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    let u = (t.truncatingRemainder(dividingBy: period)) / period
+                    // Ease out, so it opens quickly and spends most of the loop dissolving.
+                    let e = 1 - pow(1 - u, 2)
+                    Circle()
+                        .stroke(Theme.purple.opacity(0.34 * (1 - e)), lineWidth: 2)
+                        .frame(width: 12 + 22 * e, height: 12 + 22 * e)
+                }
+            }
+            Circle().fill(.white).frame(width: 12, height: 12)
+                .overlay(Circle().stroke(Theme.purple, lineWidth: 3))
+        }
+        .frame(width: 34, height: 34)
+        .allowsHitTesting(false)
     }
 }
