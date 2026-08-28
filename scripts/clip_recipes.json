@@ -1,0 +1,287 @@
+{
+  "live-run": {
+    "title": "Live run: the stat card, then the map following the runner",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--live-run-planned",
+      "--ui-test-route",
+      "--live-page-cycle"
+    ],
+    "appearance": "dark",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 40,
+    "record": 40,
+    "trim_start": 3.4,
+    "duration": 15.3
+  },
+  "community": {
+    "title": "Community home: ringed faces over a wall of real route maps",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--reset-social",
+      "--seed-follows",
+      "--profile-tab",
+      "--profile-community"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 35,
+    "record": 26,
+    "trim_start": 2.6,
+    "duration": 9.0,
+    "push": 0.05
+  },
+  "athlete-profile": {
+    "title": "An athlete's profile: route-map cover, ringed photo, workout grid",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--reset-social",
+      "--seed-follows",
+      "--profile-tab",
+      "--profile-community",
+      "--athlete-profile"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 35,
+    "record": 26,
+    "trim_start": 2.3,
+    "duration": 9.0,
+    "push": 0.05
+  },
+  "share-templates": {
+    "title": "Share composer: a photo card, then the Templates grid",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--profile-tab",
+      "--share-card",
+      "--share-media",
+      "--share-style=photo",
+      "--share-templates"
+    ],
+    "appearance": "dark",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 24,
+    "trim_start": 1.6,
+    "duration": 9.0,
+    "push": 0.04
+  },
+  "save-screen": {
+    "title": "Post-run save: the hero number counting up over the route",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--save-screen"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 24,
+    "trim_start": 2.75,
+    "duration": 8.0,
+    "push": 0.04
+  },
+  "today-deck": {
+    "title": "Today: the deck collapses to a glass Start pill and the map takes the screen",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--deck-cycle"
+    ],
+    "appearance": "dark",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 40,
+    "record": 18,
+    "trim_start": 2.4,
+    "duration": 9.5
+  },
+  "plan-reveal": {
+    "title": "Plan reveal: the block lands, week by week, in monochrome",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--onboarding",
+      "--onboarding-reveal"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 20,
+    "trim_start": 1.6,
+    "duration": 9.0,
+    "push": 0.04
+  },
+  "award-unlock": {
+    "title": "A medallion unlocks: Century Club, 100 km lifetime",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--award-unlock"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 22,
+    "trim_start": 2.3,
+    "duration": 6.0,
+    "push": 0.05
+  },
+  "progress-trends": {
+    "title": "Trends: the charts build in, then a point pins itself",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--seed-dense-history",
+      "--progress-tab",
+      "--scrub-demo"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 18,
+    "trim_start": 1.0,
+    "duration": 8.5,
+    "push": 0.04
+  },
+  "readiness": {
+    "title": "Readiness: the ring fills to Primed",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--progress-tab",
+      "--progress-health"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 16,
+    "trim_start": 1.1,
+    "duration": 8.0,
+    "push": 0.05
+  },
+  "fuel": {
+    "title": "Fuel: the one vivid room, gauges settling",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--seed-fuel-today",
+      "--fuel-tab"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 16,
+    "trim_start": 1.2,
+    "duration": 8.0,
+    "push": 0.05
+  },
+  "strength-live": {
+    "title": "Live strength: the planned checklist and the muscle map lighting up",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--strength-live-planned"
+    ],
+    "appearance": "dark",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 18,
+    "trim_start": 1.4,
+    "duration": 8.5,
+    "push": 0.04
+  },
+  "coach-card": {
+    "title": "The coach proposes a plan change, as a card you can apply",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--coach-card"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 18,
+    "trim_start": 2.5,
+    "duration": 6.0,
+    "push": 0.04
+  },
+  "heatmap": {
+    "title": "History: the personal heatmap opening up",
+    "args": [
+      "--reset-store",
+      "--seed-demo",
+      "--seed-dense-history",
+      "--progress-tab",
+      "--progress-history",
+      "--heatmap-expand"
+    ],
+    "appearance": "light",
+    "prewarm": true,
+    "prewarm_args": [
+      "--reset-store",
+      "--seed-demo"
+    ],
+    "prewarm_wait": 25,
+    "record": 16,
+    "trim_start": 1.2,
+    "duration": 8.0,
+    "push": 0.05
+  }
+}
