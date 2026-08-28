@@ -210,21 +210,23 @@ struct BalanceCard: View {
     }
 
     /// Shape-coded end markers with a 2pt surface ring, plus direct end labels in ink —
-    /// identity survives CVD and grayscale without leaning on hue. The labels sit on OPPOSITE
-    /// sides — strain's ABOVE its square, recovery's BELOW its circle — so the two numbers can
-    /// never stack into one unreadable pile at the right edge; when the end values nearly meet,
-    /// `endLabelSpacing` widens so the labels clear past each other instead of touching.
+    /// identity survives CVD and grayscale without leaning on hue.
+    ///
+    /// The labels DIVERGE: whichever series ends higher takes the space above its marker, the
+    /// lower one takes the space below. Fixed sides (strain always above, recovery always below)
+    /// looked safe and wasn't — with recovery at 100 over strain at 86, both labels pointed into
+    /// the 14-point gap between them and met in the middle, and widening the spacing only drove
+    /// them further in. See `endLabelPositions`.
     @ChartContentBuilder
     private func endDots(_ plot: Plot) -> some ChartContent {
-        let spacing = endLabelSpacing(plot)
+        let spacing: CGFloat = 5
+        let place = endLabelPositions(plot)
         if let r = plot.lastRecovery {
             PointMark(x: .value("Day", r.date), y: .value("Score", r.value))
                 .symbol(.circle).symbolSize(118).foregroundStyle(Theme.surface)
             PointMark(x: .value("Day", r.date), y: .value("Score", r.value))
                 .symbol(.circle).symbolSize(55).foregroundStyle(Theme.Health.recoveryInk)
-                // Near the floor, "bottom" would overflow and get pushed back up INTO the plot —
-                // step aside to .leading instead so it can never stack on the strain label.
-                .annotation(position: r.value < 12 ? .leading : .bottom, spacing: spacing,
+                .annotation(position: place.recovery, spacing: spacing,
                             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
                     endLabel(r.value)
                 }
@@ -234,25 +236,33 @@ struct BalanceCard: View {
                 .symbol(.square).symbolSize(144).foregroundStyle(Theme.surface)
             PointMark(x: .value("Day", s.date), y: .value("Score", s.value))
                 .symbol(.square).symbolSize(64).foregroundStyle(Theme.Health.strainInk)
-                // Same ceiling case: at ~90+ the "top" label overflows, is pushed down inside the
-                // chart, and lands on the recovery label (the screenshot's 98-over-75 stack).
-                .annotation(position: s.value > 88 ? .leading : .top, spacing: spacing,
+                .annotation(position: place.strain, spacing: spacing,
                             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
                     endLabel(s.value)
                 }
         }
     }
 
-    /// Anti-collision spacing for the direct end labels. With strain-above / recovery-below the
-    /// labels only converge when recovery ends over strain (each label points into the gap
-    /// between the dots), and they touch when that gap is small-to-middling — so within ~12
-    /// points either way, or a converging gap under ~24, the spacing widens enough (at ~1.7px
-    /// per point on the fixed 0–100 × 190pt frame) that the labels cross cleanly past each
-    /// other rather than meeting in the middle.
-    private func endLabelSpacing(_ plot: Plot) -> CGFloat {
-        guard let r = plot.lastRecovery?.value, let s = plot.lastStrain?.value else { return 5 }
-        let gap = r - s   // > 0 ⇒ recovery over strain ⇒ the labels converge
-        return (abs(gap) < 12 || (gap > 0 && gap < 24)) ? 16 : 5
+    /// Where each end label sits, so the two can never point into the same gap.
+    ///
+    /// The higher series takes the space ABOVE its marker and the lower one the space BELOW, so
+    /// they move apart rather than toward each other. Near the ceiling or the floor that space
+    /// does not exist: `overflowResolution` pushes the label back INSIDE the plot, straight onto
+    /// its neighbour, so the cramped label steps aside to `.leading` instead. (Both can only end
+    /// up leading when one is above 88 and the other below 12, and at that separation they are
+    /// nowhere near each other.)
+    private func endLabelPositions(_ plot: Plot) -> (recovery: AnnotationPosition, strain: AnnotationPosition) {
+        guard let r = plot.lastRecovery?.value, let s = plot.lastStrain?.value else {
+            return (.bottom, .top)
+        }
+        let recoveryHigher = r >= s
+        var rp: AnnotationPosition = recoveryHigher ? .top : .bottom
+        var sp: AnnotationPosition = recoveryHigher ? .bottom : .top
+        if rp == .top, r > 88 { rp = .leading }
+        if rp == .bottom, r < 12 { rp = .leading }
+        if sp == .top, s > 88 { sp = .leading }
+        if sp == .bottom, s < 12 { sp = .leading }
+        return (rp, sp)
     }
 
     private func endLabel(_ value: Double) -> some View {
