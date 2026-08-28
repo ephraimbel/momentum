@@ -123,11 +123,9 @@ struct WeekStatStrip: View {
     private var silent: Bool { now.sessions == 0 && prev.sessions == 0 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
             HStack(alignment: .firstTextBaseline) {
-                Text("THIS WEEK")
-                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(Theme.inkTertiary)
+                EyebrowLabel(text: "This week")
                 Spacer(minLength: 0)
                 if !silent {
                     Text("vs last week")
@@ -135,28 +133,40 @@ struct WeekStatStrip: View {
                         .foregroundStyle(Theme.inkTertiary)
                 }
             }
+            .padding(.horizontal, 2)
             if silent {
                 Text("Nothing logged this week or last — your numbers land here after your next session.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(Theme.Space.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             } else {
+                // One quiet row (owner call 2026-08-27, replacing the 2×2 coloured tiles: "the
+                // colours are ugly, condense it"): four ink numbers, small labels, and one tiny
+                // delta chip each — lavender when up, quiet ink when down. No icons, no per-stat
+                // colour; the charts below carry the colour.
                 HStack(alignment: .top, spacing: 0) {
                     column(value: Formatters.distance(meters: now.distanceM, unit: distanceUnit),
-                           label: "distance", delta: pctDelta(now.distanceM, prev.distanceM))
+                           label: "distance", delta: pctDelta(now.distanceM, prev.distanceM),
+                           up: now.distanceM >= prev.distanceM)
                     column(value: Formatters.duration(s: now.durationS),
-                           label: "time", delta: pctDelta(now.durationS, prev.durationS))
+                           label: "time", delta: pctDelta(now.durationS, prev.durationS),
+                           up: now.durationS >= prev.durationS)
                     column(value: "\(now.sessions)",
-                           label: "sessions", delta: countDelta(now.sessions, prev.sessions))
+                           label: "sessions", delta: countDelta(now.sessions, prev.sessions),
+                           up: now.sessions >= prev.sessions)
                     column(value: climbText,
-                           label: "climb", delta: pctDelta(now.elevationM, prev.elevationM))
+                           label: "climb", delta: pctDelta(now.elevationM, prev.elevationM),
+                           up: now.elevationM >= prev.elevationM)
                 }
+                .padding(.horizontal, Theme.Space.sm).padding(.vertical, Theme.Space.md)
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                .accessibilityHidden(true)
             }
         }
-        .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("This week")
         .accessibilityValue(spokenValue)
@@ -176,20 +186,25 @@ struct WeekStatStrip: View {
         return "\(Formatters.compact(v)) \(imperial ? "ft" : "m")"
     }
 
-    private func column(value: String, label: String, delta: String?) -> some View {
-        VStack(spacing: 2) {
+    private func column(value: String, label: String, delta: String?, up: Bool) -> some View {
+        VStack(spacing: 4) {
             Text(value)
-                .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                .font(.display(19, weight: .bold)).monospacedDigit()
                 .foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
+                .lineLimit(1).minimumScaleFactor(0.65)
                 .contentTransition(.numericText())
             Text(label)
-                .font(.rounded(Theme.FontSize.label, weight: .medium))
+                .font(.rounded(11, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
+            // The slot is always reserved so the four columns stay level.
             Text(delta ?? " ")
                 .font(.rounded(10, weight: .bold)).monospacedDigit()
-                .foregroundStyle(Theme.inkSecondary)
-                .opacity(delta == nil ? 0 : 1)   // keeps the four columns level
+                // Green means "more", grey means "less or same" — the delta is DATA, so it wears a
+                // semantic colour, never the brand accent.
+                .foregroundStyle(up ? MetricColor.positive : Theme.inkSecondary)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(up ? MetricColor.positive.opacity(0.12) : Theme.ink.opacity(0.05)))
+                .opacity(delta == nil ? 0 : 1)
         }
         .frame(maxWidth: .infinity)
     }
@@ -231,9 +246,7 @@ struct StepsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
-                Text("DAILY MOVEMENT")
-                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(Theme.inkTertiary)
+                EyebrowLabel(text: "Daily movement", tint: MetricColor.fresh)
                 Spacer(minLength: 0)
                 if onOpen != nil {
                     Image(systemName: "chevron.forward")
@@ -277,8 +290,7 @@ struct StepsCard: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         // Tap-through anywhere off the plot (the chart's scrub gesture wins inside it).
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .onTapGesture { onOpen?() }
@@ -315,8 +327,9 @@ struct StepsCard: View {
                         y: .value("Steps", animate ? p.steps : 0),
                         width: .fixed(width))
                     .foregroundStyle(p.date == last ? AnyShapeStyle(IridescentMaterial())
-                                                    : AnyShapeStyle(Theme.ink.opacity(0.55)))
-                    .cornerRadius(2)
+                                                    : AnyShapeStyle(LinearGradient(colors: [MetricColor.fresh, MetricColor.fresh.opacity(0.55)],
+                                                                                   startPoint: .top, endPoint: .bottom)))
+                    .cornerRadius(3)
             }
             if let sel = scrub.pinned, let p = pts.first(where: { $0.date == sel }) {
                 TrendScrub.mark(at: sel,
@@ -355,9 +368,7 @@ struct TrendTotalsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("TOTALS")
-                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                .foregroundStyle(Theme.inkTertiary)
+            EyebrowLabel(text: "Totals")
             HStack(alignment: .top, spacing: 0) {
                 column("This month", totals.month)
                 column("This year", totals.year)
@@ -366,8 +377,7 @@ struct TrendTotalsCard: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Totals")
         .accessibilityValue("This month \(Formatters.distance(meters: totals.month.distanceM, unit: distanceUnit)), "

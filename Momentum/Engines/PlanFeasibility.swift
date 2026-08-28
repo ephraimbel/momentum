@@ -29,13 +29,27 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
         case .gentle:     "Gentler ramp, most sustainable"
         case .balanced:   "Steady, sustainable progress"
         case .aggressive: "Faster gains, more demanding"
-        case .podium:     "Train to win — the full commitment"
+        case .podium:     "Train to win. The full commitment"
         }
     }
 
     /// Volume multiplier applied on each build week (the weekly ramp rate).
     var weeklyRamp: Double {
         switch self { case .gentle: 1.05; case .balanced: 1.08; case .aggressive: 1.11; case .podium: 1.12 }
+    }
+
+    /// How the tier scales the experience table's readiness peak (2026-08-28, the mileage audit:
+    /// Balanced and Aggressive used to land on the SAME peak — the tier only changed how fast you
+    /// climbed, never where you ended up). Podium is the load of an athlete who means to win.
+    var peakScale: Double {
+        switch self { case .gentle: 0.9; case .balanced: 1.0; case .aggressive: 1.2; case .podium: 1.45 }
+    }
+
+    /// The least a plan grows the athlete's CURRENT weekly volume by its peak. A runner already
+    /// past the table's peak used to be handed their own mileage back for twelve weeks; now the
+    /// plan always leaves the start line behind, scaled by how hard they chose to push.
+    var minGrowth: Double {
+        switch self { case .gentle: 1.15; case .balanced: 1.3; case .aggressive: 1.45; case .podium: 1.6 }
     }
 
     /// Build weeks between cutback/down weeks — aggressive tiers stack a little more before easing.
@@ -105,6 +119,9 @@ struct PlanFeasibility: Sendable {
     let options: [String]
     /// A realistic finish time achievable by race day (nil when no goal time / not applicable).
     let realisticFinishS: Double?
+    /// When the athlete's own mileage ceiling sits under what the goal wants: the volume the goal
+    /// usually stands on (meters). nil = no cap, or the cap is enough. UI phrases it in their unit.
+    var weeklyCapShortfallM: Double? = nil
 
     // MARK: Assessment
 
@@ -124,7 +141,8 @@ struct PlanFeasibility: Sendable {
                        injuryProne: Bool = false,
                        daysPerWeek: Int? = nil,
                        intensity: PlanIntensity = .balanced,
-                       currentRaceTimeS: Double? = nil) -> PlanFeasibility {
+                       currentRaceTimeS: Double? = nil,
+                       targetWeeklyVolumeM: Double? = nil) -> PlanFeasibility {
 
         guard let distanceM = raceDistanceM, distanceM > 0 else {
             return PlanFeasibility(verdict: .noRace, weeksAvailable: weeksAvailable, weeksNeeded: 0,
@@ -140,7 +158,9 @@ struct PlanFeasibility: Sendable {
         // push ramps volume faster (`weeklyRamp`) and earns a higher improvement ceiling
         // (`improvementFactor`) — so "how hard do you want to push" genuinely moves the verdict.
         func read(_ push: PlanIntensity) -> (weeksNeeded: Int, beyondReach: Bool, realisticFinishS: Double?) {
-            let peak = peakWeeklyVolumeM(distanceM: distanceM, experience: experience)
+            let peak = peakWeeklyVolumeM(distanceM: distanceM, experience: experience, intensity: push,
+                                         goalFinishTimeS: goalFinishTimeS, currentWeeklyM: currentWeeklyVolumeM,
+                                         targetWeeklyM: targetWeeklyVolumeM)
             let current = max(currentWeeklyVolumeM, 8_000)      // floor so a near-zero base doesn't blow up the log
             let buildWeeks = current >= peak ? 0
                 : Int(ceil(log(peak / current) / log(push.weeklyRamp)))
@@ -213,15 +233,66 @@ struct PlanFeasibility: Sendable {
         case .noRace: recommended = .balanced
         }
 
+        // Ceiling honesty: the athlete capped their mileage under what the goal wants. The plan
+        // respects the cap (their call); the verdict says what it costs (ours).
+        var capShortfall: Double? = nil
+        if let cap = targetWeeklyVolumeM, cap > 0 {
+            let wanted = peakWeeklyVolumeM(distanceM: distanceM, experience: experience, intensity: intensity,
+                                           goalFinishTimeS: goalFinishTimeS, currentWeeklyM: currentWeeklyVolumeM)
+            if wanted > cap * 1.05 { capShortfall = wanted }
+        }
         let (headline, detail, options) = copy(verdict: verdict, weeksAvailable: weeksAvailable,
                                                weeksNeeded: shown.weeksNeeded, distanceM: distanceM,
-                                               realisticFinishS: goalFinishTimeS != nil ? shown.realisticFinishS : nil,
+                                               intensity: intensity, capped: capShortfall != nil,
                                                calendarVerdict: shownVerdict,
                                                frequencyShortfall: frequencyShortfall)
+        var result = PlanFeasibility(verdict: verdict, weeksAvailable: weeksAvailable, weeksNeeded: shown.weeksNeeded,
+                                     recommended: recommended, headline: headline, detail: detail,
+                                     options: options, realisticFinishS: shown.realisticFinishS)
+        result.weeklyCapShortfallM = capShortfall
+        return result
+    }
 
-        return PlanFeasibility(verdict: verdict, weeksAvailable: weeksAvailable, weeksNeeded: shown.weeksNeeded,
-                               recommended: recommended, headline: headline, detail: detail,
-                               options: options, realisticFinishS: shown.realisticFinishS)
+    /// Peak weekly volume (meters) a plan builds toward — THE goal-driven read (2026-08-28). The
+    /// experience table is only the floor: the tier scales it (Podium never trains under the
+    /// experienced row — it is the load of an athlete who means to win), a goal TIME sets its own
+    /// floor (`goalRequiredWeeklyM`), and the plan always leaves the athlete's current volume
+    /// behind (`minGrowth`) so nobody is handed the mileage they walked in with. The athlete's own
+    /// ceiling (`targetWeeklyM`, "how far are you willing to build") caps it all — their call.
+    static func peakWeeklyVolumeM(distanceM: Double, experience: ExperienceLevel, intensity: PlanIntensity,
+                                  goalFinishTimeS: Double? = nil, currentWeeklyM: Double? = nil,
+                                  targetWeeklyM: Double? = nil) -> Double {
+        var peak = peakWeeklyVolumeM(distanceM: distanceM, experience: experience)
+        if intensity == .podium {
+            peak = max(peak, peakWeeklyVolumeM(distanceM: distanceM, experience: .experienced))
+        }
+        peak *= intensity.peakScale
+        if let goal = goalFinishTimeS, goal > 0 {
+            let needed = goalRequiredWeeklyM(distanceM: distanceM, goalFinishTimeS: goal)
+            peak = max(peak, needed * (intensity == .gentle ? 0.85 : 1.0))
+        }
+        if let current = currentWeeklyM, current > 0 {
+            peak = max(peak, current * intensity.minGrowth)
+        }
+        if let target = targetWeeklyM, target > 0 {
+            peak = min(peak, max(target, currentWeeklyM ?? 0))
+        }
+        return peak
+    }
+
+    /// The weekly volume (meters) a goal finish time usually stands on — a coach's rule of thumb
+    /// made deterministic: the goal's VDOT (via its 5K-equivalent) maps to mileage, then scales by
+    /// race length (a 5K racer needs a fraction of a marathoner's base). Sub-3 marathon ≈ 105 km,
+    /// 4:00 ≈ 60 km, 20:00 5K ≈ 57 km, 25:00 5K ≈ 35 km. Clamped to a human range.
+    static func goalRequiredWeeklyM(distanceM: Double, goalFinishTimeS: Double) -> Double {
+        guard distanceM > 0, goalFinishTimeS > 0 else { return 0 }
+        let t5k = goalFinishTimeS / pow(distanceM / 5_000, 1.06)
+        let vdot = DanielsPaces.vdot(p5kSPerKm: t5k / 5.0)
+        let factor: Double = switch RaceDistance.nearest(toMeters: distanceM) {
+        case .fiveK: 0.6; case .tenK: 0.7; case .half: 0.85; case .marathon: 1.0; case .fiftyK: 1.1
+        }
+        let km = ((vdot - 30) * 3.2 + 32) * factor
+        return min(180, max(20, km)) * 1_000
     }
 
     // MARK: Model
@@ -293,73 +364,53 @@ struct PlanFeasibility: Sendable {
         min(improvementCap(experience, intensity), improvementPerWeek(experience, intensity) * Double(max(0, weeks)))
     }
 
+    /// The verdict's words (rewritten 2026-08-28, owner call): SHORT, and every suggestion is
+    /// something the athlete can actually do. The race has a date and the goal is the goal, so
+    /// we never say "move your race", "run a shorter one" or "aim for a slower time" — the plan
+    /// adapts its ramp to the runway instead (`PlanEngine`'s runway-fitted ramp).
     private static func copy(verdict: Verdict, weeksAvailable: Int, weeksNeeded: Int,
-                             distanceM: Double, realisticFinishS: Double?,
+                             distanceM: Double, intensity: PlanIntensity, capped: Bool,
                              calendarVerdict: Verdict? = nil,
                              frequencyShortfall: (days: Int, minDays: Int)? = nil) -> (String, String, [String]) {
         let label = RaceDistance.nearest(toMeters: distanceM).label.lowercased()
+        let noDate = weeksAvailable >= 900
 
-        // Frequency-driven tooShort gets its own copy: the calendar may be fine — the WEEK is the
-        // problem, and "move your race later" would be advice for the wrong constraint.
+        // What they can do about a short runway, in the order it helps most.
+        var moves: [String] = []
+        if let f = frequencyShortfall { moves.append("Train \(f.minDays) days a week") }
+        if capped { moves.append("Raise your mileage cap") }
+        if intensity == .gentle || intensity == .balanced { moves.append("Pick Aggressive or Podium") }
+
         if let f = frequencyShortfall, f.minDays - f.days >= 2 {
-            var opts = ["Train \(f.minDays) days a week. \(f.minDays + 1) is even better for a \(label)"]
-            if distanceM >= RaceDistance.half.meters {
-                let shorter = distanceM >= RaceDistance.marathon.meters ? "half marathon" : "10K"
-                opts.append("Point this week at a \(shorter) instead and build up from there")
-            }
-            if calendarVerdict == .tooShort {
-                opts.append("Move your race about \(max(1, weeksNeeded - weeksAvailable)) weeks later so you can build safely")
-            }
-            return ("\(f.days) days a week won't prepare a \(label)",
-                    "We'll build your week either way — but honestly, \(f.days) days holds fitness rather than building race readiness. A \(label) build needs room for a long run, quality work, AND easy volume; that starts at about \(f.minDays) days. Your best moves:",
-                    opts)
+            return ("\(f.days) days is light for a \(label)",
+                    "We'll build the week you have. \(f.minDays) days gives it a long run, quality work and easy miles.",
+                    Array(moves.prefix(2)))
         }
-
-        var (headline, detail, options): (String, String, [String])
         switch verdict {
         case .onTrack:
-            // The no-date sentinel (OnboardingViewModel passes 999 when a race distance is chosen
-            // but no date is on the calendar): a literal "999 weeks is comfortable" shipped once.
-            // No date means no clock, so say that instead of the number.
-            if weeksAvailable >= 900 {
-                (headline, detail, options) = ("You've got room",
-                        "No race date yet, so there's no clock on this. We'll build you toward your \(label) steadily, and you'll be ready when you pick one.",
-                        [])
-            } else {
-                (headline, detail, options) = ("You've got room",
-                        "\(weeksAvailable) weeks is comfortable for a safe \(label) build. We'll progress you steadily and arrive fresh.",
-                        [])
-            }
+            let detail = noDate
+                ? "No race date yet. We'll build toward your \(label) and be ready when you pick one."
+                : "\(weeksAvailable) weeks is a comfortable \(label) build. Steady progress, arrive fresh."
+            return ("You've got room", detail, frequencyShortfall == nil ? [] : Array(moves.prefix(1)))
         case .tight:
-            (headline, detail, options) = ("It'll be tight, but doable",
-                    "\(weeksAvailable) weeks to your \(label). We'd ideally want about \(weeksNeeded). It's within reach if you stay consistent; an aggressive plan bridges the gap, and we'll watch your recovery closely.",
-                    [])
+            // The calendar is fine and the WEEK is the constraint: name the day, not the clock.
+            if let f = frequencyShortfall, calendarVerdict == .onTrack {
+                let clock = noDate ? "No race date yet, but" : "\(weeksAvailable) weeks is fine, but"
+                return ("Tight, but doable",
+                        "\(clock) \(f.days) days a week is the light side for a \(label). One more day closes most of the gap.",
+                        Array(moves.prefix(2)))
+            }
+            return ("Tight, but doable",
+                    "\(weeksAvailable) weeks is on the short side for a \(label). We ramp a little faster and watch your recovery.",
+                    Array(moves.prefix(2)))
         case .tooShort:
-            var opts = ["Move your race about \(max(1, weeksNeeded - weeksAvailable)) weeks later so you can build safely"]
-            if let t = realisticFinishS { opts.insert("Target a realistic \(Self.hms(t)) for this race", at: 0) }
-            if distanceM >= RaceDistance.half.meters {
-                let shorter = distanceM >= RaceDistance.marathon.meters ? "half marathon" : "10K"
-                opts.append("Run a \(shorter) now and build to the \(label) later")
-            }
-            (headline, detail, options) = ("That's a very short runway",
-                    "A safe \(label) build from where you are is about \(weeksNeeded) weeks, and you have \(weeksAvailable). We won't pretend otherwise: cramming that gap sharply raises injury risk. We'll still coach every day between now and the start line, with fresh legs, race-pace touches, and a plan that gets you there ready to run the day well. But honestly, here are your best moves:",
-                    opts)
+            if moves.isEmpty { moves.append("Keep every long run. They carry this build") }
+            return ("Short runway. We build to it.",
+                    "A short runway: \(weeksAvailable) weeks for a \(label) from where you are. We ramp faster and taper late. What helps most:",
+                    Array(moves.prefix(3)))
         case .noRace:
-            (headline, detail, options) = ("A plan that grows with you", "", [])
+            return ("A plan that grows with you", "", [])
         }
-
-        // One day under the effective minimum: the calendar copy stands, with the frequency move
-        // named first — it's the cheapest fix on the table.
-        if let f = frequencyShortfall {
-            let tight = verdict == .tight && calendarVerdict == .onTrack
-            if tight {
-                detail = weeksAvailable >= 900
-                    ? "No race date yet, so there's no clock. But \(f.days) days a week is the light side for a \(label). Most of the gap closes with one more day."
-                    : "\(weeksAvailable) weeks is comfortable, but \(f.days) days a week is the light side for a \(label). Most of the gap closes with one more day."
-            }
-            options.insert("Train \(f.minDays) days a week. A \(label) build really wants \(f.minDays)–\(f.minDays + 1)", at: 0)
-        }
-        return (headline, detail, options)
     }
 
     /// "h:mm:ss" / "mm:ss" for a duration.

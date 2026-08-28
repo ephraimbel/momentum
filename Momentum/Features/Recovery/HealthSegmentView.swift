@@ -161,6 +161,24 @@ struct HealthSegmentView: View {
             .id(Anchor.hero)
             .reveal(0)
 
+        // The glance trio (glass pass 2026-08-27): strain · recovery · sleep as glowing gauges,
+        // straight from the engines already feeding this page, plus the coaching line.
+        TodayGaugesCard(strain: model.balanceWeek.days.last?.strain,
+                        acwr: model.acwr > 0 ? model.acwr : nil,
+                        sleepFraction: model.sleepReport.map { $0.needH > 0 ? $0.asleepH / $0.needH : 0 },
+                        sleepText: model.sleepReport.map { r in
+                            let h = Int(r.asleepH), m = Int((r.asleepH - Double(h)) * 60)
+                            return "\(h)h \(String(format: "%02d", m))"
+                        },
+                        coaching: model.readiness?.guidance,
+                        // Each ring opens its own story. A ring with no data to plot stays inert —
+                        // a chevron that opens an empty chart is a broken promise.
+                        onOpenStrain: model.balanceMonth.days.contains(where: { $0.strain != nil })
+                            ? { sleepDetail = strainDetail(model) } : nil,
+                        onOpenLoad: model.acwr > 0 ? { sleepDetail = loadDetail } : nil,
+                        onOpenSleep: model.sleepReport != nil ? { sleepDetail = sleepTrendDetail } : nil)
+            .reveal(0.04)
+
         DriverRow(pillars: model.readiness?.pillars ?? [],
                   modifiers: model.readiness?.modifiers ?? [],
                   readout: model.readout,
@@ -250,6 +268,70 @@ struct HealthSegmentView: View {
         }
     }
 
+    /// STRAIN's tap-through: the exact daily scores behind the ring — the same 30-day spine the
+    /// balance card plots, so the two can never disagree. One window only (`maxWeeks`): the spine
+    /// is built 30 days deep because each day costs a Health round-trip, and offering "1Y" over a
+    /// month of data would be a lie told by a button.
+    private func strainDetail(_ model: Model) -> TrendDetail {
+        let points = model.balanceMonth.days.compactMap { day -> TrendDetail.Point? in
+            guard let strain = day.strain else { return nil }   // a hole stays a hole
+            return TrendDetail.Point(date: day.date, value: strain)
+        }
+        return TrendDetail(
+            id: "day-strain",
+            title: "Strain",
+            unit: "/100",
+            form: .bars,
+            stats: [.average, .best, .latest],
+            minimumYTop: 100,
+            tint: Theme.Health.strainInk,
+            explainer: MetricExplainers.strainRecoveryBalance,
+            maxWeeks: 5,
+            format: { "\(Int($0.rounded()))" },
+            series: { _ in points })
+    }
+
+    /// LOAD's tap-through: the acute:chronic ratio day by day, read from the app's one ACWR
+    /// source (`ProgressInsights`) evaluated at each day — never a second formula. The sweet
+    /// spot rides behind it as the band, so "am I in it?" is answered by the picture.
+    private var loadDetail: TrendDetail {
+        // Value tuples, captured HERE on the main actor — SwiftData models must never cross to
+        // another actor. The series below then computes with no model access at all.
+        let sessions = workouts.map { (date: $0.startedAt, load: TrainingLoad.session($0)) }
+        return TrendDetail(
+            id: "training-load-acwr",
+            title: "Training load",
+            unit: "ACWR",
+            form: .line,
+            stats: [.average, .latest],
+            hugsY: true,
+            tint: Theme.purple,
+            band: (lower: 0.8, upper: 1.3),
+            bandTint: Theme.purple,
+            bandNote: "the sweet spot · 0.8–1.3",
+            explainer: MetricExplainers.recoveryForm,
+            format: { String(format: "%.2f", $0) },
+            series: { weeks in
+                // Daily for the short windows; weekly samples beyond, so a year is 52 points and
+                // not 365 rebuilds. Off the render path — this runs when the sheet opens.
+                let calendar = Calendar.current
+                let today = calendar.startOfDay(for: Date())
+                let days = weeks * 7
+                // Daily inside a month; one sample a week beyond, so 3M is 13 readable points
+                // rather than 91 colliding ones (the sleep card's own convention).
+                let step = days > 35 ? 7 : 1
+                return await Task.detached(priority: .userInitiated) {
+                    stride(from: days - 1, through: 0, by: -step).compactMap { ago -> TrendDetail.Point? in
+                        guard let d = calendar.date(byAdding: .day, value: -ago, to: today) else { return nil }
+                        let ratio = ProgressInsights.acuteChronic(sessions: sessions, now: d,
+                                                                  calendar: calendar).acwr
+                        guard ratio > 0 else { return nil }   // before there's a baseline, no point
+                        return TrendDetail.Point(date: d, value: ratio)
+                    }
+                }.value
+            })
+    }
+
     /// The nights section's tap-through: nightly hours over month-to-year windows, straight from
     /// the service (weekly means beyond ~5 weeks so a year never becomes 365 slivers). The axis
     /// floor mirrors the card's own rule — never below 8h, so a short stretch doesn't dramatize.
@@ -290,9 +372,10 @@ struct HealthSegmentView: View {
         case .restingHR:
             return await concrete.dailyHistory(.restingHeartRate, unit: bpm, days: days)
         case .respiratory:
-            return await concrete.dailyHistory(.respiratoryRate, unit: bpm, days: days)
+            return await concrete.dailyHistory(.respiratoryRate, unit: bpm, days: days, reduction: .nightMedian)
         case .wristTemp:
-            return await concrete.dailyHistory(.appleSleepingWristTemperature, unit: .degreeCelsius(), days: days)
+            return await concrete.dailyHistory(.appleSleepingWristTemperature, unit: .degreeCelsius(), days: days,
+                                               reduction: .nightMedian)
         case .walkingHR:
             return await concrete.dailyHistory(.walkingHeartRateAverage, unit: bpm, days: days)
         }
@@ -437,10 +520,15 @@ extension HealthSegmentView {
                 hrvHist = await concrete.hrvDailyHistory(days: HealthBaselines.Window.hrv)
                 rhrHist = await concrete.dailyHistory(.restingHeartRate, unit: bpm,
                                                       days: HealthBaselines.Window.restingHR)
+                // Overnight-only signals key by NIGHT (the sample's end → the wake morning), not by
+                // the sample's start — otherwise one night splits across two dates and the band
+                // appears after half the nights it claims (accuracy audit 2026-08-27).
                 respHist = await concrete.dailyHistory(.respiratoryRate, unit: bpm,
-                                                       days: HealthBaselines.Window.respiratoryRate)
+                                                       days: HealthBaselines.Window.respiratoryRate,
+                                                       reduction: .nightMedian)
                 tempHist = await concrete.dailyHistory(.appleSleepingWristTemperature, unit: .degreeCelsius(),
-                                                       days: HealthBaselines.Window.wristTemperature)
+                                                       days: HealthBaselines.Window.wristTemperature,
+                                                       reduction: .nightMedian)
                 walkHist = await concrete.dailyHistory(.walkingHeartRateAverage, unit: bpm,
                                                        days: HealthBaselines.Window.walkingHR)
                 rawNights = await concrete.sleepNights(days: 60)
@@ -461,7 +549,11 @@ extension HealthSegmentView {
             // ── Sleep: the service nights become engine nights (the outer sleep window isn't in
             // the service's night shape yet, so midpoint drift stays honestly nil — "learning
             // your rhythm" — until that read lands).
-            let nights = rawNights.map {
+            // A night with in-bed time and NO asleep time is phone-only bedtime tracking, not a
+            // sleep measurement. Kept in the service's report (it is a real record), dropped here:
+            // fed through as 0 h it headlined the card as "slept 0h 00m", banked 8 h of debt, and
+            // zeroed that morning's historical sleep pillar (accuracy audit 2026-08-27).
+            let nights = rawNights.filter { $0.asleepH > 0 }.map {
                 SleepReport.Night(date: $0.date, asleepH: $0.asleepH, coreS: $0.coreS,
                                   deepS: $0.deepS, remS: $0.remS, awakeS: $0.awakeS, inBedS: $0.inBedS)
             }
@@ -803,9 +895,7 @@ struct AdaptationTimelineList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("WHEN THE PLAN EASED")
-                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                .foregroundStyle(Theme.inkTertiary)
+            EyebrowLabel(text: "WHEN THE PLAN EASED", tint: Theme.Health.recoveryInk)
             if entries.isEmpty {
                 if let emptyText {
                     Text(emptyText)

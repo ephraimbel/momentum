@@ -530,8 +530,7 @@ struct LogActivityView: View {
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkSecondary)
                 .padding(.horizontal, Theme.Space.md).padding(.vertical, 9)
-                .background(Capsule().fill(Theme.surface))
-                .overlay(Capsule().stroke(Theme.hairline))
+                .raised(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -643,8 +642,7 @@ struct LogActivityView: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .onTapGesture { openEditor(card) }
     }

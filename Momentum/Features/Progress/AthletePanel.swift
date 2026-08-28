@@ -55,15 +55,14 @@ struct AthletePanel: View {
     /// The stage grows with the athlete's text setting — 400pt at the default size (exactly what
     /// it was hard-coded to), taller as the type grows. That headroom is the whole fix: the box
     /// being fixed was the reason every reading had to shrink back down to fit inside it.
-    @ScaledMetric(relativeTo: .body) private var stageHeight: CGFloat = 400
+    @ScaledMetric(relativeTo: .body) private var stageHeight: CGFloat = 360
 
     private var isDark: Bool { colorScheme == .dark }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
-                Text("ATHLETE PANEL").font(.rounded(Theme.FontSize.label, weight: .bold))
-                    .tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                EyebrowLabel(text: "Athlete panel")
                 Spacer(minLength: Theme.Space.sm)
                 Text(windowLabel).font(.rounded(10, weight: .bold))
                     .tracking(1.2).foregroundStyle(Theme.inkTertiary.opacity(0.7))
@@ -73,8 +72,9 @@ struct AthletePanel: View {
             }
             stage.frame(height: stageHeight)
         }
-        // Deliberately no card: the panel is built into the canvas — the figure stands in the
-        // app itself, not in a box. The platform below grounds it instead.
+        // No card (owner call 2026-08-28): the panel is baked into the page. The figure and its
+        // readings sit straight on the background, which is what makes the top of Trends read
+        // as one surface instead of a box on a surface.
         .padding(.vertical, Theme.Space.sm)
         .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
     }
@@ -83,7 +83,7 @@ struct AthletePanel: View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             // The figure owns the center column; the data columns own the gutters.
-            let fig = CGRect(x: w * 0.5 - w * 0.20, y: 6, width: w * 0.40, height: h - 26)
+            let fig = CGRect(x: w * 0.5 - w * 0.21, y: 4, width: w * 0.42, height: h - 22)
             let body = fittedBodyRect(in: fig)
             ZStack {
                 backdrop(body: body, h: h)
@@ -91,14 +91,14 @@ struct AthletePanel: View {
                 HStack(alignment: .top, spacing: 0) {
                     // Left: the anchor stat — one big number, staggered down for composition.
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                        heroView(hero)
-                        if let sub { railRow(sub) }
+                        reading(hero, hero: true)
+                        if let sub { reading(sub, hero: false) }
                     }
                     .padding(.top, h * 0.16)
                     .frame(width: w * 0.30, alignment: .topLeading)
                     Spacer(minLength: 0)
-                    // Right: the rail — compact readings separated by hairlines. Free tier sees the
-                    // labels but the values are locked: the physiology your body carries is Pro.
+                    // Right: the rail — compact readings separated by hairlines. Free tier sees
+                    // the labels but the values are locked: the physiology is Pro.
                     lockedRail
                         .padding(.top, h * 0.05)
                         .frame(width: w * 0.30, alignment: .topLeading)
@@ -112,10 +112,8 @@ struct AthletePanel: View {
         ZStack {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 ForEach(Array(rail.enumerated()), id: \.element.id) { i, c in
-                    if i > 0 {
-                        Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 0.5)
-                    }
-                    railRow(c)
+                    if i > 0 { Rectangle().fill(Theme.ink.opacity(0.08)).frame(height: 0.5) }
+                    reading(c, hero: false)
                 }
             }
             .blur(radius: pro ? 0 : 6)
@@ -127,8 +125,6 @@ struct AthletePanel: View {
     /// Where the anatomy actually renders inside `fig` (aspect-fit, centered) — used to place
     /// the light the figure stands in.
     private func fittedBodyRect(in fig: CGRect) -> CGRect {
-        // The figure shows front only; use its sex-specific viewBox so the light sits on the
-        // female figure's own proportions, not the male box's.
         let vb = BodyAnatomy.viewBox(.front, sex)
         let aspect = vb.width / vb.height
         var size = CGSize(width: fig.width, height: fig.width / aspect)
@@ -143,22 +139,20 @@ struct AthletePanel: View {
 
     @ViewBuilder
     private func backdrop(body: CGRect, h: CGFloat) -> some View {
-        // The figure stands in the brand's light: a soft iridescent aura, the same family as the
-        // fuel/readiness rings' glow (user call 2026-07-16). STATIC by design — a live `.shadow`
-        // on the 30fps-animating mesh cost a full offscreen pass per tick and stuttered the tab
-        // (see `figure()`), so the glow lives here, rendered once and cached.
-        AngularGradient(colors: Theme.iridescent + [Theme.iridescent.first ?? .clear], center: .center)
-            .frame(width: body.width * 1.15, height: body.width * 1.15)
-            .clipShape(Circle())
-            .blur(radius: 42)
-            .opacity(isDark ? 0.34 : 0.22)
-            .position(x: body.midX, y: body.minY + body.height * 0.32)
+        // One soft pool of lavender light behind the torso (the Bevel wash, in our hue) — a
+        // static radial, never a live blur on the animating mesh.
+        // A faint COOL pool, not a lavender one — the figure's muscle lighting is the only
+        // colour this panel gets to spend.
+        RadialGradient(colors: [Theme.iridescent[1].opacity(isDark ? 0.16 : 0.20),
+                                Theme.iridescent[1].opacity(isDark ? 0.05 : 0.06), .clear],
+                       center: .center, startRadius: 10, endRadius: body.width * 0.95)
+            .frame(width: body.width * 1.9, height: body.width * 1.9)
+            .position(x: body.midX, y: body.minY + body.height * 0.36)
             .allowsHitTesting(false)
         platform(body: body)
     }
 
-    /// No platform — just a subtle grounding shadow at the feet so the figure doesn't float.
-    /// (A light pool and rims were tried and cut: too much furniture under the body.)
+    /// A subtle grounding shadow at the feet so the figure doesn't float.
     private func platform(body: CGRect) -> some View {
         Ellipse()
             .fill(isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.10))
@@ -168,15 +162,12 @@ struct AthletePanel: View {
     }
 
     private func figure(fig: CGRect) -> some View {
-        // No `.shadow` here: blurring a 30fps-animating mesh re-renders the whole figure
-        // offscreen every tick. The static aura in `backdrop` supplies the dark-mode glow.
         MuscleMapView(activation: activation, sides: [.front], grading: .weeklyVolume, sex: sex,
                       forceStatic: reduceMotion || !onScreen)
-            // A range flip (or a new workout) re-lights the body smoothly, not with a hard swap.
             .animation(.easeOut(duration: 0.45), value: activation)
             .frame(width: fig.width, height: fig.height)
             .position(x: fig.midX, y: fig.midY)
-            .accessibilityHidden(true)   // the columns carry the data; the figure is scenery
+            .accessibilityHidden(true)
     }
 
     /// The lock resting over the blurred rail — a small tappable badge that opens the paywall.
@@ -185,9 +176,9 @@ struct AthletePanel: View {
             Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold))
             Text("PRO").font(.rounded(10, weight: .heavy)).tracking(1.2)
         }
-        .foregroundStyle(Theme.inkOnFixedLight)     // fixed dark: the route badge is always light
+        .foregroundStyle(Theme.background)
         .padding(.horizontal, 11).padding(.vertical, 7)
-        .background(Capsule().fill(Theme.proLavender))
+        .raised(Capsule(), tone: .ink)
         .contentShape(Rectangle())
         .onTapGesture { Haptics.light(); onLockedTap() }
         .accessibilityElement()
@@ -196,53 +187,40 @@ struct AthletePanel: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    // MARK: data columns
+    // MARK: readings
 
-    private func heroView(_ c: AthleteCallout) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(c.label).font(.rounded(9, weight: .bold)).tracking(1.1)
-                .foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                // 0.65, not 0.55 — a safety net for the widest value ("4.45 mi") at xxxLarge,
-                // not a licence to cancel the athlete's text setting outright.
-                Text(c.value).font(.display(34, weight: .black)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.65)
-                    .foregroundStyle(Theme.ink)
-                if let unit = c.unit {
-                    Text(unit).font(.rounded(11, weight: .bold)).foregroundStyle(Theme.inkSecondary)
-                }
-            }
-            Text(c.context).font(.rounded(10, weight: .medium))
-                .foregroundStyle(Theme.inkTertiary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { Haptics.light(); onSelect(c.target) }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(c.label): \(c.value)\(c.unit.map { " \($0)" } ?? ""), \(c.context)")
-        .accessibilityHint("Shows the detail card")
-        .accessibilityAddTraits(.isButton)
+    /// Each reading's domain colour, by what it measures.
+    private func tint(for c: AthleteCallout) -> Color {
+        let l = c.label.uppercased()
+        if l.contains("VO") || l.contains("FITNESS") { return MetricColor.fitness }
+        if l.contains("READINESS") { return MetricColor.fresh }
+        if l.contains("LOAD") { return MetricColor.load }
+        if l.contains("HEART") { return MetricColor.pace }
+        return Theme.inkSecondary
     }
 
-    private func railRow(_ c: AthleteCallout) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(c.label).font(.rounded(8.5, weight: .bold)).tracking(1.0)
-                .foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(c.value).font(.display(17, weight: .black)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.7)
+    /// One reading in a side column: tinted dot + label, ink value, one line of context. The
+    /// hero wears the display size; rail rows stay compact. Wraps instead of truncating.
+    private func reading(_ c: AthleteCallout, hero: Bool) -> some View {
+        let tint = tint(for: c)
+        return VStack(alignment: .leading, spacing: hero ? 3 : 2) {
+            HStack(spacing: 4) {
+                Circle().fill(tint).frame(width: 5, height: 5)
+                    .shadow(color: tint.opacity(0.6), radius: 2)
+                Text(c.label).font(.rounded(hero ? 9 : 8.5, weight: .bold)).tracking(1.0)
+                    .foregroundStyle(Theme.inkTertiary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(c.value).font(.display(hero ? 34 : 17, weight: .bold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(hero ? 0.65 : 0.7)
                     .foregroundStyle(Theme.ink)
+                    .contentTransition(.numericText())
                 if let unit = c.unit {
-                    Text(unit).font(.rounded(10, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                    Text(unit).font(.rounded(hero ? 11 : 10, weight: .bold)).foregroundStyle(Theme.inkSecondary)
                 }
             }
-            // Wraps instead of truncating. The old `lineLimit(1) + 0.75` clipped the context line
-            // at anything past the default text size — it's how "Most worked over the last 7 days"
-            // became "Most worked over the last 7…".
-            Text(c.context).font(.rounded(9.5, weight: .medium))
+            Text(c.context).font(.rounded(hero ? 10 : 9.5, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)

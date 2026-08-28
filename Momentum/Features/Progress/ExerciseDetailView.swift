@@ -71,13 +71,34 @@ struct ExerciseDetailView: View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             Text("e1RM OVER TIME").font(.rounded(Theme.FontSize.label, weight: .bold))
                 .tracking(1.4).foregroundStyle(Theme.inkTertiary)
-            Chart(series, id: \.date) { point in
-                LineMark(x: .value("Date", point.date), y: .value("e1RM", disp(point.e1RM)))
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .foregroundStyle(Theme.ink)
-                PointMark(x: .value("Date", point.date), y: .value("e1RM", disp(point.e1RM)))
-                    .symbolSize(36).foregroundStyle(Theme.ink)
+            // A STEP curve (strength moves in jumps, session to session — a smoothed line implies
+            // strength you never had between sessions), a soft ink floor, a tick per session,
+            // and the best session wearing the earned iridescence. Same grammar as the
+            // progression rows' sparklines.
+            let bestPoint = series.max { $0.e1RM < $1.e1RM }
+            Chart {
+                ForEach(series, id: \.date) { point in
+                    AreaMark(x: .value("Date", point.date),
+                             yStart: .value("floor", yDomain.lowerBound),
+                             yEnd: .value("e1RM", disp(point.e1RM)))
+                        .interpolationMethod(.stepEnd)
+                        .foregroundStyle(LinearGradient(colors: [Theme.ink.opacity(0.10), .clear], startPoint: .top, endPoint: .bottom))
+                    LineMark(x: .value("Date", point.date), y: .value("e1RM", disp(point.e1RM)))
+                        .interpolationMethod(.stepEnd)
+                        .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(Theme.ink)
+                    PointMark(x: .value("Date", point.date), y: .value("e1RM", disp(point.e1RM)))
+                        .symbolSize(22).foregroundStyle(Theme.ink)
+                }
+                if let bestPoint {
+                    PointMark(x: .value("Date", bestPoint.date), y: .value("e1RM", disp(bestPoint.e1RM)))
+                        .symbolSize(110).foregroundStyle(IridescentMaterial())
+                        .annotation(position: .top, spacing: 6) {
+                            Text("BEST").font(.system(size: 8, weight: .black)).tracking(0.8).foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(Capsule().fill(IridescentMaterial()).opacity(0.55))
+                        }
+                }
             }
             .chartYScale(domain: yDomain)
             // Was the stock unstyled axis — the only chart on the tab ignoring the shared look.
@@ -123,15 +144,27 @@ struct ExerciseDetailView: View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             Text("RECENT SESSIONS").font(.rounded(Theme.FontSize.label, weight: .bold))
                 .tracking(1.4).foregroundStyle(Theme.inkTertiary)
-            ForEach(series.suffix(6).reversed(), id: \.date) { point in
-                HStack {
+            let recent = Array(series.suffix(6))
+            ForEach(Array(recent.enumerated().reversed()), id: \.element.date) { i, point in
+                if i < recent.count - 1 { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+                HStack(spacing: Theme.Space.sm) {
                     Text(point.date.formatted(.dateTime.month().day()))
                         .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     Spacer()
+                    // The move since the session before it — the honest per-session receipt.
+                    if i > 0 {
+                        let delta = point.e1RM - recent[i - 1].e1RM
+                        if abs(delta) >= 0.5 {
+                            Text("\(delta > 0 ? "+" : "−")\(Formatters.weight(kg: abs(delta), unit: weightUnit))")
+                                .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
+                                .foregroundStyle(delta > 0 ? MetricColor.positive : Theme.inkTertiary)
+                        }
+                    }
                     Text(Formatters.weight(kg: point.e1RM, unit: weightUnit))
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .frame(width: 76, alignment: .trailing)
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -183,8 +216,7 @@ struct ExerciseDetailView: View {
 
     private var card: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
+            Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
 }

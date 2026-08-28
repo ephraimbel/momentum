@@ -170,8 +170,7 @@ struct FitnessFreshnessCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Fitness and freshness")
         .accessibilityValue(current.map { "Fitness \(Int($0.ctl)), form \(Int($0.tsb)), \(FitnessFreshness.formLabel($0.tsb))" } ?? "not enough data")
@@ -341,8 +340,7 @@ struct TrendChartCard: View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
                 if headline {
-                    Text(title.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
-                        .foregroundStyle(Theme.inkTertiary)
+                    EyebrowLabel(text: title, tint: tint == Theme.ink ? nil : tint)
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
@@ -381,8 +379,7 @@ struct TrendChartCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         // Tap-through anywhere off the plot (the chart's scrub gesture wins inside it).
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         .onTapGesture { onOpen?() }
@@ -461,7 +458,9 @@ struct TrendChartCard: View {
             ForEach(series) { wk in
                 switch form {
                 case .line:
-                    if filled {
+                    // Every trend line carries its soft wash (glass pass 2026-08-27) — the
+                    // ink-tinted strength charts included, at their quieter opacity.
+                    if filled || tint != Theme.ink {
                         // Anchor the fill to the chart's floor, not the default y=0 baseline — otherwise
                         // the gradient spills past the card whenever the domain doesn't start at zero.
                         AreaMark(x: .value("Week", wk.weekStart),

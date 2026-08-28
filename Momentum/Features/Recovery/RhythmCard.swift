@@ -92,8 +92,7 @@ struct RhythmCard: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .onAppear {
             appeared = true
             armWeekShimmer()

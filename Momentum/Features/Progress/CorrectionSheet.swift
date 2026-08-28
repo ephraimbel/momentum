@@ -27,7 +27,7 @@ struct CorrectionSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(Theme.Space.lg)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
 
                 Text("SET ME STRAIGHT").font(.rounded(Theme.FontSize.label, weight: .bold))
                     .tracking(1.4).foregroundStyle(Theme.inkTertiary)
@@ -35,7 +35,7 @@ struct CorrectionSheet: View {
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                     .lineLimit(2...4)
                     .padding(Theme.Space.md)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
 
                 OversizedButton(title: "Save", systemImage: "checkmark") {
                     services.athleteModel.addCorrection(text, category: category, for: profile, in: context)

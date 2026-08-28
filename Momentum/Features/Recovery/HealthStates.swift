@@ -13,8 +13,7 @@ extension View {
     func healthCard() -> some View {
         padding(Theme.Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 }
 
@@ -52,7 +51,7 @@ struct ConnectRow: View {
                     .foregroundStyle(Theme.background)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, Theme.Space.pillV)
-                    .background(Capsule().fill(Theme.ink))
+                    .raised(Capsule(), tone: .ink)
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -121,8 +120,7 @@ struct SpecimenOverlay<Content: View>: View {
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.5)
                     .foregroundStyle(Theme.inkTertiary)
                     .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(Capsule().fill(Theme.surface)
-                        .overlay(Capsule().stroke(Theme.hairline)))
+                    .raised(Capsule())
             }
             Text(teaching)
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))

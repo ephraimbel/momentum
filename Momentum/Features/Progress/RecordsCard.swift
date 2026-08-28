@@ -40,10 +40,7 @@ struct RecordsCard: View {
                 }
             }
             .padding(Theme.Space.md)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)
-            }
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
         }
         .task(id: recordsKey) {

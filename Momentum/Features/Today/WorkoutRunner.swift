@@ -257,13 +257,18 @@ struct WorkoutRunner: ViewModifier {
             // Expand a prescribed quality session (intervals/tempo/run-walk) into a guided structured
             // run; a plain free/easy run passes nil and shows just the hero metrics.
             let structured = planned.flatMap { StructuredWorkoutBuilder.build(from: $0, p5kSPerKm: plan?.p5kSPerKm,
-                                                                              raceDistanceM: profiles.first?.raceDistanceM) }
+                                                                              raceDistanceM: profiles.first?.raceDistanceM,
+                                                                              goalRacePaceSPerKm: plan?.goalRacePaceSPerKm) }
             CardioTrackingView(type: type, goalMeters: goal, container: context.container,
                                distanceUnit: distanceUnit,
                                guideRoute: guide, structured: structured,
                                targetPaceSPerKm: structured == nil ? planned?.targetPaceSPerKm : nil) { id in
                 finish(id, type: type, planned: planned)
             }
+            // The shell's `@Query`s (this modifier's `profiles`, RootView's recent workouts — a set
+            // that contains the run being recorded) re-run this body on every persisted GPS sample.
+            // The recorder is Equatable on its launch inputs, so that churn stops here.
+            .equatable()
         case let .strength(type, planned):
             StrengthLiveView(container: context.container, type: type, plannedSession: planned) { id in
                 finish(id, type: type, planned: planned)

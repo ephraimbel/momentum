@@ -2,8 +2,8 @@ import SwiftUI
 
 /// The Health segment's hero — one honest 0–100 readiness ring (RECOVERY-HUB-PLAN §5 row 1).
 ///
-/// A 180pt ring fills in mint ink over a 22% mint-wash track (warmed to ~28% in dark — §6), with hairline ticks at the band
-/// cuts (25/45/65/80 — `RecoveryModel.band`, the one banding function app-wide). The numeral
+/// A 180pt ring fills as ONE flowing arc in the band colour over a soft same-colour track (the
+/// band-cut ticks were retired 2026-08-27 — owner call: a continuous ring, not a gauge). The numeral
 /// counts up in lockstep with the trim sweep; the band word and guidance crossfade in after.
 /// Iridescence is *earned*: the fill renders as the `MeshGradient` mesh only at `.primed` (≥ 80).
 /// A check-in-only score draws its fill **dashed** — self-reported never impersonates measured —
@@ -45,7 +45,7 @@ struct ReadinessHeroCard: View {
     @State private var onScreen = true
 
     private static let ringSize: CGFloat = 180
-    private static let ringWidth: CGFloat = 14
+    private static let ringWidth: CGFloat = 16
     /// Stroke-centerline diameter — inset by half the stroke so the 14pt band stays inside
     /// the 180pt frame, with the band ticks crossing its center.
     private static let ringDiameter: CGFloat = ringSize - ringWidth
@@ -82,9 +82,7 @@ struct ReadinessHeroCard: View {
 
     private var header: some View {
         // The readiness ⓘ lives in the education footer below — one affordance, one sheet.
-        Text("READINESS")
-            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-            .foregroundStyle(Theme.inkTertiary)
+        EyebrowLabel(text: "Readiness", tint: Theme.Health.recoveryInk)
     }
 
     // MARK: Scored state
@@ -195,13 +193,15 @@ struct ReadinessHeroCard: View {
                 sweepGlint
                     .mask { fillArc(progress, style: style) }
             } else {
+                // One flowing arc (glass pass 2026-08-27: no band ticks, the ring reads as a
+                // single continuous sweep): the band colour brightening along its travel, round
+                // caps, and its static same-colour glow (not motion, Reduce Motion safe).
                 fillArc(progress, style: style)
-                    .foregroundStyle(color)
-                    // The glow — a static same-color soft shadow, not motion (Reduce Motion safe).
+                    .foregroundStyle(AngularGradient(colors: [color.opacity(0.55), color, color],
+                                                     center: .center, startAngle: .degrees(-90), endAngle: .degrees(270)))
                     .shadow(color: color.opacity(0.55), radius: 10)
             }
 
-            ticks.opacity(trackShown ? 1 : 0)
         }
     }
 
@@ -232,17 +232,6 @@ struct ReadinessHeroCard: View {
         .rotationEffect(.degrees(90 + glintPhase * 360))
         .opacity(glintShown ? 1 : 0)
         .allowsHitTesting(false)
-    }
-
-    /// Hairline ticks at the band boundaries 25/45/65/80 — the ring wears the banding math.
-    private var ticks: some View {
-        ForEach([0.25, 0.45, 0.65, 0.80], id: \.self) { cut in
-            Capsule()
-                .fill(Theme.hairline)
-                .frame(width: 1.5, height: Self.ringWidth + 5)
-                .offset(y: -Self.ringDiameter / 2)   // the band's centerline radius
-                .rotationEffect(.degrees(cut * 360))
-        }
     }
 
     // MARK: 7-day micro-strip
@@ -322,7 +311,7 @@ struct ReadinessHeroCard: View {
                         .foregroundStyle(Theme.background)
                         .padding(.horizontal, Theme.Space.lg)
                         .padding(.vertical, Theme.Space.pillV)
-                        .background(Capsule().fill(Theme.ink))
+                        .raised(Capsule(), tone: .ink)
                 }
                 .buttonStyle(.plain)
             }

@@ -128,13 +128,17 @@ struct SleepReport: Sendable {
     /// The report over the athlete's recent nights, or nil when there is no usable night at all —
     /// the SleepCard renders its designed empty state off nil rather than a fake number.
     /// Future-keyed records (an in-progress early bedtime the service files under tomorrow
-    /// morning) are dropped, like future-dated junk everywhere else.
+    /// morning) are dropped, like future-dated junk everywhere else. So are nights with no asleep
+    /// time: phone-only bedtime tracking writes in-bed and nothing else, and headlining that as
+    /// "slept 0h 00m" — banking 8 h of debt for it — is exactly the fake number this nil exists
+    /// to prevent (accuracy audit 2026-08-27). A phone-only athlete gets the specimen, honestly.
     static func build(from nights: [Night],
                       now: Date = Date(),
                       calendar: Calendar = .current) -> SleepReport? {
         let today = calendar.startOfDay(for: now)
         let dated: [(night: Night, age: Int)] = nights.compactMap { night in
-            guard let age = calendar.dateComponents([.day],
+            guard night.asleepH > 0,
+                  let age = calendar.dateComponents([.day],
                                                     from: calendar.startOfDay(for: night.date),
                                                     to: today).day,
                   age >= 0 else { return nil }

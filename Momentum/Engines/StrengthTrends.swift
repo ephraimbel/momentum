@@ -14,7 +14,117 @@ enum StrengthTrends {
         let gainPct: Double
         let spark: [Double]       // e1RM per session, oldest → newest
         let sessions: Int
+        /// The equipment the lift was last logged on (the progression row's subtitle).
+        var equipment: EquipmentType? = nil
         var id: String { name }
+    }
+
+    /// The six body regions of the muscle-load wheel (2026-08-28, the Bevel "Total Volume" /
+    /// "Muscular Load" read in our theme). Clockwise from the top: chest, back, legs,
+    /// shoulders, core, arms — the same order Bevel lays them out, so the eye reads it the same.
+    enum BodyRegion: String, CaseIterable, Identifiable, Sendable {
+        case chest, back, legs, shoulders, core, arms
+        var id: String { rawValue }
+        var displayName: String { rawValue.capitalized }
+        /// Which region a muscle belongs to (`.fullBody` spreads across all six).
+        static func of(_ m: MuscleGroup) -> BodyRegion? {
+            switch m {
+            case .chest: .chest
+            case .back: .back
+            case .shoulders: .shoulders
+            case .biceps, .triceps, .forearms: .arms
+            case .quads, .hamstrings, .glutes, .calves: .legs
+            case .core: .core
+            case .fullBody: nil
+            }
+        }
+    }
+
+    /// One region's recent training: weight moved (kg, working sets) and weighted working
+    /// sets — the same primary-1.0 / secondary-0.5 credit the muscle map grades the body by, so
+    /// the wheel and the figure always agree on which part of the body is carrying the load.
+    struct RegionLoad: Identifiable, Equatable, Sendable {
+        let region: BodyRegion
+        let volumeKg: Double
+        let sets: Double
+        var id: String { region.rawValue }
+    }
+
+    /// One logged exercise's contribution, as the region walk sees it.
+    struct RegionEntry: Sendable {
+        let primary: [MuscleGroup]
+        let secondary: [MuscleGroup]
+        let volumeKg: Double
+        let workingSets: Double
+    }
+
+    /// Pure aggregation. Volume is never double-counted: each set's weight·reps is SHARED across
+    /// the muscles it works (primary weight 1.0, secondary 0.5, normalized), so the six regions
+    /// sum to the total moved. Sets are credited the muscle-map way (1.0 / 0.5, un-normalized).
+    static func regionLoads(entries: [RegionEntry]) -> [RegionLoad] {
+        var volume: [BodyRegion: Double] = [:]
+        var sets: [BodyRegion: Double] = [:]
+        for e in entries {
+            var weights: [BodyRegion: Double] = [:]
+            func credit(_ m: MuscleGroup, _ w: Double) {
+                if let r = BodyRegion.of(m) { weights[r, default: 0] += w }
+                else { for r in BodyRegion.allCases { weights[r, default: 0] += w / 6 } }
+            }
+            for m in e.primary { credit(m, 1.0) }
+            for m in e.secondary { credit(m, 0.5) }
+            let total = weights.values.reduce(0, +)
+            guard total > 0 else { continue }
+            for (r, w) in weights {
+                volume[r, default: 0] += e.volumeKg * (w / total)
+                sets[r, default: 0] += e.workingSets * w
+            }
+        }
+        return BodyRegion.allCases.map {
+            RegionLoad(region: $0, volumeKg: volume[$0] ?? 0, sets: sets[$0] ?? 0)
+        }
+    }
+
+    /// The wheel's data over the trailing `days` — every region, zeros included, in wheel order.
+    static func regionLoads(in workouts: [Workout], days: Int = 30,
+                            now: Date = Date(), calendar: Calendar = .current) -> [RegionLoad] {
+        guard let cutoff = calendar.date(byAdding: .day, value: -days, to: now) else { return [] }
+        var entries: [RegionEntry] = []
+        for w in workouts where w.type.isStrengthStyle && w.startedAt >= cutoff {
+            guard let session = w.strength else { continue }
+            for row in session.exercises {
+                guard let ex = row.exercise else { continue }
+                let working = row.sets.filter { $0.isComplete && $0.type == .working }
+                guard !working.isEmpty else { continue }
+                let volume = working.reduce(0.0) { acc, set in
+                    guard let kg = set.weightKg, let reps = set.reps else { return acc }
+                    return acc + StrengthMath.setVolume(weightKg: kg, reps: reps)
+                }
+                entries.append(RegionEntry(primary: ex.primaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
+                                           secondary: ex.secondaryMuscles.compactMap(MuscleGroup.init(rawValue:)),
+                                           volumeKg: volume, workingSets: Double(working.count)))
+            }
+        }
+        return regionLoads(entries: entries)
+    }
+
+    /// Every lift with a logged working set, staples first — the Strength Progression rows.
+    /// `minSessions` 1: a lift logged once still earns a row (its line is flat until the next).
+    static func progression(in workouts: [Workout], limit: Int = 6) -> [LiftMetric] {
+        var equipmentByName: [String: EquipmentType] = [:]
+        for w in workouts {
+            guard let session = w.strength else { continue }
+            for row in session.exercises {
+                if let ex = row.exercise, !ex.name.isEmpty { equipmentByName[ex.name] = ex.equipment }
+            }
+        }
+        return topLifts(in: workouts, limit: limit, minSessions: 1).compactMap { name in
+            let series = ExerciseTrends.e1RMSeries(exerciseName: name, in: workouts)
+            guard let last = series.last?.e1RM, last > 0 else { return nil }
+            return LiftMetric(name: name, currentE1RMKg: last,
+                              gainPct: ExerciseTrends.gainPercent(series),
+                              spark: series.map(\.e1RM), sessions: series.count,
+                              equipment: equipmentByName[name])
+        }
     }
 
     /// One muscle's share of recent working-set volume (primary 1.0, secondary 0.5).

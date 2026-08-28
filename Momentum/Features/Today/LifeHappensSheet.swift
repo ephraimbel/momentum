@@ -181,16 +181,13 @@ struct LifeHappensSheet: View {
                     .font(.rounded(Theme.FontSize.body, weight: .semibold))
                     .foregroundStyle(Theme.background)
                     .frame(maxWidth: .infinity).frame(height: 48)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func apply() {

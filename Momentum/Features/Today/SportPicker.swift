@@ -112,8 +112,7 @@ struct SportPicker: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 10)
-        .background(Capsule().fill(Theme.surface))
-        .overlay(Capsule().stroke(Theme.hairline))
+        .raised(Capsule())
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.sm)
         .padding(.bottom, Theme.Space.xs)

@@ -204,7 +204,7 @@ struct RootView: View {
                             onSignedIn: {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { gateAccountBeat = false }
                             })
-                        .environment(\.colorScheme, .dark)   // same dark sequence onboarding runs in
+                        .environment(\.colorScheme, .light)   // same light sequence onboarding runs in
                     } else {
                         // Re-enters the three-page flow AT the checkout page — the athlete saw
                         // the try-free and reminder pages before force-quitting; re-telling the
@@ -393,15 +393,17 @@ struct RootView: View {
                 // The prompt moved to the finished-workout moment, gated on real engagement — see
                 // `AppReview` and `WorkoutRunner.dismissSummary`.
             }
-            // First-run onboarding is a dark, cinematic sequence regardless of the athlete's
-            // appearance setting (user call 2026-07-28) — it flows straight into the paywall, which
-            // has been unconditionally dark since 2026-07-10, so a light setup followed by a dark
-            // wall was a visible seam. `.environment(\.colorScheme)`, NOT `.preferredColorScheme`:
-            // the latter is a PREFERENCE that flows UP to the hosting window, which would leave the
-            // whole app stuck dark after onboarding finishes and quietly override Settings →
-            // Appearance. Setting the environment styles only onboarding's own subtree. Every
-            // `Theme` token is an asset colorset, so they all resolve dark from this one line.
-            .environment(\.colorScheme, .dark)
+            // First-run onboarding is a LIGHT, glass sequence regardless of the athlete's appearance
+            // setting (owner call 2026-08-27, reversing the 2026-07-28 dark run: the light canvas
+            // is the hero aesthetic, and the setup should read as the bright, premium first
+            // impression). The paywall that follows stays dark — a deliberate scene change, the
+            // way the checkout in every premium health onboarding drops to a dark room.
+            // `.environment(\.colorScheme)`, NOT `.preferredColorScheme`: the latter is a
+            // PREFERENCE that flows UP to the hosting window, which would leave the whole app
+            // stuck light after onboarding finishes and quietly override Settings → Appearance.
+            // Setting the environment styles only onboarding's own subtree. Every `Theme` token
+            // is an asset colorset, so they all resolve light from this one line.
+            .environment(\.colorScheme, .light)
         }
         // Onboarding owns the screen: the coach cover must never stack over it (proactive seeds
         // and deep links suspend until the flow completes). No `initial:` — isSuspended already

@@ -81,6 +81,12 @@ struct TodayView: View {
     // The athlete's app-wide base-map choice — persists across launches and stays in sync with every
     // other map surface (run screen, heatmap). Realistic (Mapbox Standard 3D) is the default.
     @AppStorage(MapStyleOption.storageKey) private var mapStyle: MapStyleOption = .realistic
+    /// The athlete's 2D/3D choice ("" = never chosen → each style's own tilt). Raw string so
+    /// AppStorage can hold "no choice" honestly instead of inventing a default.
+    @AppStorage(MapPerspective.storageKey) private var mapPerspectiveRaw = ""
+    private var mapPerspective: MapPerspective? { MapPerspective(rawValue: mapPerspectiveRaw) }
+    /// The explore camera's tilt: the style's default until the athlete taps 2D/3D, then their call.
+    private var explorePitch: CGFloat { mapStyle.explorePitch(mapPerspective) }
     @State private var showNotifications = false
     @State private var showLogWorkout = false
     /// The offline-log composer (say/type what you did → receipt → confirm).
@@ -128,6 +134,8 @@ struct TodayView: View {
     /// ~3× per render (annotations + subtitle + legend) through the whole ~950-entry list while
     /// the camera was mid-flight.
     @State private var globeDots: [CommunityAthlete] = []
+    /// The corner fan (bell · coach · globe · map style) — open or folded.
+    @State private var railOpen = false
     /// "A recovery adaptation landed today", memoized per (events, day) — the raw `contains` did
     /// per-element calendar math over the whole CoachingEvent table on every readout render.
     private final class AdaptedTodayMemo {
@@ -328,9 +336,9 @@ struct TodayView: View {
             // (last-known, else a neutral default) until they grant it via Start/recenter.
             if case .idle = viewport {
                 if let coord = lastKnownCoordinate {
-                    viewport = .camera(center: coord, zoom: 13.5, pitch: mapStyle.explorePitch)
+                    viewport = .camera(center: coord, zoom: 13.5, pitch: explorePitch)
                 } else if locator.isAuthorized {
-                    viewport = .followPuck(zoom: 14, pitch: mapStyle.explorePitch)
+                    viewport = .followPuck(zoom: 14, pitch: explorePitch)
                 } else {
                     viewport = Self.unlocatedViewport
                 }
@@ -372,7 +380,7 @@ struct TodayView: View {
         // Follow the athlete's puck the moment a fix lands — but never while zoomed out to the globe.
         .onChange(of: locator.lastLocation?.latitude) {
             if !worldMode, !marketingHero, locator.lastLocation != nil {
-                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: mapStyle.explorePitch) }
+                withAnimation(Motion.standard) { viewport = .followPuck(zoom: 15, pitch: explorePitch) }
             }
         }
         // A persisted Pro style with no entitlement (lapse, restore on a new device) self-heals
@@ -384,21 +392,9 @@ struct TodayView: View {
         // Never via followPuck without authorization — the puck viewport spins up Mapbox's location
         // provider, which would prompt for permission from a style change (the ask stays contextual:
         // Start or recenter, never a re-skin).
-        .onChange(of: mapStyle) {
-            if !worldMode, !marketingHero {
-                // Re-tilting only makes sense over a place we can actually point at — an un-located
-                // athlete keeps the flat world view rather than being tipped into a pitched globe.
-                let target: Viewport
-                if locator.isAuthorized {
-                    target = .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
-                } else if let coord = lastKnownCoordinate {
-                    target = .camera(center: coord, zoom: 13.5, pitch: mapStyle.explorePitch)
-                } else {
-                    target = Self.unlocatedViewport
-                }
-                withAnimation(Motion.standard) { viewport = target }
-            }
-        }
+        .onChange(of: mapStyle) { retiltCamera() }
+        // The 2D/3D toggle re-frames through the same path a layer change does.
+        .onChange(of: mapPerspectiveRaw) { retiltCamera() }
         // The recorder itself is no longer attached here: launch state lives on
         // `router.workoutLaunch` and the ONE `WorkoutRunner` overlay is mounted above the whole
         // tab shell in `RootView` (shared-map pass 2026-08-19) — Today and Plan write the same
@@ -573,8 +569,17 @@ struct TodayView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { setDeck(collapsed: true) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { setDeck(collapsed: false) }
         }
+        // --today-rail-open: land with the corner fan open (sim verification).
+        if ProcessInfo.processInfo.arguments.contains("--today-rail-open") { railOpen = true }
         if ProcessInfo.processInfo.arguments.contains("--enter-world") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { enterWorld() }
+        }
+        // --seed-nudge: a nudge in the inbox (the social row's look; the live path needs a
+        // second real account).
+        if ProcessInfo.processInfo.arguments.contains("--seed-nudge") {
+            AppNotification.post(kind: .nudge, title: "Maya Rivera nudged you",
+                                 body: "They noticed you haven't moved today. Keep moving.",
+                                 in: context, dedupeToken: "nudge-demo", daily: false)
         }
         // --notifications: open the bell inbox for verification.
         if ProcessInfo.processInfo.arguments.contains("--notifications") {
@@ -642,6 +647,34 @@ struct TodayView: View {
                                                planned: session, guideRoute: [])
             }
         }
+        // --live-run-planned: a plan-prescribed EASY run (distance goal + target pace, no structure)
+        // so the stats page's session line, goal strip, opening line and drift nudge are drivable.
+        if ProcessInfo.processInfo.arguments.contains("--live-run-planned") {
+            let session = PlannedSession()
+            session.discipline = .running
+            session.runType = .easy
+            session.targetDistanceM = 5 * Formatters.metersPerMile
+            session.targetPaceSPerKm = 372   // ~6:12 /km, ~10:00 /mi
+            session.date = Date()
+            context.insert(session)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                router.workoutLaunch = .cardio(type: .run, goalMeters: session.targetDistanceM,
+                                               planned: session, guideRoute: [])
+            }
+        }
+        // --live-run-goal: a free run with a distance goal and no plan (goal strip + halfway /
+        // last-unit / goal cues, no target pace). --live-ride: a free ride (speed hero, no split
+        // pace in the mile call).
+        if ProcessInfo.processInfo.arguments.contains("--live-run-goal") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                router.workoutLaunch = .cardio(type: .run, goalMeters: 5000, planned: nil, guideRoute: [])
+            }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--live-ride") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                router.workoutLaunch = .cardio(type: .ride, goalMeters: nil, planned: nil, guideRoute: [])
+            }
+        }
         // --live-run: straight into a free run (pair with --ui-test-route for a synthetic GPS feed) —
         // verifies the live screen and the lock-screen Live Activity without UI choreography.
         if ProcessInfo.processInfo.arguments.contains("--live-run") {
@@ -664,7 +697,8 @@ struct TodayView: View {
         // row grammar. Strength always listed its whole prescription here while an interval day
         // showed one line; the athlete confirming "Start run" deserves the same full picture.
         let structure = StructuredWorkoutBuilder.build(from: session, p5kSPerKm: plan?.p5kSPerKm,
-                                                       raceDistanceM: profiles.first?.raceDistanceM)?
+                                                       raceDistanceM: profiles.first?.raceDistanceM,
+                                                       goalRacePaceSPerKm: plan?.goalRacePaceSPerKm)?
             .summaryLines(distanceUnit: distanceUnit) ?? []
         let scrolls = !exercises.isEmpty || !structure.isEmpty
         return VStack(spacing: Theme.Space.lg) {
@@ -720,8 +754,7 @@ struct TodayView: View {
                             .font(.rounded(Theme.FontSize.body, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                             .frame(maxWidth: .infinity).frame(height: 50)
-                            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+                            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -768,10 +801,7 @@ struct TodayView: View {
                 .monospacedDigit().foregroundStyle(Theme.inkSecondary)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
     }
 
     /// One prescribed exercise: name on the left, sets × reps on the right — no weight; the athlete
@@ -788,10 +818,7 @@ struct TodayView: View {
                 .foregroundStyle(Theme.inkSecondary)
         }
         .padding(.horizontal, Theme.Space.md).padding(.vertical, 12)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
     }
 
     /// What marks a session as PLAN work wherever it surfaces — the plan's own name when the
@@ -1047,7 +1074,7 @@ struct TodayView: View {
             }
             .padding(Theme.Space.lg)
             .frame(maxWidth: 340)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface))
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         } else {
             Text("Your first lift starts here.")
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
@@ -1121,10 +1148,65 @@ struct TodayView: View {
     }
 
     private var topBar: some View {
-        VStack {
+        // The vertical control rail (owner call 2026-08-27): bell → coach → globe → map style
+        // stacked in ONE glass capsule in the TOP-RIGHT CORNER, its first button level with the
+        // avatar and the sport pill (which keeps dead-centre via the header's balancing slot).
+        // Recenter stays down by the deck, where the thumb is.
+        ZStack(alignment: .top) {
             headerCard
-            Spacer()
+            HStack {
+                Spacer()
+                controlRail
+            }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.top, Theme.Space.sm)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// The compact corner control (owner call 2026-08-27, replacing the always-open rail): ONE
+    /// glass disc. Tapping it fans the four controls down beneath it — each its own glass disc,
+    /// arriving on a staggered spring (opacity + a few points of travel, transforms only) — and
+    /// a second tap, or using any control, folds them away. A small ink dot on the closed disc
+    /// says something is waiting (unread notifications, unseen coach news).
+    private var controlRail: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.ink)
+                .rotationEffect(.degrees(railOpen ? 90 : 0))
+                .frame(width: 44, height: 44).momentumGlass(in: Circle())
+                .overlay(alignment: .topTrailing) {
+                    if !railOpen, unreadCount > 0 || hasUnseenCoachNews {
+                        Circle().fill(Theme.ink).frame(width: 9, height: 9)
+                            .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                            .offset(x: -1, y: 1)
+                            .transition(.opacity)
+                    }
+                }
+                .mapSafeTap(railOpen ? "Close controls" : "More") {
+                    Haptics.light()
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.8)) { railOpen.toggle() }
+                }
+                .accessibilityHint("Notifications, coach, the world and map style")
+            if railOpen {
+                fanItem(bellButton.momentumGlass(in: Circle()), index: 0)
+                fanItem(coachButton.momentumGlass(in: Circle()), index: 1)
+                fanItem(globeButton.momentumGlass(in: Circle()), index: 2)
+                if isCardio {
+                    fanItem(MapLayersButton(style: $mapStyle, previewCenter: locator.lastCoordinate), index: 3)
+                }
+            }
+        }
+    }
+
+    /// One fanned control: fades and slides in from the disc above, later items a beat behind.
+    private func fanItem<V: View>(_ v: V, index: Int) -> some View {
+        let d = reduceMotion ? 0 : Double(index) * 0.045
+        return v.transition(
+            .asymmetric(insertion: .opacity.combined(with: .offset(y: -10))
+                            .animation(.spring(response: 0.38, dampingFraction: 0.8).delay(d)),
+                        removal: .opacity.combined(with: .offset(y: -6))
+                            .animation(.easeOut(duration: 0.16).delay(Double(3 - index) * 0.02))))
     }
 
     /// A clean header card floating over the map (Runna-style): profile + notifications on the left, the
@@ -1146,16 +1228,17 @@ struct TodayView: View {
                 // cross-tab mailbox) makes this button and the tab-bar item the identical
                 // destination: one live screen, one set of state.
                 .mapSafeTap("Your profile") { Haptics.light(); router.pendingTab = .profile }
-            bellButton
             Spacer(minLength: Theme.Space.xs)
             activitySelector
             Spacer(minLength: Theme.Space.xs)
-            coachButton
-            globeButton
+            // Balances the avatar so the sport pill sits dead-centre; the controls live in the
+            // vertical rail beneath.
+            Color.clear.frame(width: 44, height: 44)
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.sm)
     }
+
 
     /// The whole planet, one tap from home (owner call, 2026-07-29: the globe took the streak
     /// chip's slot — the streak still lives in the widget and Progress). Same glass circle language
@@ -1165,8 +1248,8 @@ struct TodayView: View {
     private var globeButton: some View {
         Image(systemName: "globe")
             .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-            .frame(width: 44, height: 44).momentumGlass(in: Circle())
-            .mapSafeTap("See the world") { enterWorld() }
+            .frame(width: 44, height: 44)
+            .mapSafeTap("See the world") { railOpen = false; enterWorld() }
     }
 
     /// The coach, one tap from home — same glass circle language as the bell. Free to talk; plan
@@ -1174,7 +1257,7 @@ struct TodayView: View {
     /// (proactive proposal / weekly recap) the athlete hasn't seen yet.
     private var coachButton: some View {
         BrandMark(size: 26)
-            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .frame(width: 44, height: 44)
             .overlay(alignment: .topTrailing) {
                 if hasUnseenCoachNews {
                     Circle().fill(Theme.ink)
@@ -1187,7 +1270,7 @@ struct TodayView: View {
             // label breaks element identity for assistive tech and UI tests alike; the unseen
             // news rides on the accessibility VALUE instead.
             .mapSafeTap("Ask your coach") {
-                Haptics.light(); coach.open()
+                Haptics.light(); railOpen = false; coach.open()
             }
             .accessibilityValue(hasUnseenCoachNews ? "New message waiting" : "")
     }
@@ -1201,7 +1284,7 @@ struct TodayView: View {
 
     private var bellButton: some View {
         Image(systemName: "bell").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-            .frame(width: 44, height: 44).momentumGlass(in: Circle())
+            .frame(width: 44, height: 44)
             .overlay(alignment: .topTrailing) {
                 if unreadCount > 0 {
                     Text("\(min(unreadCount, 9))")
@@ -1213,7 +1296,7 @@ struct TodayView: View {
                 }
             }
             .mapSafeTap("Notifications\(unreadCount > 0 ? ", \(unreadCount) unread" : "")") {
-                Haptics.light(); showNotifications = true
+                Haptics.light(); railOpen = false; showNotifications = true
             }
     }
 
@@ -1316,14 +1399,10 @@ struct TodayView: View {
             if isCardio {
                 HStack {
                     Spacer()
-                    VStack(spacing: Theme.Space.sm) {
-                        // No World/globe entry — the social layer is gone (2026-07-16); the picker
-                        // is purely map styles. The globe machinery below stays back-burnered
-                        // (reachable only via the DEBUG --world deep link).
-                        MapLayersButton(style: $mapStyle,
-                                        previewCenter: locator.lastCoordinate)
-                        recenterButton
-                    }
+                    // Map style moved up into the header's vertical rail (2026-08-27); recenter
+                    // alone stays by the thumb. (A 2D/3D toggle sat beside it for a day,
+                    // 2026-08-28, and was pulled the same day — owner call.)
+                    recenterButton
                 }
                 .padding(.horizontal, Theme.Space.md)
                 .offset(y: -mapControlsLift)
@@ -1350,16 +1429,19 @@ struct TodayView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Show today's deck")
 
-            Button { Haptics.light(); startFree() } label: {
+            Button { Haptics.medium(); startFree() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "play.fill").font(.system(size: 13, weight: .bold))
-                    Text("Start").font(.rounded(Theme.FontSize.body, weight: .bold))
+                    Text("Start").font(.rounded(Theme.FontSize.body, weight: .semibold))
                 }
                 .foregroundStyle(Theme.background)
                 .padding(.horizontal, 18).frame(height: 44)
-                .background(Capsule().fill(Theme.ink))
+                // Same raised ink capsule as the deck's Start (glass pass 2026-08-27) — the
+                // morph between the two states is one object changing size, not two styles.
+                .raised(Capsule(), tone: .ink)
+                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RaisedPressStyle())
             // Exactly one live source per state (`isSource`), so the outgoing Start travels to the
             // incoming one's frame — one button in motion, and no double-source ambiguity.
             .matchedGeometryEffect(id: "todayStartCTA", in: startMorph, isSource: deckCollapsed)
@@ -1412,9 +1494,15 @@ struct TodayView: View {
                         .matchedGeometryEffect(id: "todayStartCTA", in: startMorph, isSource: !deckCollapsed)
                         .accessibilityIdentifier("todayDeckStart")
                 }
-                utilityLine
             }
             .padding(Theme.Space.md)
+            // The utility line is the deck's THIRD row, not a card floating inside the action zone
+            // (owner call 2026-08-26): plan → actions → utility, hairline-divided, one object.
+            Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                .padding(.horizontal, Theme.Space.md)
+            utilityLine
+                .padding(.horizontal, Theme.Space.md)
+                .padding(.vertical, Theme.Space.sm)
         }
         .momentumGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
     }
@@ -1490,11 +1578,13 @@ struct TodayView: View {
             }
             .foregroundStyle(Theme.ink)
             .padding(.horizontal, 20)
-            .frame(height: 56)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.inkTertiary.opacity(0.45), lineWidth: 1))
+            .frame(height: 58)
+            // The secondary action wears the raised WHITE capsule beside Start's raised ink —
+            // same material, quieter tone, so the hierarchy still reads.
+            .raised(Capsule())
+            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RaisedPressStyle())
         .accessibilityLabel("Log a workout you already did")
     }
 
@@ -1534,12 +1624,8 @@ struct TodayView: View {
                     Text("10 sec").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                 }
-                .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-                .background {
-                    Capsule().fill(Theme.surface)
-                    Capsule().stroke(Theme.hairline)
-                }
-                .contentShape(Capsule())
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Morning check-in — how are you feeling today? Takes ten seconds.")
@@ -1567,15 +1653,28 @@ struct TodayView: View {
                     Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                 }
                 .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
-                .background {
-                    Capsule().fill(Theme.surface)
-                    Capsule().stroke(Theme.hairline)
-                }
+                .raised(Capsule())
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Training around your \(area.label). Feeling better? Tap to ease back into running.")
         }
+    }
+
+    /// Re-frame the camera at the current tilt — after a layer change (some styles reset it flat)
+    /// or a 2D/3D flip. Re-tilting only makes sense over a place we can actually point at: an
+    /// un-located athlete keeps the flat world view rather than being tipped into a pitched globe.
+    private func retiltCamera() {
+        guard !worldMode, !marketingHero else { return }
+        let target: Viewport
+        if locator.isAuthorized {
+            target = .followPuck(zoom: 15, pitch: explorePitch)
+        } else if let coord = lastKnownCoordinate {
+            target = .camera(center: coord, zoom: 13.5, pitch: explorePitch)
+        } else {
+            target = Self.unlocatedViewport
+        }
+        withAnimation(Motion.standard) { viewport = target }
     }
 
     private var recenterButton: some View {
@@ -1596,7 +1695,7 @@ struct TodayView: View {
             locator.requestAuthorization()   // not granted — prompt; the fix recenters via onChange
             return
         }
-        let me: Viewport = .followPuck(zoom: 16, pitch: mapStyle.explorePitch)
+        let me: Viewport = .followPuck(zoom: 16, pitch: explorePitch)
         if reduceMotion { viewport = me }
         else { withViewportAnimation(.easeInOut(duration: 0.55)) { viewport = me } }
     }
@@ -1805,8 +1904,8 @@ struct TodayView: View {
         // neighborhood — so the camera reliably leaves the globe (followPuck alone does nothing without
         // a live location).
         let me = locator.lastLocation ?? lastKnownCoordinate
-        let home: Viewport = me.map { .camera(center: $0, zoom: 15, pitch: mapStyle.explorePitch) }
-            ?? .followPuck(zoom: 15, pitch: mapStyle.explorePitch)
+        let home: Viewport = me.map { .camera(center: $0, zoom: 15, pitch: explorePitch) }
+            ?? .followPuck(zoom: 15, pitch: explorePitch)
         withAnimation(Motion.reversible) { worldMode = false }
         if reduceMotion {
             viewport = home
@@ -1915,7 +2014,7 @@ struct TodayView: View {
                     .font(.rounded(Theme.FontSize.body, weight: .bold))
                     .frame(maxWidth: .infinity).frame(height: 46)
                     .foregroundStyle(Theme.background)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
             }
             .buttonStyle(.plain)
             .disabled(profiles.first == nil)

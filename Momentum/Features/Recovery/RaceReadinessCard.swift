@@ -44,9 +44,7 @@ struct RaceReadinessCard: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("RACE DAY FORM")
-                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                .foregroundStyle(Theme.inkTertiary)
+            EyebrowLabel(text: "RACE DAY FORM", tint: Theme.purple)
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
                 Text(displayName)
                     .font(.rounded(Theme.FontSize.headline, weight: .bold))

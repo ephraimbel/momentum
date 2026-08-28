@@ -75,10 +75,8 @@ struct SleepCard: View {
     // MARK: Header + duration hero
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("Sleep")
-                .font(.rounded(Theme.FontSize.headline, weight: .bold))
-                .foregroundStyle(Theme.ink)
+        VStack(alignment: .leading, spacing: 4) {
+            EyebrowLabel(text: "Sleep", tint: Theme.Health.sleepInk)
             Text(nightLabel)
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
@@ -124,9 +122,10 @@ struct SleepCard: View {
                 }
             } else {
                 // Duration-only night: a single-tone bar, and the honest reason why.
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Theme.Health.sleepInk)
-                    .frame(height: 20)
+                Capsule()
+                    .fill(LinearGradient(colors: [Theme.Health.sleepInk, Theme.Health.sleepInk.opacity(0.78)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(height: 22)
                     .opacity(appeared ? 1 : 0)
                     .animation(reduceMotion ? nil : Motion.entrance, value: appeared)
                 Text("Stages come from a watch worn overnight")
@@ -145,13 +144,14 @@ struct SleepCard: View {
             HStack(spacing: 0) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
                     Rectangle()
-                        .fill(seg.color)
+                        .fill(LinearGradient(colors: [seg.color, seg.color.opacity(0.78)],
+                                             startPoint: .top, endPoint: .bottom))
                         .frame(width: geo.size.width * seg.seconds / total)
                 }
             }
         }
-        .frame(height: 20)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .frame(height: 22)
+        .clipShape(Capsule())
         .opacity(appeared ? 1 : 0)
         .animation(reduceMotion ? nil : Motion.entrance, value: appeared)
         .accessibilityElement(children: .ignore)
@@ -291,14 +291,16 @@ struct SleepCard: View {
                     VStack(spacing: 1) {
                         // Drawn top-down, so deep sits on the floor of the column.
                         ForEach(Array(parts.reversed().enumerated()), id: \.offset) { _, part in
-                            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                .fill(part.color)
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(LinearGradient(colors: [part.color, part.color.opacity(0.72)],
+                                                     startPoint: .top, endPoint: .bottom))
                                 .frame(height: max(2, columnChartHeight * part.hours / maxH))
                         }
                     }
                 } else {
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(Theme.Health.sleepInk)
+                        .fill(LinearGradient(colors: [Theme.Health.sleepInk, Theme.Health.sleepInk.opacity(0.72)],
+                                             startPoint: .top, endPoint: .bottom))
                         .frame(height: max(3, columnChartHeight * night.asleepH / maxH))
                 }
             } else {
@@ -308,7 +310,7 @@ struct SleepCard: View {
                     .frame(height: columnChartHeight * report.needH / maxH)
             }
         }
-        .frame(width: 14)
+        .frame(width: 16)
         .scaleEffect(y: appeared ? 1 : 0.001, anchor: .bottom)
         .animation(reduceMotion ? nil : Motion.entrance.delay(0.06 * Double(index)),
                    value: appeared)
@@ -380,14 +382,13 @@ struct SleepCard: View {
                 AreaMark(x: .value("Day", point.day),
                          y: .value("Debt", appeared ? point.debtH : 0))
                     .foregroundStyle(LinearGradient(
-                        colors: [Theme.Health.sleepWash.opacity(washOpacity * 2),
-                                 Theme.Health.sleepWash.opacity(0.02)],
+                        colors: [Theme.Health.sleepInk.opacity(0.22), Theme.Health.sleepInk.opacity(0.0)],
                         startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.monotone)
                 LineMark(x: .value("Day", point.day),
                          y: .value("Debt", appeared ? point.debtH : 0))
                     .foregroundStyle(Theme.Health.sleepInk)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
             // The zero line is the story — "caught up" is a place on this chart.
@@ -494,9 +495,7 @@ struct SleepCard: View {
     // MARK: Shared bits
 
     private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
-            .foregroundStyle(Theme.inkTertiary)
+        EyebrowLabel(text: text, tint: Theme.Health.sleepInk)
     }
 
     /// A §7 one-line education footer, ending in ⓘ when it has a sheet.

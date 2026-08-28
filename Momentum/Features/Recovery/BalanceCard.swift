@@ -78,8 +78,7 @@ struct BalanceCard: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .onAppear(perform: reveal)
     }
 
@@ -87,9 +86,8 @@ struct BalanceCard: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: Theme.Space.sm) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Strain & recovery")
-                    .font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
+            VStack(alignment: .leading, spacing: 4) {
+                EyebrowLabel(text: "Strain & recovery", tint: Theme.Health.strainInk)
                 Text("What you're spending vs what you have to spend")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
             }
@@ -187,7 +185,7 @@ struct BalanceCard: View {
                              series: .value("series", seg.id))
                 }
                 .foregroundStyle(ink)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                 .interpolationMethod(.linear)
             }
         }
@@ -293,9 +291,7 @@ struct BalanceCard: View {
                 .foregroundStyle(Theme.ink)
         }
         .padding(.horizontal, Theme.Space.sm).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-            .fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
     }
 
     // MARK: Ghost bars + scrub capture (chart overlay)
@@ -401,8 +397,8 @@ struct BalanceCard: View {
                 Text(stateWord.uppercased())
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
                     .foregroundStyle(Theme.ink)
-                    .padding(.horizontal, Theme.Space.sm).padding(.vertical, 3)
-                    .background(Capsule().fill(Theme.background).overlay(Capsule().stroke(Theme.hairline)))
+                    .padding(.horizontal, Theme.Space.sm + 2).padding(.vertical, 4)
+                    .raised(Capsule())
                 Text(stateSentence)
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)

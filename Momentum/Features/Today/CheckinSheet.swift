@@ -62,10 +62,7 @@ struct CheckinSheet: View {
                             Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                         }
                         .padding(Theme.Space.md)
-                        .background {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-                        }
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -87,10 +84,7 @@ struct CheckinSheet: View {
                                 Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
                             }
                             .padding(Theme.Space.md)
-                            .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-                                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-                            }
+                            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

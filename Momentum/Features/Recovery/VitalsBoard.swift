@@ -91,10 +91,8 @@ struct VitalsBoard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Your vitals")
-                    .font(.rounded(Theme.FontSize.headline, weight: .bold))
-                    .foregroundStyle(Theme.ink)
+            VStack(alignment: .leading, spacing: 4) {
+                EyebrowLabel(text: "Your vitals", tint: Theme.Health.vitalsInk)
                 Text("Every band is your own normal — learned from your nights, never compared.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
@@ -212,10 +210,19 @@ private struct VitalTileView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
+            HStack(alignment: .center, spacing: 8) {
+                // The vital's glyph in its own ink on a soft disc (glass pass 2026-08-27) —
+                // the tile announces its family before the number does.
+                Image(systemName: glyph)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(model.ink)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(model.ink.opacity(0.13)))
+                    .accessibilityHidden(true)
                 Text(model.title.uppercased())
                     .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1)
                     .foregroundStyle(Theme.inkTertiary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
                     .accessibilityHidden(true)   // the collapsed readout below speaks the title
                 Spacer(minLength: 4)
                 // Outside the ignored element so VoiceOver can still reach the ⓘ.
@@ -232,6 +239,17 @@ private struct VitalTileView: View {
         .contentShape(Rectangle())
         .onTapGesture { if chartable { onOpen() } }
         .onAppear(perform: armBaselineShimmer)
+    }
+
+    /// One SF Symbol per vital family.
+    private var glyph: String {
+        switch model.kind {
+        case .hrv: "waveform.path.ecg"
+        case .restingHR: "heart.fill"
+        case .respiratory: "lungs.fill"
+        case .wristTemp: "thermometer.medium"
+        case .walkingHR: "figure.walk"
+        }
     }
 
     // MARK: Earned shimmer (§6 trigger 4 — first vitals baseline banked)
@@ -291,13 +309,13 @@ private struct VitalTileView: View {
                 if chartable {
                     sparkChart
                 } else if isPro {
-                    Color.clear.frame(height: 30)
+                    Color.clear.frame(height: 40)
                 }
             } else {
                 Text("No readings yet")
                     .font(.rounded(Theme.FontSize.label, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
-                if isPro { Color.clear.frame(height: 30) }
+                if isPro { Color.clear.frame(height: 40) }
             }
         }
     }
@@ -306,7 +324,7 @@ private struct VitalTileView: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if let latest = model.latest {
                 Text(model.format(latest))
-                    .font(.display(22, weight: .heavy)).monospacedDigit()
+                    .font(.display(24, weight: .bold)).monospacedDigit()
                     .foregroundStyle(Theme.ink)
                     .lineLimit(1).minimumScaleFactor(0.6)
                 Text(model.unit)
@@ -325,11 +343,11 @@ private struct VitalTileView: View {
     /// carries type (§6); the wash alone says which family this vital belongs to.
     private var deltaChip: some View {
         Text(model.delta)
-            .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-            .foregroundStyle(Theme.inkSecondary)
+            .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+            .foregroundStyle(model.ink)
             .lineLimit(1).minimumScaleFactor(0.8)
-            .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(Capsule().fill(model.wash.opacity(washOpacity * 2)))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(model.ink.opacity(0.12)))
     }
 
     /// 30-day 2pt ink sparkline over the personal-band ribbon (mean ± 1 SD, quiet wash).
@@ -354,16 +372,28 @@ private struct VitalTileView: View {
                     .cornerRadius(4)
             }
             ForEach(Array(values.enumerated()), id: \.offset) { day, value in
+                // A soft wash under the line in the vital's own ink (glass pass 2026-08-27),
+                // anchored to the chart floor so it never spills past the tile.
+                AreaMark(x: .value("Day", day),
+                         yStart: .value("floor", lower - pad),
+                         yEnd: .value("Value", value))
+                    .foregroundStyle(LinearGradient(colors: [model.ink.opacity(0.20), model.ink.opacity(0.0)],
+                                                    startPoint: .top, endPoint: .bottom))
+                    .interpolationMethod(.monotone)
                 LineMark(x: .value("Day", day), y: .value("Value", value))
                     .foregroundStyle(model.ink)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
+            }
+            if let last = values.last {
+                PointMark(x: .value("Day", values.count - 1), y: .value("Value", last))
+                    .symbolSize(30).foregroundStyle(model.ink)
             }
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
         .chartYScale(domain: (lower - pad)...(upper + pad))
-        .frame(height: 30)
+        .frame(height: 40)
         .mask(alignment: .leading) {
             Rectangle().scaleEffect(x: appeared ? 1 : 0.001, anchor: .leading)
         }

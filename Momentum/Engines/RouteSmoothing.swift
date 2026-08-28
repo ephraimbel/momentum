@@ -180,11 +180,18 @@ extension RouteSmoothing {
             var tail: [CLLocationCoordinate2D] = []
         }
 
-        /// Feed the growing route (append-only — pass the whole array; only new points are read).
-        mutating func ingest(_ route: [CLLocationCoordinate2D]) -> Delta {
+        /// Feed the growing route (append-only — pass the whole array or any slice of it; only
+        /// points past those already ingested are read, so a slice avoids copying the route per
+        /// fix). Positions are counted from the COLLECTION'S OWN start: element 0 of every call
+        /// must be the same route point, however the caller sliced it.
+        mutating func ingest<R: RandomAccessCollection>(_ route: R) -> Delta
+        where R.Element == CLLocationCoordinate2D {
             var delta = Delta()
             guard route.count > consumed else { delta.tail = tail; return delta }
-            for coord in route[consumed...] {
+            // startIndex-relative, never absolute: a slice's indices need not begin at 0 (an
+            // `ArraySlice` from `coords[k...]` starts at k), so `route[consumed...]` would re-read
+            // wrong elements — or trap — on anything but a zero-based collection.
+            for coord in route[route.index(route.startIndex, offsetBy: consumed)...] {
                 if let last = lastRaw,
                    Geo.distance(lat1: last.latitude, lon1: last.longitude,
                                 lat2: coord.latitude, lon2: coord.longitude) > Self.gapSplitM {

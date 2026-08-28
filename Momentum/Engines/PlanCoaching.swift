@@ -235,7 +235,8 @@ enum PlanCoaching {
                 guard let rt = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
                 s.targetPaceSPerKm = RunRounding.snapPace(
                     sPerKm: PlanEngine.sessionPace(rt, p5k: plan.p5kSPerKm, intervals: s.intervals,
-                                                   raceDistanceM: goalRaceDistanceM(in: context)),
+                                                   raceDistanceM: goalRaceDistanceM(in: context),
+                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm),
                     unit: unit, type: rt)
             }
             plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
@@ -443,7 +444,8 @@ enum PlanCoaching {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
             s.targetPaceSPerKm = RunRounding.snapPace(
                 sPerKm: PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
-                                               raceDistanceM: goalRaceDistanceM(in: context)),
+                                               raceDistanceM: goalRaceDistanceM(in: context),
+                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm),
                 unit: displayUnit(in: context), type: runType)
             updated += 1
         }
@@ -490,7 +492,8 @@ enum PlanCoaching {
             guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
             s.targetPaceSPerKm = RunRounding.snapPace(
                 sPerKm: PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
-                                               raceDistanceM: goalRaceDistanceM(in: context)),
+                                               raceDistanceM: goalRaceDistanceM(in: context),
+                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm),
                 unit: displayUnit(in: context), type: runType)
             updated += 1
         }

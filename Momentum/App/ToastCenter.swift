@@ -129,8 +129,7 @@ struct ToastHost: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 10)
-        .background(Capsule().fill(Theme.surface))
-        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+        .raised(Capsule())
         .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.sm)

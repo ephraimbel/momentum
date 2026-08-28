@@ -61,9 +61,7 @@ struct DriverRow: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                Text("TODAY'S DRIVERS")
-                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(Theme.inkTertiary)
+                EyebrowLabel(text: "TODAY'S DRIVERS", tint: Theme.Health.recoveryInk)
 
                 let drivers = topDrivers
                 VStack(spacing: Theme.Space.sm) {
@@ -281,9 +279,7 @@ struct DriverRow: View {
 
     private var timelineList: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("WHEN THE PLAN EASED")
-                .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                .foregroundStyle(Theme.inkTertiary)
+            EyebrowLabel(text: "WHEN THE PLAN EASED", tint: Theme.Health.recoveryInk)
             VStack(spacing: 0) {
                 ForEach(Array(timeline.enumerated()), id: \.element.id) { i, entry in
                     HStack(alignment: .top, spacing: Theme.Space.md) {

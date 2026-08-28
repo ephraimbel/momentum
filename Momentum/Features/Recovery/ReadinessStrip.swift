@@ -144,10 +144,7 @@ struct ReadinessStrip: View {
                     .foregroundStyle(Theme.inkTertiary)
             }
         .padding(Theme.Space.md)
-        .background {
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).stroke(Theme.hairline)
-        }
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 

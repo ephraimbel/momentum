@@ -44,23 +44,38 @@ struct ProgressInsights {
     let paceTrendPct: Double          // running pace: negative = faster (improving)
     let hasData: Bool
 
+    /// The ACWR math on PLAIN VALUES — the one formula, so any caller (the initializer below,
+    /// the Health page's load history) reads the same number. Values not models: SwiftData
+    /// objects belong to the main actor, so a caller that wants a long series maps to these
+    /// tuples first and evaluates off the render path.
+    ///
+    /// The chronic divisor is normalized to the history that actually exists (weeks, capped at
+    /// 4). A flat ÷4 understates chronic for new athletes — a keen first week reads as ratio ≈ 4
+    /// and tells exactly the person we should be encouraging to "ease off / rest". With one week
+    /// of data chronic == acute (ratio 1); by four weeks this is the classic ACWR.
+    nonisolated static func acuteChronic(sessions: [(date: Date, load: Double)],
+                             now: Date = Date(),
+                             calendar: Calendar = .current) -> (acute: Double, chronic: Double, acwr: Double) {
+        guard let acuteCut = calendar.date(byAdding: .day, value: -7, to: now),
+              let chronicCut = calendar.date(byAdding: .day, value: -28, to: now) else { return (0, 0, 0) }
+        let acute = sessions.filter { $0.date >= acuteCut }.reduce(0) { $0 + $1.load }
+        let chronic28 = sessions.filter { $0.date >= chronicCut }.reduce(0) { $0 + $1.load }
+        let historyDays = sessions.map(\.date).min()
+            .flatMap { calendar.dateComponents([.day], from: $0, to: now).day } ?? 0
+        let chronic = chronic28 / min(4, max(1, Double(historyDays) / 7))
+        return (acute, chronic, chronic < 1 ? 0 : acute / chronic)
+    }
+
     /// `weeksBack` sizes the weekly series window (the Trends range picker: 1M ≈ 5, 3M ≈ 13,
     /// later 6M ≈ 26 and 1Y ≈ 52). ACWR and the trend percentages are window-independent — they
     /// always read the most recent weeks — so switching ranges never changes the coaching verdict.
     init(workouts: [Workout], now: Date = Date(), calendar: Calendar = .current, weeksBack: Int = 8) {
         let load = TrainingLoad.session   // canonical session-RPE load (PRD §4.8)
 
-        let acuteCut = calendar.date(byAdding: .day, value: -7, to: now)!
-        let chronicCut = calendar.date(byAdding: .day, value: -28, to: now)!
-        acute = workouts.filter { $0.startedAt >= acuteCut }.reduce(0) { $0 + load($1) }
-        let chronic28 = workouts.filter { $0.startedAt >= chronicCut }.reduce(0) { $0 + load($1) }
-        // Normalize the chronic divisor to the history that actually exists (weeks, capped at 4).
-        // A flat ÷4 understates chronic for new athletes — a keen first week reads as ratio ≈ 4
-        // and tells exactly the person we should be encouraging to "ease off / rest". With one
-        // week of data chronic == acute (ratio 1); by four weeks this is the classic ACWR.
-        let historyDays = workouts.map(\.startedAt).min()
-            .flatMap { calendar.dateComponents([.day], from: $0, to: now).day } ?? 0
-        chronic = chronic28 / min(4, max(1, Double(historyDays) / 7))
+        let ratios = Self.acuteChronic(sessions: workouts.map { (date: $0.startedAt, load: load($0)) },
+                                       now: now, calendar: calendar)
+        acute = ratios.acute
+        chronic = ratios.chronic
 
         hasData = !workouts.isEmpty
         if chronic < 1 {
@@ -68,7 +83,7 @@ struct ProgressInsights {
             status = .starting
             recommendation = .start
         } else {
-            let ratio = acute / chronic
+            let ratio = ratios.acwr
             acwr = ratio
             switch ratio {
             case ..<0.8: status = .underloaded; recommendation = .increase

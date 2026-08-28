@@ -39,6 +39,10 @@ struct TrendDetail: Identifiable {
     /// Caption after the band range, e.g. "mean ± 1 SD · 30 days".
     var bandNote: String? = nil
     var explainer: MetricExplainer?
+    /// The longest window this metric can honestly answer, in weeks. The sheet offers only the
+    /// ranges that fit — a series with a 30-day spine must never put a "1Y" button on screen and
+    /// then plot the same month under it.
+    var maxWeeks: Int = 52
     /// Value → display numeral (no unit — the unit renders separately, quiet).
     var format: (Double) -> String
     /// Points for a `weeksBack` window, oldest → newest. Async so Health-backed series can fetch;
@@ -95,6 +99,9 @@ struct TrendDetailSheet: View {
     }
 
     @State private var range: Range = .quarter
+    /// The selected window, clamped to what this metric can answer — a caption reading "past 3
+    /// months" over a picker offering only 1M was the tell that these two could disagree.
+    private var activeRange: Range { offeredRanges.contains(range) ? range : (offeredRanges.last ?? .month) }
     @State private var points: [TrendDetail.Point]?
     @State private var drawn = false
     @State private var scrub = ChartScrubState()
@@ -124,7 +131,7 @@ struct TrendDetailSheet: View {
             // Refetch per window; the old curve holds until the new one lands (no skeleton flash),
             // then the numerals roll and the chart redraws — a range flip reads as one movement.
             .task(id: range) {
-                let pts = await detail.series(range.weeks)
+                let pts = await detail.series(activeRange.weeks)
                 withAnimation(reduceMotion ? nil : Motion.standard) {
                     points = pts
                     scrub = .init()   // a pinned week from the old window means nothing here
@@ -151,20 +158,26 @@ struct TrendDetailSheet: View {
                 Text(detail.unit)
                     .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
-            Text("Latest · \(range.phrase)")
+            Text("Latest · \(activeRange.phrase)")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .contentTransition(.opacity)
         }
         .animation(Motion.standard, value: points)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(detail.title)
-        .accessibilityValue("latest \(latest.map(detail.format) ?? "no data") \(detail.unit), \(range.phrase)")
+        .accessibilityValue("latest \(latest.map(detail.format) ?? "no data") \(detail.unit), \(activeRange.phrase)")
     }
 
     // MARK: Range picker — the page picker's exact capsule language
 
+    /// The windows this metric can actually answer (always at least the shortest).
+    private var offeredRanges: [Range] {
+        let fits = Range.allCases.filter { $0.weeks <= detail.maxWeeks }
+        return fits.isEmpty ? [.month] : fits
+    }
+
     private var rangePicker: some View {
-        SegmentedCapsule(items: Range.allCases, selection: $range, scale: .compact,
+        SegmentedCapsule(items: offeredRanges, selection: $range, scale: .compact,
                          title: { $0.rawValue }, spokenLabel: { $0.phrase })
     }
 
@@ -214,6 +227,13 @@ struct TrendDetailSheet: View {
         // conventions (pace/strength roll from "now", distance/steps use calendar weeks) — the
         // old `.weekOfYear` binning + strided ticks drew the rolling ones snapped to calendar
         // bins while the scrub kept raw dates, so cursor, bar and label all disagreed.
+        // Hoisted for the type-checker: the line form's wash, floor and dot rule are computed
+        // once here, not re-derived inside the ForEach closure.
+        let lineTint = detail.tint ?? Theme.ink
+        let floorY = yDomain(plotted, maxV: maxV).first ?? 0
+        let wash = LinearGradient(colors: [lineTint.opacity(0.18), lineTint.opacity(0)],
+                                  startPoint: .top, endPoint: .bottom)
+        let showDots = plotted.count <= 40
         return Chart {
             if let band = detail.band {
                 // The band spans the full padded plot, not first-to-last bin centre — the old
@@ -234,11 +254,24 @@ struct TrendDetailSheet: View {
                         .foregroundStyle(barStyle(isCurrent: p.date == last))
                         .cornerRadius(2)
                 case .line:
+                    // A soft wash under the line + a dot on every point (glass pass 2026-08-27,
+                    // the reference's dotted glowing line) — the line is 2.5pt in the metric's ink.
+                    AreaMark(x: .value("Date", p.date),
+                             yStart: .value("floor", floorY),
+                             yEnd: .value(detail.title, drawn ? p.value : maxV))
+                        .foregroundStyle(wash)
+                        .interpolationMethod(.monotone)
                     LineMark(x: .value("Date", p.date),
                              y: .value(detail.title, drawn ? p.value : maxV))
-                        .foregroundStyle(detail.tint ?? Theme.ink)
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .foregroundStyle(lineTint)
+                        .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
                         .interpolationMethod(.monotone)
+                    if showDots, p.date != last {
+                        PointMark(x: .value("Date", p.date),
+                                  y: .value(detail.title, drawn ? p.value : maxV))
+                            .symbolSize(18)
+                            .foregroundStyle(lineTint)
+                    }
                     if p.date == last {
                         PointMark(x: .value("Date", p.date),
                                   y: .value(detail.title, drawn ? p.value : maxV))
@@ -302,8 +335,11 @@ struct TrendDetailSheet: View {
         if let tint = detail.tint {
             return AnyShapeStyle(tint.opacity(isCurrent ? 1 : 0.5))
         }
+        // Untinted magnitudes (distance, sessions) wear the page's own lavender bars — the
+        // sheet used to switch to ink here, so the tap-through contradicted the card it opened.
         return isCurrent ? AnyShapeStyle(IridescentMaterial())
-                         : AnyShapeStyle(Theme.ink.opacity(0.75))
+                         : AnyShapeStyle(LinearGradient(colors: [Theme.purple, Theme.purple.opacity(0.6)],
+                                                        startPoint: .top, endPoint: .bottom))
     }
 
     // MARK: Stats — the window in three numbers
@@ -332,8 +368,7 @@ struct TrendDetailSheet: View {
             }
         }
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .animation(Motion.standard, value: pts)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Summary")
@@ -389,8 +424,7 @@ struct TrendDetailSheet: View {
                     .foregroundStyle(Theme.ink)
                     .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                        .fill(Theme.surface).overlay(RoundedRectangle(cornerRadius: Theme.Radius.chip).stroke(Theme.hairline)))
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
             }
             ForEach(Array(e.sections.enumerated()), id: \.offset) { _, section in
                 VStack(alignment: .leading, spacing: 5) {

@@ -84,5 +84,8 @@ struct GeneratedWeek: Sendable, Equatable {
 
 struct GeneratedPlan: Sendable, Equatable {
     var p5kSPerKm: Double
+    /// The pace goal-pace sessions are set at (s/km): the athlete's goal, honesty-capped by the
+    /// improvement model. nil without a goal time. Persisted so recalibration never re-stamps it.
+    var goalRacePaceSPerKm: Double? = nil
     var weeks: [GeneratedWeek]
 }

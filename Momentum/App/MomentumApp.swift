@@ -22,6 +22,7 @@ struct MomentumApp: App {
     @State private var comments = CommentStore()
     @State private var moderation = ModerationStore()
     @State private var remoteFeed = RemoteFeedStore()
+    @State private var nudges = NudgeStore()
     // Social stores + backend wiring removed 2026-07-16: Community is back-burnered from v1 —
     // the app ships solo-first (Bevel-for-endurance positioning). The stores, feed, and Supabase
     // social backend all remain in the repo, dormant; re-wire here when community returns.
@@ -83,6 +84,7 @@ struct MomentumApp: App {
         comments.backend = services.social
         moderation.backend = services.social
         remoteFeed.backend = services.social
+        nudges.backend = services.social
         remoteFeed.reactions = reactions
         remoteFeed.follows = follows
         // Wrist sync (Watch Slice 4): the health handle must be wired before any watch message can
@@ -172,6 +174,7 @@ struct MomentumApp: App {
             .environment(coach)
             .environment(router)
             .environment(follows)
+            .environment(nudges)
             .environment(reactions)
             .environment(comments)
             .environment(moderation)

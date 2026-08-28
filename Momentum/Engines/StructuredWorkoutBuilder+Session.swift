@@ -13,7 +13,7 @@ extension StructuredWorkoutBuilder {
     /// athlete's goal race) prices the race-pace finish block on quality long runs — omitted, a long
     /// race's marathon pace stands in. Pure + deterministic.
     static func build(from session: PlannedSession, p5kSPerKm: Double? = nil,
-                      raceDistanceM: Double? = nil) -> StructuredWorkout? {
+                      raceDistanceM: Double? = nil, goalRacePaceSPerKm: Double? = nil) -> StructuredWorkout? {
         guard session.discipline == .running,
               let runType = session.runType,
               let pace = session.targetPaceSPerKm, pace > 0 else { return nil }
@@ -61,7 +61,9 @@ extension StructuredWorkoutBuilder {
             // needs no structure. Race pace comes from the goal distance when known; a long-race
             // default (marathon) stands in otherwise — this pattern only generates for ≥half plans.
             guard let finishM = parseRaceFinish(session.intervals) else { return nil }
-            let racePace = DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 42_195, p5kSPerKm: p5k)
+            // The finish block runs at the plan's GOAL pace when one is set (2026-08-28).
+            let racePace = goalRacePaceSPerKm
+                ?? DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 42_195, p5kSPerKm: p5k)
             return raceFinishLong(totalDistanceM: session.targetDistanceM ?? 0, finishM: finishM,
                                   bodyPace: pace, racePace: racePace)
         default:

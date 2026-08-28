@@ -8,6 +8,9 @@ import Charts
 struct StrengthProgressSection: View {
     let workouts: [Workout]
     var weightUnit: WeightUnit = .kg
+    /// The wheel's window — the Trends range's activation days, so the wheel, the body figure
+    /// and the progression rows all read the same slice of training.
+    var days: Int = 30
     /// Only compute when unlocked — a free user sees a blurred teaser, so skip the full walk of every
     /// workout × exercise × set (previously re-run several times per render, uncached).
     var pro: Bool = true
@@ -21,6 +24,8 @@ struct StrengthProgressSection: View {
     /// ago, reachable at last).
     @State private var volumeDetail: TrendDetail?
     @State private var liftDetail: LiftDetailItem?
+    @State private var showAllLifts = false
+    @State private var showLoadDetail = false
 
     struct LiftDetailItem: Identifiable {
         let name: String
@@ -38,8 +43,11 @@ struct StrengthProgressSection: View {
         var seriesByLift: [String: [ExerciseTrends.Point]]
         var volumeKg: [TrendAnalytics.WeekValue]
         var balance: [StrengthTrends.MuscleLoad]
+        /// The wheel (six regions, wheel order) and the progression rows (all lifts, staples first).
+        var regions: [StrengthTrends.RegionLoad] = []
+        var progression: [StrengthTrends.LiftMetric] = []
 
-        static func build(_ workouts: [Workout]) -> Model {
+        static func build(_ workouts: [Workout], days: Int = 30) -> Model {
             let lifts = StrengthTrends.topLifts(in: workouts)
             var series: [String: [ExerciseTrends.Point]] = [:]
             for lift in lifts { series[lift] = ExerciseTrends.e1RMSeries(exerciseName: lift, in: workouts) }
@@ -47,7 +55,9 @@ struct StrengthProgressSection: View {
                          summary: StrengthTrends.liftSummary(in: workouts),
                          seriesByLift: series,
                          volumeKg: StrengthTrends.weeklyVolume(in: workouts),
-                         balance: StrengthTrends.muscleBalance(in: workouts))
+                         balance: StrengthTrends.muscleBalance(in: workouts),
+                         regions: StrengthTrends.regionLoads(in: workouts, days: days),
+                         progression: StrengthTrends.progression(in: workouts, limit: 40))
         }
     }
 
@@ -59,17 +69,25 @@ struct StrengthProgressSection: View {
     @MainActor private static var modelCache: (key: String, model: Model)?
 
     private var cacheKey: String {
-        "\(workouts.contentSignature)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
+        "\(workouts.contentSignature)-\(days)-\(Int(Calendar.current.startOfDay(for: Date()).timeIntervalSinceReferenceDate))"
     }
 
     var body: some View {
         if hasStrength {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 if let model {
-                    LiftVitalsStrip(metrics: model.summary, weightUnit: weightUnit)
-                    if !model.lifts.isEmpty { liftProgressionCard(model) }
+                    // The Bevel-structured chapter (2026-08-28): the muscle-load wheel, the
+                    // progression rows, then weekly tonnage. The wheel shares the body figure's
+                    // window and muscle weighting, so the figure above lights where the wheel leads.
+                    MuscleLoadCard(loads: model.regions, weightUnit: weightUnit, days: days, animate: appeared,
+                                   onOpen: { showLoadDetail = true })
+                    if !model.progression.isEmpty {
+                        StrengthProgressionCard(rows: Array(model.progression.prefix(5)), weightUnit: weightUnit,
+                                                animate: appeared,
+                                                onOpenAll: { showAllLifts = true },
+                                                onOpen: { liftDetail = LiftDetailItem(name: $0.name) })
+                    }
                     volumeCard(model)
-                    muscleBalanceCard(model)
                 } else {
                     skeleton
                 }
@@ -83,7 +101,7 @@ struct StrengthProgressSection: View {
                     return
                 }
                 if model == nil { await Task.yield() }   // paint the skeleton first
-                let built = Model.build(workouts)
+                let built = Model.build(workouts, days: days)
                 Self.modelCache = (key, built)
                 if selectedLift == nil { selectedLift = built.lifts.first }
                 model = built
@@ -91,8 +109,49 @@ struct StrengthProgressSection: View {
             .onAppear {
                 if reduceMotion { appeared = true }
                 else { withAnimation(.easeOut(duration: 0.6)) { appeared = true } }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--progress-open-muscle-load") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { showLoadDetail = true }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-open-lift") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                        if let first = model?.progression.first { liftDetail = LiftDetailItem(name: first.name) }
+                    }
+                }
+                if ProcessInfo.processInfo.arguments.contains("--progress-open-volume") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { volumeDetail = volumeDetailPayload }
+                }
+                #endif
             }
             .sheet(item: $volumeDetail) { TrendDetailSheet(detail: $0) }
+            .sheet(isPresented: $showLoadDetail) {
+                NavigationStack {
+                    MuscleLoadDetailView(workouts: workouts, weightUnit: weightUnit, initialDays: days)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showLoadDetail = false }.fontWeight(.semibold).foregroundStyle(Theme.ink)
+                            }
+                        }
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showAllLifts) {
+                NavigationStack {
+                    StrengthProgressionListView(rows: model?.progression ?? [], weightUnit: weightUnit) { m in
+                        showAllLifts = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { liftDetail = LiftDetailItem(name: m.name) }
+                    }
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showAllLifts = false }.fontWeight(.semibold).foregroundStyle(Theme.ink)
+                        }
+                    }
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
             // The per-lift deep dive — full e1RM history, heaviest sets, the whole story.
             .sheet(item: $liftDetail) { lift in
                 NavigationStack {
@@ -158,8 +217,7 @@ struct StrengthProgressSection: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         // Tap-through to the selected lift's full history (every set, the PR line, the story).
         // The lift chips and the ⓘ keep their own taps; the plot keeps its scrub; everywhere
         // else on the card opens the detail.
@@ -335,8 +393,7 @@ struct StrengthProgressSection: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Space.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func muscleRow(_ load: StrengthTrends.MuscleLoad, maxSets: Double) -> some View {
@@ -407,8 +464,7 @@ private struct LiftTile: View {
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.surface)
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline)))
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(metric.name)
         .accessibilityValue(Formatters.weight(kg: metric.currentE1RMKg, unit: weightUnit))
