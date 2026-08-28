@@ -250,17 +250,22 @@ struct HealthTile: View {
     var body: some View {
         let side: CGFloat = 84
         let shape = RoundedRectangle(cornerRadius: side * 0.224, style: .continuous)
-        // Drawn to Apple's proportions rather than shipping their artwork: the heart fills ~62%
-        // of the tile's width (the icon's own ratio) and runs bright pink at the upper left into
-        // crimson at the lower right, which is the gradient's actual direction. Sizing by
-        // `side` keeps that ratio if the tile is ever rescaled.
+        // Drawn to Apple's proportions rather than shipping their artwork, and measured off the
+        // real icon rather than guessed: the heart is 47% of the tile wide and sits ABOVE and
+        // RIGHT of centre (+11% / −13% of the side), not centred. The gradient is VERTICAL,
+        // magenta at the top through to red at the foot — a diagonal ramp reads noticeably
+        // wrong. Everything scales off `side`, so the ratios hold at any tile size.
         shape.fill(.white)
             .overlay {
                 Image(systemName: "heart.fill")
-                    .font(.system(size: side * 0.62, weight: .regular))
+                    // 0.49, not the 0.47 the bbox implies: `heart.fill`'s glyph box is wider
+                    // than the shape it draws, so the point size has to be tuned until the
+                    // RENDERED heart measures 47% of the tile, which is what this does.
+                    .font(.system(size: side * 0.49, weight: .regular))
                     .foregroundStyle(LinearGradient(
-                        colors: [Color(hex: "FF6182"), Color(hex: "FB2B54"), Color(hex: "E80B3E")],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                        colors: [Color(hex: "FE61A6"), Color(hex: "FF4563"), Color(hex: "FF302A")],
+                        startPoint: .top, endPoint: .bottom))
+                    .offset(x: side * 0.109, y: -side * 0.129)
             }
             .frame(width: side, height: side)
             .overlay { shape.strokeBorder(.black.opacity(0.06), lineWidth: 0.6) }
