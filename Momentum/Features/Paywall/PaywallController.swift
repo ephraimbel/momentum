@@ -36,14 +36,25 @@ struct PaywallOffering: Sendable, Equatable {
     var weeklyPriceValue: Double = weeklyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Shipped pricing (owner call 2026-08-28, replacing $9.99/mo + $59.99/yr): the entry plan
-    /// is **weekly** and the yearly is priced **~80% under the weekly run-rate**, displayed at its
-    /// own per-week number. $5.99 × 52 = $311.48 against $64.99 is 79.1% — a clean yearly price, a
-    /// clean **$1.25 a week**, and a badge that rounds to **SAVE 80%**.
+    /// Shipped pricing (owner call 2026-08-28, second pass — the yearly cut from $64.99 to
+    /// **$29.99** to buy conversion): the entry plan is **weekly** and the yearly is priced
+    /// **90% under the weekly run-rate**, displayed at its own per-week number. $5.99 × 52 =
+    /// $311.48 against $29.99 is 90.4% — a clean yearly price, **$0.58 a week**, and a badge that
+    /// rounds to **SAVE 90%**.
     ///
     /// The three numbers have to agree, and only two of them are free: pick the yearly and the
     /// weekly falls out of it, along with the badge. $79.99 was considered and rejected — it is
     /// only 74.3% off, so it would have to wear "SAVE 75%".
+    ///
+    /// **The floor this sits on.** A heavy daily user costs ~$1.25/mo to serve ($15/yr). Note the
+    /// take rate is NOT 84% in year one: App Store Connect quotes this product's proceeds as
+    /// **$21.00 on $29.99** (the standard 70% first-year rate) rising to ~85% once a subscriber
+    /// passes twelve months, so a first-year yearly nets ~$21 against ~$15 of cost. It clears,
+    /// but by ~$6 rather than the ~$10 an 84% take implies — and a heavy user who churns inside
+    /// year one is roughly break-even. This is
+    /// the reason a 90% badge off a CHEAPER weekly does not work: at $1.99/wk the same 90% is
+    /// $10.35, which loses ~$6.61 a year on every heavy subscriber. If the weekly ever drops, the
+    /// yearly cannot simply follow the percentage down.
     ///
     /// Monthly is gone from the offering. Existing monthly subscribers keep their price and their
     /// entitlement — removing a product from an offering never cancels or re-prices a live sub —
@@ -55,7 +66,7 @@ struct PaywallOffering: Sendable, Equatable {
     /// RevenueCat is wired — the weekly product must be in the SAME subscription group as the
     /// annual, or upgrades/downgrades won't work.
     static let weeklyPrice = 5.99
-    static let annualPrice = 64.99
+    static let annualPrice = 29.99
 
     static let standard = PaywallOffering(
         weekly: .init(id: "momentum_pro_weekly", period: .weekly,
@@ -69,8 +80,8 @@ struct PaywallOffering: Sendable, Equatable {
 
     /// Percent saved by paying yearly instead of 52× weekly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
-    /// (live once the store loads), never a hand-written label. Currently **80%**: $64.99 vs
-    /// 52 × $5.99 = $311.48 is 79.13%, which rounds to 80%.
+    /// (live once the store loads), never a hand-written label. Currently **90%**: $29.99 vs
+    /// 52 × $5.99 = $311.48 is 90.37%, which rounds to 90%.
     var annualSavingsPercent: Int {
         let weeklyYear = 52 * weeklyPriceValue
         guard weeklyYear > 0 else { return 0 }
