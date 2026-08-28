@@ -188,17 +188,19 @@ struct PlanRevealView: View {
             }
                 .reveal(0.4)
                 .padding(.horizontal, Theme.Space.lg)
-                .padding(.top, Theme.Space.sm)
+                .padding(.top, Theme.Space.md)
                 .padding(.bottom, Theme.Space.sm)
                 // ONE fade, owned by the inset: clear → canvas rising above it, bled past the
                 // column and under the home indicator. (A separate scroll-edge overlay plus an
                 // opaque button background left a hairline seam between the two while scrolling —
-                // owner report 2026-08-27.) It reaches full canvas by 0.35 rather than 0.55: the
-                // inset grew a review line above the button, and at the old stop the plan's
-                // mileage stats were still scrolling through those words.
+                // owner report 2026-08-27.) The stop is pulled all the way up to 0.24 — roughly
+                // where the inset's own content starts, given the `-xl` bleed above it — so the
+                // fade is SPENT before the review line rather than around it. At 0.55 the plan's
+                // mileage scrolled straight through the words; at 0.35 a section header and a card
+                // edge still ghosted behind them. The line needs a clean bed, not a lighter one.
                 .background {
                     LinearGradient(stops: [.init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 0),
-                                           .init(color: OnboardingStyle.canvas(colorScheme), location: 0.35),
+                                           .init(color: OnboardingStyle.canvas(colorScheme), location: 0.24),
                                            .init(color: OnboardingStyle.canvas(colorScheme), location: 1)],
                                    startPoint: .top, endPoint: .bottom)
                         .padding(.top, -Theme.Space.xl)
