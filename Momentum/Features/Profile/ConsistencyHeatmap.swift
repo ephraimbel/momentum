@@ -17,9 +17,24 @@ struct ConsistencyHeatmap: View {
     var cell: CGFloat = 13
     var spacing: CGFloat = 3
     var showsAxes: Bool = false
+    /// The `Less → More` key under the grid (only with axes). Off for a stacked older half-year,
+    /// which shares the recent half's key.
+    var showsLegend: Bool = true
+    /// The grid's newest day. Today by default; a past date renders an older window (the depth
+    /// sheet's 52-week view stacks two 26-week grids — pages are vertical-only, never a horizontal
+    /// scroller). The today ring appears only when the anchor IS today.
+    var anchor: Date = Calendar.current.startOfDay(for: Date())
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The cascade: columns arrive oldest → newest on first appearance (transform-only —
+    /// opacity + scale — and Reduce Motion snaps). The grid used to pop in whole.
+    @State private var revealed = false
+
+    private var anchorDay: Int { StreakCalculator.localDay(anchor) }
+    private var anchoredOnToday: Bool { anchorDay == StreakCalculator.localDay(Date()) }
 
     var body: some View {
-        let today = StreakCalculator.localDay(Date())
+        let today = anchorDay
         let windowDays = weeks * 7
         let activeDays = (0..<windowDays).filter { countingDays.contains(today - $0) }.count
         HStack(alignment: .top, spacing: spacing * 2) {
@@ -27,10 +42,11 @@ struct ConsistencyHeatmap: View {
             VStack(alignment: .leading, spacing: spacing * 2) {
                 if showsAxes { monthLabels }
                 grid(today: today)
-                if showsAxes { legend.padding(.top, spacing) }
+                if showsAxes, showsLegend { legend.padding(.top, spacing) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { revealed = true }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Consistency")
         .accessibilityValue("\(activeDays) of \(windowDays) days active in the last \(weeks) weeks")
@@ -40,9 +56,17 @@ struct ConsistencyHeatmap: View {
         ZStack {
             cells(today: today) { day in fill(for: day) }
             // Today: a quiet ink ring anchors "now" at the bottom-right of the story.
-            if showsAxes { todayRing(today: today) }
+            if showsAxes, anchoredOnToday {
+                todayRing(today: today)
+                    .opacity(revealed ? 1 : 0)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.25).delay(Self.columnDelay * Double(weeks)),
+                               value: revealed)
+            }
         }
     }
+
+    /// Per-column stagger of the arrival cascade.
+    private static let columnDelay = 0.018
 
     // MARK: Intensity
 
@@ -85,8 +109,8 @@ struct ConsistencyHeatmap: View {
     /// stepped date at 23:00 the prior day and label the row with the wrong weekday.
     private func weekdayLetter(row: Int) -> String {
         let cal = Calendar.current
-        let date = cal.date(byAdding: .day, value: -(6 - row), to: cal.startOfDay(for: Date()))
-            ?? Date()
+        let date = cal.date(byAdding: .day, value: -(6 - row), to: cal.startOfDay(for: anchor))
+            ?? anchor
         let symbol = Calendar.current.shortWeekdaySymbols[
             Calendar.current.component(.weekday, from: date) - 1]
         return String(symbol.prefix(1))
@@ -109,7 +133,7 @@ struct ConsistencyHeatmap: View {
 
     private func monthLabel(col: Int, formatter: DateFormatter) -> String? {
         let cal = Calendar.current
-        let colTop = cal.startOfDay(for: Date())
+        let colTop = cal.startOfDay(for: anchor)
             .addingTimeInterval(TimeInterval(-(((weeks - 1 - col) * 7) + 6) * 86_400))
         if col == 0 { return formatter.string(from: colTop) }
         let prevTop = colTop.addingTimeInterval(-7 * 86_400)
@@ -156,13 +180,17 @@ struct ConsistencyHeatmap: View {
                             .frame(width: cell, height: cell)
                     }
                 }
+                .opacity(revealed ? 1 : 0)
+                .scaleEffect(revealed ? 1 : 0.85)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.28).delay(Self.columnDelay * Double(col)),
+                           value: revealed)
             }
         }
     }
 
     /// Same geometry, overlaying an arbitrary per-cell view (keeps the today ring pixel-aligned).
     private func cellsOverlay<V: View>(@ViewBuilder _ view: @escaping (Int) -> V) -> some View {
-        let today = StreakCalculator.localDay(Date())
+        let today = anchorDay
         return HStack(spacing: spacing) {
             ForEach(0..<weeks, id: \.self) { col in
                 VStack(spacing: spacing) {
