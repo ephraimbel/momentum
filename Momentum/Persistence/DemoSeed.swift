@@ -458,6 +458,26 @@ enum DemoSeed {
                 context.insert(w)
             }
         }
+        // --seed-track-run: eight laps of a real 400 m oval, finished half an hour ago, so it is
+        // the newest run on the profile and the post-run page opens on a trace that actually
+        // follows a track (a marketing capture, 2026-08-28 — the neighbourhood loops above read
+        // as blobs). Lane-1 geometry: two 84.39 m straights joined by 36.5 m-radius bends.
+        if ProcessInfo.processInfo.arguments.contains("--seed-track-run") {
+            let start = Date().addingTimeInterval(-(30 * 60 + 16 * 60))
+            let trace = trackSamples(start: start, paceSPerKm: 300, laps: 8)
+            let w = Workout(); w.type = .run; w.startedAt = start
+            w.durationS = trace.distanceM / 1000 * 300
+            w.elapsedS = w.durationS
+            let gps = GPSDetail()
+            gps.distanceM = trace.distanceM
+            gps.avgPaceSPerKm = 300
+            gps.elevationGainM = 3
+            gps.avgHR = 164
+            gps.avgCadence = 182
+            gps.samples = trace.samples
+            w.gps = gps
+            context.insert(w)
+        }
         // A few coaching-history entries so the "How your plan adapted" timeline populates.
         let cal = Calendar.current
         let demoEvents: [(CoachingEvent.Kind, String, String, Int)] = [
@@ -879,6 +899,60 @@ enum DemoSeed {
             s.speedMS = 1000 / paceSPerKm
             s.altitudeM = 150 + 12 * sin(a * 2)
             s.accuracyM = 6
+            s.accepted = true
+            out.append(s)
+            prevLat = lat; prevLon = lon
+        }
+        return (out, distanceM)
+    }
+
+    /// Samples around a standard 400 m track, lane 1, long axis rotated by `headingDeg` (0 = the
+    /// straights run north–south). Centre is the middle of the infield.
+    private static func trackSamples(start: Date, paceSPerKm: Double, laps: Int,
+                                     centerLat: Double = 30.27873, centerLon: Double = -97.75002,
+                                     headingDeg: Double = -4) -> (samples: [LocationSample], distanceM: Double) {
+        let straight = 84.39, radius = 36.5
+        let perLap = 80
+        let mPerDegLat = HeatmapBinning.metersPerDegLat
+        let mPerDegLon = mPerDegLat * cos(centerLat * .pi / 180)
+        let h = headingDeg * .pi / 180
+        var out: [LocationSample] = []
+        var distanceM = 0.0, elapsed = 0.0
+        var prevLat = 0.0, prevLon = 0.0
+        for i in 0...(laps * perLap) {
+            // Walk the perimeter: straight (east side, heading north) → bend → straight → bend.
+            let u = Double(i % perLap) / Double(perLap)          // 0…1 around the lap
+            let lapLen = 2 * straight + 2 * .pi * radius
+            let d = u * lapLen
+            var x = 0.0, y = 0.0                                   // metres, before rotation
+            if d < straight {                                      // right straight, northbound
+                x = radius; y = -straight / 2 + d
+            } else if d < straight + .pi * radius {                // top bend
+                let t = (d - straight) / radius
+                x = radius * cos(t); y = straight / 2 + radius * sin(t)
+            } else if d < 2 * straight + .pi * radius {            // left straight, southbound
+                x = -radius; y = straight / 2 - (d - straight - .pi * radius)
+            } else {                                               // bottom bend
+                let t = (d - 2 * straight - .pi * radius) / radius
+                x = -radius * cos(t); y = -straight / 2 - radius * sin(t)
+            }
+            // A runner holds a line, but not a rail: a few decimetres of wander.
+            let wobble = 0.35 * sin(Double(i) * 0.9)
+            let rx = (x + wobble) * cos(h) - y * sin(h)
+            let ry = (x + wobble) * sin(h) + y * cos(h)
+            let lat = centerLat + ry / mPerDegLat
+            let lon = centerLon + rx / mPerDegLon
+            if i > 0 {
+                let step = Geo.distance(lat1: prevLat, lon1: prevLon, lat2: lat, lon2: lon)
+                distanceM += step
+                elapsed += step / 1000 * paceSPerKm
+            }
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(elapsed)
+            s.lat = lat; s.lon = lon
+            s.speedMS = 1000 / paceSPerKm
+            s.altitudeM = 149
+            s.accuracyM = 4
             s.accepted = true
             out.append(s)
             prevLat = lat; prevLon = lon
