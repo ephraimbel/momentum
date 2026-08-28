@@ -458,6 +458,27 @@ enum DemoSeed {
                 context.insert(w)
             }
         }
+        // --seed-trail-run: the Lady Bird Lake loop, finished this morning, so it is the newest
+        // run and the post-run page opens on a trace that follows a real trail.
+        if ProcessInfo.processInfo.arguments.contains("--seed-trail-run") {
+            // Finished ~10 min ago. `--profile-open-run` opens the newest GPS workout, and
+            // `--seed-route-history`'s newest outing lands an hour back, so the loop has to be
+            // more recent than that to be the run the capture opens on.
+            let start = Date().addingTimeInterval(-(10 * 60 + 90 * 60))
+            let trace = traceSamples(ladyBirdLakeTrail, start: start, paceSPerKm: 331)
+            let w = Workout(); w.type = .run; w.startedAt = start
+            w.durationS = trace.distanceM / 1000 * 331
+            w.elapsedS = w.durationS
+            let gps = GPSDetail()
+            gps.distanceM = trace.distanceM
+            gps.avgPaceSPerKm = 331
+            gps.elevationGainM = 62
+            gps.avgHR = 158
+            gps.avgCadence = 176
+            gps.samples = trace.samples
+            w.gps = gps
+            context.insert(w)
+        }
         // --seed-track-run: five miles of laps on a stadium oval, finished half an hour ago, so it is
         // the newest run on the profile and the post-run page opens on a trace that actually
         // follows a track (a marketing capture, 2026-08-28 — the neighbourhood loops above read
@@ -902,6 +923,66 @@ enum DemoSeed {
             s.accepted = true
             out.append(s)
             prevLat = lat; prevLon = lon
+        }
+        return (out, distanceM)
+    }
+
+    /// The Ann and Roy Butler Hike-and-Bike Trail, the full loop around Lady Bird Lake in Austin
+    /// (Mopac to Longhorn Dam, both shores) — 16.3 km / 10.15 mi. Fetched from the Mapbox
+    /// Directions walking profile and downsampled from 1,101 points, so the trace follows the real
+    /// trail rather than a shape drawn over the water. Same source the community routes use.
+    private static let ladyBirdLakeTrail: [(Double, Double)] = [
+        (30.27328, -97.77450), (30.27270, -97.77377), (30.27215, -97.77325), (30.27320, -97.77241), (30.27517, -97.77092),
+        (30.27570, -97.77061), (30.27602, -97.76873), (30.27581, -97.76790), (30.27546, -97.76596), (30.27486, -97.76500),
+        (30.27373, -97.76348), (30.27337, -97.76267), (30.27286, -97.76143), (30.27249, -97.76050), (30.27197, -97.75920),
+        (30.27086, -97.75618), (30.27019, -97.75640), (30.26960, -97.75639), (30.26918, -97.75524), (30.26889, -97.75465),
+        (30.26818, -97.75295), (30.26765, -97.75169), (30.26746, -97.75145), (30.26723, -97.75059), (30.26700, -97.75014),
+        (30.26682, -97.74959), (30.26660, -97.74891), (30.26645, -97.74832), (30.26564, -97.74864), (30.26530, -97.74773),
+        (30.26469, -97.74553), (30.26443, -97.74492), (30.26350, -97.74452), (30.26316, -97.74332), (30.26291, -97.74317),
+        (30.26263, -97.74215), (30.26232, -97.74106), (30.26183, -97.73927), (30.26117, -97.73891), (30.26065, -97.73707),
+        (30.25860, -97.73774), (30.25722, -97.73663), (30.25697, -97.73636), (30.25603, -97.73644), (30.25477, -97.73637),
+        (30.25330, -97.73566), (30.25244, -97.73538), (30.25213, -97.73468), (30.25106, -97.73211), (30.25092, -97.73092),
+        (30.25042, -97.72960), (30.24878, -97.72826), (30.24838, -97.72716), (30.24800, -97.72551), (30.24799, -97.72537),
+        (30.24788, -97.72594), (30.24776, -97.72661), (30.24853, -97.72834), (30.24914, -97.72964), (30.24953, -97.73120),
+        (30.25031, -97.73279), (30.25083, -97.73431), (30.25140, -97.73520), (30.25167, -97.73566), (30.25242, -97.73676),
+        (30.25342, -97.73691), (30.24947, -97.73607), (30.24856, -97.73595), (30.24800, -97.73499), (30.24802, -97.73464),
+        (30.24838, -97.73486), (30.24849, -97.73488), (30.24876, -97.73479), (30.24907, -97.73488), (30.24897, -97.73375),
+        (30.24897, -97.73375), (30.24920, -97.73495), (30.24975, -97.73556), (30.25012, -97.73657), (30.25027, -97.73684),
+        (30.25059, -97.73767), (30.25066, -97.73817), (30.25100, -97.73873), (30.25110, -97.73910), (30.25127, -97.73942),
+        (30.25149, -97.73983), (30.25176, -97.74012), (30.25203, -97.74039), (30.25248, -97.74057), (30.25284, -97.74085),
+        (30.25311, -97.74108), (30.25339, -97.74131), (30.25372, -97.74148), (30.25412, -97.74177), (30.25447, -97.74196),
+        (30.25465, -97.74238), (30.25387, -97.74389), (30.25438, -97.74421), (30.25468, -97.74437), (30.25491, -97.74455),
+        (30.25525, -97.74487), (30.25596, -97.74552), (30.25652, -97.74586), (30.25730, -97.74511), (30.25729, -97.74502),
+        (30.25645, -97.74597), (30.25726, -97.74683), (30.25856, -97.74836), (30.25883, -97.74877), (30.25947, -97.74928),
+        (30.26074, -97.75009), (30.26150, -97.75116), (30.26175, -97.75178), (30.26146, -97.75238), (30.26106, -97.75223),
+        (30.26164, -97.75248), (30.26180, -97.75293), (30.26239, -97.75348), (30.26293, -97.75359), (30.26318, -97.75352),
+        (30.26406, -97.75505), (30.26493, -97.75680), (30.26586, -97.75884), (30.26619, -97.75967), (30.26659, -97.76067),
+        (30.26670, -97.76112), (30.26590, -97.76285), (30.26565, -97.76431), (30.26550, -97.76502), (30.26554, -97.76590),
+        (30.26595, -97.76708), (30.26614, -97.76752), (30.26620, -97.76793), (30.26608, -97.76839), (30.26637, -97.76943),
+        (30.26742, -97.77132), (30.26819, -97.77250), (30.26888, -97.77268), (30.26934, -97.77336), (30.26979, -97.77391),
+        (30.27052, -97.77359), (30.27088, -97.77338), (30.27100, -97.77301), (30.27077, -97.77274), (30.27050, -97.77231),
+        (30.27044, -97.77174), (30.27084, -97.77168), (30.27215, -97.77325), (30.27270, -97.77377), (30.27328, -97.77450)
+    ]
+
+    /// Walk a real polyline at a steady pace, emitting one sample per vertex.
+    private static func traceSamples(_ route: [(Double, Double)], start: Date,
+                                     paceSPerKm: Double) -> (samples: [LocationSample], distanceM: Double) {
+        var out: [LocationSample] = []
+        var distanceM = 0.0, elapsed = 0.0
+        for (i, p) in route.enumerated() {
+            if i > 0 {
+                let step = Geo.distance(lat1: route[i - 1].0, lon1: route[i - 1].1, lat2: p.0, lon2: p.1)
+                distanceM += step
+                elapsed += step / 1000 * paceSPerKm
+            }
+            let s = LocationSample()
+            s.t = start.addingTimeInterval(elapsed)
+            s.lat = p.0; s.lon = p.1
+            s.speedMS = 1000 / paceSPerKm
+            s.altitudeM = 145 + 4 * sin(Double(i) * 0.3)
+            s.accuracyM = 5
+            s.accepted = true
+            out.append(s)
         }
         return (out, distanceM)
     }

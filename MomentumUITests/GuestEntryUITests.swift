@@ -91,7 +91,9 @@ final class GuestEntryUITests: XCTestCase {
         // 2026-08-06: the checkout page's X skips it (the tour carries no X). This test takes the
         // purchase path; the DEBUG seam grants locally, which is exactly the entitlement flip
         // under test.
-        let tryNow = app.buttons["Try now"]
+        // The tour CTA is a STORE fact: "Try now" only while an intro trial exists, "Continue"
+        // otherwise (trial retired 2026-08-20) — match either, like OnboardingPaywallUITests.
+        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
         XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the paywall should follow the location primer")
         XCTAssertFalse(app.buttons["Close"].exists, "the tour page carries no X — checkout-only")
         attach("beat-2-paywall")
@@ -183,12 +185,24 @@ final class GuestEntryUITests: XCTestCase {
             if app.staticTexts["What do you want to do?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Run"].firstMatch.tap()
             }
+            // Goal is gated too (2026-08-28): pick the plainest one so the walk isn't goal-shaped.
+            if app.staticTexts["What's your main goal?"].exists, !app.buttons["Continue"].isEnabled {
+                app.staticTexts["Stay consistent"].firstMatch.tap()
+            }
             let cont = app.buttons["Continue"]
             let looksGreat = app.buttons["This looks great"]
             let maybeLater = app.buttons["Maybe later"]
             let notNow = app.buttons["Not now"]
-            let tryNow = app.buttons["Try now"]                             // paywall flow, the tour page
-            if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
+            // The tour CTA is a STORE fact: "Try now" only while an intro trial exists, "Continue"
+        // otherwise (trial retired 2026-08-20) — match either, like OnboardingPaywallUITests.
+        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch                             // paywall flow, the tour page
+            // "Continue" is NOT unique once the paywall cover is up: the primer's own Continue
+            // stays in the hierarchy underneath it, `firstMatch` picks that covered one, and a
+            // walker keyed on `cont.isHittable` sleeps forever (found 2026-08-28 after a 1257s
+            // timeout). Take the first Continue that is actually hittable, wherever it lives.
+            let liveContinue = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
+                .first { $0.isHittable && $0.isEnabled }
+            if let liveContinue { liveContinue.tap() }
             else if looksGreat.exists && looksGreat.isHittable { looksGreat.tap() }
             else if maybeLater.exists && maybeLater.isHittable { maybeLater.tap() }
             else if notNow.exists && notNow.isHittable { notNow.tap() }     // legacy skip labels
