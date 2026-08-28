@@ -121,8 +121,8 @@ struct OnboardingPaywallFlow: View {
             Spacer()
             if step == 0 {
                 Button("Restore") { restore() }
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                    .foregroundStyle(Theme.inkSecondary)
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
                     .disabled(restoring)
             } else {
                 Button { close() } label: {
@@ -165,16 +165,21 @@ struct OnboardingPaywallFlow: View {
         // horizontal padding lives on the copy and the footer, not the whole page.
         VStack(spacing: 0) {
             Spacer(minLength: Theme.Space.lg)
+            // The display sans, not the serif: the tour is the first page of the same flow as
+            // onboarding and the paywall, and both set their headlines in Space Grotesk. One
+            // heavy black line, tight tracking, and the deck below does the talking.
             Text("Welcome to momentum.")
-                .font(.serif(29 * s, weight: .semibold)).foregroundStyle(Theme.ink)
+                .font(.display(30 * s, weight: .bold)).tracking(-0.9 * s)
+                .foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
+                .lineLimit(1).minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
-            Spacer(minLength: Theme.Space.md)
+            Spacer(minLength: Theme.Space.lg)
             PaywallShowcase(height: 500 * s)
                 .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
-            Spacer(minLength: Theme.Space.md)
+            Spacer(minLength: Theme.Space.lg)
             footer(cta: showcaseCTA, s: s) { advance() }
                 .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
@@ -214,7 +219,7 @@ struct OnboardingPaywallFlow: View {
     /// Trust line + black CTA + the price in plain words. These pages sell without transacting,
     /// so their fine print is one honest sentence rather than the checkout's full renewal terms.
     private func footer(cta: String, s: CGFloat, action: @escaping () -> Void) -> some View {
-        VStack(spacing: Theme.Space.sm) {
+        VStack(spacing: Theme.Space.sm + 2) {
             if offering.annual.trialDays > 0, paywall.pricingIsLive {
                 Label("No payment due now", systemImage: "checkmark")
                     .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
@@ -223,11 +228,13 @@ struct OnboardingPaywallFlow: View {
                 Haptics.light()
                 action()
             } label: {
+                // A full-width ink capsule (the radius law: pills are capsules), 56pt so it
+                // reads as THE action on the page, medium weight so the label sits quiet in it.
                 Text(cta)
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                    .frame(maxWidth: .infinity).frame(height: 48)
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+                    .frame(maxWidth: .infinity).frame(height: 56)
                     .foregroundStyle(Theme.background)
-                    .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.ink))
+                    .background(Capsule().fill(Theme.ink))
             }
             .buttonStyle(.plain)
             Group {

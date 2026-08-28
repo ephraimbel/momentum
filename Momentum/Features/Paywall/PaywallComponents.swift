@@ -14,31 +14,29 @@ import UserNotifications
 /// rises from the very bottom so the canvas has depth behind the CTA. `IridescentView` freezes
 /// itself under Reduce Motion; the bloom is otherwise motion-free (opacity-static, no wander).
 struct PaywallBackground: View {
+    /// One bloom of the field. Square-framed and reaching clear well inside itself, so no bloom
+    /// can ever show an edge.
+    private func wash(_ c: Color, _ o: Double, _ at: UnitPoint, _ r: CGFloat) -> some View {
+        RadialGradient(colors: [c.opacity(o), c.opacity(o * 0.35), .clear],
+                       center: at, startRadius: 0, endRadius: r)
+    }
+
     var body: some View {
+        // A CONTINUOUS, MULTI-HUE field: mostly white with faint, well-separated pools of
+        // DIFFERENT hues, so the eye reads air rather than colour (owner call 2026-08-28 —
+        // lavender-family blooms at full strength read as one purple wash). The green note is
+        // `recoveryInk`, the one non-lavender the system already owns.
+        //
+        // Shared with `PaywallView` so the tour page and the wall behind it are ONE surface: the
+        // tour used to run an animated `IridescentView` mesh, which both broke that continuity
+        // and re-composited a full-screen mask every tick.
         ZStack {
-            Theme.background
-            // NO gaussian blur here (perf, 2026-08-05): a 3×3 MeshGradient interpolates smoothly
-            // on its own (IridescentView already softens edge artifacts internally), and a
-            // full-screen 70pt blur re-rendered at 30fps was the most expensive layer in the app —
-            // it made returning to a presented paywall from the background visibly hitch. The
-            // oversize + low opacity + mask deliver the same soft bloom for a fraction of a frame.
-            IridescentView(intensity: 0.5, amplitude: 1.6, loop: 16)
-                .scaleEffect(1.6)
-                .opacity(0.34)
-                .mask(
-                    ZStack {
-                        RadialGradient(colors: [.white, .clear],
-                                       center: UnitPoint(x: 0.5, y: 0.10),
-                                       startRadius: 10, endRadius: 420)
-                        LinearGradient(stops: [.init(color: .clear, location: 0.82),
-                                               .init(color: .white.opacity(0.35), location: 1.0)],
-                                       startPoint: .top, endPoint: .bottom)
-                    }
-                )
-                // Flatten the animating mesh + two-gradient mask into one Metal composite — as
-                // plain layers, every 30fps tick re-ran the full-screen mask on the CPU
-                // compositor (perf audit 2026-08-13).
-                .drawingGroup()
+            Color(hex: "FAFAFC")
+            wash(Theme.iridescent[0], 0.15, UnitPoint(x: 0.18, y: 0.16), 300)   // lavender
+            wash(Theme.iridescent[1], 0.18, UnitPoint(x: 0.96, y: 0.40), 300)   // sky
+            wash(Theme.Health.recoveryInk, 0.07, UnitPoint(x: 0.80, y: 0.62), 260)
+            wash(Theme.iridescent[2], 0.13, UnitPoint(x: 0.04, y: 0.70), 280)   // rose
+            wash(Theme.iridescent[4], 0.10, UnitPoint(x: 0.55, y: 0.95), 300)   // orchid
         }
         .ignoresSafeArea()
     }
@@ -186,9 +184,14 @@ struct PaywallShowcase: View {
     var height: CGFloat = 440
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The centered card, fed by `scrollPosition` — nil only before first layout.
-    @State private var slide: Int? = 0
-    /// Auto-advance direction; flips at the deck's ends so the show never does a 9-card flyback.
-    @State private var forward = true
+    @State private var slide: Int? = nil
+    /// How many copies of the deck the row holds. The show always moves FORWARD and the position
+    /// folds back into the middle copy whenever the deck comes to rest, so there is no end to
+    /// reach and no flyback — the same trick the feature marquee uses (owner ask 2026-08-28:
+    /// "the carousel should feel infinite"). Odd, so there is a true middle.
+    private static let reps = 5
+    private var slideCount: Int { Self.slides.count }
+    private var band: Int { slideCount * (Self.reps / 2) }
     /// Live scroll phase. Auto-advance must never write `slide` while the thumb (or the
     /// deceleration it handed off to) owns the deck: a programmatic scroll target landing
     /// mid-gesture is what made a swipe jump to a seemingly random card (owner report
@@ -207,11 +210,12 @@ struct PaywallShowcase: View {
     var body: some View {
         VStack(spacing: Theme.Space.md) {
             deck
+                .onAppear { if slide == nil { slide = band } }
                 // Auto-play. `.task` dies with the view (nothing to clean up); the id restarts
                 // the dwell on every advance — including the athlete's own swipes. Keying on the
                 // phase too means the moment a finger lands the pending advance is cancelled, and
                 // a fresh dwell only begins once the deck is idle again in the athlete's hands.
-                .task(id: AutoPlayTick(slide: slide ?? 0, idle: scrollPhase == .idle)) {
+                .task(id: AutoPlayTick(slide: slide ?? band, idle: scrollPhase == .idle)) {
                     guard !reduceMotion, scrollPhase == .idle else { return }
                     try? await Task.sleep(for: .seconds(3.0))
                     // BOTH halves of this guard are load-bearing; neither is a formality.
@@ -221,12 +225,7 @@ struct PaywallShowcase: View {
                     // And the thumb can take over mid-dwell without moving a whole card, so
                     // `slide` never changes, the id never flips, and nothing cancels us at all.
                     guard !Task.isCancelled, scrollPhase == .idle else { return }
-                    let i = slide ?? 0
-                    var direction = forward
-                    if i >= Self.slides.count - 1 { direction = false }
-                    if i <= 0 { direction = true }
-                    forward = direction
-                    withAnimation(.easeInOut(duration: 0.55)) { slide = i + (direction ? 1 : -1) }
+                    withAnimation(.easeInOut(duration: 0.55)) { slide = (slide ?? band) + 1 }
                 }
             slideNote
             pageDots
@@ -235,9 +234,10 @@ struct PaywallShowcase: View {
         .accessibilityLabel(noteForSlide.map { "A tour of the app's screens. \($0)" }
                             ?? "A tour of the app's screens")
         .accessibilityAdjustableAction { direction in
-            let n = Self.slides.count
-            let i = slide ?? 0
-            slide = direction == .increment ? min(i + 1, n - 1) : max(i - 1, 0)
+            // The row is `reps` copies deep, so the clamp is the copies' bounds, not the slide
+            // count — clamping to `slides.count - 1` used to pin VoiceOver inside the first copy.
+            let i = slide ?? band
+            slide = direction == .increment ? min(i + 1, slideCount * Self.reps - 1) : max(i - 1, 0)
         }
     }
 
@@ -264,8 +264,8 @@ struct PaywallShowcase: View {
                 // keeps only the on-screen fan alive; the fade floor below never hides a card
                 // fully, but cards beyond the viewport are simply not realized.
                 LazyHStack(spacing: Theme.Space.md) {
-                    ForEach(Array(Self.slides.enumerated()), id: \.offset) { i, name in
-                        deviceCard(name, w: w, h: h)
+                    ForEach(0..<(slideCount * Self.reps), id: \.self) { i in
+                        deviceCard(Self.slides[i % slideCount], w: w, h: h)
                             .visualEffect { content, proxy in
                                 let container = proxy.bounds(of: .scrollView(axis: .horizontal))?.width
                                     ?? proxy.size.width
@@ -293,7 +293,15 @@ struct PaywallShowcase: View {
             .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
             .scrollPosition(id: $slide)
             .scrollIndicators(.hidden)
-            .onScrollPhaseChange { _, phase in scrollPhase = phase }
+            .onScrollPhaseChange { _, phase in
+                scrollPhase = phase
+                // Fold home the moment the deck rests — same card, same pixels, one copy over,
+                // so the jump is invisible and the athlete can keep swiping either way forever.
+                if phase == .idle, let i = slide, i < band || i >= band + slideCount {
+                    var t = i % slideCount; if t < 0 { t += slideCount }
+                    slide = band + t
+                }
+            }
             // Shadows, tilted corners, and the sunk neighbors all draw outside the row's bounds —
             // clipping any of them re-creates the TabView seam this design exists to avoid.
             .scrollClipDisabled()
@@ -302,30 +310,27 @@ struct PaywallShowcase: View {
         .frame(height: h)
     }
 
-    /// One device of the deck — the shared titanium-rail hardware with a single capture in the
-    /// glass. Radii scale from the onboarding mock (300×640, 60/52) so all our hardware reads
-    /// the same.
+    /// One device of the deck — the SAME hardware as the onboarding mocks (`DeviceFrame`:
+    /// graphite rail, side buttons, black bezel, glass highlight), so both surfaces show one
+    /// phone. Its 640/300 ratio is exactly the deck's h/w, so it drops in at the deck's width.
+    /// `island: false` — the captures carry a real status bar and island of their own, and a
+    /// drawn island on top would double up with the screenshot's.
     private func deviceCard(_ name: String, w: CGFloat, h: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: h * (60.0 / 640.0), style: .continuous)
-            .fill(LinearGradient(colors: [Color(white: 0.38), Color(white: 0.16)],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing))   // titanium rail
-            .overlay {
-                // `.medium` interpolation: the shots ship pre-downsampled to ~the glass's own pixel
-                // size (720 wide, 2026-08-13), so the near-1:1 draw gains nothing from Lanczos —
-                // `.high` was pure GPU cost across every card of the fan.
-                Image(name)
-                    .resizable().interpolation(.medium).scaledToFill()
-                    // Top-aligned: the tiny aspect difference between capture and glass crops off
-                    // the BOTTOM edge (under the home indicator), never the status bar — the
-                    // island always reads complete.
-                    .frame(width: w - 7, height: h - 7, alignment: .top)
-                    .clipShape(RoundedRectangle(cornerRadius: h * (52.0 / 640.0), style: .continuous))
-                    .padding(3.5)   // bezel thickness
-            }
-            .frame(width: w, height: h)
-            // A soft drop into the charcoal so each device sits IN the page; a card's fade dims
-            // its shadow with it, so the fanned edges never puddle darkness on their neighbors.
-            .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
+        DeviceFrame(width: w, island: false) {
+            // `.medium` interpolation: the shots ship pre-downsampled to ~the glass's own pixel
+            // size (720 wide, 2026-08-13), so the near-1:1 draw gains nothing from Lanczos —
+            // `.high` was pure GPU cost across every card of the fan.
+            // Top-aligned: the tiny aspect difference between capture and glass crops off the
+            // BOTTOM edge (under the home indicator), never the status bar — the island always
+            // reads complete.
+            Image(name).resizable().interpolation(.medium).scaledToFill()
+        }
+        .frame(width: w, height: h)
+        // ONE soft neutral drop so each device sits ON the light canvas rather than punching a
+        // hole in it (the 0.5 black was tuned for the old charcoal wall and read as a dark halo
+        // on white); a card's fade dims its shadow with it, so the fanned edges never puddle
+        // darkness on their neighbors.
+        .shadow(color: .black.opacity(0.16), radius: 26, y: 14)
     }
 
     /// Two of the nine slides show screens that only fill in with a wearable. Everywhere else the
@@ -340,7 +345,7 @@ struct PaywallShowcase: View {
     private static let wearableShots: Set<String> = ["PaywallShotReadiness", "PaywallShotVitals"]
 
     private var noteForSlide: String? {
-        let i = slide ?? 0
+        let i = (slide ?? band) % slideCount
         guard Self.slides.indices.contains(i),
               Self.wearableShots.contains(Self.slides[i]) else { return nil }
         return "With a wearable — Apple Watch, Garmin, Oura or Whoop"
@@ -361,11 +366,12 @@ struct PaywallShowcase: View {
 
     /// Nine dots, the current one stretched — quiet, monochrome.
     private var pageDots: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<Self.slides.count, id: \.self) { i in
+        HStack(spacing: 6) {
+            ForEach(0..<slideCount, id: \.self) { i in
+                let on = i == ((slide ?? band) % slideCount)
                 Capsule()
-                    .fill(i == (slide ?? 0) ? Theme.ink : Theme.ink.opacity(0.22))
-                    .frame(width: i == (slide ?? 0) ? 16 : 5, height: 5)
+                    .fill(on ? Theme.ink : Theme.ink.opacity(0.18))
+                    .frame(width: on ? 18 : 6, height: 6)
             }
         }
         .animation(reduceMotion ? nil : Motion.lively, value: slide)

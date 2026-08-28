@@ -91,20 +91,7 @@ struct PaywallView: View {
         .background {
             // The bright canvas with one soft aurora bloom behind the marquee — the Bevel wash,
             // in the lavender family. Static; never a wall of colour.
-            ZStack {
-                Color(hex: "FAFAFC")
-                // A CONTINUOUS, MULTI-HUE field. Four lavender-family blooms at high opacity
-                // read as one purple wash — the reference wall's background is mostly white with
-                // faint, well-separated pools of DIFFERENT hues, so the eye reads air rather than
-                // colour. Hues are spread far apart and each is roughly half its old strength;
-                // the green note is `recoveryInk`, the one non-lavender the system already owns.
-                wash(Theme.iridescent[0], 0.15, UnitPoint(x: 0.18, y: 0.16), 300)   // lavender
-                wash(Theme.iridescent[1], 0.18, UnitPoint(x: 0.96, y: 0.40), 300)   // sky
-                wash(Theme.Health.recoveryInk, 0.07, UnitPoint(x: 0.80, y: 0.62), 260)
-                wash(Theme.iridescent[2], 0.13, UnitPoint(x: 0.04, y: 0.70), 280)   // rose
-                wash(Theme.iridescent[4], 0.10, UnitPoint(x: 0.55, y: 0.95), 300)   // orchid
-            }
-            .ignoresSafeArea()
+            PaywallBackground()
         }
         .overlay(alignment: .topLeading) { if !hard { closeButton } }
         // The paywall is a BRIGHT moment regardless of appearance (owner call 2026-08-27; it was
@@ -116,13 +103,6 @@ struct PaywallView: View {
             SKANConversion.record(.paywallSeen)
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
         }
-    }
-
-    /// One bloom of the page's background field. Kept as a helper so every bloom is built the
-    /// same way and none of them can grow an edge.
-    private func wash(_ c: Color, _ o: Double, _ at: UnitPoint, _ r: CGFloat) -> some View {
-        RadialGradient(colors: [c.opacity(o), c.opacity(o * 0.35), .clear],
-                       center: at, startRadius: 0, endRadius: r)
     }
 
     // MARK: The headline

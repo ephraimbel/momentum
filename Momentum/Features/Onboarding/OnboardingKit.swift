@@ -272,14 +272,20 @@ struct HealthTile: View {
 /// needs (a real capture, or a composed lock screen). Proportions follow a 6.1" body at 300pt.
 struct DeviceFrame<Screen: View>: View {
     var width: CGFloat = 300
+    /// Draw the Dynamic Island + camera over the screen. Off when the screen content is a real
+    /// capture that already carries its own island (the paywall tour), so the two never double up.
+    var island: Bool = true
     @ViewBuilder var screen: () -> Screen
 
     var body: some View {
         let h = width * (640.0 / 300.0)
+        // Every fixed-pixel detail below was drawn at width 300; `k` scales them so the same
+        // hardware reads right at the paywall deck's smaller size (identical at 300).
+        let k = width / 300
         let outer = RoundedRectangle(cornerRadius: h * (64.0 / 640.0), style: .continuous)
         let inner = RoundedRectangle(cornerRadius: h * (52.0 / 640.0), style: .continuous)
         ZStack {
-            sideButtons(h: h)
+            sideButtons(h: h, k: k)
             // Rail: graphite, with a hairline catch of light — reads as the phone, not a mock.
             outer.fill(LinearGradient(colors: [Color(white: 0.24), Color(white: 0.13)],
                                       startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -288,23 +294,25 @@ struct DeviceFrame<Screen: View>: View {
             // Bezel.
             RoundedRectangle(cornerRadius: h * (58.0 / 640.0), style: .continuous)
                 .fill(.black)
-                .padding(4)
+                .padding(4 * k)
             // Screen.
             screen()
-                .frame(width: width - 20, height: h - 20, alignment: .top)
+                .frame(width: width - 20 * k, height: h - 20 * k, alignment: .top)
                 .clipShape(inner)
-                .padding(10)
+                .padding(10 * k)
             // Dynamic Island + camera.
-            VStack {
-                Capsule().fill(.black)
-                    .frame(width: width * 0.31, height: 31)
-                    .overlay(alignment: .trailing) {
-                        Circle().fill(Color(white: 0.09)).frame(width: 13, height: 13)
-                            .overlay(Circle().fill(Color(red: 0.10, green: 0.12, blue: 0.24)).frame(width: 6, height: 6))
-                            .padding(.trailing, 8)
-                    }
-                    .padding(.top, 21)
-                Spacer()
+            if island {
+                VStack {
+                    Capsule().fill(.black)
+                        .frame(width: width * 0.31, height: 31 * k)
+                        .overlay(alignment: .trailing) {
+                            Circle().fill(Color(white: 0.09)).frame(width: 13 * k, height: 13 * k)
+                                .overlay(Circle().fill(Color(red: 0.10, green: 0.12, blue: 0.24)).frame(width: 6 * k, height: 6 * k))
+                                .padding(.trailing, 8 * k)
+                        }
+                        .padding(.top, 21 * k)
+                    Spacer()
+                }
             }
         }
         .frame(width: width, height: h)
@@ -314,32 +322,32 @@ struct DeviceFrame<Screen: View>: View {
         .accessibilityHidden(true)
     }
 
-    private func sideButtons(h: CGFloat) -> some View {
+    private func sideButtons(h: CGFloat, k: CGFloat) -> some View {
         let metal = Color(white: 0.16)
         return ZStack {
             VStack(spacing: 0) {
                 Color.clear.frame(height: h * 0.16)
-                button(metal, height: 22)
-                Color.clear.frame(height: 20)
-                button(metal, height: 48)
-                Color.clear.frame(height: 12)
-                button(metal, height: 48)
+                button(metal, height: 22 * k, k: k)
+                Color.clear.frame(height: 20 * k)
+                button(metal, height: 48 * k, k: k)
+                Color.clear.frame(height: 12 * k)
+                button(metal, height: 48 * k, k: k)
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .offset(x: -2)
+            .offset(x: -2 * k)
             VStack(spacing: 0) {
                 Color.clear.frame(height: h * 0.22)
-                button(metal, height: 78)
+                button(metal, height: 78 * k, k: k)
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .offset(x: 2)
+            .offset(x: 2 * k)
         }
     }
 
-    private func button(_ fill: Color, height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(fill).frame(width: 4, height: height)
+    private func button(_ fill: Color, height: CGFloat, k: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 1.5 * k, style: .continuous).fill(fill).frame(width: 4 * k, height: height)
     }
 }
 
