@@ -174,10 +174,17 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  /* Lets the wordmark be the thing that yields when the row is tight, rather than the chip. */
+  min-width: 0;
 }
 
 /* The glass-runner app icon in a quiet white chip — the reference's circular mark. */
 .brand-chip {
+  /* NEVER shrink. As a flex child with the default `flex-shrink: 1`, a nav row too wide for the
+     viewport squeezed this circle horizontally into an ellipse and crushed the app icon inside it
+     — the owner's "the app icon feels condensed in the top left corner on mobile" (2026-08-29).
+     A round mark that is round only when there is room to spare is not a mark. */
+  flex: 0 0 auto;
   width: 42px;
   height: 42px;
   border-radius: 50%;
@@ -199,6 +206,8 @@ a {
 .wordmark {
   height: 19px;
   width: auto;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .nav-links {
@@ -321,6 +330,13 @@ a {
 .btn-sm {
   padding: 11px 18px;
   font-size: 12.5px;
+}
+
+/* A pill that wraps is a pill that has become a box. Two lines of "Get the app" also doubled the
+   nav's height on a phone, which is what pushed the whole row into the squeeze above. */
+.btn {
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .arrow {
@@ -1375,6 +1391,47 @@ a {
   text-underline-offset: 3px;
 }
 
+/* ——— the "everything else" gallery ——— */
+
+/* `auto-fit` + `minmax`, so the row REFLOWS from four to two to one as the viewport narrows.
+   Never a horizontal scroller: no page on this site moves sideways (owner rule 2026-08-20),
+   and `html, body { overflow-x: clip }` is the backstop, not the design. */
+.gallery {
+  margin-top: 52px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 34px 24px;
+  align-items: start;
+}
+
+.gallery-item {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.gallery-item figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 2px;
+}
+
+.gallery-item figcaption b {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.gallery-item figcaption span {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ——— responsive ——— */
 
 @media (max-width: 1080px) {
@@ -1594,6 +1651,42 @@ a {
   }
   .marquee-track {
     font-size: 10px;
+  }
+}
+
+/* ——— phones proper. The 760px block above is really a tablet layout; a 390px screen needs the
+   brand row itself to give ground, or the chip, the wordmark, the pill and the burger fight over
+   350px of gutter-to-gutter space. ——— */
+
+@media (max-width: 480px) {
+  .nav-inner {
+    gap: 12px;
+  }
+  .brand {
+    gap: 9px;
+  }
+  .brand-chip {
+    width: 36px;
+    height: 36px;
+  }
+  .brand-chip img {
+    width: 23px;
+    height: 23px;
+    border-radius: 6px;
+  }
+  .wordmark {
+    height: 16px;
+  }
+  .nav-right {
+    gap: 10px;
+  }
+  .nav-links a.btn {
+    padding: 10px 14px;
+    font-size: 12px;
+  }
+  .gallery {
+    margin-top: 40px;
+    gap: 30px 18px;
   }
 }
 
