@@ -27,6 +27,12 @@ struct PlanRevealView: View {
     @State private var chipsIn = 0.0        // "built around you" arriving one chip at a time
     /// The celebration haptic, held so it can be cancelled if the page goes away mid-sequence.
     @State private var celebrate: Task<Void, Never>?
+    /// Whether the stat tiles are on screen. Their loops are the only continuous clocks on this
+    /// page, and a `TimelineView` running behind six weeks of plan the athlete has scrolled to is
+    /// pure heat — the paywall gates its own tile arts the same way.
+    @State private var tilesOnScreen = true
+    /// Same rule for the curve card, which carries the peak beacon — the page's other clock.
+    @State private var curveOnScreen = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.requestReview) private var requestReview
@@ -383,8 +389,9 @@ struct PlanRevealView: View {
                 }
                 VolumeCurve(values: data.values, peakIndex: peakIdx, raceWeek: data.raceWeek,
                             peakLabel: peakLabel(maxV), progress: curveIn, calloutIn: calloutIn,
-                            gleam: curveGleam)
+                            gleam: curveGleam, alive: curveOnScreen)
                     .frame(height: 170)
+                    .onScrollVisibilityChange(threshold: 0.2) { curveOnScreen = $0 }
                 if !data.caption.isEmpty {
                     // "Peaks at 13.5 mi in week 6" is the pill's own sentence, so it arrives WITH
                     // the pill. Reading the caption before the chart has said anything is reading
@@ -443,6 +450,7 @@ struct PlanRevealView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(planWeekCount) weeks, \(vm.daysPerWeek) days per week, \(totalSessions) sessions")
+        .onScrollVisibilityChange(threshold: 0.2) { tilesOnScreen = $0 }
     }
 
     /// The light's arrival for tile `index` — one wave crossing the row, each tile a beat behind
@@ -489,7 +497,7 @@ struct PlanRevealView: View {
             if let kind = ghost(for: label) {
                 // Sized to the strip of tile that the number and its label DON'T use. At 22pt the
                 // drawing ran up through the label and read as damage rather than as texture.
-                RevealTileGhost(kind: kind, draw: tileLight(index))
+                RevealTileGhost(kind: kind, draw: tileLight(index), alive: tilesOnScreen)
                     .frame(height: 12).padding(.horizontal, 14).padding(.bottom, 7)
             }
         }
@@ -810,6 +818,9 @@ private struct VolumeCurve: View {
     /// still being drawn is already the interesting thing on screen, and two lights on one path
     /// read as a glitch rather than as craft.
     var gleam: Double = 1
+    /// Run the peak beacon's loop. False once the card has scrolled away — a breathing halo six
+    /// weeks of plan above the athlete's eyeline is heat with nobody to see it.
+    var alive: Bool = true
 
     private let inset: CGFloat = 8
     private let top: CGFloat = 30      // room for the callout pill
@@ -867,9 +878,9 @@ private struct VolumeCurve: View {
                 // other light on the reveal travels once and stops; a second looping thing would
                 // turn considered into busy.
                 let p = pts[peakIndex]
-                PeakBeacon(active: calloutIn)
+                PeakBeacon(active: calloutIn && alive)
                     .position(p)
-                    .opacity(calloutIn ? 1 : 0)
+                    .opacity(calloutIn ? 1 : 0)   // the DOT follows the callout; only the halo follows `alive`
                 Text(peakLabel)
                     .font(.rounded(12, weight: .bold)).monospacedDigit()
                     .foregroundStyle(.white)
@@ -1182,33 +1193,75 @@ private struct RevealTileGhost: View {
     let kind: Kind
     /// 0…1, left to right, sharing the tile's own light so the drawing arrives with it.
     let draw: Double
+    /// Run the loop. False = hold the still frame: off screen, or Reduce Motion.
+    var alive: Bool = true
 
-    private var on: Color { Theme.ink.opacity(0.11) }
-    private var off: Color { Theme.ink.opacity(0.05) }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
+    /// Each tile keeps its own clock, and the three periods share no common factor. On matched
+    /// clocks the row pulses in unison and reads as one metronome — three drifting loops read as
+    /// three things quietly doing their own work, which is what the paywall's marquee gets right.
+    private var period: Double {
         switch kind {
-        case .weeks(let values): weeks(values)
-        case .days(let set): days(set)
-        case .sessions(let n): sessions(n)
+        case .weeks: 4.4
+        case .days: 3.7
+        case .sessions: 5.3
         }
     }
 
-    /// Reveal fraction for the item at `i` of `n`, so the row fills in the same direction the
-    /// tile's light travels.
+    var body: some View {
+        if alive && !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { ctx in
+                let t = ctx.date.timeIntervalSinceReferenceDate
+                marks(wave: (t.truncatingRemainder(dividingBy: period)) / period)
+            }
+        } else {
+            marks(wave: nil)
+        }
+    }
+
+    @ViewBuilder
+    private func marks(wave: Double?) -> some View {
+        switch kind {
+        case .weeks(let values): weeks(values, wave)
+        case .days(let set): days(set, wave)
+        case .sessions(let n): sessions(n, wave)
+        }
+    }
+
+    /// How much the mark at `i` of `n` is lifted by the passing wave, 0…1.
+    ///
+    /// The head travels 0→1 over the period and the lift falls off either side of it, so what the
+    /// eye sees is one soft crest walking the row rather than marks blinking on and off. The head
+    /// runs slightly past 1 before wrapping so the crest leaves the row cleanly instead of
+    /// reappearing on top of itself.
+    private func lift(_ i: Int, _ n: Int, _ wave: Double?) -> Double {
+        guard let wave, n > 0 else { return 0 }
+        let head = wave * 1.22 - 0.11
+        let d = abs(head - Double(i) / Double(max(n - 1, 1)))
+        return max(0, 1 - pow(d / 0.22, 2))
+    }
+
+    /// Arrival fraction for mark `i` — the row draws itself in the same direction the tile's light
+    /// travels, then the loop takes over.
     private func lit(_ i: Int, _ n: Int) -> Double {
         min(1, max(0, (draw * 1.25 - Double(i) / Double(max(n, 1))) * 4))
     }
 
-    private func weeks(_ values: [Double]) -> some View {
+    /// Six ticks at the block's real weekly heights. The crest walks them in order, so the loop is
+    /// literally the block being worked through a week at a time — and the peak week keeps its own
+    /// standing emphasis whether the crest is on it or not, because the peak is a fact about the
+    /// plan rather than a moment in the animation.
+    private func weeks(_ values: [Double], _ wave: Double?) -> some View {
         let maxV = max(values.max() ?? 1, 0.0001)
         let peak = values.firstIndex(of: values.max() ?? 0) ?? 0
         return GeometryReader { geo in
             let h = geo.size.height
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(Array(values.enumerated()), id: \.offset) { i, v in
+                    let base = i == peak ? 0.13 : 0.055
                     RoundedRectangle(cornerRadius: 1, style: .continuous)
-                        .fill(i == peak ? on : off)
+                        .fill(Theme.ink.opacity(base + 0.16 * lift(i, values.count, wave)))
                         .frame(height: max(3, h * (0.30 + 0.70 * v / maxV)))
                         .scaleEffect(y: lit(i, values.count), anchor: .bottom)
                 }
@@ -1217,16 +1270,18 @@ private struct RevealTileGhost: View {
         }
     }
 
-    /// The only ghost that carries a PATTERN rather than a quantity — which of the seven days —
-    /// so it needs more separation than the others. At the shared 0.11/0.05 all seven dots read as
-    /// one grey row and "4 of 7" was invisible.
-    private func days(_ set: Set<Int>) -> some View {
+    /// Seven days, the athlete's own training days filled. The crest walks Monday to Sunday, so the
+    /// loop is a week going by — and it lifts ONLY the days they actually train, which is what
+    /// makes it read as their week rather than as a light show.
+    private func days(_ set: Set<Int>, _ wave: Double?) -> some View {
         HStack(spacing: 4) {
             ForEach(0..<7, id: \.self) { i in
+                let trains = set.contains(i)
+                let l = trains ? lift(i, 7, wave) : 0
                 Circle()
-                    .fill(Theme.ink.opacity(set.contains(i) ? 0.20 : 0.045))
+                    .fill(Theme.ink.opacity((trains ? 0.20 : 0.045) + 0.22 * l))
                     .frame(height: 5)
-                    .scaleEffect(lit(i, 7))
+                    .scaleEffect(lit(i, 7) * (1 + 0.30 * l))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -1234,7 +1289,8 @@ private struct RevealTileGhost: View {
 
     /// Two rows, so twenty-odd marks stay legible at tile width. Capped at 30: past that the marks
     /// stop being countable and become a smear, and an uncountable count is worse than none.
-    private func sessions(_ n: Int) -> some View {
+    /// The crest sweeps both rows as one sequence — session 1 through session 24, in order.
+    private func sessions(_ n: Int, _ wave: Double?) -> some View {
         let shown = min(n, 30)
         let perRow = Int(ceil(Double(shown) / 2))
         return VStack(spacing: 2.5) {
@@ -1243,7 +1299,7 @@ private struct RevealTileGhost: View {
                     ForEach(0..<perRow, id: \.self) { col in
                         let i = row * perRow + col
                         Circle()
-                            .fill(i < shown ? on : .clear)
+                            .fill(i < shown ? Theme.ink.opacity(0.11 + 0.20 * lift(i, shown, wave)) : .clear)
                             .frame(height: 3.5)
                             .scaleEffect(lit(i, shown))
                     }
