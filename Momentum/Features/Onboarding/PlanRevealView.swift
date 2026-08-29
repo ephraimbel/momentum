@@ -350,7 +350,7 @@ struct PlanRevealView: View {
                 }
             }
             let peak = m.max() ?? 0
-            let cap = "Peaks at \(Formatters.distance(meters: peak, unit: distanceUnit)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
+            let cap = "Peaks at \(planDistance(peak)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
             return (m, peak > 0 ? cap + truncationNote : "", raceWeek)
         } else {
             var c = [Double](repeating: 0, count: weekCount)
@@ -403,7 +403,26 @@ struct PlanRevealView: View {
     }
 
     private func peakLabel(_ v: Double) -> String {
-        vm.running ? Formatters.distance(meters: v, unit: distanceUnit) : "\(Int(v.rounded())) sessions"
+        vm.running ? planDistance(v) : "\(Int(v.rounded())) sessions"
+    }
+
+    /// A planned weekly volume, written the way a coach writes one.
+    ///
+    /// `Formatters.distance` carries significant precision because it is built for LOGGED runs,
+    /// where 5.03 mi is a fact. A week's planned volume is a target, so two decimals on it claim
+    /// an accuracy the plan does not have and never intended: the page was printing "Peaks at
+    /// 20.32 mi in week 6" above a ladder reading "15 mi · 16.5 mi", which is one quantity in two
+    /// precisions on one screen. Half-unit steps below ten, whole units above — the same grammar
+    /// `RunRounding` already uses for the sessions these totals are made of.
+    private func planDistance(_ meters: Double) -> String {
+        let imperial = distanceUnit.resolved() == .imperial
+        let value = imperial ? meters / Formatters.metersPerMile : meters / 1_000
+        let step = value >= 10 ? 1.0 : 0.5
+        let snapped = (value / step).rounded() * step
+        let numeral = snapped == snapped.rounded()
+            ? String(Int(snapped.rounded()))
+            : String(format: "%.1f", snapped)
+        return "\(numeral) \(imperial ? "mi" : "km")"
     }
 
     // MARK: Stat tiles
@@ -417,8 +436,8 @@ struct PlanRevealView: View {
             }
             if vm.running, let s = peakWeekStats {
                 HStack(spacing: 12) {
-                    textTile(Formatters.distance(meters: s.volumeM, unit: distanceUnit), "PEAK WEEK", 3)
-                    textTile(Formatters.distance(meters: s.longestM, unit: distanceUnit), "LONGEST RUN", 4)
+                    textTile(planDistance(s.volumeM), "PEAK WEEK", 3)
+                    textTile(planDistance(s.longestM), "LONGEST RUN", 4)
                 }
             }
         }
@@ -726,7 +745,7 @@ struct PlanRevealView: View {
     private func weekSummary(_ sessions: [PlannedSession]) -> String {
         if vm.running {
             let m = sessions.reduce(0.0) { $0 + ($1.discipline == .running ? ($1.targetDistanceM ?? 0) : 0) }
-            if m > 0 { return Formatters.distance(meters: m, unit: distanceUnit) }
+            if m > 0 { return planDistance(m) }
         }
         return "\(sessions.count) sess."
     }
