@@ -156,11 +156,17 @@ struct PlanRevealView: View {
                 hero
                 blockCurveCard.reveal(0.18)
                 statTiles.reveal(0.24)
-                if let weeks = vm.weeksToRace { raceCountdown(weeks).reveal(0.28) }
-                reflectionChips.reveal(0.31)
-                if vm.intensity == .podium, vm.running { podiumOutlook.reveal(0.34).id("podium") }
-                firstWeek.reveal(0.37)
-                laterWeeks.id("plan").reveal(0.42)
+                // Below the fold, everything arrives WHEN THE ATHLETE DOES. `.reveal()` runs off
+                // `onAppear`, and in a non-lazy stack inside a ScrollView that fires for every
+                // child at mount — so the chips, the first week and the whole ladder used to play
+                // their entrance against the inside of the screen, seconds before anyone scrolled
+                // to them. Arriving to find it already finished is the difference between a page
+                // that assembles for you and a page that was assembled before you got there.
+                if let weeks = vm.weeksToRace { raceCountdown(weeks).revealOnScroll() }
+                reflectionChips.revealOnScroll()
+                if vm.intensity == .podium, vm.running { podiumOutlook.revealOnScroll().id("podium") }
+                firstWeek.revealOnScroll()
+                laterWeeks.id("plan").revealOnScroll()
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, Theme.Space.lg)
@@ -505,6 +511,12 @@ struct PlanRevealView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The one-at-a-time cascade belongs to the SECTION's arrival, not to the page's — these
+        // chips are usually below the fold, and a stagger that already ran is just a block.
+        .onScrollVisibilityChange(threshold: 0.12) { visible in
+            guard visible, chipsIn == 0, !reduceMotion else { return }
+            withAnimation(.easeOut(duration: 0.5)) { chipsIn = 1 }
+        }
     }
 
     // MARK: The Podium outlook (podium tier only)
@@ -625,10 +637,17 @@ struct PlanRevealView: View {
             VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
                 sectionLabel("YOUR FIRST WEEK")
                 WeekStrip(sessions: first.sessions, fill: stripFill)
+                    .onScrollVisibilityChange(threshold: 0.5) { visible in
+                        guard visible, stripFill == 0, !reduceMotion else { return }
+                        withAnimation(.easeOut(duration: 0.75)) { stripFill = 1 }
+                    }
+                // The week deals itself out, a session at a time. Capped at six beats: past that
+                // the last row is waiting on an animation instead of on the reader.
                 VStack(spacing: 10) {
                     ForEach(Array(first.sessions.enumerated()), id: \.element.persistentModelID) { i, session in
                         SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
                                              startExpanded: i == 0)
+                            .revealOnScroll(Double(min(i, 6)) * 0.055)
                     }
                 }
             }
@@ -644,9 +663,17 @@ struct PlanRevealView: View {
         if !rest.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
                 sectionLabel("THE WEEKS AHEAD")
+                // Each row carries its own week as a BAR, scaled against the block's peak. Six rows
+                // of "10.5 mi / 11.5 mi / 8 mi" is a list you have to read and hold in your head;
+                // the same six with a bar behind them is the build, the down week and the peak,
+                // read in one glance — the shape the curve at the top of the page already drew,
+                // repeated where the detail lives. Same lavender, same peak emphasis.
+                let ladderPeak = max(rest.map(weekVolume).max() ?? 1, 0.0001)
                 VStack(spacing: 0) {
                     ForEach(Array(rest.enumerated()), id: \.element.week) { i, group in
                         if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.leading, 18) }
+                        let v = weekVolume(group)
+                        let isPeak = v >= ladderPeak - 0.0001
                         HStack(spacing: Theme.Space.md) {
                             Text("Week \(group.week)")
                                 .font(.rounded(15, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
@@ -654,16 +681,46 @@ struct PlanRevealView: View {
                             WeekStrip(sessions: group.sessions, compact: true)
                             Text(weekSummary(group.sessions))
                                 .font(.rounded(13, weight: .medium)).monospacedDigit()
-                                .foregroundStyle(Theme.inkSecondary)
+                                .foregroundStyle(isPeak ? Theme.ink : Theme.inkSecondary)
                                 .frame(width: 64, alignment: .trailing)
                         }
                         .padding(.horizontal, 18).padding(.vertical, 12)
+                        .background {
+                            // Bottom-anchored and 2pt tall: a baseline the row sits on, not a fill
+                            // behind the type. A bar tall enough to read as a background would put
+                            // tinted ground under half the rows and none under the others.
+                            //
+                            // Measured off the ROW, not `containerRelativeFrame` — that reports the
+                            // scroll container's width, so the peak week's bar ran the full page
+                            // and out through the side of the card it lives in.
+                            GeometryReader { geo in
+                                let full = max(0, geo.size.width - 36)
+                                Capsule()
+                                    .fill(isPeak ? Theme.purple.opacity(0.55) : Theme.purple.opacity(0.22))
+                                    .frame(width: max(10, full * (v / ladderPeak)), height: 2)
+                                    .padding(.leading, 18)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                                    .padding(.bottom, 4)
+                            }
+                            .allowsHitTesting(false)
+                        }
                     }
                 }
                 .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// A week's size in the unit the ladder is already showing: metres for a runner, sessions for
+    /// everyone else. The bar and the number beside it must never disagree about which week is
+    /// biggest, so both read this.
+    private func weekVolume(_ group: (week: Int, sessions: [PlannedSession])) -> Double {
+        if vm.running {
+            let m = group.sessions.compactMap(\.targetDistanceM).reduce(0, +)
+            if m > 0 { return m }
+        }
+        return Double(group.sessions.count)
     }
 
     private func weekSummary(_ sessions: [PlannedSession]) -> String {
@@ -705,8 +762,6 @@ struct PlanRevealView: View {
         withAnimation(.easeInOut(duration: 1.25).delay(1.05)) { tileSheen = 1 }
         withAnimation(.spring(response: 0.5, dampingFraction: 0.7).delay(1.5)) { calloutIn = true }
         withAnimation(.easeInOut(duration: 0.9).delay(1.8)) { curveGleam = 1 }
-        withAnimation(.easeOut(duration: 0.75).delay(2.0)) { stripFill = 1 }
-        withAnimation(.easeOut(duration: 0.5).delay(2.15)) { chipsIn = 1 }
         // The celebration belongs to the MOMENT, not to the function call. It used to fire here,
         // synchronously — at t=0, against a blank page with every counter still reading zero, a
         // full second and a half before the plan's peak was called out. A success haptic with
@@ -1239,4 +1294,40 @@ private struct DrawnCheck: View {
         }
         .accessibilityHidden(true)
     }
+}
+
+// MARK: - Arriving with the reader
+
+/// Reveal when the view actually SCROLLS INTO VIEW, not when it is created.
+///
+/// `AnimatedCounter`'s `.reveal()` runs off `onAppear`, which is right for a screen that arrives
+/// whole. This page is taller than the screen: inside a non-lazy stack in a `ScrollView`, every
+/// child appears at mount, so a delayed cascade on the lower sections played against the inside of
+/// the phone and was long finished by the time anyone scrolled down to it. Content already on
+/// screen at mount still fires immediately, so this is a superset of the old behaviour rather than
+/// a trade.
+///
+/// Once only: a section that re-animated every time it crossed the fold would turn a plan into a
+/// slideshow.
+private struct RevealOnScroll: ViewModifier {
+    let delay: Double
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || reduceMotion ? 1 : 0)
+            .offset(y: shown || reduceMotion ? 0 : 16)
+            // A low threshold: the trigger should be "its top edge has cleared the fold", not
+            // "most of it is on screen" — the taller sections would otherwise wait until they were
+            // half read before they agreed to appear.
+            .onScrollVisibilityChange(threshold: 0.03) { visible in
+                guard visible, !shown, !reduceMotion else { return }
+                withAnimation(.easeOut(duration: 0.5).delay(delay)) { shown = true }
+            }
+    }
+}
+
+private extension View {
+    func revealOnScroll(_ delay: Double = 0) -> some View { modifier(RevealOnScroll(delay: delay)) }
 }
