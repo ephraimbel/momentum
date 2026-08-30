@@ -48,4 +48,21 @@ final class MarketingShotsUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
         save(app, "history-runs")
     }
+
+    /// The onboarding plan reveal, top to bottom.
+    func testPlanRevealStates() throws {
+        try XCTSkipIf(dir == nil, "set MOMENTUM_SHOT_DIR to capture")
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-reveal"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["PLAN READY"].waitForExistence(timeout: 25))
+        Thread.sleep(forTimeInterval: 3)
+        save(app, "reveal-top")
+        app.swipeUp()
+        Thread.sleep(forTimeInterval: 1.5)
+        save(app, "reveal-mid")
+        app.swipeUp()
+        Thread.sleep(forTimeInterval: 1.5)
+        save(app, "reveal-bottom")
+    }
 }

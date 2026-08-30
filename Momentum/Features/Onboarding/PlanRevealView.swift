@@ -33,6 +33,11 @@ struct PlanRevealView: View {
     @State private var tilesOnScreen = true
     /// Same rule for the curve card, which carries the peak beacon — the page's other clock.
     @State private var curveOnScreen = true
+    /// When the plan-landed confetti started falling. Nil = not falling. A DATE rather than an
+    /// animated 0…1: `withAnimation` interpolates modifier values, it does not re-run a body every
+    /// frame, so a fall computed inside the body from an animated Double renders exactly once, at
+    /// its final position. The pieces need their own clock, like every other loop on this page.
+    @State private var confettiStart: Date?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.requestReview) private var requestReview
@@ -207,6 +212,15 @@ struct PlanRevealView: View {
                 .allowsHitTesting(false)
         }
         .scrollIndicators(.hidden)
+        // Over the page, never in it: a fixed overlay, so the fall doesn't scroll away halfway
+        // down and doesn't lengthen the content. Mounted only for the ~3s it takes to land.
+        .overlay {
+            if let started = confettiStart {
+                RevealConfetti(start: started)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+        }
         #if DEBUG
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-plan") {
@@ -486,21 +500,24 @@ struct PlanRevealView: View {
 
     private func statTile(_ value: Double, _ label: String, _ index: Int,
                           _ format: @escaping (Double) -> String) -> some View {
+        // The art is a ROW OF THE STACK, not a background. It used to be a `.background`, which
+        // meant it shared the tile's box with the type and the label sat on top of the bars —
+        // "WEEKS" across the first two weeks, "SESSIONS" across the dot grid (owner, 2026-08-29).
+        // Laid out in sequence it cannot collide, whatever the label's length.
         VStack(spacing: 4) {
             AnimatedCounter(value: value, format: format)
                 .font(.display(30, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
             Text(label).font(.rounded(10, weight: .bold)).tracking(1.0).foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1).minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity).frame(height: 84)
-        .background(alignment: .bottom) {
             if let kind = ghost(for: label) {
-                // Sized to the strip of tile that the number and its label DON'T use. At 22pt the
-                // drawing ran up through the label and read as damage rather than as texture.
                 RevealTileGhost(kind: kind, draw: tileLight(index), alive: tilesOnScreen)
-                    .frame(height: 12).padding(.horizontal, 14).padding(.bottom, 7)
+                    .frame(height: 15)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 3)
             }
         }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity).frame(height: 104)
         .raised(tileShape())
         .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
     }
@@ -511,7 +528,7 @@ struct PlanRevealView: View {
                 .lineLimit(1).minimumScaleFactor(0.7)
             Text(label).font(.rounded(10, weight: .bold)).tracking(1.0).foregroundStyle(Theme.inkTertiary)
         }
-        .frame(maxWidth: .infinity).frame(height: 78)
+        .frame(maxWidth: .infinity).frame(height: 84)
         .raised(tileShape())
         .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
     }
@@ -767,6 +784,17 @@ struct PlanRevealView: View {
     /// the week assembles last. Each beat lands in a quiet moment left by the one before it —
     /// two lights running at once is where this stops reading as craft.
     private func animateIn() {
+        // The celebration mounts in BOTH modes: Reduce Motion gets the still scatter, not an empty
+        // page. It is torn down after its own duration — the fall runs long enough that its tail is
+        // still in the air when the peak is called out and the haptic lands, so the page has ONE
+        // celebration beat rather than a flourish at the top and a buzz forty frames later, while
+        // the still treatment is deliberately shorter. Nothing is left drawing, or ticking, at rest.
+        confettiStart = .now
+        let celebration = RevealConfettiScatter.duration(reduceMotion: reduceMotion)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(celebration + 0.3))
+            confettiStart = nil
+        }
         guard !reduceMotion else {
             shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
             shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
@@ -1259,9 +1287,12 @@ private struct RevealTileGhost: View {
             let h = geo.size.height
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(Array(values.enumerated()), id: \.offset) { i, v in
-                    let base = i == peak ? 0.13 : 0.055
-                    RoundedRectangle(cornerRadius: 1, style: .continuous)
-                        .fill(Theme.ink.opacity(base + 0.16 * lift(i, values.count, wave)))
+                    // Lavender, not grey. The curve above and the ladder below already speak in
+                    // `Theme.purple`; a tile art in ink read as a smudge under the label instead of
+                    // as the same plan drawn a third way.
+                    let base = i == peak ? 0.62 : 0.26
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(Theme.purple.opacity(base + 0.34 * lift(i, values.count, wave)))
                         .frame(height: max(3, h * (0.30 + 0.70 * v / maxV)))
                         .scaleEffect(y: lit(i, values.count), anchor: .bottom)
                 }
@@ -1279,9 +1310,10 @@ private struct RevealTileGhost: View {
                 let trains = set.contains(i)
                 let l = trains ? lift(i, 7, wave) : 0
                 Circle()
-                    .fill(Theme.ink.opacity((trains ? 0.20 : 0.045) + 0.22 * l))
-                    .frame(height: 5)
-                    .scaleEffect(lit(i, 7) * (1 + 0.30 * l))
+                    .fill(trains ? Theme.purple.opacity(0.42 + 0.45 * l)
+                                 : Theme.ink.opacity(0.08))
+                    .frame(height: 5.5)
+                    .scaleEffect(lit(i, 7) * (1 + 0.28 * l))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -1299,8 +1331,9 @@ private struct RevealTileGhost: View {
                     ForEach(0..<perRow, id: \.self) { col in
                         let i = row * perRow + col
                         Circle()
-                            .fill(i < shown ? Theme.ink.opacity(0.11 + 0.20 * lift(i, shown, wave)) : .clear)
-                            .frame(height: 3.5)
+                            .fill(i < shown ? Theme.purple.opacity(0.30 + 0.42 * lift(i, shown, wave))
+                                            : .clear)
+                            .frame(height: 3.8)
                             .scaleEffect(lit(i, shown))
                     }
                 }
@@ -1405,4 +1438,202 @@ private struct RevealOnScroll: ViewModifier {
 
 private extension View {
     func revealOnScroll(_ delay: Double = 0) -> some View { modifier(RevealOnScroll(delay: delay)) }
+}
+
+// MARK: - The plan landed
+
+/// A single fall of confetti as the plan arrives — the one unearned flourish on this page, and it
+/// is earned: the athlete answered twenty questions and this is the moment the answer exists.
+///
+/// Restraint is the whole design. Twenty-six pieces, not two hundred. The page's own aurora hues,
+/// so it reads as this product celebrating rather than as a party graphic dropped on top. Thin
+/// rounded slivers that turn as they fall, at varied speeds, with a little lateral drift, because
+/// paper does that and identical pieces falling in parallel look like a progress bar. It fades out
+/// in its last third and then the view is unmounted, so nothing lingers behind the plan.
+///
+/// Deterministic: the pieces are generated once from a fixed seed, never in `body`. Random numbers
+/// in a view body re-roll on every frame, and the confetti would seethe rather than fall.
+///
+/// The geometry lives in `RevealConfettiScatter` — a pure model with no SwiftUI in it, so the
+/// scatter and the fall are pinned by `PlanRevealConfettiTests` rather than by eye.
+private struct RevealConfetti: View {
+    /// When the fall began. Its own clock, via `TimelineView` — see the note on `confettiStart`.
+    let start: Date
+
+    /// Reduce Motion is not a suggestion, and a `TimelineView(.animation)` ticks straight through
+    /// it — it is a display link, not an animation. So the branch is taken BEFORE the timeline
+    /// exists: under Reduce Motion there is no clock on this view at all, and the celebration is
+    /// the house degrade (static, one crossfade), never a slower shower.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The still treatment's only animated value, and it is an opacity — a transform, not a layout.
+    @State private var restFade = 0.0
+
+    /// The page's aurora, not a party palette — the same hues `AiryField` washes the crown with.
+    private func tint(_ i: Int) -> Color {
+        switch i {
+        case 0: Theme.purple
+        case 1: Theme.iridescent[0]
+        case 2: Theme.iridescent[1]
+        case 3: Theme.iridescent[2]
+        default: Theme.iridescent[4]
+        }
+    }
+
+    var body: some View {
+        if reduceMotion {
+            still
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
+                let elapsed = ctx.date.timeIntervalSince(start) - RevealConfettiScatter.lead
+                field(min(1, max(0, elapsed / RevealConfettiScatter.fall)))
+            }
+        }
+    }
+
+    /// Reduce Motion: the same scatter, standing still, brought in and taken away on one crossfade.
+    /// Nothing travels, nothing turns, nothing repeats — the moment is still marked, and the
+    /// vestibular system is left alone.
+    private var still: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(RevealConfettiScatter.pieces.enumerated()), id: \.offset) { _, p in
+                    let at = RevealConfettiScatter.restingPlacement(p, in: geo.size)
+                    piece(p, at: at)
+                }
+            }
+        }
+        .opacity(restFade)
+        .onAppear {
+            withAnimation(.easeOut(duration: RevealConfettiScatter.restIn)
+                .delay(RevealConfettiScatter.restLead)) { restFade = 1 }
+            withAnimation(.easeInOut(duration: RevealConfettiScatter.restOut)
+                .delay(RevealConfettiScatter.restLead + RevealConfettiScatter.restIn
+                       + RevealConfettiScatter.restHold)) { restFade = 0 }
+        }
+    }
+
+    private func field(_ progress: Double) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(RevealConfettiScatter.pieces.enumerated()), id: \.offset) { _, p in
+                    // Each piece's own clock: it waits out its delay, then falls the rest of the way.
+                    if let at = RevealConfettiScatter.placement(p, progress: progress, in: geo.size) {
+                        piece(p, at: at)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func piece(_ p: RevealConfettiScatter.Piece,
+                       at: RevealConfettiScatter.Placement) -> some View {
+        Group {
+            if p.round {
+                Circle().fill(tint(p.hue)).frame(width: 5, height: 5)
+            } else {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(tint(p.hue))
+                    .frame(width: 3.5, height: p.length)
+            }
+        }
+        .rotationEffect(.degrees(at.angle))
+        .opacity(at.opacity)
+        .position(x: at.x, y: at.y)
+    }
+}
+
+/// The confetti's geometry with no SwiftUI in it: one fixed scatter and the pure function that
+/// places a piece at a moment in the fall. Split out so it can be tested — the seed, the spread and
+/// the invariant that matters most (every piece is spent by the end, so nothing is left drawn over
+/// the plan) are pinned in `PlanRevealConfettiTests` rather than trusted.
+enum RevealConfettiScatter {
+    /// Held before the first piece moves, so the fall begins as the hero settles rather than
+    /// against a blank screen; `total` is the whole thing including the hold.
+    static let lead = 0.30
+    static let fall = 2.9
+    static var total: Double { lead + fall }
+
+    /// The Reduce Motion still: in, hold, out — and gone. Deliberately shorter than the fall; a
+    /// motionless scatter that outstays a second reads as debris rather than as a celebration.
+    static let restLead = 0.15
+    static let restIn = 0.45
+    static let restHold = 0.55
+    static let restOut = 0.90
+    static var restTotal: Double { restLead + restIn + restHold + restOut }
+
+    /// How long the layer stays mounted, so the caller can tear it down at the right moment in
+    /// either mode. Nothing may keep drawing — or ticking — past this.
+    static func duration(reduceMotion: Bool) -> Double { reduceMotion ? restTotal : total }
+
+    struct Piece {
+        let x: Double            // 0…1 across the width
+        let delay: Double        // 0…0.35 of the fall
+        let speed: Double        // 0.8…1.2
+        let spin: Double         // turns over the fall
+        let drift: Double        // lateral sway, in fractions of width
+        let driftRate: Double
+        let length: CGFloat
+        let hue: Int
+        let round: Bool
+    }
+
+    struct Placement {
+        let x: CGFloat
+        let y: CGFloat
+        let angle: Double
+        let opacity: Double
+    }
+
+    /// Twenty-six pieces, not two hundred: this is a plan arriving, not a party.
+    static let count = 26
+    /// The brightest a piece ever gets. Confetti at full strength over the athlete's own name is a
+    /// graphic sitting on the page instead of light passing over it.
+    static let peakOpacity = 0.85
+
+    /// One deterministic scatter, built at type load. A tiny LCG rather than `Double.random`, so
+    /// the layout is identical on every launch and every screenshot.
+    static let pieces: [Piece] = {
+        var seed: UInt64 = 0x5EED_10AF
+        func next() -> Double {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Double((seed >> 33) & 0xFFFFFF) / Double(0xFFFFFF)
+        }
+        return (0..<count).map { i in
+            Piece(x: 0.04 + next() * 0.92,
+                  delay: next() * 0.34,
+                  speed: 0.80 + next() * 0.40,
+                  spin: 1.2 + next() * 2.4,
+                  drift: 0.02 + next() * 0.05,
+                  driftRate: 0.7 + next() * 1.1,
+                  length: 7 + CGFloat(next()) * 5,
+                  hue: i % 5,
+                  round: next() > 0.78)
+        }
+    }()
+
+    /// Where a piece is at `progress` (0…1 across the fall), or nil before it has started.
+    /// It enters above the top edge and leaves below the bottom, fading out over its last third so
+    /// no piece ever blinks out at full strength.
+    static func placement(_ p: Piece, progress: Double, in size: CGSize) -> Placement? {
+        let t = min(1, max(0, (progress - p.delay) / max(0.01, 1 - p.delay)))
+        guard t > 0 else { return nil }
+        let travelled = t * p.speed
+        let fade = t < 0.08 ? t / 0.08 : (t > 0.68 ? max(0, (1 - t) / 0.32) : 1)
+        return Placement(x: (p.x + sin(t * .pi * 2 * p.driftRate) * p.drift) * size.width,
+                         y: -0.10 * size.height + 1.25 * size.height * travelled,
+                         angle: t * 360 * p.spin,
+                         opacity: peakOpacity * fade)
+    }
+
+    /// The still frame Reduce Motion gets. The same pieces, spread down the upper page — a piece
+    /// that waited longer in the fall sits higher here, so the scatter still reads as arriving from
+    /// above without anything having to move. Opacity is the layer's, not the piece's.
+    static func restingPlacement(_ p: Piece, in size: CGSize) -> Placement {
+        let t = 0.62 - p.delay                      // 0.28…0.62 of the fall
+        return Placement(x: p.x * size.width,
+                         y: -0.10 * size.height + 1.25 * size.height * t * p.speed,
+                         angle: t * 360 * p.spin,
+                         opacity: peakOpacity)
+    }
 }
