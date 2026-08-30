@@ -63,8 +63,17 @@ protocol SocialBackending: AnyObject {
     func pullNudges() async -> [NudgeHit]?
     /// Handles that follow the viewer back — whom they may nudge.
     func mutualHandles() async -> Set<String>?
-    func setReaction(postID: UUID, reacted: Bool) async
-    func pushComment(_ comment: Comment) async
+    /// Push one reaction. Returns whether the server actually took it — `false` for a guest, an
+    /// unreachable network, or a post with no server row (a seeded community post). The same
+    /// contract `setFollow` has, and for the same reason: `ReactionStore` keeps unconfirmed
+    /// writes so a guest's tap can still reach the author once they sign in.
+    @discardableResult
+    func setReaction(postID: UUID, reacted: Bool) async -> Bool
+    /// Push one comment. Returns whether the server took it (same contract as `setFollow`) —
+    /// a comment written offline or as a guest is text the athlete typed, and losing it silently
+    /// is the worst outcome on a social page. `CommentStore` retries the unconfirmed ones.
+    @discardableResult
+    func pushComment(_ comment: Comment) async -> Bool
     func deleteComment(id: UUID) async
     func pullComments(postID: UUID) async -> [Comment]?
 
@@ -191,8 +200,8 @@ class StubSocialBackend: SocialBackending {
     func nudge(handle: String) async -> Bool { false }
     func pullNudges() async -> [NudgeHit]? { nil }
     func mutualHandles() async -> Set<String>? { nil }
-    func setReaction(postID: UUID, reacted: Bool) async {}
-    func pushComment(_ comment: Comment) async {}
+    func setReaction(postID: UUID, reacted: Bool) async -> Bool { false }
+    func pushComment(_ comment: Comment) async -> Bool { false }
     func deleteComment(id: UUID) async {}
     func pullComments(postID: UUID) async -> [Comment]? { nil }
     func setBlock(handle: String, blocked: Bool) async {}
@@ -593,28 +602,34 @@ final class SupabaseSocialBackend: SocialBackending {
         } catch { return nil }
     }
 
-    func setReaction(postID: UUID, reacted: Bool) async {
-        guard let client, let session = await session() else { return }
-        if reacted {
-            struct Row: Encodable { let post_id: UUID; let user_id: UUID }
-            _ = try? await client.from("reactions")
-                .upsert(Row(post_id: postID, user_id: session.user.id)).execute()
-        } else {
-            _ = try? await client.from("reactions").delete()
-                .eq("post_id", value: postID)
-                .eq("user_id", value: session.user.id).execute()
-        }
+    func setReaction(postID: UUID, reacted: Bool) async -> Bool {
+        guard let client, let session = await session() else { return false }
+        do {
+            if reacted {
+                struct Row: Encodable { let post_id: UUID; let user_id: UUID }
+                _ = try await client.from("reactions")
+                    .upsert(Row(post_id: postID, user_id: session.user.id)).execute()
+            } else {
+                _ = try await client.from("reactions").delete()
+                    .eq("post_id", value: postID)
+                    .eq("user_id", value: session.user.id).execute()
+            }
+            return true
+        } catch { return false }
     }
 
-    func pushComment(_ comment: Comment) async {
-        guard let client, let session = await session() else { return }
+    func pushComment(_ comment: Comment) async -> Bool {
+        guard let client, let session = await session() else { return false }
         struct Row: Encodable {
             let id: UUID, post_id: UUID, author_id: UUID, body: String, created_at: Date
         }
-        _ = try? await client.from("comments")
-            .upsert(Row(id: comment.id, post_id: comment.postID,
-                        author_id: session.user.id, body: comment.text,
-                        created_at: comment.date)).execute()
+        do {
+            _ = try await client.from("comments")
+                .upsert(Row(id: comment.id, post_id: comment.postID,
+                            author_id: session.user.id, body: comment.text,
+                            created_at: comment.date)).execute()
+            return true
+        } catch { return false }
     }
 
     func deleteComment(id: UUID) async {

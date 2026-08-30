@@ -27,7 +27,18 @@ struct AvatarView: View {
     /// site that passes raw Data — including the Today header, which re-renders continuously while
     /// the map pans. NSCache keys on the Data object; SwiftData returns the same boxed blob until
     /// the photo actually changes, so hits are the steady state and a new photo is a clean miss.
-    @MainActor private static let decoded = NSCache<NSData, UIImage>()
+    ///
+    /// Bounded (2026-08-29): this had no limits at all, so a long browse through a social surface
+    /// — every byline, every follow row, every comment — could hold one decoded bitmap per athlete
+    /// photo for the life of the process. 64 faces is far more than any screen shows and the
+    /// 24 MB ceiling is what an avatar cache is worth; `NSCache` also releases under real memory
+    /// pressure, which an unbounded dictionary cannot.
+    @MainActor private static let decoded: NSCache<NSData, UIImage> = {
+        let c = NSCache<NSData, UIImage>()
+        c.countLimit = 64
+        c.totalCostLimit = 24 * 1_048_576
+        return c
+    }()
 
     var body: some View {
         if let imageName, let ui = UIImage(named: imageName) {
@@ -45,7 +56,10 @@ struct AvatarView: View {
         let key = data as NSData
         if let hit = decoded.object(forKey: key) { return hit }
         guard let ui = UIImage(data: data) else { return nil }
-        decoded.setObject(ui, forKey: key)
+        // Cost is the decoded bitmap, not the JPEG — a 4 MB photo compresses to a few hundred KB
+        // of data and costing it by length would let the cache hold many times its budget.
+        decoded.setObject(ui, forKey: key,
+                          cost: Int(ui.size.width * ui.scale * ui.size.height * ui.scale * 4))
         return ui
     }
 

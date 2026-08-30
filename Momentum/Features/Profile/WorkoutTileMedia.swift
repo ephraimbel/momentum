@@ -82,7 +82,12 @@ struct WorkoutTileMedia: View {
         // Resolve the media once, then self-heal: a GPS workout whose snapshot render failed at
         // finish shows the silhouette, renders + persists the real map here, then re-resolves so the
         // snapshot swaps in. Keyed on identity so a reused lazy cell recomputes for its new workout.
-        .task(id: workout.id) {
+        //
+        // `coverIsPhoto` is IN the key, and has to be: the id alone never changes when the athlete
+        // flips "Photo as cover", so the task never re-ran and the tile kept whatever it resolved
+        // first — the toggle saved, and nothing on screen moved (owner report 2026-08-29). Anything
+        // `computeMedia()` branches on belongs in this key.
+        .task(id: "\(workout.id)-\(workout.coverIsPhoto)") {
             let media = await computeMedia()
             resolved = media
             onInkContext?(inkContext(for: media))

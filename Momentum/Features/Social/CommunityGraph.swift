@@ -63,10 +63,33 @@ enum CommunityGraph {
         let n = Double(max(CommunityDirectory.all().count, 1))
         // The same identity-seeded bands the profile header always displayed (20–240 / 15–335),
         // so the emergent counts keep the look the wall has had all along.
-        let popularity = 20.0 + Double(popularitySalt(b))
+        let popularity = (20.0 + Double(popularitySalt(b))) * audienceWeight(b)
         let gregariousness = (15.0 + Double(gregariousnessSalt(a))) / 175.0   // ≈ mean-1 multiplier
         return min(0.9, popularity * gregariousness / n)
     }
+
+    /// An audience is EARNED, not assigned. Popularity was a pure hash of the handle, so it was
+    /// independent of whether the athlete trains: @joonmoves showed **161 followers over 6 logged
+    /// workouts**, which is the same "the number is decorative" tell as a 30-mile grid under a
+    /// 1,181-mile header (2026-08-28). Scaling by the body of work ties the graph to the ledger
+    /// that now feeds every other number.
+    ///
+    /// The hash still sets each athlete's base, so this ORDERS the community without ranking it:
+    /// a well-known beginner can still outdraw a private veteran, which is true of real clubs.
+    /// The curve is `pow(_, 0.7)` rather than linear so the climb is steep where it should be
+    /// (the first hundred sessions change your standing far more than the nine-hundredth) and a
+    /// beginner lands in the low tens rather than at zero. Nobody is invisible.
+    private static func audienceWeight(_ handle: String) -> Double {
+        if let hit = audienceCache[handle] { return hit }
+        // A missing athlete (a real network handle, not seeded) keeps the old neutral behaviour.
+        guard let sessions = CommunityDirectory.athlete(handle: handle)?.totalWorkouts else { return 1 }
+        let t = min(max(Double(sessions), 0) / 900.0, 1)
+        let w = 0.06 + 1.5 * pow(t, 0.7)
+        audienceCache[handle] = w
+        return w
+    }
+
+    private static var audienceCache: [String: Double] = [:]
 
     private static func popularitySalt(_ handle: String) -> Int {
         let s = handle.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }

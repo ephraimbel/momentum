@@ -12,7 +12,12 @@ import SwiftUI
 struct FollowingRow: View {
     struct Person: Identifiable {
         let handle: String
+        /// The caption under the face — a first name, or "Your day" for the viewer.
         let label: String
+        /// The athlete's full name. The AVATAR reads this, never `label`: a monogram built from a
+        /// first name ("T") contradicts the same person's monogram everywhere else ("TB"), and
+        /// building one from the viewer's caption produced a "YD" face for a photo-less athlete.
+        let fullName: String
         let ringed: Bool
         /// Their newest post — orders the row (freshest first), the way a story tray reads.
         var lastActive: Date? = nil
@@ -29,19 +34,26 @@ struct FollowingRow: View {
     var onPerson: (Person) -> Void
     var onMore: () -> Void
 
+    /// Blocked athletes never appear here, whatever the host hands over. Blocking now unfollows
+    /// too, so this is the second lock rather than the only one — but a face that survived a
+    /// block (an older install's data) would be the most visible way for a block to look ignored.
+    @Environment(ModerationStore.self) private var moderation
+
     private let faceSize: CGFloat = 64
     /// 4 faces per row on a 393pt canvas at this size + label width; two rows minus "Your day"
     /// and the overflow face.
     private let maxPeople = 6
 
+    private var visiblePeople: [Person] { people.filter { !moderation.isBlocked($0.handle) } }
+
     private var shown: [Person] {
-        let sorted = people.sorted { a, b in
+        let sorted = visiblePeople.sorted { a, b in
             if a.ringed != b.ringed { return a.ringed }
             return (a.lastActive ?? .distantPast) > (b.lastActive ?? .distantPast)
         }
         return Array(sorted.prefix(maxPeople))
     }
-    private var overflow: Int { max(0, people.count - maxPeople) }
+    private var overflow: Int { max(0, visiblePeople.count - maxPeople) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -56,7 +68,7 @@ struct FollowingRow: View {
                     }
                     if overflow > 0 {
                         moreFace
-                    } else if people.isEmpty {
+                    } else if visiblePeople.isEmpty {
                         findFace
                     }
                 }
@@ -103,13 +115,17 @@ struct FollowingRow: View {
         Button(action: action) {
             VStack(spacing: 6) {
                 PresenceRing(active: person.ringed, lineWidth: 2.5, gap: 2.5) {
-                    AvatarView(photo: person.avatarData, name: person.label, size: faceSize,
+                    AvatarView(photo: person.avatarData, name: person.fullName, size: faceSize,
                                imageName: person.imageName, preset: person.preset)
                 }
                 Text(person.label)
                     .font(.rounded(Theme.FontSize.label, weight: .semibold))
                     .foregroundStyle(person.ringed ? Theme.ink : Theme.inkTertiary)
                     .lineLimit(1)
+                    // The caption sits in a fixed column so the faces stay on a grid; at the
+                    // largest accessibility sizes that clipped the viewer's own "Your day" to
+                    // "Your…". Shrink a little before truncating.
+                    .minimumScaleFactor(0.75)
                     .frame(width: faceSize + 8)
             }
         }
@@ -131,7 +147,8 @@ struct FollowingRow: View {
             }
         }
         .buttonStyle(PressableScaleStyle(scale: 0.95))
-        .accessibilityLabel("\(overflow) more you follow")
+        .accessibilityLabel(overflow == 1 ? "1 more person you follow"
+                                          : "\(overflow) more people you follow")
     }
 
     /// The empty-follows nudge, in the row itself: one obvious next step, no lecture.

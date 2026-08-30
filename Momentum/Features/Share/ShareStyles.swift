@@ -215,11 +215,11 @@ struct ShareRoute: View {
     var body: some View {
         ZStack {
             if !ink {
-                RouteSilhouette(coords: coords)
+                RouteSilhouette(coords: coords, maxPoints: 800)
                     .stroke(casing,
                             style: StrokeStyle(lineWidth: lineWidth * 1.9, lineCap: .round, lineJoin: .round))
             }
-            RouteSilhouette(coords: coords)
+            RouteSilhouette(coords: coords, maxPoints: 800)
                 .stroke(ink ? AnyShapeStyle(Theme.proLavender)
                             : AnyShapeStyle(LinearGradient(colors: Theme.iridescent,
                                                            startPoint: .topLeading, endPoint: .bottomTrailing)),

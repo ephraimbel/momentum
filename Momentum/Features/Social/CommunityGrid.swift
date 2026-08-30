@@ -18,6 +18,36 @@ struct CommunityFeedGrid: View {
     /// Called with the tapped post's id.
     var onOpen: (UUID) -> Void
 
+    /// The wall is hosted inside `ProfileScreen`, whose own body re-evaluates for reasons that
+    /// have nothing to do with the feed (its header, its profile `@Query`, a slider animation).
+    /// Each of those re-created this grid, which re-ran every realized tile's `body` — measured at
+    /// 135 tile evaluations in a single second while the athlete was doing nothing at all. The
+    /// grid draws exactly one thing, the posts in order, so it is `Equatable` on precisely that
+    /// and a re-creation with the same posts costs one comparison instead of a full cascade.
+    var body: some View {
+        FeedGridBody(items: items, zoomNamespace: zoomNamespace,
+                     onTileAppear: onTileAppear, onOpen: onOpen)
+            .equatable()
+    }
+}
+
+private struct FeedGridBody: View, Equatable {
+    let items: [FeedItem]
+    var zoomNamespace: Namespace.ID?
+    var onTileAppear: ((Int) -> Void)?
+    var onOpen: (UUID) -> Void
+
+    /// Identity, in order — never the items' contents. A `FeedItem` carries `photosData`, so a
+    /// synthesized `==` would memcmp megabytes of JPEG on every comparison; and a post's content
+    /// for a given id is fixed at assembly, so the id list is the whole truth about what this grid
+    /// will draw. It is also what keeps the captured closures honest: both call sites derive their
+    /// paging state from `items` itself, so any state a closure reads has already moved the list.
+    static func == (a: Self, b: Self) -> Bool {
+        a.zoomNamespace == b.zoomNamespace
+            && a.items.count == b.items.count
+            && !zip(a.items, b.items).contains { $0.id != $1.id }
+    }
+
     private let columns = Array(repeating: GridItem(.flexible(), spacing: ProfileGrid.gutter), count: 3)
 
     /// One quiet arrival for the whole wall — a single fade + lift, ONCE PER SESSION. The profile
@@ -41,6 +71,9 @@ struct CommunityFeedGrid: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("grid")
+        #endif
         LazyVGrid(columns: columns, spacing: ProfileGrid.gutter) {
             // Indexed so a lazily-realized tile can report WHERE in the wall it is (the
             // continuous-scroll prefetch); identity stays the item id, so diffing is unchanged.
@@ -53,6 +86,9 @@ struct CommunityFeedGrid: View {
         .opacity(arrived ? 1 : 0)
         .offset(y: arrived ? 0 : 12)
         .onAppear {
+            #if DEBUG
+            CommunityPerf.mark("FIRSTTILE grid onAppear items=\(items.count)")
+            #endif
             guard !arrived else { return }
             Self.didPlayEntrance = true
             if reduceMotion { arrived = true }
@@ -86,6 +122,9 @@ private struct FeedTile: View {
     @State private var burst = false
 
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("tile")
+        #endif
         Button(action: onOpen) {
             Color.clear
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
@@ -112,17 +151,29 @@ private struct FeedTile: View {
         // double-tap only ever ADDS respect; un-respecting lives in the pager.
         .highPriorityGesture(TapGesture(count: 2).onEnded { doubleTapRespect() })
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.authorName), \(item.title), \(item.statLine)")
+        // When it happened is half of what makes the wall read as a place people are using now —
+        // and it's the one thing a sighted athlete gets from the byline that VoiceOver had no
+        // route to at all from the grid.
+        .accessibilityLabel("\(item.authorName), \(item.title), \(item.statLine), \(item.date.formatted(.relative(presentation: .named)))")
         .accessibilityAddTraits(.isButton)
+        // The double-tap-to-respect gesture is unreachable with VoiceOver on (a VoiceOver double
+        // tap activates the button). The rotor action is the standard equivalent.
+        .accessibilityAction(named: reactions.hasReacted(item.id) ? Text("Liked") : Text("Like")) {
+            doubleTapRespect()
+        }
     }
 
+    /// IG semantics: a double-tap only ever ADDS respect; un-respecting lives in the pager.
+    ///
+    /// **The burst belongs to the NEW like (2026-08-29).** It used to play on every double-tap,
+    /// including on a post the athlete respected yesterday — a full 44pt heart telling them
+    /// something just happened when nothing did. The whole app's rule is that a celebration is
+    /// earned; a no-op gets the quiet acknowledgement (a light haptic) and no theatre.
     private func doubleTapRespect() {
-        if !reactions.hasReacted(item.id) {
-            reactions.toggle(item.id)
-            Haptics.success()
-        } else {
-            Haptics.light()
-        }
+        let alreadyRespected = reactions.hasReacted(item.id)
+        guard !alreadyRespected else { Haptics.light(); return }
+        reactions.toggle(item.id)
+        Haptics.success()
         guard !reduceMotion else { return }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { burst = true }
         Task { @MainActor in
@@ -160,8 +211,15 @@ private struct FeedTile: View {
         Text(metric)
             .font(.display(11.5, weight: .heavy)).monospacedDigit()
             .foregroundStyle(metricInk)
+            // Dynamic Type check, 2026-08-29: at the largest accessibility size this scales ~2.5×,
+            // and a lifter's "12,115 lb" then ran the full width of a 130pt tile — wrapping to two
+            // lines and sliding under the avatar chip in the opposite corner. One line, shrinking
+            // as far as it must, and the chip's own 32pt kept clear. The tile keeps its number
+            // (owner call) at every text size, and it stays legible.
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
             .modifier(PhotoLegibilityShadow(active: ink == .photo))
-            .padding(.horizontal, 7).padding(.vertical, 6)
+            .padding(.leading, 7).padding(.trailing, 32).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -187,15 +245,35 @@ private struct FeedTile: View {
 struct FeedTileMedia: View {
     let item: FeedItem
     var onInkContext: ((InkContext) -> Void)? = nil
-    /// Mapped ONCE at view creation. `item.routeCoordinates` walks every point per call, and the
-    /// tile's body re-evaluates far more often than the view is rebuilt — a `sample` under load
-    /// showed the whole main thread burning in exactly that getter (2026-07-29).
-    private let coords: [CLLocationCoordinate2D]?
+
+    /// One render size for every wall/grid tile, so the synchronous cache read below and the async
+    /// render underneath it can only ever agree (the key carries the size — a mismatch would mean
+    /// "always a miss", i.e. a fresh Mapbox render on every appearance).
+    static let tileSize = CGSize(width: 300, height: 400)
+    /// A small tile wants a proportionally thicker trace — the profile grid's exact rule.
+    static let tileRouteWidth: CGFloat = 4.5
+
+    /// Whether this post draws a route AT ALL — an O(1) count check.
+    ///
+    /// `item.routeCoordinates` (which walks and re-boxes every point) used to run in `init`, and
+    /// `init` runs on every parent body pass, not once per view. The wall's host re-creates the
+    /// grid whenever ProfileScreen re-evaluates, so a settling first second mapped ~90-point
+    /// polylines a hundred-plus times for tiles whose picture was already on screen. Nothing needs
+    /// the points unless we are actually about to draw the silhouette or start a render, so they
+    /// are mapped there and nowhere else.
+    private var hasRoute: Bool { (item.routeLatLon?.count ?? 0) > 1 }
 
     init(item: FeedItem, onInkContext: ((InkContext) -> Void)? = nil) {
         self.item = item
         self.onInkContext = onInkContext
-        self.coords = item.routeCoordinates
+        #if DEBUG
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                CommunityPerf.tick("mediaInit")
+                if item.routeLatLon != nil { CommunityPerf.tick("mediaInitCoords") }
+            }
+        }
+        #endif
     }
 
     enum InkContext { case fixedLight, appearance, photo }
@@ -204,7 +282,23 @@ struct FeedTileMedia: View {
     @State private var photo: UIImage?
     @State private var snapshot: UIImage?
 
+    /// The already-rendered map for this tile, if one exists — `@State` first, then the shared
+    /// cache read synchronously. `LazyVGrid` discards a cell's `@State` when it scrolls off, so
+    /// without the second half every scroll-back drew a grey silhouette for a frame and crossfaded
+    /// the map in behind it, on tiles that had been finished for minutes.
+    private var resolvedSnapshot: UIImage? {
+        if let snapshot { return snapshot }
+        guard hasRoute else { return nil }
+        return FeedRouteSnapshots.cachedImage(post: item.id, style: item.mapStyle,
+                                              scheme: colorScheme, size: Self.tileSize,
+                                              routeWidth: Self.tileRouteWidth)
+    }
+
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("mediaBody")
+        #endif
+        let map = resolvedSnapshot
         Group {
             if let photo {
                 Image(uiImage: photo).resizable().scaledToFill()
@@ -214,16 +308,16 @@ struct FeedTileMedia: View {
                     MuscleMapView(activation: muscles, forceStatic: true)
                         .padding(Theme.Space.sm)
                 }
-            } else if let coords, coords.count > 1 {
-                if let snapshot {
-                    Image(uiImage: snapshot).resizable().scaledToFill()
+            } else if hasRoute {
+                if let map {
+                    Image(uiImage: map).resizable().scaledToFill()
                         .transition(.opacity)
                 } else {
                     ZStack {
                         // Surface, not background: on the white page a background-canvas tile has
                         // invisible edges and the mosaic dissolves — every cell needs its own pane.
                         Theme.surface
-                        RouteSilhouette(coords: coords)
+                        RouteSilhouette(coords: item.routeCoordinates ?? [])
                             .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                             .padding(Theme.Space.md)
                     }
@@ -234,7 +328,7 @@ struct FeedTileMedia: View {
                 glyph
             }
         }
-        .animation(.easeOut(duration: 0.25), value: snapshot != nil)
+        .animation(.easeOut(duration: 0.25), value: map != nil)
         .task(id: "\(item.id)-\(colorScheme == .dark)") {
             // The cover rule (2026-07-29): the activity's own visual leads; a photo covers only
             // when the author chose it — or when the post has no route/muscle visual at all.
@@ -247,13 +341,19 @@ struct FeedTileMedia: View {
                 onInkContext?(.appearance)
                 return
             }
-            guard let coords, coords.count > 1 else {
+            guard hasRoute else {
                 if let data = item.photoData {
                     photo = await ImageDownsampler.thumbnail(data, maxPixel: 480)
                     onInkContext?(.photo)
                 } else {
                     onInkContext?(.appearance)
                 }
+                return
+            }
+            // Already rendered (a scroll-back, or a neighbour that shares the loop): report the
+            // canvas and stop — no engine, no retry loop, and `body` has already drawn the map.
+            if map != nil {
+                onInkContext?(item.mapStyle.uriStyle(for: colorScheme).bakesDarkCanvas ? .photo : .fixedLight)
                 return
             }
             onInkContext?(.appearance)   // silhouette canvas until the snapshot lands
@@ -267,13 +367,18 @@ struct FeedTileMedia: View {
             // never collide. Failed renders retry with backoff (the card feed's lesson): a cold
             // launch's first burst can rate-limit, and without retries the wall stays silhouettes
             // for the whole session.
+            guard let coords = item.routeCoordinates, coords.count > 1 else { return }
             var attempt = 0
             while !Task.isCancelled, attempt < 3 {
                 if let rendered = await FeedRouteSnapshots.image(
                     post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
-                    size: CGSize(width: 300, height: 400), routeWidth: 4.5) {
+                    size: Self.tileSize, routeWidth: Self.tileRouteWidth) {
                     snapshot = rendered
-                    onInkContext?(item.mapStyle.bakesDarkCanvas ? .photo : .fixedLight)
+                    // The canvas the snapshot ACTUALLY baked, not the style the post stored: a
+                    // Realistic/Light post pairs to Dark at night (`uriStyle(for:)`, the same
+                    // pairing every map in the app makes), and reading the unresolved style left
+                    // near-black ink sitting on a dark basemap.
+                    onInkContext?(item.mapStyle.uriStyle(for: colorScheme).bakesDarkCanvas ? .photo : .fixedLight)
                     return
                 }
                 attempt += 1
@@ -282,14 +387,32 @@ struct FeedTileMedia: View {
         }
     }
 
+    /// The mapless post's tile — a sport symbol on the iridescent wash, **dealt per post**
+    /// (2026-08-29).
+    ///
+    /// It used to be one fixed picture: `IridescentWash()` with no parameters under a 40pt symbol
+    /// dead centre, so every swim tile in the app was byte-identical to every other swim tile and a
+    /// run of them read as wallpaper, or as a rendering bug. `WashVariation` deals this post's own
+    /// gradient axis, corner light, lead hue, symbol size, offset and ink weight from its id — the
+    /// same design language, never the same rendering twice. Deliberately narrow ranges: the wall
+    /// has to look like many people's posts, not like a theme picker.
+    ///
+    /// Computed here rather than in `init` so a routed or muscle-mapped tile — which never reaches
+    /// this branch — pays nothing for it (`init` runs on every parent body pass; see `hasRoute`).
     private var glyph: some View {
-        ZStack {
-            IridescentWash()
+        let deal = WashVariation(seed: item.id)
+        let size = Self.glyphSize * deal.glyphScale
+        return ZStack {
+            IridescentWash(variation: deal)
             Image(systemName: item.type.systemImage)
-                .font(.system(size: 40, weight: .bold))
-                .foregroundStyle(Theme.ink.opacity(0.85))
+                .font(.system(size: size, weight: .bold))
+                .foregroundStyle(Theme.ink.opacity(deal.glyphInk))
+                .offset(x: size * deal.glyphOffsetX, y: size * deal.glyphOffsetY)
         }
     }
+
+    /// The un-varied symbol size — the centre of the range `WashVariation.glyphScale` deals around.
+    static let glyphSize: Double = 40
 }
 
 /// Dim-only press feedback — at a 2pt gutter a scale-down opens a visible hole in the mosaic
@@ -377,7 +500,10 @@ struct CommunityScopeTabs: View {
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // `.plain` gave these no press state at all: the finger went down on "Global" and nothing
+        // acknowledged it until the underline finished sliding. The tile's dim-on-press is the
+        // wall's own answer-on-touch-down feedback, so the tabs above it use the same one.
+        .buttonStyle(FeedTilePressStyle())
         .accessibilityLabel(s.label)
         .accessibilityAddTraits(on ? [.isSelected] : [])
     }
@@ -399,3 +525,46 @@ struct PhotoLegibilityShadow: ViewModifier {
         }
     }
 }
+
+#if DEBUG
+// MARK: - TEMPORARY perf meter (2026-08-29 responsiveness pass) — remove before landing.
+
+import os
+
+@MainActor
+enum CommunityPerf {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("--community-perf")
+    private static let log = Logger(subsystem: "com.momentum.perf", category: "community")
+    private static var counts: [String: Int] = [:]
+
+    static func tick(_ tag: String) {
+        guard enabled else { return }
+        counts[tag, default: 0] += 1
+    }
+
+    static func mark(_ message: String) {
+        guard enabled else { return }
+        log.notice("\(message, privacy: .public)")
+    }
+
+    @discardableResult
+    static func time<T>(_ tag: String, _ body: () -> T) -> T {
+        guard enabled else { return body() }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let r = body()
+        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        mark(String(format: "TIME %@ %.1fms main=%@", tag, ms, Thread.isMainThread ? "Y" : "N"))
+        return r
+    }
+
+    static func dump(_ label: String) {
+        guard enabled else { return }
+        let line = counts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        mark("EVALS \(label) \(line)")
+    }
+
+    static func reset() {
+        counts.removeAll()
+    }
+}
+#endif

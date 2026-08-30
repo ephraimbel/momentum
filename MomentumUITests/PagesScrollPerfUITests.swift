@@ -29,4 +29,18 @@ final class PagesScrollPerfUITests: XCTestCase {
     func testPlanScrollsSmoothly()    { burst(XCUIApplication(), args: ["--plan-tab"]) }
     func testFuelScrollsSmoothly()    { burst(XCUIApplication(), args: ["--fuel-tab"]) }
     func testProfileScrollsSmoothly() { burst(XCUIApplication(), args: ["--profile-tab"], settle: 6) }
+
+    /// The community wall (2026-08-29 responsiveness pass). The heaviest scrolling surface in the
+    /// app: a 3-across mosaic of route snapshots, muscle figures and photos over a well that
+    /// deepens as you reach the bottom, so a burst here also exercises the page-in path.
+    ///
+    /// `--ui-test-social` keeps the instant silhouettes — XCUITest realizes every lazy cell at once
+    /// and a hundred queued Mapbox renders starve the run, which measures the snapshotter's
+    /// throughput rather than the wall's. Settles longer than the other pages because the first
+    /// open builds the whole seeded directory (off the main actor, behind the skeleton).
+    func testCommunityWallScrollsSmoothly() {
+        burst(XCUIApplication(),
+              args: ["--profile-tab", "--profile-community", "--feed-global", "--ui-test-social"],
+              settle: 8)
+    }
 }

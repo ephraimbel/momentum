@@ -44,7 +44,13 @@ struct ScaleTests {
     @Test func silhouetteDownsamplesAndKeepsEndpoints() {
         let coords = (0..<1000).map { CLLocationCoordinate2D(latitude: Double($0) * 0.0001, longitude: 0) }
         let reduced = RouteSilhouette.downsample(coords, to: 120)
-        #expect(reduced.count == 120)
+        // `<=`, not `==`. `downsample` is Ramer-Douglas-Peucker now, not a fixed stride, so it
+        // returns AT MOST `max` points and drops the ones that carry no shape. This input is 1,000
+        // perfectly collinear points, which correctly collapses to a handful. The fuller contract
+        // lives in `RouteSilhouetteTests`, whose `aStraightLineCollapsesAndShortRoutesAreUntouched`
+        // asserts exactly that; this assertion is the budget guard, and `== 120` was left over from
+        // the stride implementation it replaced.
+        #expect(reduced.count <= 120)
         #expect(reduced.first?.latitude == coords.first?.latitude)
         #expect(reduced.last?.latitude == coords.last?.latitude)
 

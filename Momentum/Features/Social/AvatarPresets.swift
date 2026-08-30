@@ -88,6 +88,12 @@ struct PresetAvatarView: View {
                                  lineWidth: max(0.5, size * 0.004)))
     }
 
+    /// Below this the wordmark asset is unreadable at any weight, so the brand letter stands in.
+    /// Covers the wall's 20pt chip and the 42pt follow-list avatar; profile-scale marks are above it.
+    private static let wordmarkFloor: CGFloat = 44
+    /// Below this the track's inner lane smears into the outer one rather than reading as a lane.
+    private static let trackLaneFloor: CGFloat = 56
+
     @ViewBuilder private var motif: some View {
         switch preset {
         case .monogramLight, .monogramDark, .monogramLavender:
@@ -98,21 +104,43 @@ struct PresetAvatarView: View {
             // The real mark, not a redrawing of it: the shipped wordmark assets, white on the
             // charcoal world and black on the light one. Sized to sit comfortably inside the
             // circle's usable width — a wordmark run to the edges reads cramped, not confident.
-            Image(preset.ink == .white ? "WordmarkWhite" : "WordmarkBlack")
-                .resizable()
-                .scaledToFit()
-                .frame(width: size * 0.68)
+            //
+            // BUT a whole word cannot survive a chip. At the wall's 20pt avatar the mark is drawn
+            // 13.6pt wide and reads as a dirty dot, and this preset is one of the most repeated
+            // faces on the first screen, so the mush is what the eye actually samples. Below the
+            // legibility floor we fall back to the brand's LETTER, not to the athlete's initials:
+            // a wordmark avatar says "this person wears the brand", and swapping in their monogram
+            // would make one athlete wear two different identities across surfaces (the exact bug
+            // just fixed in FollowingRow). Same mark, same ink, at a size that resolves.
+            if size < Self.wordmarkFloor {
+                Text(verbatim: "M")
+                    .font(.display(size * 0.44, weight: .bold))
+                    .foregroundStyle(preset.ink)
+            } else {
+                Image(preset.ink == .white ? "WordmarkWhite" : "WordmarkBlack")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size * 0.68)
+            }
         case .runnerLight, .runnerDark, .runnerLavender:
             Image(systemName: "figure.run")
                 .font(.system(size: size * 0.42, weight: .medium))
                 .foregroundStyle(preset.ink)
         case .trackLight, .trackDark, .trackLavender:
             // A stadium track — two concentric lanes, tilted so it reads athletic, not clinical.
+            //
+            // The second lane is what kills it small: at a 42pt follow-list avatar the lanes are
+            // 1.9pt and 1.3pt of stroke separated by ~4pt, and antialiasing smears the pair into a
+            // featureless oval. One lane with an honest minimum weight still reads as a track; two
+            // smudged ones read as a blob, so below the floor we drop the inner lane and hold the
+            // stroke at a width that can actually paint.
             ZStack {
-                Capsule().stroke(preset.ink, lineWidth: size * 0.045)
+                Capsule().stroke(preset.ink, lineWidth: max(1.25, size * 0.045))
                     .frame(width: size * 0.62, height: size * 0.40)
-                Capsule().stroke(preset.ink.opacity(0.45), lineWidth: size * 0.03)
-                    .frame(width: size * 0.42, height: size * 0.22)
+                if size >= Self.trackLaneFloor {
+                    Capsule().stroke(preset.ink.opacity(0.45), lineWidth: size * 0.03)
+                        .frame(width: size * 0.42, height: size * 0.22)
+                }
             }
             .rotationEffect(.degrees(-16))
         }

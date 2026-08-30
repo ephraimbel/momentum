@@ -28,8 +28,10 @@ struct AthleteProfileView: View {
     #if DEBUG
     @MainActor private static var didOpenDebugGraph = false
     #endif
-    /// The grid's posts: feed post(s) + deterministic history for sample athletes (cached), or
-    /// exactly what a real athlete shared. Loaded once on appear.
+    /// The grid's posts: one tile per ledger session for sample athletes, or exactly what a real
+    /// athlete shared. Materialized a page at a time — a veteran with 900 sessions has 900 tiles,
+    /// and building them all to show nine would make every profile open at the speed of the
+    /// slowest athlete in the directory.
     @State private var gridPosts: [FeedItem] = []
 
     var body: some View {
@@ -90,7 +92,15 @@ struct AthleteProfileView: View {
         }
         .confirmationDialog("Report \(athlete.name)?", isPresented: $confirmingReport, titleVisibility: .visible) {
             ForEach(ReportReason.allCases) { reason in
-                Button(reason.rawValue) { athlete.posts.forEach { moderation.reportPost($0.id, reason: reason) }; Haptics.success() }
+                Button(reason.rawValue) {
+                    // Files the report AND hides them everywhere — the old version reported the
+                    // athlete's hand-built sample posts only, so most of their content stayed on
+                    // screen after a report that promised otherwise (see `reportAthlete`).
+                    moderation.reportAthlete(athlete.handle, reason: reason)
+                    Haptics.success()
+                    ToastCenter.shared.show(icon: "flag", line: "Reported. You won't see \(athlete.name) again.")
+                    dismiss()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -107,21 +117,26 @@ struct AthleteProfileView: View {
         return Date().timeIntervalSince(latest) < 86_400
     }
 
-    /// Disciplines they actually post, most frequent first — identity, not filters.
+    /// Disciplines they actually train, most frequent first — counted over their WHOLE ledger, not
+    /// over the page of tiles that happens to be loaded, so the chips don't change as you scroll.
     private var chips: [ProfileHeroStyle.Chip] {
-        let posts = gridPosts.isEmpty ? athlete.posts : gridPosts
-        var counts: [WorkoutType: Int] = [:]
-        for p in posts { counts[p.type, default: 0] += 1 }
-        return counts.sorted { $0.value > $1.value }.prefix(3)
-            .map { .init(id: $0.key.rawValue, text: $0.key.title) }
+        derived.lifetime.typeCounts.sorted { ($0.value, $0.key.rawValue) > ($1.value, $1.key.rawValue) }
+            .prefix(3).map { .init(id: $0.key.rawValue, text: $0.key.title) }
     }
 
     private var identity: some View {
-        let dist = Formatters.wholeDistance(meters: athlete.totalDistanceM, unit: distanceUnit)
+        // The trio reads the ledger, which is also what the grid below draws: the workouts count is
+        // the number of tiles, the distance is their sum, and the streak is the run of days the
+        // newest tiles sit on. They cannot disagree (owner report 2026-08-28).
+        let life = derived.lifetime
+        let dist = Formatters.wholeDistance(meters: life.distanceM, unit: distanceUnit)
         let following = follows.isFollowing(athlete.handle)
         return ProfileHero(
             ringed: trainedToday,
-            trio: [("\(athlete.totalWorkouts)", "Workouts"), ("\(dist.value)", dist.unit), ("\(athlete.dayStreak)", "Streak")],
+            // Grouped, like every other figure in the app: "2560" beside a tile reading
+            // "15,583 lb" is the same page speaking two dialects.
+            trio: [(life.sessions.formatted(), "Workouts"), (dist.value.formatted(), dist.unit),
+                   (life.streakDays.formatted(), "Streak")],
             name: athlete.name,
             // Sample members seal by the same deterministic draw their bylines use; real network
             // athletes stay unsealed until the server actually knows their entitlement.
@@ -145,9 +160,12 @@ struct AthleteProfileView: View {
                         Menu {
                             Button { confirmingReport = true } label: { Label("Report", systemImage: "flag") }
                             Button(role: .destructive) {
+                                // `ModerationStore.block` unfollows too, at every block site in
+                                // the app (2026-08-29) — this page no longer has to remember.
                                 moderation.block(athlete.handle)
-                                if follows.isFollowing(athlete.handle) { follows.toggle(athlete.handle) }   // also unfollow
                                 Haptics.medium()
+                                ToastCenter.shared.show(icon: "hand.raised",
+                                                        line: "Blocked \(athlete.name).")
                                 dismiss()
                             } label: { Label("Block \(athlete.name)", systemImage: "hand.raised") }
                         } label: {
@@ -174,7 +192,9 @@ struct AthleteProfileView: View {
                 // Care, not pressure — it never appears on someone who already moved today.
                 if following, !trainedToday, nudges.canNudge(athlete.handle, isSample: athlete.isSample) || nudges.nudgedToday(athlete.handle) {
                     let sent = nudges.nudgedToday(athlete.handle)
-                    Button { if !sent { nudges.nudge(athlete.handle, isSample: athlete.isSample) } } label: {
+                    Button {
+                        if !sent { nudges.nudge(athlete.handle, isSample: athlete.isSample, name: athlete.name) }
+                    } label: {
                         HStack(spacing: 6) {
                             Image(systemName: sent ? "checkmark" : "hand.wave.fill")
                                 .font(.system(size: 14, weight: .semibold))
@@ -198,14 +218,24 @@ struct AthleteProfileView: View {
     /// viewer's own follow. Real athletes: their ACTUAL audience (`remoteCounts`, which the
     /// server computed excluding the viewer) plus the same +mine — so following anyone, fake or
     /// real, moves their number in the same frame, and unfollowing takes it back.
+    /// Blocked athletes are subtracted, because the LIST behind this number already drops them
+    /// (`AthleteFollowListView`). "141 Followers" opening a list of 140 rows is the same small lie
+    /// as a grid that doesn't add up to its own header — the number has to describe the list under
+    /// it (found 2026-08-29). The fast path skips the walk entirely when nothing is blocked, which
+    /// is almost always; `CommunityGraph.followerHandles` is cached per athlete either way.
     private var followerCount: Int {
         let mine = follows.isFollowing(athlete.handle) ? 1 : 0
         guard athlete.isSample else { return (remoteCounts?.followers ?? 0) + mine }
-        return athlete.sampleFollowerCount + mine
+        guard !moderation.blockedHandles.isEmpty else { return athlete.sampleFollowerCount + mine }
+        return CommunityGraph.followerHandles(of: athlete.handle)
+            .filter { !moderation.isBlocked($0) }.count + mine
     }
 
     private var followingCount: Int {
-        athlete.isSample ? athlete.sampleFollowingCount : (remoteCounts?.following ?? 0)
+        guard athlete.isSample else { return remoteCounts?.following ?? 0 }
+        guard !moderation.blockedHandles.isEmpty else { return athlete.sampleFollowingCount }
+        return CommunityGraph.followingHandles(of: athlete.handle)
+            .filter { !moderation.isBlocked($0) }.count
     }
 
     // MARK: Grid — their posts in the SAME edge-to-edge wall the community and own profile use
@@ -226,7 +256,16 @@ struct AthleteProfileView: View {
             }
             .frame(maxWidth: .infinity).padding(.vertical, Theme.Space.xxl)
         } else {
-            CommunityFeedGrid(items: gridPosts, zoomNamespace: nil) { id in
+            CommunityFeedGrid(items: gridPosts, zoomNamespace: nil, onTileAppear: { index in
+                // Continuous scroll: three rows from the bottom, materialize the next page. The
+                // grid IS their body of work, so scrolling far enough reaches every session the
+                // trio counts — a veteran's 900th tile is real, it just isn't built until asked
+                // for. Guarded on the count actually growing, so the last page can't loop.
+                guard index >= gridPosts.count - 9 else { return }
+                let next = CommunityDirectory.gridPosts(
+                    for: athlete, limit: gridPosts.count + CommunityDirectory.gridPageSize)
+                if next.count > gridPosts.count { gridPosts = next }
+            }) { id in
                 pagerStart = PagerStart(id: id)
             }
             .fullScreenCover(item: $pagerStart) { start in
@@ -249,10 +288,9 @@ struct AthleteProfileView: View {
     /// recomputes `consistencyDays` again internally. Non-observed memo box (the FallbackMemo
     /// pattern): filled during body without dirtying SwiftUI state.
     private struct DerivedStats {
-        let disciplineCounts: [WorkoutType: Int]
-        let consistencyDays: Set<Int>
-        let consistencyMinutes: [Int: Double]
-        let lifetimeDurationS: Double
+        /// The one fold over the athlete's session ledger — every number on this page comes out
+        /// of it, including the hero trio's.
+        let lifetime: CommunityLifetime
         let awardCells: [AwardsShelf.Cell]
         let awardsEarned: Int
     }
@@ -262,10 +300,7 @@ struct AthleteProfileView: View {
         let key = "\(athlete.handle)-\(StreakCalculator.localDay(Date()))"
         if derivedMemo.key == key, let cached = derivedMemo.value { return cached }
         let awards = athlete.communityAwards
-        let value = DerivedStats(disciplineCounts: athlete.disciplineCounts,
-                                 consistencyDays: athlete.consistencyDays,
-                                 consistencyMinutes: athlete.consistencyMinutes,
-                                 lifetimeDurationS: athlete.lifetimeDurationS,
+        let value = DerivedStats(lifetime: athlete.lifetime,
                                  awardCells: awards.cells,
                                  awardsEarned: awards.earnedCount)
         derivedMemo.key = key
@@ -305,25 +340,26 @@ struct AthleteProfileView: View {
     /// hero only for distance sports — a lifter/yogi headlining "4,200 km covered" contradicted
     /// their whole profile; their body of work is the session count.
     private var lifetimeSection: some View {
-        section("Lifetime") {
+        let life = derived.lifetime
+        return section("Lifetime") {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 VStack(alignment: .leading, spacing: 2) {
-                    if athlete.primaryType.isGPS, athlete.totalDistanceM > 0 {
-                        CountUpNumber(value: athlete.totalDistanceM,
+                    if athlete.primaryType.isGPS, life.distanceM > 0 {
+                        CountUpNumber(value: life.distanceM,
                                       format: { Formatters.distance(meters: $0, unit: distanceUnit) },
                                       font: .display(40, weight: .black))
                             .lineLimit(1).minimumScaleFactor(0.6)
                             .accessibilityLabel("Distance covered")
-                            .accessibilityValue(Formatters.distance(meters: athlete.totalDistanceM, unit: distanceUnit))
+                            .accessibilityValue(Formatters.distance(meters: life.distanceM, unit: distanceUnit))
                         Text("distance covered")
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     } else {
-                        CountUpNumber(value: Double(athlete.totalWorkouts),
+                        CountUpNumber(value: Double(life.sessions),
                                       format: { "\(Int($0.rounded()))" },
                                       font: .display(40, weight: .black))
                             .lineLimit(1).minimumScaleFactor(0.6)
                             .accessibilityLabel("Workouts logged")
-                            .accessibilityValue("\(athlete.totalWorkouts)")
+                            .accessibilityValue("\(life.sessions)")
                         Text("workouts logged")
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     }
@@ -332,12 +368,12 @@ struct AthleteProfileView: View {
                 HStack(spacing: 0) {
                     // Lifetime, like every other number in this block — derived from distance +
                     // session mix so it can never contradict them (see `lifetimeDurationS`).
-                    lifetimeCell(Formatters.duration(s: derived.lifetimeDurationS), "Time moving")
+                    lifetimeCell(Formatters.duration(s: life.durationS), "Time moving")
                     lifetimeDivider
-                    lifetimeCell("\(athlete.totalWorkouts)", "Sessions")
-                    if athlete.dayStreak > 0 {
+                    lifetimeCell("\(life.sessions)", "Sessions")
+                    if life.streakDays > 0 {
                         lifetimeDivider
-                        lifetimeCell("\(athlete.dayStreak)", "Day streak")
+                        lifetimeCell("\(life.streakDays)", "Day streak")
                     }
                 }
             }
@@ -346,7 +382,7 @@ struct AthleteProfileView: View {
 
     private var trainSection: some View {
         section("How they train") {
-            DisciplineBreakdown(counts: derived.disciplineCounts)
+            DisciplineBreakdown(counts: derived.lifetime.typeCounts)
                 .padding(Theme.Space.lg).background(card)
         }
     }
@@ -355,7 +391,7 @@ struct AthleteProfileView: View {
     /// grid, then the full heatmap with month/weekday axes.
     private var consistencySection: some View {
         let today = StreakCalculator.localDay(Date())
-        let days = derived.consistencyDays   // once — the old closure regenerated the Set 112×
+        let days = derived.lifetime.activeDays   // once — the old closure regenerated the Set 112×
         let active = (0..<(16 * 7)).filter { days.contains(today - $0) }.count
         return section("Consistency") {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -368,7 +404,7 @@ struct AthleteProfileView: View {
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
                 ConsistencyHeatmap(countingDays: days,
-                                   dayMinutes: derived.consistencyMinutes, showsAxes: true)
+                                   dayMinutes: derived.lifetime.dayMinutes, showsAxes: true)
             }
             .padding(Theme.Space.lg).background(card)
         }

@@ -104,7 +104,9 @@ struct ShareCardContent: View {
     private func routeSilhouette(_ gps: GPSDetail) -> some View {
         let coords = routeCache.coordinates(for: gps, type: workout.type)
         if coords.count > 1 {
-            RouteSilhouette(coords: coords)
+            // 800, not the 120 default: this is a full-size card, not a list thumbnail, and a
+            // multi-lap track needs the budget to draw every lap (owner report 2026-08-29).
+            RouteSilhouette(coords: coords, maxPoints: 800)
                 .stroke(.white, style: StrokeStyle(lineWidth: size.width * 0.012, lineCap: .round, lineJoin: .round))
                 .frame(height: size.height * 0.28)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -188,10 +190,63 @@ struct RouteSilhouette: Shape {
         }
     }
 
-    /// Keep endpoints; evenly sample the middle down to `max` points.
+    /// Reduce to at most `max` points while keeping the SHAPE — Ramer–Douglas–Peucker, not an
+    /// every-Nth stride.
+    ///
+    /// **Why this is not a stride any more (owner report 2026-08-29).** A track session — twenty
+    /// laps of a 400 m oval, a few thousand fixes — came out as a solid blob with the inside of
+    /// the track coloured in. Nothing was filling the path: every call site strokes it. The stride
+    /// was the bug. Twenty laps sampled down to 120 points is ~6 points per lap, and each lap's
+    /// six land at a different phase of the oval, so the laps drew as twenty different jagged
+    /// hexagons crossing each other — a scribble dense enough to read as fill.
+    ///
+    /// RDP drops only points that do not move the line: the straights collapse to their endpoints
+    /// and every bend survives, so a lap stays a lap at any budget. Epsilon starts fine and
+    /// doubles until the budget is met, so a simple out-and-back keeps its handful of points and a
+    /// track keeps its ovals.
     static func downsample(_ coords: [CLLocationCoordinate2D], to max: Int) -> [CLLocationCoordinate2D] {
         guard coords.count > max, max > 2 else { return coords }
+        let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
+        let diag = hypot((lats.max()! - lats.min()!), (lons.max()! - lons.min()!))
+        guard diag > 0 else { return Array(coords.prefix(max)) }
+        var epsilon = diag / 4_000            // ~a couple of metres on a typical route
+        for _ in 0..<24 {
+            let simplified = rdp(coords, epsilon: epsilon)
+            if simplified.count <= max { return simplified }
+            epsilon *= 2
+        }
+        // Pathological input only (a route that is all corner) — the old stride as the backstop.
         let stride = Double(coords.count - 1) / Double(max - 1)
         return (0..<max).map { coords[Int((Double($0) * stride).rounded())] }
+    }
+
+    /// Ramer–Douglas–Peucker in lat/lon space. Iterative (a recursive one blows the stack on the
+    /// ~40k-point polyline an ultra produces).
+    static func rdp(_ pts: [CLLocationCoordinate2D], epsilon: Double) -> [CLLocationCoordinate2D] {
+        guard pts.count > 2 else { return pts }
+        var keep = [Bool](repeating: false, count: pts.count)
+        keep[0] = true; keep[pts.count - 1] = true
+        var stack = [(0, pts.count - 1)]
+        while let (first, last) = stack.popLast() {
+            guard last > first + 1 else { continue }
+            var worst = 0.0, index = first
+            let a = pts[first], b = pts[last]
+            let dx = b.longitude - a.longitude, dy = b.latitude - a.latitude
+            let den = hypot(dx, dy)
+            for i in (first + 1)..<last {
+                let p = pts[i]
+                // Perpendicular distance to the segment; a degenerate segment (start == end,
+                // which a closed lap produces) falls back to distance from the point itself.
+                let d = den < 1e-12
+                    ? hypot(p.longitude - a.longitude, p.latitude - a.latitude)
+                    : abs(dy * (p.longitude - a.longitude) - dx * (p.latitude - a.latitude)) / den
+                if d > worst { worst = d; index = i }
+            }
+            if worst > epsilon {
+                keep[index] = true
+                stack.append((first, index)); stack.append((index, last))
+            }
+        }
+        return zip(pts, keep).compactMap { $1 ? $0 : nil }
     }
 }

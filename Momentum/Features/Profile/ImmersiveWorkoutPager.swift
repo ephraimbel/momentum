@@ -126,45 +126,57 @@ private struct ImmersiveWorkoutPage: View {
     /// on every multi-photo post. The default is the two-button column (36 + 8 + 36) so the very
     /// first frame is already right; the re-center control growing the column moves the pill down.
     @State private var controlColumnHeight: CGFloat = 80
+    /// The thumbnail's tap target — the route/muscle map full screen.
+    @State private var showOwnVisual = false
 
-    /// The cover rule applied to your own posts: the session's visual (live route map, muscle
-    /// map) is page one and photos page behind it — flipped by "Photo as cover". In a paged
-    /// context the route page drops its camera handle (a pannable map inside a horizontal pager
-    /// fights the swipe); the single-media page keeps the fully explorable map exactly as before.
-    private var mediaPages: [FullBleedPage] {
-        let photos = workout.orderedPhotosData.map { FullBleedPage.photo($0) }
-        guard !photos.isEmpty else { return [] }
-        let primary = [FullBleedPage.primary(AnyView(
-            WorkoutTileMedia(workout: workout, style: .immersive, distanceUnit: distanceUnit)
-                .allowsHitTesting(false)))]
-        return workout.coverIsPhoto ? photos + primary : primary + photos
+    /// **Photos are the pages (owner call 2026-08-29).** The old cover rule made the session's
+    /// visual page one and paged photos behind it (flipped by "Photo as cover"), so whichever the
+    /// athlete didn't pick was hidden behind a swipe nobody was told about. Now the photograph is
+    /// always the hero, swiping moves between photographs, and the route/muscle map is always
+    /// present as a `PostMediaThumb` above the byline. `coverIsPhoto` is untouched — it still does
+    /// its real job, choosing which image represents this post in the GRID.
+    private var photos: [Data] { workout.orderedPhotosData }
+
+    /// The session's own visual, for the thumbnail and its full-screen tap target. Hit-testing off
+    /// inside the thumbnail: a pannable map in a 62pt card would just fight the finger.
+    /// `.tile` in the thumbnail, `.immersive` full screen. The immersive style is composed for a
+    /// full page — inside a 62pt card it rendered as an empty wash. `.tile` is the style the grid
+    /// already uses at this size, so the thumbnail is literally the tile the athlete knows.
+    private func ownVisual(interactive: Bool) -> some View {
+        WorkoutTileMedia(workout: workout, style: interactive ? .immersive : .tile,
+                         distanceUnit: distanceUnit,
+                         mapCameraHandle: interactive ? mapCamera : nil)
+            .allowsHitTesting(interactive)
     }
 
     var body: some View {
         ZStack {
-            let pages = mediaPages
-            if pages.count > 1 {
+            if photos.count > 1 {
                 // The counter pill sits BELOW the whole top-right control column (measured), with
                 // the same gap the column's buttons keep between themselves.
-                FullBleedMediaPager(pages: pages,
+                FullBleedMediaPager(pages: photos.map { .photo($0) },
                                     pillTopPadding: topInset + Theme.Space.sm + controlColumnHeight + Theme.Space.sm)
                     .animation(.easeOut(duration: 0.25), value: controlColumnHeight)
+            } else if let only = photos.first {
+                PagedPhoto(data: only).ignoresSafeArea()
             } else {
-                WorkoutTileMedia(workout: workout, style: .immersive,
-                                 distanceUnit: distanceUnit, mapCameraHandle: mapCamera)
+                ownVisual(interactive: true)
             }
 
             // Soft light scrims keep ink controls legible over any media (photos, maps, muscle
             // art). Eased (SoftScrim), not two-stop — a linear fade "ends in a line" over dark
             // basemaps (owner report 2026-07-29, first seen on the community pager).
-            VStack(spacing: 0) {
-                SoftScrim.top(Theme.background)
-                    .frame(height: topInset + 150)
-                Spacer(minLength: 0)
-                // As tall as the community pager's: this overlay now stacks byline + title + note +
-                // stats, and at 300 a busy basemap's POI labels bled up through the byline.
-                SoftScrim.bottom(Theme.background)
-                    .frame(height: bottomInset + 430)
+            // ONE soft scrim, bottom only — the same rule the community pager has had since
+            // 2026-08-20 ("scrap the fade from the top"), which this pager never adopted. A photo
+            // opened from the profile grid was hazed at BOTH ends, and the bottom fade ran
+            // `bottomInset + 430` — well over half the screen on a 6.1". The athlete's photograph
+            // is the point; it runs clean to the top edge now (owner report 2026-08-29).
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    SoftScrim.bottom(Theme.background)
+                        .frame(height: geo.size.height * 0.35)
+                }
             }
 
             VStack(spacing: 0) {
@@ -179,6 +191,9 @@ private struct ImmersiveWorkoutPage: View {
         }
         .contentShape(Rectangle())
         .sheet(isPresented: $editing) { editSheet }
+        .fullScreenCover(isPresented: $showOwnVisual) {
+            PostMediaFullScreen { ownVisual(interactive: true) }
+        }
         .task {
             guard isFirst else { return }
             withAnimation(.easeIn(duration: 0.4).delay(0.5)) { showHint = true }
@@ -240,6 +255,11 @@ private struct ImmersiveWorkoutPage: View {
     /// numbers. Without a byline (previews) the date carries the top line on its own.
     private var statsOverlay: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            // The session's own visual, above the byline — present on every post that has a photo,
+            // so the route is never the thing the photo hid.
+            if !photos.isEmpty {
+                PostMediaThumb { ownVisual(interactive: false) } onTap: { showOwnVisual = true }
+            }
             if let byline {
                 bylineRow(byline)
             } else {

@@ -34,18 +34,29 @@ struct WorkoutPhotoSection: View {
                     addButton
                 } else {
                     thumbnailStrip
+                    // Photos write straight through (see the type's note) while the text fields
+                    // around them stage until Save. That split is invisible otherwise — and the
+                    // athlete finds out by hitting Cancel and watching the photo stay.
+                    Text("Photos save as you add them.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                // The cover rule (owner call 2026-07-29): the activity's own visual — route map,
-                // muscle map — is always the grid/post cover; this quiet switch is the ONE way a
-                // photo takes over. Only shown when there IS an own visual to displace.
+                // What this switch means changed on 2026-08-29. It used to decide which media led
+                // the POST — and the loser was hidden behind a swipe. Now the photo always leads
+                // the post and the session's visual always rides above the byline, so the only
+                // thing left to choose is which image represents this activity in the GRID. The
+                // copy has to say that, or the toggle describes behaviour that no longer exists.
                 if !photosData.isEmpty, hasOwnVisual {
                     Toggle(isOn: $workout.coverIsPhoto) {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Photo as cover")
+                            Text("Photo as grid cover")
                                 .font(.rounded(Theme.FontSize.body, weight: .semibold))
                                 .foregroundStyle(Theme.ink)
-                            Text(workout.type.isGPS ? "Off, your route leads and photos ride behind it."
-                                                    : "Off, your session visual leads.")
+                            Text(workout.coverIsPhoto
+                                 ? "Your photo represents this activity in the grid."
+                                 : (workout.type.isGPS ? "Your route map represents it in the grid."
+                                                       : "Your session visual represents it in the grid."))
                                 .font(.rounded(Theme.FontSize.label, weight: .medium))
                                 .foregroundStyle(Theme.inkTertiary)
                         }

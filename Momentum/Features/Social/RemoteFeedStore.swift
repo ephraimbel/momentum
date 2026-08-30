@@ -14,6 +14,9 @@ final class RemoteFeedStore {
     @ObservationIgnored var reactions: ReactionStore?
     /// The server's follow graph merges in on refresh (cross-device consistency).
     @ObservationIgnored var follows: FollowStore?
+    /// Comments written while there was no session (guest, offline) are retried from here —
+    /// a feed refresh is the app's one reliable "the backend is reachable now" moment.
+    @ObservationIgnored var comments: CommentStore?
 
     private(set) var items: [FeedItem] = []
     private(set) var isLoading = false
@@ -30,6 +33,11 @@ final class RemoteFeedStore {
         if let remoteFollowing = await backend.pullFollowing() {
             follows?.merge(remote: remoteFollowing)
         }
+        // Deliver anything the network never saw. Reaching here means a session exists, so this
+        // is exactly the moment a guest's taps and typed comments become real for everyone else
+        // — the migration the guest-first app promises (see `CommentStore.pending`).
+        reactions?.flushPending()
+        comments?.flushPending()
         // Switching scope: drop the old scope's rows up front so a failed fetch yields an empty
         // correct-scope list, never stale cross-scope athletes (e.g. Everyone's under Following).
         if scope != scopeLoaded {

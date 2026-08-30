@@ -11,14 +11,25 @@ Usage:
     python3 scripts/fetch_community_routes.py            # token read from Secrets.xcconfig
     MBX_TOKEN=pk.xxx python3 scripts/fetch_community_routes.py
 
-Output shape (lat/lon order, matching FeedItem.routeLatLon):
-    { "Austin, TX": { "run":  [ {"km": 4.1, "pts": [[lat,lon], ...]}, ... ],
-                      "ride": [ {"km": 21.7, "pts": [[lat,lon], ...]} ] }, ... }
+Output shape — LENGTH-FIRST, geometry as one opaque string per loop:
+    { "Austin, TX": { "run":  [ {"km": 4.1, "b": "<base64>"}, ... ],
+                      "ride": [ {"km": 21.7, "b": "<base64>"} ] }, ... }
+
+`b` is base64 of little-endian int32 pairs, each value = degrees x 10,000 — exactly the 4-decimal
+rounding below, so the round trip through `CommunityRoutes.decode` is bit-exact. The old shape wrote
+each loop as a JSON array of `[lat, lon]` arrays; parsing the file then meant building 86,887 point
+arrays (108 ms) on the first `loopKms` call, when all the session ledger wanted was 967 lengths.
+Now the launch parse is 967 numbers plus 967 strings and a polyline is decoded only when something
+draws it. Keep the two halves in one file: `km` has to be there for every city at launch, and
+splitting geometry into a second bundled resource would need an `xcodegen` regeneration for a 3 ms
+gain (measured).
 """
+import base64
 import json
 import math
 import os
 import re
+import struct
 import sys
 import time
 import urllib.parse
@@ -55,11 +66,28 @@ WORLD_CITIES = [
 CITIES = US_CITIES + WORLD_CITIES
 
 # Loop variants to fetch per city: (kind, profile, target loop length km, bearing offset deg).
+# The original four lead the list so existing slot indices keep resolving to the same loops;
+# everything after is ADDED variety. Three run loops per city was the ceiling on how varied the
+# wall could ever look: a city's mapped runs could only ever be three distances, so strangers
+# drew identical traces and the distances clustered (2026-08-29). Targets are spread across the
+# real range an endurance community actually runs, and bearings are scattered so neighbouring
+# loops don't retrace one another's streets.
 VARIANTS = [
     ("run", "walking", 3.0, 15),
     ("run", "walking", 5.5, 200),
     ("run", "walking", 8.5, 95),
     ("ride", "cycling", 20.0, 320),
+    ("run", "walking", 2.0, 40),
+    ("run", "walking", 4.2, 250),
+    ("run", "walking", 6.8, 110),
+    ("run", "walking", 7.6, 330),
+    ("run", "walking", 10.5, 300),
+    ("run", "walking", 12.9, 165),
+    ("run", "walking", 16.1, 25),
+    ("run", "walking", 21.1, 275),
+    ("ride", "cycling", 12.0, 60),
+    ("ride", "cycling", 32.0, 140),
+    ("ride", "cycling", 48.0, 235),
 ]
 
 
@@ -99,13 +127,44 @@ def fetch_loop(tok, profile, lat, lon, target_km, bearing0):
     if data.get("code") != "Ok" or not data.get("routes"):
         return None
     route = data["routes"][0]
-    pts = [[round(la, 5), round(lo, 5)] for lo, la in route["geometry"]["coordinates"]]
+    # 4 decimals is ~11 m, invisible at any size a route is drawn, and it deliberately matches the
+    # quantization CommunityView.mediaSignature uses to fingerprint a route shape.
+    pts = [[round(la, 4), round(lo, 4)] for lo, la in route["geometry"]["coordinates"]]
     # Downsample long geometries; keep endpoints.
-    cap = 140
+    cap = 90
     if len(pts) > cap:
         step = (len(pts) - 1) / (cap - 1)
         pts = [pts[round(i * step)] for i in range(cap)]
-    return {"km": round(route["distance"] / 1000, 2), "pts": pts}
+    # MEASURE THE SHIPPED SHAPE, never `route["distance"]`. The API returns the road-network
+    # length, but downsampling cuts chords across every curve, so the polyline we actually ship is
+    # SHORTER — by a median of 1.05 km and up to 18 km on a winding loop. Storing the road distance
+    # meant a tile printed a number longer than the shape drawn beneath it, which is the exact
+    # class of "the number contradicts the picture" defect this community was cleaned up to remove
+    # (2026-08-29). `CommunityContentAuditTests.mapsAndStatsAgree` pins the two within 0.3 mi, and
+    # this must use the same flat-earth sum as `CommunityRoutes.lengthKm` so they agree bit for bit.
+    return {"km": round(drawn_km(pts), 2), "b": encode(pts)}
+
+
+def encode(pts):
+    """Polyline -> base64 of little-endian int32 pairs at 1e-4 degrees (lossless at 4 decimals).
+
+    Must stay the exact inverse of `CommunityRoutes.decode`. Anything that changes the packing here
+    changes every drawn route in the app, so change both sides together or not at all.
+    """
+    raw = bytearray()
+    for la, lo in pts:
+        raw += struct.pack("<ii", int(round(la * 10000)), int(round(lo * 10000)))
+    return base64.b64encode(bytes(raw)).decode()
+
+
+def drawn_km(pts):
+    """Length of the polyline AS SHIPPED (same formula as CommunityRoutes.lengthKm)."""
+    m = 0.0
+    for (la1, lo1), (la2, lo2) in zip(pts, pts[1:]):
+        mlat = (la2 - la1) * 111132.0
+        mlon = (lo2 - lo1) * 111320.0 * math.cos(la1 * math.pi / 180)
+        m += math.sqrt(mlat * mlat + mlon * mlon)
+    return m / 1000
 
 
 def main():
@@ -119,7 +178,7 @@ def main():
             except Exception as e:  # noqa: BLE001 — a single city variant failing is fine
                 loop = None
                 print(f"  ! {name} {kind} {target}km: {e}", file=sys.stderr)
-            if loop and len(loop["pts"]) > 10 and loop["km"] > 0.8:
+            if loop and len(loop["b"]) > 110 and loop["km"] > 0.8:   # >10 points once decoded
                 entry[kind].append(loop)
             else:
                 failures.append(f"{name} {kind} {target}km")

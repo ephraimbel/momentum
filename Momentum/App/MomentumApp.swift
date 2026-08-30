@@ -87,9 +87,17 @@ struct MomentumApp: App {
         nudges.backend = services.social
         remoteFeed.reactions = reactions
         remoteFeed.follows = follows
+        // A feed refresh is the app's one reliable "there is a session now" moment, so it is what
+        // delivers the taps and comments a guest made before signing up (see `CommentStore.pending`).
+        remoteFeed.comments = comments
+        // A block is also an unfollow, wherever it is tapped from (see `ModerationStore.follows`).
+        moderation.follows = follows
         // Wrist sync (Watch Slice 4): the health handle must be wired before any watch message can
         // arrive, but activation itself rides the deferred block below.
         PhoneWatchSync.shared.health = services.health
+        // …and the paywall, which is the only half of the wrist's voice-coach gate the watch can't
+        // work out for itself (the Pro receipt lives on the phone).
+        PhoneWatchSync.shared.paywall = services.paywall
         // BGTask handlers must register before launch completes — scheduling itself rides the
         // deferred block (`runDeferredLaunchWork`).
         MorningReadinessRefresh.register(health: services.health)

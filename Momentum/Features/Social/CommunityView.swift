@@ -47,17 +47,37 @@ struct CommunityView: View {
     /// Instagram-style progressive reveal (owner ask 2026-07-29): the wall renders a WINDOW of
     /// the assembled feed and grows it a page at a time when you reach the bottom — thousands of
     /// posts without ever materializing thousands of tiles.
-    @State private var visibleCount = 30
+    ///
+    /// **The window is HELD, not re-sliced (2026-08-29).** The wall used to hand the grid
+    /// `Array(items.prefix(visibleCount))` straight out of `body`, and `body` runs whenever the
+    /// host re-evaluates — ProfileScreen's header, its own `@Query`, a slider animation — measured
+    /// at 8–12 passes in the first second of a community open. Each pass copied up to a few hundred
+    /// `FeedItem`s, every one carrying five strings and three arrays, to hand back a value that had
+    /// not changed. `visibleCount` is now DERIVED from the window rather than driving it, so the
+    /// count and the tiles can never disagree, and `reveal(_:)` is the only writer.
+    @State private var window: [FeedItem]
+    private var visibleCount: Int { window.count }
+    /// The opening reveal — ten rows of the 3-wide grid.
+    private static let firstWindow = 30
     /// One load = 12 posts — four rows of the 3-wide grid, the Instagram page (owner call
     /// 2026-07-30: "loads another twelve… just continuous"). Small pages keep each reveal
     /// imperceptible; the near-end prefetch below keeps them coming before the bottom is reached.
     private static let windowStep = 12
-    /// How deep the Global well reaches into the assembled feed. Starts at one page's worth of
-    /// scrolling and DEEPENS by `wellStep` whenever the reveal window catches up to it (owner ask
-    /// 2026-07-30: the wall must never dead-end — reaching the bottom loads more, like pull-to-
-    /// refresh in reverse). The cap exists so a cold open never sorts/filters thousands of rows it
-    /// may never show; growth is demand-driven.
-    @State private var wellCap = 400
+    /// How deep the Global well reaches into the assembled feed. It DEEPENS by `wellStep` whenever
+    /// the reveal window catches up to it (owner ask 2026-07-30: the wall must never dead-end —
+    /// reaching the bottom loads more, like pull-to-refresh in reverse); growth is demand-driven.
+    ///
+    /// **The opening cap is a TIME window, not a row budget (2026-08-28).** The community posts on
+    /// a recency-weighted curve, so a 400-row well ended 3.4 hours back: every post the wall could
+    /// reach was minutes old, every one of them therefore sat on the engagement model's immaturity
+    /// floor, and the whole page read quiet no matter how far you scrolled. 1,200 rows is roughly
+    /// the last 24 hours of a 2,863-athlete community — the same day the presence ring uses — so
+    /// scrolling actually reaches posts that have had time to gather an audience.
+    ///
+    /// It is close to free: the assembly already sorts and moderation-filters the WHOLE seed before
+    /// this cap is applied (the old comment claimed otherwise), the cap only bounds one array copy
+    /// and the `spaced` pass, and the grid still realizes `visibleCount` tiles either way.
+    @State private var wellCap = 1_200
     private static let wellStep = 400
     #if DEBUG
     /// --saved-routes: push the library directly (sim verification; the strip link needs a tap).
@@ -90,7 +110,9 @@ struct CommunityView: View {
     init(searching: Binding<Bool> = .constant(false)) {
         self._searching = searching
         _items = State(initialValue: Self.sessionFeed)
+        _window = State(initialValue: Array(Self.sessionFeed.prefix(Self.firstWindow)))
         _assembledOnce = State(initialValue: !Self.sessionFeed.isEmpty)
+        _latestByAuthor = State(initialValue: Self.sessionLatest)
         if !Self.didApplyLaunchArgs {
             Self.didApplyLaunchArgs = true
             // `--reset-social` starts UI tests from the default scope, like the social stores.
@@ -127,7 +149,24 @@ struct CommunityView: View {
     /// The feedKey the assembly task last ran for — lets `onAppear` tell a genuine revisit apart
     /// from the first pass of a fresh instance (where assembling again would double the work).
     @State private var lastAssembledKey = ""
+    /// Newest post per author, built with the feed — the ring row's only read of it.
+    @State private var latestByAuthor: [String: Date]
+    /// A real (non-seeded) athlete whose page is being fetched, and one whose fetch just failed —
+    /// see `openAthlete`. Both drive `athleteResolveNote`.
+    @State private var resolvingAthlete: String?
+    @State private var unresolvedAthlete: String?
+    /// The revisit refresh, held so it can be cancelled — see the `onAppear` note below.
+    @State private var revisitRefresh: Task<Void, Never>?
+    /// Refresh ordering. `snapshotSeq` stamps each set of inputs as it is read; `appliedSeq` is the
+    /// stamp of the newest one actually put on screen. Two refreshes can be in flight at once (the
+    /// `.task(id:)` one and the `onAppear` revisit one) and they snapshot at different instants —
+    /// without this, whichever detached build happened to finish last wrote, so a revisit that
+    /// picked up a share-visibility change could be overwritten by an older snapshot that never saw
+    /// it. A result older than what is already displayed is dropped, never applied.
+    @State private var snapshotSeq = 0
+    @State private var appliedSeq = 0
     @MainActor private static var sessionFeed: [FeedItem] = []
+    @MainActor private static var sessionLatest: [String: Date] = [:]
 
     /// Cheap change signature over every feed input; a change re-runs the assembly task.
     /// `publicRouteMaps` is a term because own-post route visibility is decided AT assembly
@@ -140,60 +179,333 @@ struct CommunityView: View {
         "\(profile?.handle ?? "")|\(wellCap)|\(profile?.publicRouteMaps == true)"
     }
 
-    /// Assembled once per relevant change (the community seed is ~950 athletes' posts — never filter
-    /// per row). Moderation runs on the full stream so blocked athletes vanish from both scopes.
-    /// Remote posts (real athletes, fetched per-scope so the *server's* follow graph gates them)
-    /// merge on top; the local pipeline — including `FeedAssembler.scoped` — is unchanged.
-    private func assembleFeed() -> [FeedItem] {
+    /// Everything the assembly reads, as plain `Sendable` values.
+    ///
+    /// This exists so the assembly can leave the main actor (see `refreshFeed`). Only the first
+    /// two fields need the main thread at all — the athlete's own SwiftData workouts and the live
+    /// stores — and they are cheap; the expensive half (the 2,863-athlete directory behind
+    /// `CommunityFeed.seed()`, a merge and sort over ~2,900 posts, and `spaced`) touches none of it.
+    struct FeedInputs: Sendable {
+        var own: [FeedItem] = []
+        var pulsed: [FeedItem] = []
+        var remote: [FeedItem] = []
+        var following: Set<String> = []
+        /// Snapshots of `ModerationStore` — see `isVisible`.
+        var blocked: Set<String> = []
+        var reported: Set<String> = []
+        var scopeIsFollowing = false
+        var wellCap = 1_200
+
+        /// `ModerationStore.isVisible`, re-expressed over the snapshot. It has to be re-expressed
+        /// rather than called, because the store is `@MainActor` and this runs off it —
+        /// `MomentumTests/CommunityFeedAssemblySnapshotTests` pins the two to the same answer on
+        /// every combination, so a change to the store can't silently leave this behind.
+        func isVisible(_ item: FeedItem) -> Bool {
+            !reported.contains(item.id.uuidString)
+                && !(item.authorHandle.map(blocked.contains) ?? false)
+        }
+    }
+
+    /// The main-actor half: read the SwiftData rows and the observable stores into values. Bounded
+    /// and cheap — the athlete's own shared posts only, capped at `ownWorkoutCap`.
+    @MainActor
+    private func feedInputs() -> FeedInputs {
         let shared = workouts.lazy.filter { SocialPrivacy.isShared($0) }.prefix(Self.ownWorkoutCap)
+        let isPro = paywall.isEntitled(to: .fullPlan)
+        return FeedInputs(
+            own: shared.map { FeedAssembler.item(from: $0, profile: profile, isPro: isPro) },
+            pulsed: pulsed,
+            remote: remoteFeed.items,
+            following: follows.following,
+            blocked: moderation.blockedHandles,
+            reported: moderation.reportedPosts,
+            scopeIsFollowing: scope == .following,
+            wellCap: wellCap)
+    }
+
+    /// Assembled once per relevant change (the community seed is ~2,900 athletes' posts — never
+    /// filter per row). Moderation runs on the full stream so blocked athletes vanish from both
+    /// scopes. Remote posts (real athletes, fetched per-scope so the *server's* follow graph gates
+    /// them) merge on top; the local pipeline — including `FeedAssembler.scoped` — is unchanged.
+    ///
+    /// `nonisolated` and pure, so `refreshFeed` can run it off the main actor. That is the whole
+    /// point: on a fresh install this call is the first thing in the process to touch
+    /// `CommunityDirectory`, which builds 2,863 athletes and folds each one's whole training
+    /// ledger. Measured on the main thread it froze the app for 881 ms — nothing drawn, no tap
+    /// accepted — before the first tile could exist.
+    nonisolated static func assembleFeed(_ input: FeedInputs) -> [FeedItem] {
         // Pulse posts (minted on pull-to-refresh) merge in ahead of the seed and re-sort — they're
         // minutes old, so they surface at the top exactly like a post that just landed.
-        // The page caps at the ~150 most recent: the seed is 950 athletes deep, and handing SwiftUI
-        // a thousand-row LazyVStack bloats memory and grinds accessibility for a tail nobody
-        // scrolls to. Follows are exempt from the cap (scoped from the FULL stream) so a followed
-        // athlete's post never disappears behind it.
-        // `FeedAssembler.feed` already returns date-sorted rows — the re-sort (a second full pass
-        // over ~2,900 fat structs) is only needed when pulse posts actually merged in.
-        let base = FeedAssembler.feed(userWorkouts: Array(shared), profile: profile,
-                                      community: CommunityFeed.seed(),
-                                      viewerIsPro: paywall.isEntitled(to: .fullPlan))
-        let assembled = (pulsed.isEmpty ? base : (pulsed + base).sorted { $0.date > $1.date })
-            .filter(moderation.isVisible)
-        let local = scope == .following
-            ? FeedAssembler.scoped(assembled, following: follows.following)
-            : Array(assembled.prefix(wellCap))   // demand-deepened well; the WINDOW reveals it 30 at a time
+        // The page caps at `wellCap`: the seed is thousands of athletes deep, and handing SwiftUI
+        // a thousand-row grid bloats memory and grinds accessibility for a tail nobody scrolls to.
+        // Follows are exempt from the cap (scoped from the FULL stream) so a followed athlete's
+        // post never disappears behind it.
+        // The base merge is already date-sorted — the re-sort (a second full pass over ~2,900 fat
+        // structs) is only needed when pulse posts actually merged in.
+        let base = (input.own + CommunityFeed.seed()).sorted { $0.date > $1.date }
+        let assembled = (input.pulsed.isEmpty ? base : (input.pulsed + base).sorted { $0.date > $1.date })
+            .filter(input.isVisible)
+        let local = input.scopeIsFollowing
+            ? FeedAssembler.scoped(assembled, following: input.following)
+            : Array(assembled.prefix(input.wellCap))   // demand-deepened well; the WINDOW reveals it 30 at a time
         // Own published posts come back in the remote feed too — the local copy wins (it has the
         // full-resolution photos and needs no signing round trip).
         let localIDs = Set(local.map(\.id))
-        let remote = remoteFeed.items.filter { !localIDs.contains($0.id) }.filter(moderation.isVisible)
+        let remote = input.remote.filter { !localIDs.contains($0.id) }.filter(input.isVisible)
         let merged = remote.isEmpty ? local : (local + remote).sorted { $0.date > $1.date }
-        return Self.mediaFirst(merged)
+        return spaced(merged)
     }
 
-    /// The wall's first impression is media (2026-08-25 realism pass): a post with no route, no
-    /// muscle map and no photo renders as a sport glyph on a wash, and two of those in the top
-    /// row read as placeholder art. Date order is kept; glyph-only posts just can't occupy the
-    /// first two rows while a media post exists to take the slot.
-    static func mediaFirst(_ items: [FeedItem]) -> [FeedItem] {
-        let lead = 6
-        guard items.count > lead else { return items }
-        func hasMedia(_ i: FeedItem) -> Bool {
-            (i.routeLatLon?.count ?? 0) > 1 || (i.muscles?.values.contains { $0 > 0 } ?? false) || !i.photosData.isEmpty
-        }
-        var head: [FeedItem] = [], deferred: [FeedItem] = [], rest: [FeedItem] = []
+    /// The newest post per author, in ONE pass — what the Following ring row reads.
+    ///
+    /// `followedPeople` used to scan the whole assembled feed once per followed athlete, inside
+    /// `body`. At 20 follows against a 1,200-post well that is 24,000 comparisons, re-run every
+    /// time the wall's body ran — including every reveal of the next twelve tiles, i.e. constantly
+    /// while scrolling. Built here instead, off the main actor, alongside the feed it summarises.
+    nonisolated static func latestByAuthor(_ items: [FeedItem]) -> [String: Date] {
+        var out: [String: Date] = [:]
         for item in items {
-            if head.count < lead {
-                if hasMedia(item) { head.append(item) } else { deferred.append(item) }
-            } else {
-                rest.append(item)
-            }
+            guard let handle = item.authorHandle else { continue }
+            if let seen = out[handle], seen >= item.date { continue }
+            out[handle] = item.date
         }
-        // Not enough media posts to fill the lead? Let the deferred ones back in, in order.
-        while head.count < lead, !deferred.isEmpty { head.append(deferred.removeFirst()) }
-        return head + deferred + rest
+        return out
+    }
+
+    /// Snapshot inputs on the main actor, assemble off it, hand the finished wall back. The wall
+    /// keeps whatever it was already showing until the new one lands, so a refresh never blanks
+    /// the page.
+    @MainActor
+    private func refreshFeed() async {
+        let key = feedKey
+        let input = feedInputs()
+        snapshotSeq += 1
+        let seq = snapshotSeq
+        #if DEBUG
+        let t0 = CFAbsoluteTimeGetCurrent()
+        #endif
+        let built = await CommunityFeedAssembly.build(key: key, input: input)
+        // Two guards, and they answer different questions. `isCancelled` means "this view is gone"
+        // (the athlete flipped away mid-build). `seq > appliedSeq` means "a newer snapshot already
+        // landed" — the stale-writer race the two refresh paths could otherwise lose.
+        guard !Task.isCancelled, seq > appliedSeq else {
+            #if DEBUG
+            if seq <= appliedSeq { CommunityPerf.mark("STALE refresh seq=\(seq) applied=\(appliedSeq) dropped") }
+            #endif
+            return
+        }
+        appliedSeq = seq
+        #if DEBUG
+        CommunityPerf.mark(String(format: "TIME assembleFeed %.1fms main=%@ (off-actor)",
+                                  (CFAbsoluteTimeGetCurrent() - t0) * 1000,
+                                  Thread.isMainThread ? "Y" : "N"))
+        #endif
+        // The very first fill replaces the skeleton, so the two crossfade rather than one
+        // disappearing and the other arriving into the gap. Opacity only — a crossfade is what
+        // Reduce Motion asks for, not something it has to be spared.
+        let firstFill = !assembledOnce
+        withAnimation(firstFill ? .easeOut(duration: 0.3) : nil) {
+            items = built.items
+            // The window is replaced with the feed it is a window ONTO, in the same transaction —
+            // the one place a shrinking feed is handled (`reveal` only ever grows).
+            window = Array(built.items.prefix(max(Self.firstWindow, window.count)))
+            assembledOnce = true
+        }
+        #if DEBUG
+        CommunityPerf.tick("window")
+        #endif
+        latestByAuthor = built.latest
+        lastAssembledKey = key
+        Self.sessionFeed = built.items
+        Self.sessionLatest = built.latest
+    }
+
+    /// What a tile will actually DRAW, as a comparable string — a bundled city loop two neighbours
+    /// both ran, two lower-body lifts lighting the identical muscle figure, two yoga posts wearing
+    /// the identical glyph.
+    ///
+    /// **Say the promise precisely (2026-08-29).** It used to read "two tiles with the same
+    /// signature are the same picture", and per-post wash variation made that imprecise: two yoga
+    /// tiles now wear different tints and different symbol sizes, so they are not the same
+    /// *rendering* any more. The promise this actually keeps, and the only one its single consumer
+    /// needs, is: **two tiles with the same signature draw the same SUBJECT, and a repeated subject
+    /// reads as repetition in the viewport whatever tint it wears.** `spaced` exists to keep
+    /// repetition out of the viewport, not to compare bitmaps — see `dealtSignature` below and
+    /// `spacingKeysOnTheSubjectNotTheDeal`, which measured the alternative and found it seats 27
+    /// same-subject neighbours across a 400-tile wall where this seats 0.
+    ///
+    /// Photos are always their own subject; a route is fingerprinted by its shape (only three
+    /// loops ship per city, so different athletes genuinely draw the same trace); a muscle map by
+    /// the groups it lights; everything else by its sport glyph.
+    static func mediaSignature(_ i: FeedItem) -> String {
+        // The branch ORDER is the tile's, not a convenient one: `FeedTileMedia` covers with the
+        // photo only when the author chose it, then muscle, then route, then a photo it has no
+        // other visual for. Leading with "has photos at all" claimed a unique picture for a post
+        // whose tile actually draws its route — the exact class of lie this function exists to
+        // avoid. Seeded community posts carry no photos, so this only ever mattered for the
+        // athlete's own posts on their own wall; it is still what the tile draws.
+        if i.coverIsPhoto, !i.photosData.isEmpty { return "photo:\(i.id)" }
+        if let m = i.muscles, m.values.contains(where: { $0 > 0 }) {
+            // COARSE on purpose. Keying on the exact set of lit groups made two figures whose
+            // loads differed in one minor group count as different pictures, and they shipped
+            // side by side looking identical (a 9,929 lb tile beside a 6,900 lb tile, both
+            // chest/shoulders/quads). At tile size only the DOMINANT regions are legible, so the
+            // signature is the two heaviest groups. That still separates leg day from push day,
+            // which genuinely do look different, while catching the look-alikes.
+            let top = m.filter { $0.value > 0 }
+                .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key.rawValue < $1.key.rawValue }
+                .prefix(2).map(\.key.rawValue).sorted()
+            return "muscle:" + top.joined(separator: ",")
+        }
+        if let pts = i.routeLatLon, pts.count > 1,
+           let first = pts.first, first.count > 1, let last = pts.last, last.count > 1 {
+            // Quantized to ~10m so float noise can't split one loop into two signatures.
+            // Interpolation, never `String(format:)` — a `%d` there takes a 32-bit CInt and an Int
+            // argument is a silent truncation waiting to happen.
+            func q(_ v: Double) -> Int { Int((v * 10_000).rounded()) }
+            return "route:\(pts.count):\(q(first[0])),\(q(first[1])):\(q(last[0])),\(q(last[1]))"
+        }
+        if !i.photosData.isEmpty { return "photo:\(i.id)" }
+        // The GLYPH, never the sport (2026-08-29). This read `type.rawValue`, but the tile draws
+        // `type.systemImage`, and several sports share one: `.run` and `.trailRun` are both
+        // `figure.run`, and all four cycling cases are `bicycle`. So a mapless run and a mapless
+        // trail run were two different signatures and one identical picture — and `spaced`, being
+        // told they differed, shipped them side by side. Caught on a screenshot of the wall at
+        // depth 24: two identical running figures in one row, 7.83 mi and 8.44 mi. This whole
+        // function's promise is "two tiles with the same signature are the same picture", so it has
+        // to key on what is drawn. Same correction as coarsening the muscle key on 2026-08-28.
+        //
+        // **AND STILL ONLY THE GLYPH, after the tiles stopped being identical (2026-08-29,
+        // later).** `WashVariation` now deals every mapless post its own gradient axis, corner
+        // light, lead hue, symbol size and offset, so two swims are no longer the same rendering.
+        // The obvious follow-through was to put the deal in the key: two tiles that differ are not
+        // the same picture, and `spaced` would stop spending displacement budget separating them.
+        //
+        // Measured, that is a bad trade, and `spacingKeysOnTheSubjectNotTheDeal` holds the numbers.
+        // The deal changes a tile's TINT and its symbol's size; it does not change its SUBJECT, and
+        // the subject is what the eye sorts a mosaic by at 130pt. Keying on the deal put three
+        // running figures side by side in the wall's third row on a real screenshot — visibly worse
+        // than the identical-but-separated tiles it replaced. The budget spent separating them is
+        // not wasted; it is buying the most legible difference on the tile.
+        //
+        // So the variation and the spacer do different jobs, and both are needed: the spacer keeps
+        // two of one sport apart, and the variation means the pairs it CANNOT keep apart (a run of
+        // five swims in date order, the tail of the well) are still two different pictures instead
+        // of one rendered twice.
+        return "glyph:\(i.type.systemImage)"
+    }
+
+    /// The alternative definition of "the same picture", kept so the trade above stays measurable:
+    /// the tile's subject AND the tone `WashVariation` deals it. Not what the wall ships — see
+    /// `spacingKeysOnTheSubjectNotTheDeal`, which runs both over the real seed and counts.
+    static func dealtSignature(_ i: FeedItem) -> String {
+        let base = mediaSignature(i)
+        guard base.hasPrefix("glyph:") else { return base }
+        return base + ":\(WashVariation.tone(for: i.id))"
+    }
+
+    static func hasMedia(_ i: FeedItem) -> Bool {
+        (i.routeLatLon?.count ?? 0) > 1 || (i.muscles?.values.contains { $0 > 0 } ?? false) || !i.photosData.isEmpty
+    }
+
+    /// Two rules over one pass, both about what the wall LOOKS like:
+    ///
+    /// 1. **The lead is media** (2026-08-25 realism pass): a post with no route, no muscle map and
+    ///    no photo renders as a sport glyph on a wash, and two of those in the top row read as
+    ///    placeholder art.
+    /// 2. **No two neighbours draw the same picture** (2026-08-28): at depth the wall showed a full
+    ///    row of stick figures — yoga, yoga, swim — and pairs of muscle figures lit identically,
+    ///    side by side. On screen that reads as a rendering bug, then as a generator. Repetition in
+    ///    the viewport is the loudest tell there is.
+    ///
+    /// "Neighbour" means what the EYE sees on a 3-across mosaic: the tile to the left and the tile
+    /// directly above (`columns` back in the flat order), not just the previous index.
+    ///
+    /// Date order still governs: no post moves more than `maxDrift` slots from its own date
+    /// position, in either direction, and when nothing legal is within reach the date wins and the
+    /// repeat ships. Pure and O(n) — the well runs to thousands of posts.
+    ///
+    /// **`maxDrift` is a hard cap, not a hope (2026-08-29).** The displacement bound used to be
+    /// incidental: `held` was capped at `lookahead`, but a post sitting in it could be passed over
+    /// again and again while legal posts streamed by, so its drift was unbounded in principle and
+    /// merely small in practice. Coarsening the glyph signature — a mapless run and a mapless trail
+    /// run draw the identical figure and must count as one picture — created enough extra
+    /// collisions to expose it, and `everyPostSurvivesAndBarelyMoves` went to a worst drift of 6
+    /// against its bound of 4. The head of the queue now goes the moment it has waited its whole
+    /// budget, legal or not, which makes reverse-chronology structural: forward drift is capped
+    /// here, and backward drift can never exceed `held.count`, itself capped at `lookahead`.
+    ///
+    /// **`picture` is injectable, and that is not a test hook (2026-08-29).** What counts as "the
+    /// same picture" is the one judgement call in this whole file, it has been got wrong twice
+    /// (`type.rawValue` vs the glyph; the exact lit muscle set vs the dominant two), and the cost of
+    /// getting it wrong in either direction is only visible as a COUNT over a real wall. So a
+    /// candidate definition can be run against the seed and compared with the shipped one —
+    /// `spacingKeysOnTheSubjectNotTheDeal` does exactly that, and is why the glyph key stayed on
+    /// the symbol when the per-post wash variation landed.
+    static func spaced(_ items: [FeedItem], lead: Int = 6, lookahead: Int = 4,
+                       columns: Int = 3, maxDrift: Int = 4,
+                       picture: (FeedItem) -> String = mediaSignature) -> [FeedItem] {
+        guard items.count > 2 else { return items }
+        // Signatures once per post, never per comparison: the well runs to thousands of rows and
+        // each candidate is weighed several times as it waits. `at` is the post's own date
+        // position, which is what the drift cap below is measured against.
+        typealias Tile = (item: FeedItem, sig: String, media: Bool, at: Int)
+        let queue: [Tile] = items.enumerated().map { ($1, picture($1), hasMedia($1), $0) }
+        var out: [FeedItem] = []
+        out.reserveCapacity(items.count)
+        var sigs: [String] = []         // out's signatures, so a neighbour check is a lookup
+        var held: [Tile] = []           // deferred, still in date order; never longer than `lookahead`
+        var i = 0
+
+        func emit(_ tile: Tile) {
+            sigs.append(tile.sig)
+            out.append(tile.item)
+        }
+        func legal(_ tile: Tile) -> Bool {
+            guard out.count >= lead || tile.media else { return false }
+            // The tile immediately left (unless this one starts a row) and the tile directly
+            // above. DELIBERATELY NARROW: a wider neighbourhood (diagonals, the two-left slot)
+            // was tried on 2026-08-28 and reverted — it demands more reordering than the
+            // "barely moves" promise funds, so the algorithm started shipping TOUCHING repeats
+            // to stay inside the displacement budget, which is strictly worse to look at.
+            // Diagonal and same-row-with-a-gap repeats remain possible; their real cause is
+            // content variety (only 3 route loops ship per city), and that is fixed at the seed,
+            // not by rearranging tiles.
+            if out.count % columns != 0, sigs.last == tile.sig { return false }
+            if out.count >= columns, sigs[out.count - columns] == tile.sig { return false }
+            return true
+        }
+
+        while i < queue.count || !held.isEmpty {
+            // FIRST, always: a post that has waited its whole displacement budget ships now,
+            // legal or not. This is the line that makes reverse-chronological order a guarantee
+            // rather than an observation — see the note on `maxDrift`. It has to precede the
+            // legality scan, because emitting some other held post instead would push this one
+            // past its budget.
+            if let head = held.first, out.count - head.at >= maxDrift {
+                emit(held.removeFirst())
+                continue
+            }
+            // The oldest thing waiting goes the moment it becomes legal — that's what keeps a
+            // deferred post near its own date slot.
+            if let k = held.firstIndex(where: legal) { emit(held.remove(at: k)); continue }
+            if i < queue.count {
+                let next = queue[i]
+                i += 1
+                if legal(next) { emit(next) }
+                else if held.count < lookahead { held.append(next) }
+                else { emit(held.removeFirst()); held.append(next) }   // out of slack: date wins
+                continue
+            }
+            emit(held.removeFirst())   // tail: nothing legal is left, so keep the order
+        }
+        return out
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("wall")
+        #endif
         Group {
             if searching {
                 // In-place search (owner ask 2026-07-29): the header magnifier opens a search bar
@@ -211,6 +523,8 @@ struct CommunityView: View {
             }
         }
         .background(Theme.background)
+        .overlay(alignment: .bottom) { athleteResolveNote }
+        .animation(.easeOut(duration: 0.2), value: resolvingAthlete == nil && unresolvedAthlete == nil)
         .navigationBarHidden(true)
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .navigationDestination(item: $showingFollowing) { _ in FollowingListView() }
@@ -238,22 +552,42 @@ struct CommunityView: View {
                 CommunityPager(items: start.items, startID: first.id, ownHandle: profile?.handle)
             }
         }
+        #if DEBUG
+        .task {
+            guard CommunityPerf.enabled else { return }
+            CommunityPerf.mark("APPEAR CommunityView")
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                CommunityPerf.dump("1s")
+                CommunityPerf.mark(FeedRouteSnapshots.perfLine())
+                CommunityPerf.reset()
+            }
+        }
+        #endif
         .task(id: feedKey) {
             // Assemble off the render path — runs on appear and whenever an input signature moves.
-            items = assembleFeed()
-            assembledOnce = true
-            lastAssembledKey = feedKey
-            Self.sessionFeed = items
+            await refreshFeed()
         }
         // Tab revisits rebuild too: a share-visibility toggle elsewhere changes no count in
         // `feedKey`, but the athlete expects the feed to reflect it when they come back. Only on
         // a REAL revisit though — on a fresh instance (every slider flip creates one) the task
         // above hasn't stamped the key yet, and running here too assembled the whole feed TWICE
         // back to back (2026-07-30 perf audit).
+        //
+        // **Held and cancelled (2026-08-29).** This was a bare unstructured `Task`: nothing owned
+        // it, so leaving the wall did not stop it and a second revisit started another beside the
+        // first. Two builds then raced the `.task(id:)` one and the last writer won, from whichever
+        // snapshot happened to finish last. It is held now, cancelled on the next revisit and on
+        // disappear, and `refreshFeed`'s sequence stamp is the backstop for the window where a
+        // cancelled build has already passed its last suspension point.
         .onAppear {
             guard assembledOnce, lastAssembledKey == feedKey else { return }
-            items = assembleFeed()
-            Self.sessionFeed = items
+            revisitRefresh?.cancel()
+            revisitRefresh = Task { await refreshFeed() }
+        }
+        .onDisappear {
+            revisitRefresh?.cancel()
+            revisitRefresh = nil
         }
         .task {
             // Who follows back + any nudges that landed while the app was away (throttled).
@@ -382,7 +716,7 @@ struct CommunityView: View {
                 Task { @MainActor in
                     for _ in 0..<30 {
                         if items.indices.contains(index) {
-                            visibleCount = max(visibleCount, min(index + Self.windowStep, items.count))
+                            reveal(index + Self.windowStep)
                             try? await Task.sleep(for: .milliseconds(600))
                             immersive = PagerStart(id: items[index].id)
                             return
@@ -455,9 +789,11 @@ struct CommunityView: View {
                         emptyState
                             .padding(.top, Theme.Space.xl)
                             .padding(.horizontal, Theme.Space.md)
+                    } else {
+                        wallSkeleton
                     }
                 } else {
-                    CommunityFeedGrid(items: Array(items.prefix(visibleCount)),
+                    CommunityFeedGrid(items: window,
                                       zoomNamespace: tileZoom,
                                       onTileAppear: { index in
                                           // The Instagram trick: the next page is requested when a
@@ -468,6 +804,7 @@ struct CommunityView: View {
                                       }) { id in
                         immersive = PagerStart(id: id)
                     }
+                    .transition(.opacity)   // crossfades with the skeleton it replaces
                     // Reaching the bottom loads more, always (owner ask 2026-07-30 — the mirror of
                     // pull-to-refresh): grow the local window a page (the Instagram reveal), DEEPEN
                     // the well itself once the window catches up to its cap (the assembled feed is
@@ -497,7 +834,7 @@ struct CommunityView: View {
                     Task { @MainActor in
                         for _ in 0..<20 {
                             if !items.isEmpty {
-                                visibleCount = max(visibleCount, min(index + Self.windowStep, items.count))
+                                reveal(index + Self.windowStep)
                                 try? await Task.sleep(for: .milliseconds(500))
                                 let target = items.indices.contains(index) ? items[index] : items[items.count - 1]
                                 withAnimation { proxy.scrollTo(target.id, anchor: .top) }
@@ -523,9 +860,7 @@ struct CommunityView: View {
     /// a burst of near-end tile appearances in one frame advances at most one page, because the
     /// first advance moves the threshold the rest are compared against.
     private func loadNextPage() {
-        if visibleCount < items.count {
-            visibleCount = min(visibleCount + Self.windowStep, items.count)
-        }
+        reveal(visibleCount + Self.windowStep)
         let remaining = items.count - visibleCount
         // (`items.count >= wellCap` proves the assembled feed still had more; once assembly
         // returns fewer than the cap, the seed is exhausted and the cap stops growing.)
@@ -535,6 +870,19 @@ struct CommunityView: View {
         if remaining <= Self.windowStep * 4 {
             Task { await remoteFeed.loadMore(scope: remoteScope) }
         }
+    }
+
+    /// The ONLY writer of `window` outside `refreshFeed` — so the revealed count and the revealed
+    /// tiles are one fact rather than two that can drift. Grows only (every caller is a reveal);
+    /// a shrinking feed is handled where the feed itself is replaced. Idempotent: asking for a
+    /// window that is already open costs one comparison and allocates nothing.
+    private func reveal(_ count: Int) {
+        let target = min(max(count, window.count), items.count)
+        guard target != window.count else { return }
+        window = Array(items.prefix(target))
+        #if DEBUG
+        CommunityPerf.tick("window")
+        #endif
     }
 
     /// True while scrolling further down can still produce content: window not fully revealed,
@@ -561,6 +909,31 @@ struct CommunityView: View {
         }
     }
 
+    /// The wall's first beat, before there is a wall: the mosaic's own geometry in quiet surface
+    /// panes (ProfileScreen's `profileWarmup` pattern, perf audit 2026-08-13).
+    ///
+    /// It only ever shows on the FIRST community open of a process — every later one is seeded
+    /// from `sessionFeed` and renders real tiles on frame one. That first open is the expensive
+    /// one: the whole 2,863-athlete directory and its ledgers are built behind this. Deliberately
+    /// still and unlabelled — no spinner, no "Loading" — so the page reads as a page arriving
+    /// rather than as a machine working, and the real grid crossfades in over it at the same
+    /// gutter, same aspect, same top inset, so nothing moves when it lands.
+    private var wallSkeleton: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: ProfileGrid.gutter),
+                                 count: 3),
+                  spacing: ProfileGrid.gutter) {
+            ForEach(0..<12, id: \.self) { _ in
+                Color.clear
+                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                    .overlay(Theme.surface)
+            }
+        }
+        .padding(.top, ProfileGrid.gutter)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .transition(.opacity)
+    }
+
     /// The saved-route library's door, tucked into the scope-tabs strip's trailing edge. This used
     /// to live in a "pulse strip" between the tabs and the wall ("2,863 athletes · 217 moving
     /// now") — the owner cut that line entirely (2026-07-30) so the grid runs full-bleed from the
@@ -576,7 +949,7 @@ struct CommunityView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(savedRoutes.count) saved routes")
+            .accessibilityLabel(savedRoutes.count == 1 ? "1 saved route" : "\(savedRoutes.count) saved routes")
         }
     }
 
@@ -603,13 +976,25 @@ struct CommunityView: View {
     }
 
     private var followedPeople: [FollowingRow.Person] {
-        follows.following.filter { $0 != ownHandle }.map { handle in
+        // `following` is a Set, so the map's order is arbitrary and Swift's sort is not stable —
+        // without the handle tiebreak below, two people with the same ring state and the same last
+        // post swapped places between renders.
+        let newest = latestByAuthor
+        return follows.following.filter { $0 != ownHandle }.sorted().map { handle in
             let athlete = CommunityDirectory.athlete(handle: handle)
-            let latest = items.lazy.filter { $0.authorHandle == handle }.map(\.date).max()
-                ?? athlete?.posts.map(\.date).max()
+            // One dictionary lookup, not a scan of the whole well per followed athlete — see
+            // `latestByAuthor`. This runs inside `body`, and `body` runs on every reveal of the
+            // next twelve tiles.
+            let latest = newest[handle] ?? athlete?.posts.map(\.date).max()
             let ringed = latest.map { Date().timeIntervalSince($0) < 86_400 } ?? false
             let label = athlete?.name.split(separator: " ").first.map(String.init) ?? handle
-            return FollowingRow.Person(handle: handle, label: label, ringed: ringed, lastActive: latest,
+            // `label` is the caption (a first name fits under a 64pt face); `fullName` is what the
+            // avatar draws its initials from. Passing the caption made Theo Bennett a "T" here and
+            // a "TB" in search and in every follow list — one person reading as two, the exact bug
+            // `CommunityAvatars` promises can't happen (2026-08-28).
+            return FollowingRow.Person(handle: handle, label: label,
+                                       fullName: athlete?.name ?? handle,
+                                       ringed: ringed, lastActive: latest,
                                        avatarData: athlete?.avatarData,
                                        imageName: athlete?.communityAvatarAsset,
                                        preset: athlete?.communityPreset)
@@ -618,8 +1003,12 @@ struct CommunityView: View {
 
     private var followingRow: some View {
         FollowingRow(
-            you: .init(handle: ownHandle, label: "Your day", ringed: youTrainedToday,
-                       avatarData: profile?.avatarData),
+            // "Your day" is the caption, never the name: with no profile photo the avatar drew its
+            // initials from the caption and the athlete's own face on the community home read
+            // "YD" (2026-08-28).
+            you: .init(handle: ownHandle, label: "Your day",
+                       fullName: FeedAssembler.displayName(profile),
+                       ringed: youTrainedToday, avatarData: profile?.avatarData),
             people: followedPeople,
             onFind: { withAnimation(.easeOut(duration: 0.2)) { searching = true } },
             onYou: {
@@ -643,17 +1032,57 @@ struct CommunityView: View {
 
     private var remoteScope: FeedScope { scope == .following ? .following : .everyone }
 
-    /// Community (seeded) athletes resolve locally; real athletes fetch their page from the
-    /// backend. Nothing happens on a miss (offline/dark) — the feed card is still fully readable.
+    /// Community (seeded) athletes resolve locally and push instantly; real athletes need a round
+    /// trip first.
+    ///
+    /// **The tap always answers (2026-08-29).** A miss used to do nothing at all — no spinner while
+    /// the fetch ran, no word when it failed, no navigation — so on a slow or dark connection the
+    /// athlete tapped a name and the app sat there. A control that does nothing is the most
+    /// fake-feeling thing on a social page, which is the whole point of this pass. Same treatment
+    /// as `FollowingListView`: a quiet spinner for as long as it takes, then one plain line if it
+    /// can't be had. The toast clears itself, so nothing is left to dismiss.
     private func openAthlete(_ handle: String) {
         if let seeded = CommunityDirectory.athlete(handle: handle) {
             selectedAthlete = seeded
             return
         }
+        resolvingAthlete = handle
         Task {
-            if let remote = await remoteFeed.athlete(handle: handle) {
+            let remote = await remoteFeed.athlete(handle: handle)
+            guard resolvingAthlete == handle else { return }   // a newer tap owns the spinner now
+            resolvingAthlete = nil
+            if let remote {
                 selectedAthlete = remote
+            } else {
+                unresolvedAthlete = handle
+                try? await Task.sleep(for: .seconds(3))
+                if unresolvedAthlete == handle { unresolvedAthlete = nil }
             }
+        }
+    }
+
+    /// The resolve's own beat, over the wall: a spinner while a real athlete's page is fetched and
+    /// one honest line when it can't be. Deliberately a small floating capsule rather than a sheet
+    /// or an alert — the tap was a navigation, not a decision, so failing it must not demand one.
+    @ViewBuilder
+    private var athleteResolveNote: some View {
+        if resolvingAthlete != nil || unresolvedAthlete != nil {
+            HStack(spacing: Theme.Space.sm) {
+                if resolvingAthlete != nil {
+                    ProgressView().controlSize(.small).tint(Theme.inkSecondary)
+                    Text("Opening profile")
+                } else {
+                    Text("Profile isn't available right now.")
+                }
+            }
+            .font(.rounded(Theme.FontSize.label, weight: .semibold))
+            .foregroundStyle(Theme.inkSecondary)
+            .padding(.horizontal, Theme.Space.md).padding(.vertical, Theme.Space.sm)
+            .background(Capsule().fill(Theme.surface))
+            .overlay(Capsule().stroke(Theme.hairline))
+            .padding(.bottom, Theme.Space.xl)
+            .transition(.opacity)
+            .allowsHitTesting(false)
         }
     }
 
@@ -680,6 +1109,55 @@ struct CommunityView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(Theme.Space.xl)
+    }
+}
+
+/// One assembly per distinct set of inputs, however many callers ask for it at once.
+///
+/// **The flip storm (2026-08-29).** The Profile ↔ Community slider tears `CommunityView` down and
+/// builds a new one on every switch, and each new one starts its own `.task(id: feedKey)`. During
+/// the ~650 ms first build — the one that constructs the 2,863-athlete directory and folds every
+/// ledger — flipping back and forth spawned a detached task per flip, each re-sorting and
+/// re-`spaced`ing ~2,900 posts while competing with the others for cores. The results were
+/// identical (the assembly is a pure function of its input), so every copy but one was work the
+/// athlete waited through for nothing. The first caller now starts the build and everyone else
+/// waits on that same task.
+///
+/// Keyed on `feedKey`, the assembly's whole change signature, so two callers only ever share a
+/// build when they would have computed the same wall. Internal rather than file-private only so
+/// `CommunitySurfacePerfTests` can hold it to that.
+@MainActor
+enum CommunityFeedAssembly {
+    typealias Wall = (items: [FeedItem], latest: [String: Date])
+    private static var inFlight: (key: String, task: Task<Wall, Never>)?
+
+    #if DEBUG
+    /// Builds actually run, against callers served — the coalescer's own measurement.
+    private(set) static var builds = 0
+    private(set) static var requests = 0
+    static func resetCounters() { builds = 0; requests = 0 }
+    #endif
+
+    static func build(key: String, input: CommunityView.FeedInputs) async -> Wall {
+        #if DEBUG
+        requests += 1
+        #endif
+        // Nothing suspends between the lookup and the store below, so two callers on the main
+        // actor cannot both miss and both start a build.
+        if let running = inFlight, running.key == key { return await running.task.value }
+        #if DEBUG
+        builds += 1
+        #endif
+        let task = Task.detached(priority: .userInitiated) { () -> Wall in
+            let items = CommunityView.assembleFeed(input)
+            return (items, CommunityView.latestByAuthor(items))
+        }
+        inFlight = (key, task)
+        let wall = await task.value
+        // Only clear our own: a build for a NEWER key may already have replaced the slot, and
+        // clearing it then would let the next caller start a duplicate of that one.
+        if inFlight?.key == key { inFlight = nil }
+        return wall
     }
 }
 

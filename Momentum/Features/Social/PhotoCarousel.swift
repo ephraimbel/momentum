@@ -111,8 +111,44 @@ private struct CarouselPhoto: View {
 /// bitmap for a small on-screen frame, and never decode a JPEG/PNG on the main thread in a `body`
 /// pass. Shared by feed photos and the Progress→History route thumbnails.
 enum ImageDownsampler {
+    /// Decoded results, kept for the session.
+    ///
+    /// Without this every appearance re-decoded from scratch: swiping to photo 2 and back to
+    /// photo 1 paid the full ImageIO decode again, and the page showed a flat `Theme.surface`
+    /// grey until it finished. That grey flash on a swipe you have already made is the single
+    /// least "seamless" thing in the post viewer (owner ask 2026-08-29). `NSCache` is
+    /// thread-safe and evicts itself under pressure, so this can never become a leak; the cost
+    /// limit is bytes, so ~11 full-page photos live here at most.
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 24
+        c.totalCostLimit = 64 * 1024 * 1024
+        return c
+    }()
+
+    /// Cheap, collision-safe enough for one session: the blob's length and its first and last
+    /// 64 bytes. Hashing three megabytes of JPEG on every lookup would cost more than the decode.
+    private static func key(_ data: Data, _ maxPixel: CGFloat) -> NSString {
+        var h = Hasher()
+        h.combine(data.count)
+        h.combine(data.prefix(64))
+        h.combine(data.suffix(64))
+        h.combine(maxPixel)
+        return String(h.finalize()) as NSString
+    }
+
+    /// Warm a photo the athlete is ABOUT to see — the neighbouring page in the media pager — so
+    /// landing on it is instant instead of a decode. Fire-and-forget; a hit is free.
+    static func prefetch(_ data: Data, maxPixel: CGFloat) {
+        let k = key(data, maxPixel)
+        guard cache.object(forKey: k) == nil else { return }
+        Task.detached(priority: .utility) { _ = await thumbnail(data, maxPixel: maxPixel) }
+    }
+
     static func thumbnail(_ data: Data, maxPixel: CGFloat) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) {
+        let k = key(data, maxPixel)
+        if let hit = cache.object(forKey: k) { return hit }
+        let decoded = await Task.detached(priority: .userInitiated) {
             guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return UIImage(data: data) }
             let opts: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -125,5 +161,10 @@ enum ImageDownsampler {
             }
             return UIImage(cgImage: cg)
         }.value
+        if let decoded {
+            let cost = Int(decoded.size.width * decoded.size.height * decoded.scale * decoded.scale * 4)
+            cache.setObject(decoded, forKey: k, cost: cost)
+        }
+        return decoded
     }
 }

@@ -9,7 +9,13 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let id: UUID
     let authorName: String
     let authorHandle: String?
+    /// What the byline prints — the author's own home town ("Buda, TX").
     let location: String?
+    /// The metro that town belongs to ("Austin, TX"), for anything that needs to know WHERE rather
+    /// than what is written: the hemisphere a January run is in, and the bundled loop pool. Since
+    /// the community moved off downtown pins (2026-08-29) `location` alone can no longer answer
+    /// either. nil for the user's own and real network posts.
+    var metro: String? = nil
     let isCommunity: Bool          // drives the "Momentum community" label (honest labeling)
     /// Verified Pro athlete → the checkmark next to the name. Remote posts carry it from the
     /// server profile; the viewer's own posts stamp it from the live entitlement; seeded community
@@ -69,6 +75,10 @@ struct FeedItem: Identifiable, Sendable, Hashable {
             if lower.contains("/mi") || lower.contains("/km") { return FeedMetric(value: t, label: "Pace") }
             if lower.contains("mi") || lower.contains("km")   { return FeedMetric(value: t, label: "Distance") }
             if lower.contains("lb") || lower.contains("kg")   { return FeedMetric(value: t, label: "Volume") }
+            // Trail posts carry a climb figure ("8.1 mi · 1:14:45 · 1,350 ft"). It used to fall
+            // through to the unlabeled case, so the pager's stat row showed a number under a blank
+            // caption while its neighbours read DISTANCE and TIME — the one cell that looked broken.
+            if lower.hasSuffix(" ft") || lower.hasSuffix(" m")  { return FeedMetric(value: t, label: "Climb") }
             if lower.contains("set") {
                 let num = t.split(separator: " ").first.map(String.init) ?? t
                 return FeedMetric(value: num, label: "Sets")
@@ -76,6 +86,20 @@ struct FeedItem: Identifiable, Sendable, Hashable {
             if t.contains(":") { return FeedMetric(value: t, label: "Time") }
             return FeedMetric(value: t, label: "")
         }
+    }
+}
+
+extension FeedItem {
+    /// The post's distance in km, read back off its own stat line — what the "save this route"
+    /// bookmark stores. The UNIT has to be read too: the leading token is "5.5 mi" for an athlete
+    /// on imperial and "8.9 km" for one on metric, and dividing both by 0.621371 stored every
+    /// metric athlete's saved routes 1.6× too long (2026-08-28). 0 when the post has no distance.
+    var distanceKm: Double {
+        guard let token = metrics.first(where: { $0.label == "Distance" })?.value else { return 0 }
+        let parts = token.split(separator: " ")
+        guard let number = parts.first.map({ $0.replacingOccurrences(of: ",", with: "") }).flatMap(Double.init)
+        else { return 0 }
+        return parts.dropFirst().first.map(String.init)?.lowercased() == "km" ? number : number / 0.621371
     }
 }
 

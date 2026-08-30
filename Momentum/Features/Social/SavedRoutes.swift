@@ -6,8 +6,17 @@ import SwiftData
 /// SHAPE (the silhouette, instantly) and open a full, explorable map.
 struct SavedRoutesView: View {
     @Query(sort: \SavedRoute.savedAt, order: .reverse) private var routes: [SavedRoute]
+    /// The athlete's unit preference. This library used to hardcode `"%.1f mi"`, so a metric
+    /// athlete saved an 8 km loop off the wall and the library called it 5.0 mi — the same
+    /// distance reading as two different numbers on two screens (found 2026-08-29). Distances are
+    /// stored SI and converted at display time, like everywhere else in the app.
+    @Query private var profiles: [UserProfile]
     @Environment(\.modelContext) private var context
     @State private var opened: SavedRoute?
+
+    private var distanceUnit: DistanceUnit {
+        DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
+    }
 
     var body: some View {
         ScrollView {
@@ -30,8 +39,32 @@ struct SavedRoutesView: View {
     private func row(_ route: SavedRoute) -> some View {
         // A route opens its explorable map; a routeless save (a strength day, a swim) is the kept
         // post itself — its row is informational, no map to promise, no chevron that lies.
-        Button { if route.hasRoute { opened = route } } label: {
-            HStack(spacing: Theme.Space.md) {
+        //
+        // The routeless row is NOT a Button any more (2026-08-29). It used to be one whose action
+        // was `if route.hasRoute { … }`, so for a routeless save it took the press highlight,
+        // announced itself to VoiceOver as a button, and then did nothing — a dead control, which
+        // is exactly what this audit is about. Long-press to Remove still works on both.
+        Group {
+            if route.hasRoute {
+                Button { opened = route } label: { rowBody(route) }
+                    .buttonStyle(.plain)
+            } else {
+                rowBody(route)
+            }
+        }
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
+        .contextMenu {
+            Button(role: .destructive) {
+                context.delete(route)
+                try? context.save()
+                Haptics.light()
+            } label: { Label("Remove", systemImage: "bookmark.slash") }
+        }
+        .accessibilityLabel("\(route.title), \(subtitle(route))")
+    }
+
+    private func rowBody(_ route: SavedRoute) -> some View {
+        HStack(spacing: Theme.Space.md) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10).fill(Theme.surface)
                     if route.hasRoute {
@@ -59,24 +92,13 @@ struct SavedRoutesView: View {
                         .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
             }
-            .padding(.vertical, Theme.Space.sm + 2)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-        .contextMenu {
-            Button(role: .destructive) {
-                context.delete(route)
-                try? context.save()
-                Haptics.light()
-            } label: { Label("Remove", systemImage: "bookmark.slash") }
-        }
-        .accessibilityLabel("\(route.title), \(subtitle(route))")
+        .padding(.vertical, Theme.Space.sm + 2)
+        .contentShape(Rectangle())
     }
 
     private func subtitle(_ route: SavedRoute) -> String {
         var parts: [String] = []
-        if route.km > 0 { parts.append(String(format: "%.1f mi", route.km * 0.621371)) }
+        if route.km > 0 { parts.append(Formatters.distance(meters: route.km * 1000, unit: distanceUnit)) }
         if let city = route.city { parts.append(city) }
         if let handle = route.authorHandle { parts.append("from @\(handle)") }
         return parts.joined(separator: " · ")
@@ -104,6 +126,11 @@ struct SavedRouteDetailView: View {
     let route: SavedRoute
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @Query private var profiles: [UserProfile]
+
+    private var distanceUnit: DistanceUnit {
+        DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
+    }
 
     var body: some View {
         ZStack {
@@ -143,7 +170,7 @@ struct SavedRouteDetailView: View {
                         .font(.display(26, weight: .black)).foregroundStyle(Theme.ink).lineLimit(2)
                     HStack(spacing: 6) {
                         if route.km > 0 {
-                            Text(String(format: "%.1f mi", route.km * 0.621371))
+                            Text(Formatters.distance(meters: route.km * 1000, unit: distanceUnit))
                                 .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
                                 .foregroundStyle(Theme.ink)
                         }
@@ -170,5 +197,5 @@ struct SavedRouteDetailView: View {
 
 #Preview {
     NavigationStack { SavedRoutesView() }
-        .modelContainer(for: SavedRoute.self, inMemory: true)
+        .modelContainer(for: [SavedRoute.self, UserProfile.self], inMemory: true)
 }

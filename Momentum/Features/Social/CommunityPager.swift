@@ -114,6 +114,15 @@ struct FullBleedMediaPager: View {
             }
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $page)
+            // Warm the pages either side of the one being read, so a swipe lands on a decoded
+            // photo instead of a grey placeholder. Free when they are already cached.
+            .onChange(of: page ?? 0, initial: true) { _, current in
+                for neighbour in [current - 1, current + 1] where pages.indices.contains(neighbour) {
+                    if case .photo(let d) = pages[neighbour] {
+                        ImageDownsampler.prefetch(d, maxPixel: 1400)
+                    }
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if pages.count > 1 {
                     Text("\((page ?? 0) + 1)/\(pages.count)")
@@ -170,10 +179,14 @@ struct PagedPhoto: View {
                 }
             }
             .clipped()
+            // The photo ARRIVES rather than pops. With the decode cache a revisit is instant and
+            // this never plays; on a genuine first decode a 0.2s fade reads as the image resolving
+            // instead of the page snapping from grey to photo.
+            .animation(.easeOut(duration: 0.2), value: image == nil)
             // Downsampled off-main (the house tool; 1400px matches PhotoCarousel's full-bleed
             // setting) — `UIImage(data:)` in a MainActor task parsed and first-draw-decoded the
             // full-resolution bitmap on the very swipe that landed on this page.
-            .task { image = await ImageDownsampler.thumbnail(data, maxPixel: 1400) }
+            .task(id: data.count) { image = await ImageDownsampler.thumbnail(data, maxPixel: 1400) }
     }
 }
 
@@ -199,14 +212,20 @@ private struct CommunityPostPage: View {
     /// Whether THIS post's route is bookmarked — read once on appear, flipped locally on toggle
     /// (a per-page @Query over all saved routes would re-fire on every save anywhere).
     @State private var routeSaved = false
+    /// The thumbnail's tap target — this post's route/muscle map full screen.
+    @State private var showOwnVisual = false
+    /// The double-tap heart, mid-flight.
+    @State private var burst = false
 
-    /// The horizontal media pages, cover rule applied: the activity's own visual leads and
-    /// photos ride behind it — flipped when the author chose a photo cover; photos alone when
-    /// the post has no route/muscle visual (mapless trail runs).
+    /// The horizontal media pages: the athlete's PHOTOGRAPHS, in order. The post's own visual is
+    /// not among them any more — it rides above the byline as a `PostMediaThumb` (2026-08-29).
     /// Resolved ONCE at init (the `FeedTileMedia.coords` pattern): as a computed var the body read
     /// it 2–3× per pass, each mapping the whole polyline — and every reaction anywhere invalidates
     /// every realized page (the rail reads the shared ReactionStore).
     private let mediaPages: [FullBleedPage]
+    /// Does this post HAVE a visual of its own (a route to draw, muscles to light)? Resolved at
+    /// init alongside the pages — it gates the thumbnail, and a mapless trail run has none.
+    private let hasOwnVisual: Bool
 
     init(item: FeedItem, isFirst: Bool, canOpenAuthor: Bool, topInset: CGFloat,
          bottomInset: CGFloat, onClose: @escaping () -> Void, onOpenAuthor: ((String) -> Void)?) {
@@ -218,25 +237,40 @@ private struct CommunityPostPage: View {
         self.onClose = onClose
         self.onOpenAuthor = onOpenAuthor
         let photos = item.photosData.map { FullBleedPage.photo($0) }
-        let hasOwnVisual = (item.routeCoordinates?.count ?? 0) > 1
+        self.hasOwnVisual = (item.routeCoordinates?.count ?? 0) > 1
             || item.muscles?.values.contains(where: { $0 > 0 }) == true
-        if !hasOwnVisual {
-            self.mediaPages = photos
-        } else {
-            let primary = [FullBleedPage.primary(AnyView(CommunityPageMedia(item: item)))]
-            self.mediaPages = item.coverIsPhoto ? photos + primary : primary + photos
-        }
+        // Photos ARE the pages (owner call 2026-08-29). The cover rule used to hide whichever of
+        // the two the athlete didn't pick behind an unadvertised swipe; the photograph is the hero
+        // now and the session's own visual is always present as a `PostMediaThumb` above the
+        // byline. `coverIsPhoto` still chooses the GRID tile — that job is untouched.
+        self.mediaPages = photos
     }
 
     var body: some View {
         ZStack {
-            if mediaPages.count > 1 {
-                FullBleedMediaPager(pages: mediaPages, pillTopPadding: topInset + Theme.Space.sm)
-            } else if case .photo(let data)? = mediaPages.first {
-                PagedPhoto(data: data).ignoresSafeArea()
-            } else {
-                CommunityPageMedia(item: item)
+            // Grouped so the gesture and the burst attach to the MEDIA, whichever form it took.
+            Group {
+                if mediaPages.count > 1 {
+                    FullBleedMediaPager(pages: mediaPages, pillTopPadding: topInset + Theme.Space.sm)
+                } else if case .photo(let data)? = mediaPages.first {
+                    PagedPhoto(data: data).ignoresSafeArea()
+                } else {
+                    CommunityPageMedia(item: item)
+                }
             }
+            // Double-tap the photo to like it — the gesture every social app has taught people,
+            // and the one this post viewer was missing. It only ever LIKES (never un-likes: a
+            // stray double-tap must not silently remove a like), and the rail's heart stays the
+            // way to take one back. A tap gesture does not compete with the pager's horizontal
+            // scroll, and the rail/thumbnail sit above this and take their own taps first.
+            // `.simultaneousGesture`, NOT `.onTapGesture(count: 2)`. As an exclusive recognizer on
+            // a full-bleed parent it arbitrated against every control layered above it — taps on
+            // the rail were delayed or swallowed while it waited to see whether a second tap was
+            // coming (caught bisecting a UI-test failure, 2026-08-29: the comment sheet stopped
+            // opening). A simultaneous recognizer claims nothing, so buttons keep their taps and
+            // the double-tap still fires.
+            .simultaneousGesture(TapGesture(count: 2).onEnded { doubleTapLike() })
+            .overlay { burstHeart }
 
             // ONE soft light scrim, bottom only (owner call 2026-08-20: "scrap the fade from the
             // top" — the media runs clean to the top edge; the bottom fade stays for the text
@@ -260,6 +294,7 @@ private struct CommunityPostPage: View {
                 if isFirst, showHint, !reduceMotion { swipeHint.transition(.opacity) }
                 bottomOverlay
             }
+            .fullScreenCover(isPresented: $showOwnVisual) { ownVisualCover }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, topInset + Theme.Space.sm)
             .padding(.bottom, bottomInset + Theme.Space.lg)
@@ -301,9 +336,47 @@ private struct CommunityPostPage: View {
     }
 
     /// Byline + story bottom-left, actions bottom-right — the TikTok composition, in our type.
+    /// Like on double-tap, plus the heart that confirms it. Idempotent by design.
+    private func doubleTapLike() {
+        if !reactions.hasReacted(item.id) {
+            reactions.toggle(item.id)
+            Haptics.medium()
+        }
+        guard !reduceMotion else { return }
+        burst = true
+        withAnimation(.easeOut(duration: 0.55)) { burst = false }
+    }
+
+    /// The confirmation: a heart that swells and fades over the photo. Transform-only, and it
+    /// never appears under Reduce Motion — the like still registers, it just doesn't fly.
+    @ViewBuilder private var burstHeart: some View {
+        Image(systemName: "heart.fill")
+            .font(.system(size: 96, weight: .bold))
+            .foregroundStyle(Theme.like)
+            .shadow(color: .black.opacity(0.25), radius: 12)
+            .scaleEffect(burst ? 1.0 : 1.5)
+            .opacity(burst ? 0.92 : 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    /// The thumbnail's tap target.
+    @ViewBuilder private var ownVisualCover: some View {
+        PostMediaFullScreen { CommunityPageMedia(item: item) }
+    }
+
     private var bottomOverlay: some View {
         HStack(alignment: .bottom, spacing: Theme.Space.md) {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                // The session's own visual, above the byline — so a photo post still shows where
+                // they ran, without the route having to win a fight with the photograph.
+                if hasOwnVisual, !mediaPages.isEmpty {
+                    // `FeedTileMedia` is the grid's own tile renderer — composed for exactly this
+                    // size. `CommunityPageMedia` is a full-page composition and renders as an
+                    // empty wash inside a 62pt card.
+                    PostMediaThumb { FeedTileMedia(item: item).allowsHitTesting(false) }
+                        onTap: { showOwnVisual = true }
+                }
                 byline
                 Text(item.title)
                     .font(.display(26, weight: .black)).foregroundStyle(Theme.ink).lineLimit(2)
@@ -468,9 +541,7 @@ private struct CommunityPostPage: View {
             // Routeless posts save too (the rail is identical everywhere) — they keep the post,
             // carried by sport rather than a polyline.
             let pts = item.routeLatLon ?? []
-            // The stat's leading token is "5.5 mi" — take the number, convert back to km.
-            let miToken = item.metrics.first?.value.split(separator: " ").first.map(String.init)
-            let km = pts.isEmpty ? 0 : (miToken.flatMap(Double.init).map { $0 / 0.621371 } ?? 0)
+            let km = pts.isEmpty ? 0 : item.distanceKm
             modelContext.insert(SavedRoute(postID: id, title: item.title,
                                            authorName: item.authorName, authorHandle: item.authorHandle,
                                            city: item.location, km: km, pts: pts, mapStyle: item.mapStyle,
@@ -503,6 +574,12 @@ private struct CommunityPostPage: View {
         guard item.isCommunity else { return max(item.remoteCommentCount ?? 0, own.count) }
         if seedCountMemo.id != item.id {
             seedCountMemo.id = item.id
+            // NOTE (2026-08-28): this re-derives the thread from a subset of the post's fields
+            // while `PostCommentsView` builds it from the whole item. The counts agree only because
+            // thread SIZE is drawn from its own stream — a badge and the list it opens agreeing by
+            // construction rather than by luck wants ONE call. Left alone deliberately: the
+            // item-taking overload is a sibling's in-flight API and calling it from here would make
+            // this file un-buildable against HEAD.
             seedCountMemo.count = CommunityComments.seed(
                 for: item.id, postDate: item.date, reactions: item.baseReactions,
                 type: item.type, authorHandle: item.authorHandle)
@@ -511,11 +588,16 @@ private struct CommunityPostPage: View {
         return seedCountMemo.count + own.count
     }
 
+    /// The rail sits over an unpredictable photograph, so it wears the app's GLASS — the same
+    /// treatment every map-floating control already uses — instead of a flat `Theme.surface` fill.
+    /// A solid light disc vanished into a bright sky and read as a hard white sticker on a dark
+    /// night shot; glass adapts to whatever is behind it and stays quiet on both (owner ask
+    /// 2026-08-29: "better visible but still subtle"). The hairline goes with it — glass carries
+    /// its own rim, and the two together read as a double edge.
     private func railCircle<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
             .frame(width: 44, height: 44)
-            .background(Circle().fill(Theme.surface))
-            .overlay(Circle().stroke(Theme.hairline))
+            .momentumGlass(in: Circle())
     }
 
     /// One rail control = circle + a count line of FIXED height. Controls without a count (save,
@@ -527,7 +609,10 @@ private struct CommunityPostPage: View {
             railCircle(content)
             Text(count ?? "0")
                 .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
-                .foregroundStyle(Theme.inkSecondary)
+                .foregroundStyle(Theme.ink)
+                // The count reads straight over the photograph with no chrome of its own, so it
+                // carries a soft shadow the way a caption burned into an image does.
+                .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
                 .opacity(count == nil ? 0 : 1)
                 .accessibilityHidden(count == nil)
         }
@@ -554,6 +639,14 @@ private struct CommunityPageMedia: View {
 
     var body: some View {
         GeometryReader { geo in
+            // Already rendered? Draw it on frame one. The pager's `LazyVStack` throws a page's
+            // `@State` away as it leaves, so swiping back up used to show the grey silhouette
+            // again and crossfade a map that had been in hand the whole time (2026-08-29).
+            let cached = FeedRouteSnapshots.cachedImage(
+                post: item.id, style: item.mapStyle, scheme: colorScheme,
+                size: geo.size == .zero ? CGSize(width: 430, height: 930) : geo.size,
+                endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed)
+            let map = snapshot ?? cached
             Group {
                 if let muscles = item.muscles, muscles.values.contains(where: { $0 > 0 }) {
                     ZStack {
@@ -564,13 +657,13 @@ private struct CommunityPageMedia: View {
                 } else if let coords, coords.count > 1 {
                     ZStack {
                         Theme.background
-                        if let snapshot {
+                        if let snapshot = map {
                             Image(uiImage: snapshot).resizable().scaledToFill()
                                 .frame(width: geo.size.width, height: geo.size.height)
                                 .clipped()
                                 .transition(.opacity)
                         } else {
-                            RouteSilhouette(coords: coords)
+                            RouteSilhouette(coords: coords, maxPoints: 800)
                                 .stroke(Theme.route, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                                 .padding(Theme.Space.xxl)
                             RouteEndpointMarks(coords: coords, inset: Theme.Space.xxl,
@@ -578,17 +671,26 @@ private struct CommunityPageMedia: View {
                         }
                     }
                 } else {
+                    // The SAME deal the wall tile drew (2026-08-29). A tile zooms into this page,
+                    // so if the tile wears this post's dealt tint and the page wears the canonical
+                    // one, the transition crossfades colour mid-flight — the tapped picture and the
+                    // one that lands are visibly two pictures. `WashVariation` is seeded from the
+                    // post id and its offsets are in units of the symbol's own size, so the tile's
+                    // 40pt deal and this page's 96pt one are the same composition at two scales.
+                    let deal = WashVariation(seed: item.id)
+                    let size = 96 * deal.glyphScale
                     ZStack {
-                        IridescentWash()
+                        IridescentWash(variation: deal)
                         Image(systemName: item.type.systemImage)
-                            .font(.system(size: 96, weight: .bold))
-                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .font(.system(size: size, weight: .bold))
+                            .foregroundStyle(Theme.ink.opacity(deal.glyphInk))
+                            .offset(x: size * deal.glyphOffsetX, y: size * deal.glyphOffsetY)
                     }
                 }
             }
-            .animation(.easeOut(duration: 0.25), value: snapshot != nil)
+            .animation(.easeOut(duration: 0.25), value: map != nil)
             .task(id: "\(item.id)-\(colorScheme == .dark)") {
-                guard let coords, coords.count > 1 else { return }
+                guard let coords, coords.count > 1, map == nil else { return }
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
                 #endif

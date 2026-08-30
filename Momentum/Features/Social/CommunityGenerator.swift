@@ -7,8 +7,9 @@ import UIKit
 
 /// Generates a large, deterministic **Momentum community** (docs/SOCIAL-LAYER.md). Honest presence:
 /// every generated athlete is clearly labeled community content in the UI (never a real stranger near
-/// you). Deterministic (index-seeded) so the feed + globe are stable across launches. Athletes sit at
-/// real cities — **US-majority** — with small jitter so globe dots land on cities (not the ocean), and
+/// you). Deterministic (index-seeded) so the feed + globe are stable across launches. Athletes live in
+/// real TOWNS of real metros — **US-majority** — reverse-geocoded into `CommunityPlaces`, so a globe
+/// dot is on land because a real place is there rather than because the jitter was kept tight, and
 /// each GPS post carries a real short route + a varied map style so the feed shows real maps.
 enum CommunityGenerator {
     /// Community scale (owner call 2026-07-29: "thousands across the globe" — feed, strip, and
@@ -17,7 +18,15 @@ enum CommunityGenerator {
     /// appends new athletes without reshuffling anyone who already existed.
     static let count = 2_863
 
-    static func generate(now: Date) -> [CommunityAthlete] {
+    #if DEBUG
+    /// TEMPORARY split-timing probe for the 2026-08-29 load pass — how much of the directory build
+    /// is the ledger walk and how much is materializing the wall card.
+    nonisolated(unsafe) static var probeFoldMs = 0.0
+    nonisolated(unsafe) static var probePostMs = 0.0
+    static let probing = ProcessInfo.processInfo.arguments.contains("--community-perf")
+    #endif
+
+    static func generate(now: Date, clock: CommunityLedger.Clock) -> [CommunityAthlete] {
         // Handles are creative now, which means they can collide (two Mayas both landing on
         // "mayamiles"). A colliding athlete is rebuilt with a numeric tail — the same fix a real
         // signup flow makes. Seeded with the hand-curated eight so a generated athlete can never
@@ -26,14 +35,14 @@ enum CommunityGenerator {
         var out: [CommunityAthlete] = []
         out.reserveCapacity(count)
         for i in 0..<count {
-            let made = athlete(index: i, now: now)
+            let made = athlete(index: i, now: now, clock: clock)
             if used.insert(made.handle).inserted {
                 out.append(made)
             } else {
                 var n = 2
                 var candidate = "\(made.handle)\(n)"
                 while !used.insert(candidate).inserted { n += 1; candidate = "\(made.handle)\(n)" }
-                out.append(athlete(index: i, now: now, handleOverride: candidate))
+                out.append(athlete(index: i, now: now, clock: clock, handleOverride: candidate))
             }
         }
         return out
@@ -106,10 +115,22 @@ enum CommunityGenerator {
         return h
     }
 
-    private static func athlete(index i: Int, now: Date, handleOverride: String? = nil) -> CommunityAthlete {
+    private static func athlete(index i: Int, now: Date, clock: CommunityLedger.Clock,
+                                handleOverride: String? = nil) -> CommunityAthlete {
         var rng = SeededRNG(i &* 2654435761)
         let first = rng.pick(firstNames)
-        let last = rng.pick(lastNames)
+        var last = rng.pick(lastNames)
+        // "Cole" is in both pools, so one member of the directory was introducing herself as
+        // "Cole Cole". Re-derived from a SEPARATE hash rather than by editing a pool: dropping an
+        // entry would shift every later index and rename the whole community (the name draws are
+        // the first two, and the handle hangs off them).
+        if last == first {
+            var n = 0
+            repeat {
+                last = lastNames[Int(handleHash("surname:\(first)\(i)\(n)") % UInt64(lastNames.count))]
+                n += 1
+            } while last == first && n < 8
+        }
         let name = "\(first) \(last)"
         // ~78% US so the map is majority-US; real cities + tight jitter keep dots on land. The pick is
         // power-biased toward the front of the (roughly big-metro-first) list — real communities clump
@@ -122,62 +143,57 @@ enum CommunityGenerator {
         let handle = handleOverride ?? Self.handle(first: first, last: last, discipline: discipline, salt: i)
 
         // Bodies of work follow a power curve, not a flat spread: most people are early (a real
-        // "from your first 5K" community has beginners), streaks cluster low with a thin long tail.
-        // Uniform draws made every profile read mid-veteran with a fat streak — a generator tell.
+        // "from your first 5K" community has beginners). This is now the ONLY body-of-work number
+        // that is drawn — lifetime distance, the streak, the discipline split, the heatmap and the
+        // trophy case all FOLD OUT of the ledger built from it, so they can never disagree with
+        // each other or with the tiles the grid actually shows (owner report 2026-08-28: a profile
+        // claiming 1,181 miles over a grid whose sessions summed to thirty).
         let workouts = 6 + Int(894 * pow(rng.double(0, 1), 2.4))
-        let streak = Int(46 * pow(rng.double(0, 1), 3.2))
-        // Lifetime distance follows the sport × the body of work (per-session km band × the sessions
-        // that plausibly covered distance). A lifter/yogi with "4,200 km covered" was a fake tell.
-        let perSessionKm: ClosedRange<Double> = switch discipline {
-        case .run, .trailRun: 5...12
-        case .ride: 18...45
-        case .walk: 3...7
-        case .swimming: 1.5...3.2
-        case .rowing: 5...9
-        default: 0...0                        // strength/HIIT/yoga: no meaningful distance
+        #if DEBUG
+        let _f0 = probing ? CFAbsoluteTimeGetCurrent() : 0
+        #endif
+        // Only the wall card is resolved here — a PREFIX of the ledger, not the whole career.
+        // Folding all ~2,900 careers to fill `dayStreak` and `totalDistanceM` cost 611 ms at launch
+        // and nothing on screen was waiting for either number: the profile refolds with `detail`
+        // when it is opened. Those two are lazy now (`CommunityAthlete.dayStreak`), and the
+        // session COUNT needs no walk at all — it is this draw.
+        let lead = CommunityLedger.lead(handle: handle, primary: discipline, city: city.name,
+                                        count: workouts, clock: clock)
+        #if DEBUG
+        if probing {
+            probeFoldMs += (CFAbsoluteTimeGetCurrent() - _f0) * 1000
         }
-        let distance = perSessionKm.upperBound == 0 ? 0
-            : Double(workouts) * rng.double(perSessionKm.lowerBound, perSessionKm.upperBound) * rng.double(0.45, 0.8) * 1000
+        let _p0 = probing ? CFAbsoluteTimeGetCurrent() : 0
+        defer { if probing { probePostMs += (CFAbsoluteTimeGetCurrent() - _p0) * 1000 } }
+        #endif
 
-        // Dot jitter is tight so it stays on the city (not offshore); the route anchors on the city
-        // center (downtown = land) rather than the jittered dot, so traces don't start in the water.
-        let lat = city.lat + rng.double(-0.02, 0.02)
-        let lon = city.lon + rng.double(-0.02, 0.02)
-        // Post content is salted by the calendar day: identities never change (a followed handle
-        // must not vanish overnight), but everyone's latest post rotates daily — a returning user
-        // opens a NEW page every day, not the same feed frozen forever. Deterministic within a day.
-        let day = Int(now.timeIntervalSince1970 / 86_400)
-        var postRng = SeededRNG(i &* 48_271 &+ day &* 92_821)
-        // Recency-weighted post ages: a big slice of the community posted within the last few
-        // hours, so the top of the feed reads "3 min ago, 40 min ago, 2 hr ago" like a page people
-        // are actively using — not a uniform smear across four days. Exponent 1.7 keeps the newest
-        // posts SPREAD across the first hour (a steeper curve piles dozens onto one identical
-        // "9 minutes ago", which is its own fake tell).
-        let u = postRng.double(0, 1)
-        let postDate = now.addingTimeInterval(-(0.05 + 96 * pow(u, 1.7)) * 3600)
-        let post = makePost(index: i, name: name, handle: handle, city: city.name,
-                            discipline: discipline, lat: city.lat, lon: city.lon, date: postDate,
-                            now: now, rng: &postRng)
+        // **The two jitter draws stay exactly where they were.** They are draws six and seven of
+        // the sequential stream the identity contract rests on; what changed on 2026-08-29 is only
+        // what they are added TO. The athlete now lives in a real town of their metro
+        // (`CommunityPlaces`, reverse-geocoded, so it is on land and has a real name) instead of
+        // ±2 km from one of 65 downtown pins — but the town is chosen from a SEPARATE hash, the
+        // same way `handle` is, so nobody's name, city, sport or body of work moved.
+        let jitterLat = rng.double(-0.02, 0.02)
+        let jitterLon = rng.double(-0.02, 0.02)
+        let home = CommunityPlaces.home(metro: city.name, seed: handleHash("home:\(handle)"))
+        let lat = (home?.lat ?? city.lat) + jitterLat
+        let lon = (home?.lon ?? city.lon) + jitterLon
+        // What they SAY. Their routes still come from the metro — a suburb has no bundled loop.
+        let hometown = home?.display ?? city.name
+        // Their feed post is a REAL ledger entry — the newest session in their own sport — so the
+        // card on the wall is literally the tile at that index of their grid, never a thirteenth
+        // workout invented on top of twelve. Content still rotates daily because the ledger is
+        // anchored to today, so a returning user opens a new page every morning.
+        let posts = lead.map {
+            [post(index: i, name: name, handle: handle, city: city.name, place: hometown,
+                  session: $0.session, slot: $0.index, now: now)]
+        } ?? []
 
         return CommunityAthlete(
-            handle: handle, name: name, location: city.name, bio: bio(for: discipline, rng: &rng),
-            totalWorkouts: workouts, dayStreak: streak, totalDistanceM: distance,
-            lat: lat, lon: lon, posts: [post])
-    }
-
-    /// "Athletes moving right now" for the wall's live strip — a deterministic time-of-day curve
-    /// (twin peaks at 6–9 and 17–20, 3am near-quiet) with per-hour jitter, over the community's
-    /// size. Stable within an hour, honest to the clock; real presence replaces it when the
-    /// backend serves one.
-    static func movingNow(now: Date = Date()) -> Int {
-        let hour = Calendar.current.component(.hour, from: now)
-        let day = Int(now.timeIntervalSince1970 / 86_400)
-        let curve: [Double] = [0.010, 0.008, 0.006, 0.006, 0.012, 0.035,
-                               0.075, 0.095, 0.085, 0.060, 0.045, 0.050,
-                               0.055, 0.045, 0.040, 0.045, 0.060, 0.090,
-                               0.105, 0.085, 0.055, 0.035, 0.022, 0.014]
-        var rng = SeededRNG(day &* 24 &+ hour &* 7877)
-        return max(3, Int(Double(count) * curve[hour] * rng.double(0.85, 1.15)))
+            handle: handle, name: name, location: hometown, metro: city.name,
+            bio: bio(for: discipline, rng: &rng),
+            totalWorkouts: workouts,
+            lat: lat, lon: lon, posts: posts, primarySport: discipline)
     }
 
     /// Power-biased pick toward the front of a (roughly popularity-ordered) list — real communities
@@ -186,85 +202,91 @@ enum CommunityGenerator {
         pool[min(pool.count - 1, Int(Double(pool.count) * pow(rng.double(0, 1), 1.8)))]
     }
 
-    /// A visited athlete's grid history — the older posts behind their most recent share, so their
-    /// profile reads like a real training log (~10 weeks deep) rather than a single tile. Generated
-    /// on demand per athlete (deterministic — seeded from the handle), NOT folded into the feed:
-    /// the feed stays one-recent-post-per-athlete, exactly as before.
-    static func historyPosts(handle: String, name: String, city: String, primary: WorkoutType,
-                             count: Int, now: Date) -> [FeedItem] {
-        var rng = SeededRNG(handle.utf8.reduce(11) { ($0 &* 131 &+ Int($1)) & 0x7FFF_FFFF })
-        // Where in the city's loop pool this athlete starts, so neighbours in the same city don't
-        // all open their grid on the same street loop.
-        let offset = handle.utf8.reduce(7) { ($0 &* 17 &+ Int($1)) & 0xFFFF }
-        // A stable per-athlete discipline mix led by THEIR OWN sport — a swimmer's or lifter's grid
-        // full of runs contradicted their feed post, bio, and discipline split (the loudest
-        // non-runner fake tell). ~62% primary, the rest plausible cross-training for that sport.
-        var date = now.addingTimeInterval(-Double(rng.int(30...90)) * 3600)
-        return (0..<count).map { j in
-            let roll = rng.int(0...99)
-            let discipline: WorkoutType = roll < 62 ? primary
-                : rng.pick(primary.isGPS ? [.strength, .walk, .hiit] : [.run, .walk, .strength])
-            date = date.addingTimeInterval(-Double(rng.int(30...110)) * 3600)   // every 1–4½ days back
-            // Unique, deterministic id-space far away from the feed posts' indices.
-            let index = 500_000 + (handle.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }) * 100 + j
-            return makePost(index: index, name: name, handle: handle, city: city,
-                            discipline: discipline, lat: 0, lon: 0, date: date, now: now, rng: &rng,
-                            routeSlot: j, routeOffset: offset)
+    /// A visited athlete's grid — one tile per ledger session, newest first. Materialized lazily in
+    /// pages (`CommunityDirectory.gridPosts(for:limit:)`), because an athlete with 900 sessions has
+    /// 900 tiles and only the first thirty are on screen. Each tile is derived from its OWN session
+    /// and its own slot seed, so page two never depends on page one and scrolling far enough
+    /// literally reaches every session the profile's totals count.
+    static func gridPosts(handle: String, name: String, city: String, place: String,
+                          sessions: [CommunitySession], from firstSlot: Int = 0,
+                          now: Date) -> [FeedItem] {
+        sessions.enumerated().map { offset, session in
+            post(index: 0, name: name, handle: handle, city: city, place: place, session: session,
+                 slot: firstSlot + offset, now: now)
         }
     }
 
-    /// A brand-new post for `athlete`, dated moments ago — the pull-to-refresh pulse uses these so
-    /// refreshing the page always surfaces something that just happened. Deterministic per
-    /// (pulse, slot); ids live in their own space (8M+) far from feed (0+) and history (500k+) posts.
-    static func freshPost(for athlete: CommunityAthlete, pulse: Int, slot: Int, now: Date) -> FeedItem {
+    /// A brand-new session for `athlete`, minted moments ago — the pull-to-refresh pulse. It is a
+    /// REAL session: `CommunityDirectory` records it against the athlete, so their grid, their
+    /// session count, their lifetime distance and their streak all move with it rather than the
+    /// wall showing a workout their own profile has never heard of. Deterministic per (pulse, slot).
+    static func freshSession(for athlete: CommunityAthlete, pulse: Int, slot: Int,
+                             now: Date) -> CommunitySession {
         var rng = SeededRNG(pulse &* 48_611 &+ slot &* 7_129 &+ 977)
-        // The fresh post leads with the athlete's OWN sport (like their grid) — a yogi suddenly
-        // posting a run on refresh reads generated.
+        // The fresh session leads with the athlete's OWN sport — a yogi suddenly posting a run on
+        // refresh reads generated.
         let primary = athlete.primaryType
-        let roll = rng.int(0...99)
-        let discipline: WorkoutType = roll < 70 ? primary
+        let type: WorkoutType = rng.int(0...99) < 70 ? primary
             : rng.pick(primary.isGPS ? [.strength, .walk] : [.run, .walk])
         let date = now.addingTimeInterval(-rng.double(0.5, 6) * 60)
-        return makePost(index: 8_000_000 + pulse * 50 + slot, name: athlete.name,
-                        handle: athlete.handle, city: athlete.location ?? "Austin, TX",
-                        discipline: discipline, lat: athlete.lat, lon: athlete.lon,
-                        date: date, now: now, rng: &rng)
+        let kms = CommunityRoutes.loopKms(city: athlete.routeCity, discipline: type)
+        var distanceM = 0.0
+        var routePool: Int?
+        if type.isGPS, type != .trailRun, !kms.isEmpty {
+            let idx = rng.int(0...(kms.count - 1))
+            routePool = idx
+            distanceM = kms[idx] * 1000
+        } else if type.isGPS {
+            distanceM = rng.double(4, 12) * 1000
+        }
+        let durationS: Double = type.isGPS
+            ? (distanceM / 1000) * rng.double(300, 420)
+            : Double(rng.int(28 * 60...70 * 60))
+        return CommunitySession(day: StreakCalculator.localDay(date), date: date, type: type,
+                                distanceM: distanceM, durationS: durationS,
+                                routePool: routePool, structured: false)
     }
 
-    private static func makePost(index i: Int, name: String, handle: String, city: String,
-                                 discipline: WorkoutType, lat: Double, lon: Double, date: Date,
-                                 now: Date, rng: inout SeededRNG,
-                                 // Which slot of the city's loop pool this post takes. nil keeps the
-                                 // old per-post roll (the wall, where 400 posts over ~195 loops
-                                 // already spread themselves); a grid passes its running index so
-                                 // one athlete cycles the pool instead of clustering one shape.
-                                 routeSlot: Int? = nil, routeOffset: Int = 0) -> FeedItem {
-        let id = UUID(uuidString: "00000000-0000-0000-0001-\(String(format: "%012d", i))")!
+    /// The card for a pulse session. Its id lives in its own space so it can never collide with a
+    /// ledger tile's.
+    static func freshPost(for athlete: CommunityAthlete, session: CommunitySession,
+                          pulse: Int, slot: Int, now: Date) -> FeedItem {
+        post(index: pulse &* 50 &+ slot, name: athlete.name, handle: athlete.handle,
+             city: athlete.routeCity, place: athlete.location ?? athlete.routeCity,
+             session: session, slot: slot, now: now, pulse: true)
+    }
+
+    /// Materializes one ledger session into a feed card: its real date, its real type, its real
+    /// distance and duration, and — when the session traced one — the exact bundled street loop it
+    /// traced. Nothing here re-draws a number the session already decided, which is what keeps a
+    /// tile's stats equal to the ledger entry the profile totals counted.
+    /// `city` is the METRO (the route key); `place` is the athlete's home town (what the card
+    /// prints). They differ for every generated athlete — see `CommunityPlaces`.
+    private static func post(index i: Int, name: String, handle: String, city: String, place: String,
+                             session s: CommunitySession, slot: Int, now: Date,
+                             pulse: Bool = false) -> FeedItem {
+        // Per-(handle, slot) seed: a tile renders identically whether it arrived on page one or
+        // page nine, and materializing a page never has to replay the pages before it.
+        var rng = SeededRNG(handleSalt(handle) &+ slot &* 7919 &+ (pulse ? 104_729 : 0))
+        let discipline = s.type
+        let id = postID(handle: handle, slot: slot, pulse: pulse ? i : nil)
         let caption = rng.int(0...2) == 0 ? nil : rng.pick(captions(for: discipline))
         let style = feedStyles[rng.int(0...(feedStyles.count - 1))]
         // A REAL street-following loop from the bundled Directions fetch — never a synthetic
-        // shape over rooftops. If a city has no bundled loop, the post ships without a map
-        // (an honest gap beats an obviously fake trace).
+        // shape over rooftops. The ledger already chose which loop this session traced (and the
+        // distance it credited the athlete IS that loop's true length), so the map and the numbers
+        // agree by construction.
         //
         // Structured sessions (track reps, tempo, hills) and trail runs ship WITHOUT a map on
         // purpose: their titles claim terrain or a workout a downtown street loop would flatly
         // contradict ("Track night" over city blocks is the loudest fake tell), and real watch
         // posts from the track or the woods are mapless all the time — that's what honest looks
         // like in a feed.
-        // ~8%: real feeds have the occasional watch-only interval post, but the WALL is a wall of
-        // routes — at 14% two glyph tiles per screenful read as a pattern, not an exception.
-        let structured = discipline == .run && rng.int(0...99) < 8
-        let mapless = structured || discipline == .trailRun
-        let loop: CommunityRoutes.Loop? = {
-            guard discipline.isGPS, !mapless else { return nil }
-            if let routeSlot {
-                return CommunityRoutes.loop(city: city, discipline: discipline,
-                                            slot: routeSlot, offset: routeOffset)
-            }
-            return CommunityRoutes.loop(city: city, discipline: discipline, rng: &rng)
-        }()
-        let (title, stat, pr) = structured ? workoutContent(rng: &rng)
-                                           : content(for: discipline, routeKm: loop?.km, rng: &rng)
+        let loop: CommunityRoutes.Loop? = s.routePool.flatMap {
+            CommunityRoutes.loop(city: city, discipline: discipline, slot: $0, offset: 0)
+        }
+        let (title, stat, pr) = content(for: s, rng: &rng)
+        let date = s.date
         // NO stock photos on seeded posts (owner call 2026-07-30, reversing 2026-07-29): the
         // bundled Lorem Picsum shots read tacky next to real work, and a fake vista on a fake
         // post is the exact generator-tell this feed is engineered to avoid. Every seeded post
@@ -284,9 +306,23 @@ enum CommunityGenerator {
         // popular tail into the hundreds, and even a fresh post has been seen by SOMEONE (the
         // maturity floor) — a page of 2s and 3s read as a ghost town, not a community.
         let ceiling = 10 + 480 * pow(aud.double(0, 1), 2.2)
-        let maturity = min(max(0, now.timeIntervalSince(date)) / 3600 / 24, 1)
-        let reactions = Int(ceiling * max(maturity, 0.18) * (pr != nil ? 1.6 : 1.0) * rng.double(0.6, 1.1))
-        return FeedItem(id: id, authorName: name, authorHandle: handle, location: city,
+        // A post's audience finds it fast and then tails off. The old `max(maturity, 0.18)` was a
+        // step, not a curve: it pinned every post younger than four hours to the same sixth of its
+        // ceiling, which both flattened the fresh end and (because comment volume is gated on
+        // respects) left most of the page threadless. This is the same shape a real post follows —
+        // steep early, still climbing all day — so an hour-old post has visibly more than a
+        // minute-old one, and a full day's post has all of it.
+        // **Three days to full, not one (2026-08-29).** The horizon has to match how fast the wall
+        // actually turns over. It used to be a day, which was right when every wall post was an
+        // hour or two old; now that the community posts only some of what it trains, four fifths of
+        // the wall is older than a day and every one of those posts was pinned at its full ceiling.
+        // A page where nothing is still filling up reads as loudly generated as one where nothing
+        // has: the zero-comment share fell through the floor `CommentTests.threadVolumeIsSkewed`
+        // holds, because thread volume is gated on respects.
+        let age = min(max(0, now.timeIntervalSince(date)) / 3600 / 24 / 3, 1)
+        let maturity = max(0.08, pow(age, 0.55))
+        let reactions = Int(ceiling * maturity * (pr != nil ? 1.6 : 1.0) * rng.double(0.6, 1.1))
+        return FeedItem(id: id, authorName: name, authorHandle: handle, location: place, metro: city,
                         isCommunity: true, isPro: Self.isPro(handle: handle),
                         type: discipline, date: date, title: title, caption: caption,
                         statLine: stat, prBadge: pr, muscles: muscles, routeLatLon: loop?.pts, mapStyle: style,
@@ -311,81 +347,134 @@ enum CommunityGenerator {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
-    /// "X.X mi · T" where T is derived from the route's TRUE length at a plausible pace for the
-    /// discipline — the map and the numbers always agree.
-    private static func gpsStat(km: Double, paceSecPerKm: Double, rng: inout SeededRNG) -> String {
-        let seconds = Int(km * paceSecPerKm + rng.double(0, 59))
-        return String(format: "%.1f mi · %@", km * 0.621371, durationString(seconds: seconds))
+    /// "X.X mi · T" straight off the session — the number the athlete's lifetime distance counted
+    /// and the number their tile prints are the same number.
+    ///
+    /// Through `Formatters.distanceNumeral`, the SAME rounding the athlete's own posts use. A
+    /// hand-rolled `%.1f` here meant a Friends wall could show "5.7 mi", "24.2 mi" and "4.45 mi"
+    /// side by side, and the two-decimal one was always the real person's.
+    private static func gpsStat(_ s: CommunitySession) -> String {
+        "\(Formatters.distanceNumeral(s.distanceM / 1000 * 0.621371)) mi · \(durationString(seconds: Int(s.durationS)))"
     }
 
-    /// PR badges must match the sport — a "Longest ride" on a run post is an instant fake tell.
-    private static func prLabel(for discipline: WorkoutType, rng: inout SeededRNG) -> String? {
+    /// A tile's stable identity: derived from (handle, slot) so the wall's card for an athlete and
+    /// the tile their own grid draws at that slot are one post, not two. Pulse posts (which are
+    /// newer than every ledger entry) take their own space above 9e11, and are identity-bound the
+    /// same way — an id must describe WHOSE post it is, or engagement keyed to it lands on a
+    /// stranger. Ledger ids stay under 2.7e11, so the two spaces cannot meet.
+    private static func postID(handle: String, slot: Int, pulse: Int?) -> UUID {
+        let n: Int64
+        if let pulse {
+            // FOLD THE HANDLE IN, exactly as the ledger branch below does. This read only
+            // (pulse, slot) and never touched `handle`, even though it was right there in scope —
+            // so two DIFFERENT athletes pulsed at the same slot minted the SAME UUID, inside a
+            // single process, no relaunch required. Anything keyed to a post id then attached to
+            // the wrong post: a comment appearing under a workout the athlete never opened, a
+            // filled heart and a +1 on someone else's run (2026-08-29).
+            //
+            // The value stays inside [9e11, 10^12) so it remains above the ephemeral floor that
+            // `CommunityPostID.isEphemeral` classifies on. That guard is still load-bearing and
+            // must NOT be removed on the strength of this fix: identity-binding stops the
+            // collision, but a pulse id is still minted from a per-process counter and still
+            // means a different workout next launch, so engagement must not persist against one.
+            let mixed = handleHash("pulse:\(handle):\(pulse):\(slot)") % 100_000_000_000
+            n = 900_000_000_000 + Int64(mixed)
+        } else {
+            n = Int64(handleHash(handle) & 0xFFF_FFFF) * 1000 + Int64(min(max(slot, 0), 999))
+        }
+        // `%lld`, NOT `%d`: `%d` consumes a 32-bit CInt, so an id past Int32.max truncates and can
+        // render NEGATIVE ("-1943132160"), which is not a UUID group — and the whole directory
+        // would trap on the force-unwrap. Both branches stay under 10^12 so the value always fits
+        // the final 12-character group. The fallback keeps a future arithmetic slip a cosmetic
+        // duplicate-id bug instead of a crash on `CommunityDirectory.all()`.
+        let clamped = min(max(n, 0), 999_999_999_999)
+        return UUID(uuidString: "00000000-0000-0000-0001-\(String(format: "%012lld", clamped))")
+            ?? UUID(uuidString: "00000000-0000-0000-0001-000000000000")!
+    }
+
+    /// A non-sequential per-handle salt for tile content (see `postID` for why content must not
+    /// depend on the order pages were materialized in).
+    private static func handleSalt(_ handle: String) -> Int {
+        Int(handleHash("tile:\(handle)") & 0x7FFF_FFFF)
+    }
+
+    /// PR badges must match the sport AND the session. A "5K PR" on a 2.1 mile loop contradicts
+    /// the stat line sitting an inch below it — the same class of thing as a profile whose miles
+    /// don't match its grid — so every badge is gated on a distance that can actually contain it.
+    private static func prLabel(for s: CommunitySession, rng: inout SeededRNG) -> String? {
         guard rng.int(0...6) == 0 else { return nil }
-        switch discipline {
-        case .run, .trailRun: return rng.pick(["5K PR", "Fastest mile", "Longest run"])
-        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: return "Longest ride"
-        case .hike: return "Longest hike"
+        let km = s.distanceM / 1000
+        switch s.type {
+        case .run, .trailRun:
+            // A 5K PR needs a 5K in it; a mile PR needs a mile; "Longest run" is only honest on a
+            // session that is actually long.
+            var options: [String] = []
+            if km >= 1.61 { options.append("Fastest mile") }
+            if km >= 5 { options.append("5K PR") }
+            if km >= 10 { options.append("10K PR") }
+            if km >= 14 { options.append("Longest run") }
+            return options.isEmpty ? nil : rng.pick(options)
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide:
+            return km >= 40 ? "Longest ride" : nil
+        case .hike:
+            return km >= 8 ? "Longest hike" : nil
         case .strength, .crossfit: return rng.pick(["e1RM PR", "Most volume"])
         default: return nil
         }
     }
 
-    private static func content(for discipline: WorkoutType, routeKm: Double?,
-                                rng: inout SeededRNG) -> (String, String, String?) {
-        let pr = prLabel(for: discipline, rng: &rng)
-        switch discipline {
+    /// The words over one session. Titles are drawn to fit what the session actually WAS — a "long
+    /// run" title only lands on an actually-long one, a workout title only on a structured
+    /// (mapless) session, a trail title only on a trail run — and every number printed is the
+    /// session's own.
+    private static func content(for s: CommunitySession, rng: inout SeededRNG) -> (String, String, String?) {
+        let km = s.distanceM / 1000
+        // A structured session: track reps, tempo, hills. It is always mapless (the ledger gave it
+        // no loop), so the title can honestly claim the workout.
+        if s.structured {
+            // An interval night's PR still has to fit inside the session it sat in.
+            var options: [String] = []
+            if km >= 1.61 { options.append("Fastest mile") }
+            if km >= 5 { options.append("5K PR") }
+            let pr = (rng.int(0...7) == 0 && !options.isEmpty) ? rng.pick(options) : nil
+            return (rng.pick(workoutTitles), gpsStat(s), pr)
+        }
+        let pr = prLabel(for: s, rng: &rng)
+        switch s.type {
         case .run:
-            // 4:40–7:10 /km ≈ 7:30–11:30 /mi — everyday-runner territory. A "long run" title only lands
-            // on an actually-long distance (≥ ~9 mi); everything else is an always-true generic (time of
-            // day / effort / place) so the title never contradicts the route or pace.
-            let km = routeKm ?? rng.double(3, 12)
-            return (rng.pick(km >= 14 ? longRunTitles : runTitles),
-                    gpsStat(km: km, paceSecPerKm: rng.double(280, 430), rng: &rng), pr)
+            // A "long run" title only lands on an actually-long distance (≥ ~8.7 mi); everything
+            // else is an always-true generic (time of day / effort / place) so the title never
+            // contradicts the route or the pace.
+            return (rng.pick(km >= 14 ? longRunTitles : runTitles), gpsStat(s), pr)
         case .trailRun:
-            // Always mapless (makePost skips the street loop — no bundled trail geometry exists,
-            // and "Singletrack miles" over downtown blocks was the loudest fake tell). Terrain is
-            // carried by slower paces (5:35–8:00 /km) and a climb figure instead of a trace.
-            let km = rng.double(6, 18)
+            // Always mapless (no bundled trail geometry exists, and "Singletrack miles" over
+            // downtown blocks was the loudest fake tell). Terrain is carried by the slower pace
+            // the ledger gave it and a climb figure instead of a trace.
             let climbFt = (Int(km * 0.6214 * rng.double(80, 320)) / 10) * 10
-            return (rng.pick(trailTitles),
-                    gpsStat(km: km, paceSecPerKm: rng.double(335, 480), rng: &rng)
-                        + " · \(climbFt.formatted()) ft",
-                    pr)
+            return (rng.pick(trailTitles), gpsStat(s) + " · \(climbFt.formatted()) ft", pr)
         case .ride, .mountainBikeRide, .gravelRide, .eBikeRide:
-            // 20–31 km/h ≈ 12–19 mph.
-            return (rng.pick(rideTitles),
-                    gpsStat(km: routeKm ?? rng.double(15, 45), paceSecPerKm: rng.double(116, 180), rng: &rng), pr)
+            return (rng.pick(rideTitles), gpsStat(s), pr)
         case .walk, .hike:
-            // 10:00–14:30 /km ≈ 16–23 min/mi. Hike/trail titles only WITHOUT a route map — the
-            // bundled loops trace city streets, and "Trail walk" over downtown blocks reads fake.
-            return (rng.pick(routeKm == nil ? walkTitles : urbanWalkTitles),
-                    gpsStat(km: routeKm ?? rng.double(2, 8), paceSecPerKm: rng.double(600, 870), rng: &rng), pr)
+            // Hike/trail titles only WITHOUT a route map — the bundled loops trace city streets,
+            // and "Trail walk" over downtown blocks reads fake.
+            return (rng.pick(s.routePool == nil ? walkTitles : urbanWalkTitles), gpsStat(s), pr)
         case .strength, .crossfit, .hiit:
             // Volume derives from the sets (per-set load × sets, jittered) so the pair is always
             // plausible and never a round thousand — "22,000 lb · 8 sets" was an impossible tell.
             let sets = rng.int(9...24)
             let vol = sets * rng.int(520...1150) + rng.int(0...95)
-            let seconds = rng.int(35 * 60...80 * 60)
-            return (rng.pick(liftTitles), "\(vol.formatted()) lb · \(sets) sets · \(durationString(seconds: seconds))", pr)
+            return (rng.pick(liftTitles),
+                    "\(vol.formatted()) lb · \(sets) sets · \(durationString(seconds: Int(s.durationS)))", pr)
         default:
             // Timed sports get their OWN titles — "Pool intervals" on a yoga post is a fake tell.
-            let titles: [String] = switch discipline {
+            let titles: [String] = switch s.type {
             case .swimming: swimTitles
             case .rowing: rowTitles
             case .yoga: yogaTitles
             default: otherTitles
             }
-            return (rng.pick(titles), durationString(seconds: rng.int(20 * 60...70 * 60)), pr)
+            return (rng.pick(titles), durationString(seconds: Int(s.durationS)), pr)
         }
-    }
-
-    /// A structured session: track reps, tempo, hills. Total distance includes warmup and
-    /// cooldown, and the overall pace sits between easy and race effort — a 45-minute "8×400"
-    /// averaging 5:20/km is exactly what an interval night looks like on a watch.
-    private static func workoutContent(rng: inout SeededRNG) -> (String, String, String?) {
-        let pr = rng.int(0...7) == 0 ? rng.pick(["5K PR", "Fastest mile"]) : nil
-        return (rng.pick(workoutTitles),
-                gpsStat(km: rng.double(6, 13), paceSecPerKm: rng.double(275, 335), rng: &rng), pr)
     }
 
     // MARK: Pools
@@ -409,6 +498,12 @@ enum CommunityGenerator {
         ("Boise, ID",43.62,-116.21),("Bend, OR",44.06,-121.31),("Fort Collins, CO",40.59,-105.08),
         ("Ann Arbor, MI",42.28,-83.74),("Brooklyn, NY",40.68,-73.94),("Oakland, CA",37.80,-122.27),
         ("St. Louis, MO",38.63,-90.20),("Cincinnati, OH",39.10,-84.51),("New Orleans, LA",29.96,-90.09)]
+
+    /// Every metro the community draws from, in list order. `scripts/fetch_community_places.py`
+    /// parses these same two arrays out of this file, so `CommunityPlaces` can never cover a
+    /// different set of cities than the generator picks from
+    /// (`CommunityPlacesTests.everyMetroTheCommunityDrawsFromHasRealTowns`).
+    static var seedMetros: [String] { usCities.map(\.name) + worldCities.map(\.name) }
 
     /// Non-US cities — the rest of the community.
     private static let worldCities: [(name: String, lat: Double, lon: Double)] = [
@@ -587,7 +682,15 @@ enum CommunityPulse {
                 pick = athletes[rng.int(8...(athletes.count - 1))]; tries += 1
             }
             usedHandles.insert(pick.handle)
-            fresh.append(CommunityGenerator.freshPost(for: pick, pulse: pulse, slot: slot, now: now))
+            // Mint the SESSION first and record it against the athlete: a pulse is someone
+            // finishing a workout, so it has to land in their ledger too. Otherwise the wall would
+            // show a session their own profile has never counted — the exact class of drift this
+            // whole ledger exists to make impossible.
+            let session = CommunityGenerator.freshSession(for: pick, pulse: pulse, slot: slot, now: now)
+            let item = CommunityGenerator.freshPost(for: pick, session: session,
+                                                    pulse: pulse, slot: slot, now: now)
+            CommunityDirectory.recordPulse(session, item: item, for: pick.handle)
+            fresh.append(item)
         }
         return (fresh + existing).sorted { $0.date > $1.date }
     }

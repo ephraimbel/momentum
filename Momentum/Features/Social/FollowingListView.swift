@@ -18,9 +18,16 @@ struct FollowingListView: View {
     enum Face: String, CaseIterable { case followers = "Followers", following = "Following" }
     @State private var face: Face = .following
     @Environment(FollowStore.self) private var follows
+    @Environment(ModerationStore.self) private var moderation
     @Environment(Services.self) private var services
     @Environment(RemoteFeedStore.self) private var remoteFeed
     @State private var selectedAthlete: CommunityAthlete?
+    /// The handle whose profile is being resolved from the backend — the row shows a spinner
+    /// instead of doing nothing while the network answers.
+    @State private var resolving: String?
+    /// A resolution that came back empty. Shown as a one-line explanation on the row, because a
+    /// tap that produces nothing at all is the thing that reads as broken.
+    @State private var unresolved: String?
     /// nil = not answered yet / unavailable (guest, offline, dark build) → honest empty state.
     @State private var followers: [AthleteHit]?
     /// Who was followed when this screen opened. Rows stay on screen for the visit even after an
@@ -70,19 +77,24 @@ struct FollowingListView: View {
         .onAppear { openedWith = follows.following }
     }
 
-    /// Every followed handle, resolved where possible — never filtered. Includes anyone unfollowed
-    /// during this visit (see `openedWith`) so their row stays put, showing "Follow" again.
+    /// Every followed handle, resolved where possible — never filtered, except for blocked
+    /// athletes: blocking is supposed to remove someone from the app, and a blocked person sitting
+    /// in your own follow list is the loudest possible contradiction (found 2026-08-29; blocking
+    /// also unfollows now, so this is the belt to that braces). Includes anyone unfollowed during
+    /// this visit (see `openedWith`) so their row stays put, showing "Follow" again.
     private var followingPeople: [Person] {
-        openedWith.union(follows.following).sorted().map { handle in
-            let athlete = CommunityDirectory.athlete(handle: handle)
-            return Person(handle: handle, displayName: athlete?.name, athlete: athlete)
-        }
+        openedWith.union(follows.following)
+            .filter { !moderation.isBlocked($0) }
+            .sorted().map { handle in
+                let athlete = CommunityDirectory.athlete(handle: handle)
+                return Person(handle: handle, displayName: athlete?.name, athlete: athlete)
+            }
     }
 
     /// Real followers only; a follower who also happens to be a seeded athlete resolves so their
-    /// row can open a profile.
+    /// row can open a profile. Blocked athletes drop out here too.
     private var followerPeople: [Person] {
-        (followers ?? []).map { hit in
+        (followers ?? []).filter { !moderation.isBlocked($0.handle) }.map { hit in
             Person(handle: hit.handle, displayName: hit.displayName.isEmpty ? nil : hit.displayName,
                    athlete: CommunityDirectory.athlete(handle: hit.handle))
         }
@@ -95,12 +107,16 @@ struct FollowingListView: View {
                     selectedAthlete = athlete
                 } else {
                     // A REAL athlete (no seeded profile): resolve their page from the backend and
-                    // push it — the same resolution the pager's byline uses. A miss (offline/dark)
-                    // just leaves the list where it is.
+                    // push it — the same resolution the pager's byline uses. A miss used to leave
+                    // the list exactly as it was, so the tap read as a dead control; now the row
+                    // says what happened (2026-08-29).
+                    resolving = person.handle
+                    unresolved = nil
                     Task {
-                        if let remote = await remoteFeed.athlete(handle: person.handle) {
-                            selectedAthlete = remote
-                        }
+                        let remote = await remoteFeed.athlete(handle: person.handle)
+                        guard resolving == person.handle else { return }   // they tapped elsewhere
+                        resolving = nil
+                        if let remote { selectedAthlete = remote } else { unresolved = person.handle }
                     }
                 }
             } label: {
@@ -123,8 +139,14 @@ struct FollowingListView: View {
                                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                                 .foregroundStyle(Theme.inkTertiary).lineLimit(1)
                         }
+                        if unresolved == person.handle {
+                            Text("Profile isn't available right now.")
+                                .font(.rounded(Theme.FontSize.label, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 0)
+                    if resolving == person.handle { ProgressView().controlSize(.small) }
                 }
                 .contentShape(Rectangle())
             }
@@ -172,7 +194,7 @@ struct FollowingListView: View {
         VStack(spacing: Theme.Space.sm) {
             Text("No followers yet")
                 .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-            Text("Share a workout to Friends or Everyone — athletes who follow you will appear here.")
+            Text("Share a workout to Friends or Everyone. Athletes who follow you will appear here.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -184,6 +206,8 @@ struct FollowingListView: View {
 #Preview {
     NavigationStack { FollowingListView() }
         .environment(FollowStore())
+        .environment(ModerationStore())
+        .environment(RemoteFeedStore())
         .environment(Services.live())
 }
 

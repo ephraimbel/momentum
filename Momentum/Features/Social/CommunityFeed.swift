@@ -10,5 +10,11 @@ enum CommunityFeed {
     /// revisit — was pure main-thread waste. Memoized so entering the tab never re-allocates the
     /// whole post list. (`now` was already ignored: `all(now:)` returns the launch cache regardless.)
     static func seed(now: Date = Date()) -> [FeedItem] { cached }
-    private static let cached: [FeedItem] = CommunityDirectory.all().flatMap(\.posts)
+    /// **Newest first, once.** The wall re-sorts this every time it assembles, and the directory
+    /// hands its athletes back in generation order, so every assembly was a full random-order sort
+    /// of ~2,900 fat `FeedItem`s. Sorting here instead makes the array one long descending run, and
+    /// Swift's sort is adaptive: the wall's own re-sort (own posts + pulses merged on top) then
+    /// costs a merge rather than a sort.
+    private static let cached: [FeedItem] =
+        CommunityDirectory.all().flatMap(\.posts).sorted { $0.date > $1.date }
 }

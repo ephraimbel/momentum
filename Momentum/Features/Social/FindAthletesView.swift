@@ -14,10 +14,21 @@ struct FindAthletesView: View {
     var onCancel: (() -> Void)? = nil
 
     @Environment(FollowStore.self) private var follows
+    @Environment(ModerationStore.self) private var moderation
     @Environment(RemoteFeedStore.self) private var remoteFeed
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var remoteHits: [CommunityAthlete] = []
+    /// The query `remoteHits` belongs to. Without it the previous query's remote rows stayed on
+    /// screen under the new query's local ones for the whole debounce — a list that shows people
+    /// who do not match what is in the field.
+    @State private var remoteHitsQuery = ""
+    /// True while the backend half of the search is still out. "No athletes found" must not flash
+    /// before the answer arrives: a wrong empty state is how a working search reads as broken.
+    @State private var awaitingRemote = false
+    /// Who was already followed when the search opened — those names leave Suggested, everyone
+    /// followed during the visit stays put. Re-snapshot per visit.
+    @State private var openedWith: Set<String> = []
     @FocusState private var searching: Bool
 
     var body: some View {
@@ -44,7 +55,7 @@ struct FindAthletesView: View {
                         sectionLabel("SUGGESTED")
                         ForEach(suggested) { row($0) }
                     } else if results.isEmpty {
-                        emptyResults
+                        if awaitingRemote { searchingState } else { emptyResults }
                     } else {
                         ForEach(results) { row($0) }
                     }
@@ -57,13 +68,21 @@ struct FindAthletesView: View {
         // Debounced remote search — local results render instantly on every keystroke.
         .task(id: trimmedQuery) {
             let q = trimmedQuery
-            guard q.count >= 2 else { remoteHits = []; return }
+            guard q.count >= 2 else {
+                remoteHits = []; remoteHitsQuery = q; awaitingRemote = false; return
+            }
+            awaitingRemote = true
             try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }   // a newer keystroke owns the state now
+            let hits = await remoteFeed.search(q)
             guard !Task.isCancelled else { return }
-            remoteHits = await remoteFeed.search(q)
+            remoteHits = hits
+            remoteHitsQuery = q
+            awaitingRemote = false
         }
         .onAppear {
             searching = true
+            openedWith = follows.following
             #if DEBUG
             // --find-query <term>: pre-fill the search (deterministic sim verification of the
             // results list; host-keyboard injection into the sim is unreliable).
@@ -75,31 +94,40 @@ struct FindAthletesView: View {
         }
     }
 
-    private var trimmedQuery: String {
-        query.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "@", with: "")
-    }
+    private var trimmedQuery: String { AthleteSearch.normalize(query) }
 
-    /// (index, lowercased name, lowercased handle) — built once; keystrokes scan strings, never
-    /// copy full athlete structs (their posts carry whole route polylines).
-    private static let searchIndex: [(Int, String, String)] = CommunityDirectory.all().enumerated()
-        .map { ($0.offset, $0.element.name.lowercased(), $0.element.handle.lowercased()) }
+    /// Built once; keystrokes scan three short strings per athlete, never copy full athlete
+    /// structs (their posts carry whole route polylines).
+    private static let searchIndex: [AthleteSearch.Entry] = CommunityDirectory.all().enumerated()
+        .map { .init(index: $0.offset, name: $0.element.name, handle: $0.element.handle) }
 
-    /// Local community matches (name or handle), instantly; real athletes merge in behind them.
+    /// Local community matches, best-first (`AthleteSearch`); real athletes merge in behind them.
+    /// Blocked athletes are excluded: a block that still surfaces the person in search is a block
+    /// that did not happen (found 2026-08-29).
     private var results: [CommunityAthlete] {
-        let q = trimmedQuery.lowercased()
+        let q = trimmedQuery
         guard !q.isEmpty else { return [] }
         let all = CommunityDirectory.all()
-        let local = Self.searchIndex.lazy
-            .filter { $0.1.contains(q) || $0.2.contains(q) }
-            .prefix(30)
-            .map { all[$0.0] }
+        let local = AthleteSearch.matches(Self.searchIndex, query: q)
+            .map { all[$0.index] }
+            .filter { !moderation.isBlocked($0.handle) }
         let localHandles = Set(local.map(\.handle))
-        return Array(local) + remoteHits.filter { !localHandles.contains($0.handle) }
+        // Remote rows only belong to the query they were fetched for.
+        let remote = remoteHitsQuery == q ? remoteHits : []
+        return local + remote.filter { !localHandles.contains($0.handle) && !moderation.isBlocked($0.handle) }
     }
 
     /// The hand-curated featured athletes lead the empty-query state — a warm start, not a void.
-    private var suggested: [CommunityAthlete] { Array(CommunityDirectory.all().prefix(12)) }
+    /// Anyone the athlete already followed when this screen opened drops out and the list tops back
+    /// up from the directory: a "Suggested" column that keeps offering people you followed a minute
+    /// ago is the surest sign nothing you do here registers (2026-08-28). Following someone DURING
+    /// the visit keeps their row — a row that vanishes under the thumb makes a mis-tap
+    /// unrecoverable (the same `openedWith` rule the follow list uses).
+    private var suggested: [CommunityAthlete] {
+        Array(CommunityDirectory.all().lazy
+            .filter { !openedWith.contains($0.handle) && !moderation.isBlocked($0.handle) }
+            .prefix(12))
+    }
 
     private var searchField: some View {
         HStack(spacing: Theme.Space.sm) {
@@ -203,11 +231,26 @@ struct FindAthletesView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, Theme.Space.xxl)
+        .accessibilityIdentifier("search-no-results")
+    }
+
+    /// Nothing local matched and the backend hasn't answered yet — say so rather than claiming
+    /// there is nobody. A "no results" that turns into results a beat later is worse than a wait.
+    private var searchingState: some View {
+        HStack(spacing: Theme.Space.sm) {
+            ProgressView().controlSize(.small)
+            Text("Searching…")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, Theme.Space.xxl)
+        .accessibilityIdentifier("search-in-flight")
     }
 }
 
 #Preview {
     FindAthletesView { _ in }
         .environment(FollowStore())
+        .environment(ModerationStore())
         .environment(RemoteFeedStore())
 }
