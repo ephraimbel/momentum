@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Design tokens (PRD §18). Base UI is monochrome (asset-catalog backed, light/dark per §5.1);
 /// the iridescent palette is the *earned* accent — used only by progress/achievement surfaces.
@@ -79,6 +80,27 @@ enum Theme {
         Color(hex: "CBBDF8"), // violet — the live-route accent ([3])
         Color(hex: "EBD9F4"), // orchid ice
     ]
+
+    /// The earned iridescence at BRAND DEPTH — the aurora's five hues rebuilt at `Theme.purple`'s
+    /// own saturation and brightness (adaptive: it re-resolves per appearance, like the token it
+    /// borrows from).
+    ///
+    /// Why it exists (2026-08-29): the stock stops are pale pastels, which is right when the
+    /// oil-slick is a *wash* over something. On a GRADED surface — the muscle-load wheel, the body
+    /// figure — the leader is painted in it outright, and a pastel is lighter than a fully-lit
+    /// lavender. So the top of the scale rendered as the palest thing on the chart: the leading
+    /// wheel region read weaker than the runner-up, and the most-trained muscle on the body read
+    /// untrained. Same hues, same shimmer, never lighter than the tissue below it on the scale.
+    static let iridescentDeep: [Color] = iridescent.map { stop in
+        Color(UIColor { traits in
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            UIColor(stop).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            var bh: CGFloat = 0, bs: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+            UIColor(Theme.purple).resolvedColor(with: traits)
+                .getHue(&bh, saturation: &bs, brightness: &bb, alpha: &ba)
+            return UIColor(hue: h, saturation: bs, brightness: bb, alpha: 1)
+        })
+    }
 
     // MARK: Iridescent opacity — the earned accent is soft; these name the levels that were
     // scattered as raw literals (0.16–0.55) across the app so every surface tints consistently.

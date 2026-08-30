@@ -38,6 +38,27 @@ enum StrengthTrends {
             case .fullBody: nil
             }
         }
+        /// Every muscle this region covers — the exact inverse of `of(_:)`, so the body figure and
+        /// the wheel can never drift apart (`MuscleRegionAlignmentTests` pins the round trip).
+        var muscles: [MuscleGroup] { MuscleGroup.allCases.filter { Self.of($0) == self } }
+    }
+
+    /// The body figure's activation for a set of region loads: every muscle in a region carries
+    /// that region's SHARE OF THE LEADER (0…1) — the very number the wheel draws its rings from.
+    /// Feed it to `MuscleMapView(grading: .regionShare)` and the figure lights exactly where the
+    /// wheel leads, at exactly the same falloff. Untrained regions are absent, so their muscles
+    /// stay unlit rather than dimly tinted.
+    static func bodyShares(_ loads: [RegionLoad],
+                           value: (RegionLoad) -> Double) -> [MuscleGroup: Double] {
+        let top = loads.map(value).max() ?? 0
+        guard top > 0 else { return [:] }
+        var out: [MuscleGroup: Double] = [:]
+        for load in loads {
+            let share = value(load) / top
+            guard share > 0 else { continue }
+            for muscle in load.region.muscles { out[muscle] = share }
+        }
+        return out
     }
 
     /// One region's recent training: weight moved (kg, working sets) and weighted working

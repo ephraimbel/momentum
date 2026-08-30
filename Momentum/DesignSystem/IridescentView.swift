@@ -18,6 +18,11 @@ struct IridescentView: View {
     var amplitude: Double = 1
     /// Seconds per drift cycle. Slower fits larger surfaces — same perceived blob speed.
     var loop: Double = 8
+    /// The stops to weave. Defaults to the pale aurora (`Theme.iridescent`) — the wash treatment.
+    /// Pass `Theme.iridescentDeep` where the mesh is painted as something's OWN colour on a graded
+    /// scale (the body figure's top-of-scale muscles), so the burn can't read lighter than the
+    /// lavender it is supposed to crown.
+    var palette: [Color]? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -57,7 +62,7 @@ struct IridescentView: View {
 
     /// Nine colors woven from the five low-sat holographic stops (PRD §18).
     private var colors: [Color] {
-        let p = Theme.iridescent
+        let p = palette ?? Theme.iridescent
         return [p[0], p[1], p[2],
                 p[4], p[3], p[0],
                 p[2], p[4], p[1]]

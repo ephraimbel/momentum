@@ -56,7 +56,9 @@ struct StrengthLiveView: View {
         .animation(Motion.standard, value: vm?.restEndsAt)
         .task {
             guard vm == nil else { return }
-            let model = StrengthViewModel(container: container, type: type)
+            // Voice coach is Pro (PRD §4.10) — pass it only when entitled, else nil (silent).
+            let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
+            let model = StrengthViewModel(container: container, type: type, voice: voice)
             await model.start()
             services.analytics.log(.workoutStarted(type: type.rawValue))
             if let plannedSession { await model.loadPlanned(plannedSession) }
@@ -172,7 +174,7 @@ struct StrengthLiveView: View {
         }
         .confirmationDialog("End this workout?", isPresented: $confirmExit, titleVisibility: .visible) {
             if vm.completedSetCount > 0 {
-                Button("Finish & save") { finishOnce { onFinish(await vm.finish()) } }
+                Button("Finish & save") { finishSaving(vm) }
             }
             Button("Discard workout", role: .destructive) { finishOnce { await vm.discard(); onFinish(nil) } }
             Button("Keep going", role: .cancel) {}
@@ -180,6 +182,19 @@ struct StrengthLiveView: View {
             Text(vm.completedSetCount > 0
                  ? "Save your \(vm.completedSetCount) logged set\(vm.completedSetCount == 1 ? "" : "s"), or discard the workout."
                  : "Nothing's logged yet. Discard this workout?")
+        }
+    }
+
+    /// The one route out of a SAVED session: log anything still in a draft, let the coach say the
+    /// session is done, then finish. Speaking here rather than inside `finishOnce` is deliberate —
+    /// the discard route runs through the same latch and a discard has nothing to congratulate.
+    private func finishSaving(_ vm: StrengthViewModel, logDrafts: Bool = false) {
+        finishOnce {
+            if logDrafts {
+                for p in pendingDraftSets(vm) { await vm.completeSet(rowId: p.rowId, setId: p.setId) }
+            }
+            vm.announceSessionComplete()
+            onFinish(await vm.finish())
         }
     }
 
@@ -254,22 +269,15 @@ struct StrengthLiveView: View {
             // A filled-in set that was never ✓-logged would silently vanish from the summary —
             // the most natural end-of-workout gesture (type last set → Finish) must not lose it.
             if pendingDraftSets(vm).isEmpty {
-                finishOnce { onFinish(await vm.finish()) }
+                finishSaving(vm)
             } else {
                 confirmFinishWithDrafts = true
             }
         }
         .confirmationDialog("Some filled-in sets aren't logged yet",
                             isPresented: $confirmFinishWithDrafts, titleVisibility: .visible) {
-            Button("Log them and finish") {
-                finishOnce {
-                    for p in pendingDraftSets(vm) { await vm.completeSet(rowId: p.rowId, setId: p.setId) }
-                    onFinish(await vm.finish())
-                }
-            }
-            Button("Finish without them") {
-                finishOnce { onFinish(await vm.finish()) }
-            }
+            Button("Log them and finish") { finishSaving(vm, logDrafts: true) }
+            Button("Finish without them") { finishSaving(vm) }
             Button("Cancel", role: .cancel) {}
         }
         .padding(.horizontal, Theme.Space.md)
@@ -489,6 +497,7 @@ private struct RestRingTicker: View {
     @Environment(Services.self) private var services
     @State private var now = Date()
     @State private var didPulse = false
+    @State private var didAnnounceStart = false
     private let tick = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -501,19 +510,28 @@ private struct RestRingTicker: View {
             .accessibilityValue(remaining <= 0 ? "Done" : "\(Formatters.duration(s: remaining)) remaining")
             .onReceive(tick) { date in
                 now = date
-                let remaining = vm.restRemaining(at: date) ?? 0
+                // A SKIPPED rest is not a finished one. `restRemaining` reads nil once the timer is
+                // cleared, which the old `?? 0` turned into "zero left" — so skipping (and every
+                // superset round, which stands the ring down on the next check-off) buzzed and said
+                // "Rest complete" for a rest nobody took.
+                guard let remaining = vm.restRemaining(at: date) else { return }
                 if remaining > 0 {
                     // A new rest is running — re-arm the completion pulse. Without this, only the
                     // FIRST rest of a continuous bar session ever buzzed/announced (the view
                     // instance survives between sets, so a one-way flag stayed latched).
                     didPulse = false
+                    if !didAnnounceStart {
+                        didAnnounceStart = true
+                        vm.announceRestStart()
+                    }
                 } else if !didPulse {
                     Haptics.medium()
                     services.analytics.log(.restTimerComplete)
-                    if services.paywall.isEntitled(to: .voiceCoach) {
-                        services.voiceCoach.announce(CoachingCueBuilder.restComplete())
-                    }
+                    // Names the set that's owed, so the athlete can go again without picking the
+                    // phone back up — the only reason to speak in a gym at all.
+                    vm.announceRestComplete()
                     didPulse = true
+                    didAnnounceStart = false
                 }
             }
     }

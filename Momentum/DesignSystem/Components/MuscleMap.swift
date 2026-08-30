@@ -8,12 +8,19 @@ import SwiftUI
 /// Drive it with a `[MuscleGroup: Double]` (e.g. `MuscleActivation` / `StrengthMath`): unworked
 /// muscles read as a faint anatomy chart, worked muscles light up, the most-worked burns fullest and
 /// the rest scale relative to it. Honors Reduce Motion (iridescence holds static via `IridescentView`).
+///
+/// Two visual languages, chosen by `grading` (see `MuscleMapGrading.tone`): post-session surfaces
+/// keep the celebratory oil-slick over everything worked, while the Trends figures speak the
+/// muscle-load wheel's growth language — brand lavender that DEEPENS with training, the earned
+/// burn only at the top of the scale — so the region leading the wheel is the region carrying the
+/// most colour on the body, at the same strength, every time.
 struct MuscleMapView: View {
     let activation: [MuscleGroup: Double]
     /// Which figures to show, left→right. Default front + back (the iconic anatomy-chart look).
     var sides: [BodySide] = [.front, .back]
-    /// How activation becomes fill intensity — `.session` (default, the rich post-workout burn)
-    /// or `.weeklyVolume` (the Athlete Panel's absolute training portrait). See `MuscleMapGrading`.
+    /// How activation becomes fill intensity — `.session` (default, the rich post-workout burn),
+    /// `.weeklyVolume` (the Athlete Panel's absolute training portrait) or `.regionShare` (the
+    /// muscle-load wheel's share-of-the-leader). See `MuscleMapGrading`.
     var grading: MuscleMapGrading = .session
     /// The body figure to render — `.female` renders the true female anatomical dataset. `nil`
     /// (the default) uses the athlete's own figure (`AthleteFigure.sex`), so most call sites need
@@ -56,7 +63,50 @@ struct MuscleMapView: View {
     }
 }
 
-/// How raw activation becomes fill intensity — two honest scales for two contexts.
+/// The ONE lighting law for trained tissue (owner call 2026-08-29: "the body and the muscle map
+/// have to correlate perfectly"). The muscle-load wheel's ring segments and the body figure's
+/// muscles both run their value through these two functions, so a region reading strong on the
+/// wheel reads exactly as strong on the figure — and a muscle that has been trained more over the
+/// window is visibly deeper in brand lavender than one that hasn't.
+///
+/// Two stops, in order: **lavender deepens** with the work (the whole readable range), and the
+/// **iridescent burn** is reserved for the very top of the scale — the region leading the wheel,
+/// or a muscle carrying full weekly volume. Iridescence stays earned; lavender carries the growth.
+enum MuscleLight {
+    /// The faintest a lit thing is allowed to be: below this a barely-trained region stops
+    /// reading as trained at all. ONE floor for every surface — a wheel ring, a by-region bar and
+    /// a muscle at the same share must come out at the same alpha, or the screen shows one number
+    /// in three depths and the athlete has to decide which to believe.
+    static let floor: Double = 0.08
+
+    /// The law itself: lavender alpha rises LINEARLY with strength `t` (0…1), from the floor to
+    /// full saturation. Linear on purpose — alpha is proportional to the work, so twice the
+    /// training really is twice the colour, wherever it is drawn.
+    static func lavender(_ t: Double) -> Double { floor + (1 - floor) * clamped(t) }
+
+    /// Where the earned iridescence begins. Below it a muscle is lavender and nothing else, so a
+    /// second-place region can never wear the burn that marks the top of the athlete's training.
+    static let burnThreshold: Double = 0.97
+
+    /// How much oil-slick shows through at strength `t` — 0 below the threshold, full at 1.
+    static func burn(_ t: Double) -> Double {
+        max(0, (clamped(t) - burnThreshold) / (1 - burnThreshold))
+    }
+
+    static func clamped(_ t: Double) -> Double { min(1, max(0, t)) }
+
+    /// The fill for one body region at `share` of the leading region — the single style the
+    /// muscle-load wheel's rings and its by-region bars both draw from, and the flat-fill twin of
+    /// what `BodyFigure` paints on the anatomy. The leader wears the earned aurora at brand depth;
+    /// everyone else is brand lavender at exactly the alpha their share earns.
+    static func regionStyle(share: Double, isLeader: Bool) -> AnyShapeStyle {
+        guard isLeader else { return AnyShapeStyle(Theme.purple.opacity(lavender(share))) }
+        return AnyShapeStyle(AngularGradient(colors: Theme.iridescentDeep + [Theme.iridescentDeep[0]],
+                                             center: .center))
+    }
+}
+
+/// How raw activation becomes fill intensity — three honest scales for three contexts.
 enum MuscleMapGrading: Equatable {
     /// Post-session surfaces (summary, tiles, feed, live): what you just worked burns richly —
     /// 0.62…1.0 relative to the session's top muscle, the celebratory "covered body" look.
@@ -67,9 +117,20 @@ enum MuscleMapGrading: Equatable {
     /// as training accumulates, and every window (1M/3M/6M) grades by the same yardstick, so the
     /// muscles you actually train more visibly carry more light.
     case weeklyVolume
+    /// The muscle-load wheel's own scale: the value IS the region's share of the leading region
+    /// (0…1, `StrengthTrends.bodyShares`), graded exactly the way the wheel grades its rings. The
+    /// figure under the wheel is then the wheel, drawn on a body — same leader, same falloff.
+    case regionShare
 
     /// Weekly set-equivalents at which a muscle reaches full iridescence.
     static let fullBurnWeeklySets: Double = 10
+
+    /// How lit tissue is COLOURED. `.burn` is the celebratory post-session oil-slick over
+    /// everything worked; `.growth` is the progress language shared with the muscle-load wheel —
+    /// lavender deepening with training, iridescence only at the top of the scale.
+    enum Tone: Equatable { case burn, growth }
+
+    var tone: Tone { self == .session ? .burn : .growth }
 
     /// Fill alpha for one muscle. `maxVal` is the map's top value — `.session` normalizes to it;
     /// `.weeklyVolume` deliberately ignores it (one easy week must not read as a fully-lit body).
@@ -86,13 +147,28 @@ enum MuscleMapGrading: Equatable {
             // ~0.30 at a tenth of the top muscle, 0.5 at half, 1.0 at the top.
             return 0.28 + 0.72 * pow(min(1, value / maxVal), 1.4)
         case .weeklyVolume:
-            // ~1 set/wk ≈ 0.14, 3 ≈ 0.28, 5 ≈ 0.42, 10+ = 1.0 — sustained volume earns the burn.
-            return 0.10 + 0.90 * pow(min(1, value / Self.fullBurnWeeklySets), 1.5)
+            // LINEAR in the work, like `.regionShare` and like the wheel's rings (2026-08-29): the
+            // Trends page draws this athlete twice, so the body at the top and the muscle-load
+            // wheel below it have to turn "how much" into colour by the same rule or the same
+            // training reads at two different depths on one page. The old `^1.5` also squashed the
+            // bottom of the scale, where most athletes actually live — 1 set/wk and 3 sets/wk came
+            // out nearly the same tint. ~1 set/wk = 0.19, 3 = 0.37, 5 = 0.55, 10+ = 1.0.
+            return 0.10 + 0.90 * min(1, value / Self.fullBurnWeeklySets)
+        case .regionShare:
+            // Already a share of the leader — the wheel's number, used as the wheel uses it.
+            return MuscleLight.clamped(value)
         }
     }
 }
 
-enum BodySide: String, Identifiable, CaseIterable { case front, back; var id: String { rawValue } }
+enum BodySide: String, Identifiable, CaseIterable {
+    case front, back
+    var id: String { rawValue }
+    /// The other face. The Athlete Panel's figure turns between the two.
+    var flipped: BodySide { self == .front ? .back : .front }
+    /// Athlete-facing name, for captions and VoiceOver.
+    var displayName: String { self == .front ? "Front" : "Back" }
+}
 
 /// Which body figure to render. `.neutral` is the (male) source anatomy; `.female` is the true
 /// female anatomical dataset. Both are real SVG datasets from the same MIT source.
@@ -155,17 +231,46 @@ private struct BodyFigure: View {
                     shape(parts[i].path).fill(Theme.inkTertiary.opacity(0.11))
                 }
 
-                // Worked muscles: one flowing oil-slick, revealed only through worked regions, each at
-                // an alpha proportional to its volume. (Mask alpha = per-muscle intensity.)
-                IridescentView(intensity: 1.0, isStatic: reduceMotion || forceStatic)
-                    .mask(workedMask)
+                // Trained tissue, in the growth language (Trends' figures): brand lavender that
+                // DEEPENS with the work — the muscle-load wheel's own ramp — so the part of the
+                // body carrying more training is visibly more purple than the part carrying less.
+                // `.session` skips this: what you just worked keeps the celebratory oil-slick.
+                if grading.tone == .growth {
+                    ForEach(parts.indices, id: \.self) { i in
+                        let t = intensity(parts[i].muscle)
+                        if t > 0 {
+                            shape(parts[i].path).fill(Theme.purple.opacity(MuscleLight.lavender(t)))
+                        }
+                    }
+                }
+
+                // The earned oil-slick, revealed through the mask: every worked muscle under
+                // `.session`, and under `.growth` only the top of the scale — the region leading
+                // the wheel, a muscle at full weekly volume. (Mask alpha = per-muscle burn.)
+                //
+                // The growth figures burn in `Theme.iridescentDeep` — the same aurora at brand
+                // depth. The stock pastel stops are lighter than a fully-lit lavender, so painting
+                // the top of the scale in them made it the LIGHTEST thing on the body: the Athlete
+                // Panel's own rail read "Shoulders — most worked" while the deltoids rendered as
+                // the palest muscle on the figure. More training must never look like less.
+                IridescentView(intensity: 1.0, isStatic: reduceMotion || forceStatic,
+                               palette: grading.tone == .burn ? nil : Theme.iridescentDeep)
+                    .mask(maskLayer(burn))
 
                 // A soft top-lit sheen over the lit muscles — a subtle gloss so a covered body reads
                 // glassy and premium, not flat. Static (no per-frame blur) so it's free on animation.
-                LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.04), .clear],
-                               startPoint: .top, endPoint: .bottom)
-                    .blendMode(.softLight)
-                    .mask(workedMask)
+                //
+                // `.session` ONLY. It is a vertical gradient (0.32 white at the crown, clear at the
+                // feet), so under `.growth` it washed out whatever sat high on the figure: the
+                // deltoids rendered palest while the panel's own rail read "Shoulders — most
+                // worked". On a reading surface, where a muscle SITS must never outrank how much
+                // it has been trained, so the growth figures wear no sheen at all.
+                if grading.tone == .burn {
+                    LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.04), .clear],
+                                   startPoint: .top, endPoint: .bottom)
+                        .blendMode(.softLight)
+                        .mask(maskLayer(intensity))
+                }
 
                 // Worked muscles get a defining edge so the glow reads clearly against white.
                 ForEach(parts.indices, id: \.self) { i in
@@ -189,13 +294,13 @@ private struct BodyFigure: View {
 
     private func shape(_ path: Path) -> ScaledBodyShape { ScaledBodyShape(source: path, box: box) }
 
-    /// The worked-muscle mask: each lit region filled at its per-muscle intensity. Shared by the
-    /// iridescent fill and the gloss sheen so both reveal through exactly the same shapes.
-    private var workedMask: some View {
+    /// A mask over the anatomy, each part filled at `alpha(muscle)`. Shared shape-building for the
+    /// iridescent burn and the gloss sheen so both reveal through exactly the same shapes.
+    private func maskLayer(_ alpha: @escaping (MuscleGroup?) -> Double) -> some View {
         ZStack {
             ForEach(parts.indices, id: \.self) { i in
-                let intensity = intensity(parts[i].muscle)
-                if intensity > 0 { shape(parts[i].path).fill(.white.opacity(intensity)) }
+                let a = alpha(parts[i].muscle)
+                if a > 0 { shape(parts[i].path).fill(.white.opacity(a)) }
             }
         }
     }
@@ -204,6 +309,13 @@ private struct BodyFigure: View {
     private func intensity(_ muscle: MuscleGroup?) -> Double {
         guard let muscle, let v = activation[muscle] else { return 0 }
         return grading.intensity(v, maxVal: maxVal)
+    }
+
+    /// How much iridescence this muscle has earned: everything worked under `.session` (the
+    /// celebratory look, unchanged), only the top of the scale under `.growth`.
+    private func burn(_ muscle: MuscleGroup?) -> Double {
+        let t = intensity(muscle)
+        return grading.tone == .burn ? t : MuscleLight.burn(t)
     }
 }
 

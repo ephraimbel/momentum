@@ -52,6 +52,27 @@ struct AthletePanel: View {
     /// 2026-07-30 perf audit). Freeze it whenever the panel isn't visible.
     @State private var onScreen = true
 
+    /// Which face of the athlete is showing. The figure is a real body and it TURNS (2026-08-29):
+    /// front-only meant glutes, hamstrings and the whole back could never light up no matter how
+    /// much the athlete trained them — the panel promised a training portrait and drew half of one.
+    @State private var side: BodySide = .front
+    /// Live rotation of the figure about its own vertical axis, in degrees. The swap happens at
+    /// 90°, edge-on, where there is nothing to see — so only ONE figure is ever mounted. (Crossfading
+    /// two would double the anatomy fills and run a second 30 fps mesh behind the first, on the
+    /// panel this file has twice been optimized to keep light.)
+    @State private var flipAngle: Double = 0
+    #if DEBUG
+    /// One-shot latch for `--athlete-panel-back` (see `body`).
+    @State private var appliedDebugSide = false
+    #endif
+
+    /// The turn caption's reserved strip under the feet, and its gap from them. The figure's own
+    /// rect is the column minus this, so the body, its contact shadow and the caption never collide.
+    /// Scaled like `stageHeight` above it: the caption is brand type, so it grows with the athlete's
+    /// text setting, and the strip it stands in has to grow with it or the feet land on the words.
+    @ScaledMetric(relativeTo: .body) private var captionHeight: CGFloat = 16
+    private let captionGap: CGFloat = 10
+
     /// The stage grows with the athlete's text setting — 400pt at the default size (exactly what
     /// it was hard-coded to), taller as the type grows. That headroom is the whole fix: the box
     /// being fixed was the reason every reading had to shrink back down to fit inside it.
@@ -77,17 +98,30 @@ struct AthletePanel: View {
         // as one surface instead of a box on a surface.
         .padding(.vertical, Theme.Space.sm)
         .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
+        #if DEBUG
+        // --athlete-panel-back: land with the figure already turned, so the back can be screenshot
+        // without driving the tap. One-shot: `onAppear` fires again on every return to the tab, and
+        // re-applying it would keep yanking the figure back around under the athlete's own taps.
+        .onAppear {
+            guard !appliedDebugSide else { return }
+            appliedDebugSide = true
+            if ProcessInfo.processInfo.arguments.contains("--athlete-panel-back") { side = .back }
+        }
+        #endif
     }
 
     private var stage: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             // The figure owns the center column; the data columns own the gutters.
-            let fig = CGRect(x: w * 0.5 - w * 0.21, y: 4, width: w * 0.42, height: h - 22)
+            let column = CGRect(x: w * 0.5 - w * 0.21, y: 4, width: w * 0.42, height: h - 22)
+            let fig = figureRect(column)
             let body = fittedBodyRect(in: fig)
             ZStack {
                 backdrop(body: body, h: h)
                 figure(fig: fig)
+                sideCaption
+                    .position(x: column.midX, y: column.maxY - captionHeight / 2)
                 HStack(alignment: .top, spacing: 0) {
                     // Left: the anchor stat — one big number, staggered down for composition.
                     VStack(alignment: .leading, spacing: Theme.Space.lg) {
@@ -122,10 +156,17 @@ struct AthletePanel: View {
         }
     }
 
+    /// The figure's own rect: the centre column less the caption strip beneath the feet.
+    private func figureRect(_ column: CGRect) -> CGRect {
+        CGRect(x: column.minX, y: column.minY,
+               width: column.width, height: max(0, column.height - captionHeight - captionGap))
+    }
+
     /// Where the anatomy actually renders inside `fig` (aspect-fit, centered) — used to place
-    /// the light the figure stands in.
+    /// the light the figure stands in. Reads the viewBox of the side ON SCREEN: the female back
+    /// art is wider than her front, so a front-only box would drift the shadow off her feet.
     private func fittedBodyRect(in fig: CGRect) -> CGRect {
-        let vb = BodyAnatomy.viewBox(.front, sex)
+        let vb = BodyAnatomy.viewBox(side, sex)
         let aspect = vb.width / vb.height
         var size = CGSize(width: fig.width, height: fig.width / aspect)
         if size.height > fig.height {
@@ -162,12 +203,71 @@ struct AthletePanel: View {
     }
 
     private func figure(fig: CGRect) -> some View {
-        MuscleMapView(activation: activation, sides: [.front], grading: .weeklyVolume, sex: sex,
-                      forceStatic: reduceMotion || !onScreen)
+        // `.id(side)` swaps the anatomy outright: at the halfway point the figure is edge-on, so
+        // there is nothing to crossfade and nothing to see. Under Reduce Motion there is no turn
+        // at all, so the same swap becomes a plain opacity dissolve.
+        MuscleMapView(activation: activation, sides: [side], grading: .weeklyVolume, sex: sex,
+                      forceStatic: reduceMotion || !onScreen || flipAngle != 0)
+            .id(side)
+            .transition(reduceMotion ? .opacity : .identity)
             .animation(.easeOut(duration: 0.45), value: activation)
             .frame(width: fig.width, height: fig.height)
+            .rotation3DEffect(.degrees(flipAngle), axis: (x: 0, y: 1, z: 0), perspective: 0.24)
+            // Gestures BEFORE `.position` on purpose: `.position` returns a view the size of its
+            // parent, so a tap attached after it would arm the whole stage — including the empty
+            // gutters over the readings.
+            .contentShape(Rectangle())
+            .onTapGesture { flipBody() }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Athlete figure, \(side.displayName.lowercased())")
+            .accessibilityHint("Turns the figure to show the \(side.flipped.displayName.lowercased())")
+            .accessibilityAddTraits(.isButton)
             .position(x: fig.midX, y: fig.midY)
-            .accessibilityHidden(true)
+    }
+
+    /// The turn affordance: the panel's own micro-label type, plus the glyph that says the body
+    /// rotates. Deliberately a caption and not a control — the panel carries no furniture (owner
+    /// call: no pedestals, no rims), and the whole figure above it is the real tap target.
+    private var sideCaption: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 9, weight: .bold))
+            Text(side.displayName.uppercased())
+                .font(.rounded(10, weight: .bold)).tracking(1.2)
+                .contentTransition(.opacity)
+        }
+        .foregroundStyle(Theme.inkTertiary.opacity(0.7))
+        .lineLimit(1)
+        // No height clamp: `captionHeight` reserves the strip, the caption sizes to its own type.
+        // Pinning it would crop the glyph the moment the athlete raises their text size — the very
+        // trap this panel's Dynamic Type pass was written to get out of.
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { flipBody() }
+        .accessibilityHidden(true)   // the figure above is the labelled button
+    }
+
+    /// Turn the body around. One tap, one half-turn each way; taps during a turn are ignored so the
+    /// figure can never be left facing sideways.
+    private func flipBody() {
+        guard flipAngle == 0 else { return }
+        Haptics.light()
+        guard !reduceMotion else {
+            withAnimation(.easeInOut(duration: 0.28)) { side = side.flipped }
+            return
+        }
+        withAnimation(.easeIn(duration: 0.17)) {
+            flipAngle = 90
+        } completion: {
+            // Edge-on: swap the anatomy and jump to the far side of the turn, both unanimated
+            // (no `.animation(value:)` watches `flipAngle`, so these land instantly), then carry
+            // the second half through. The body never reads mirrored, because it is never drawn
+            // past 90°.
+            side = side.flipped
+            flipAngle = -90
+            withAnimation(.easeOut(duration: 0.21)) { flipAngle = 0 }
+        }
     }
 
     /// The lock resting over the blurred rail — a small tappable badge that opens the paywall.

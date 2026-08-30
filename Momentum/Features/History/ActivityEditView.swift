@@ -32,6 +32,8 @@ struct ActivityEditView: View {
     @State private var privacy: WorkoutPrivacy = .private
     @State private var loaded = false
     @State private var saveFailed = false
+    /// Cancel with typed-but-unsaved text asks before throwing it away.
+    @State private var confirmDiscard = false
 
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -42,6 +44,19 @@ struct ActivityEditView: View {
     /// that never happened.
     private static let cardioTypes = WorkoutType.allCases.filter(\.isGPS)
     private var canChangeSport: Bool { workout.type.isGPS }
+
+    /// Has the athlete actually changed a STAGED field? Photos are excluded on purpose — they
+    /// write through the moment they're picked, so they can never be "unsaved". Drives both the
+    /// Save button's enablement and the discard guard, so the two can never disagree about
+    /// whether there is anything to lose.
+    private var hasUnsavedChanges: Bool {
+        guard loaded else { return false }
+        return title.trimmingCharacters(in: .whitespacesAndNewlines) != workout.title
+            || desc.trimmingCharacters(in: .whitespacesAndNewlines) != workout.note
+            || sportType != workout.type
+            || effort != workout.perceivedEffort
+            || (CommunityAccess.enabled && privacy != workout.privacy)
+    }
 
     var body: some View {
         NavigationStack {
@@ -63,10 +78,18 @@ struct ActivityEditView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    // Never discard typed work on a single tap. A long note is the thing people
+                    // most regret losing here, and Cancel sat one thumb-width from Save.
+                    Button("Cancel") {
+                        if hasUnsavedChanges { confirmDiscard = true } else { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }.fontWeight(.semibold)
+                    // Quiet when there is nothing to save — a live Save that does nothing teaches
+                    // the athlete their tap didn't register.
+                    Button("Save") { save() }
+                        .fontWeight(.semibold)
+                        .disabled(!hasUnsavedChanges)
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -75,6 +98,13 @@ struct ActivityEditView: View {
             }
             // The activity itself is untouched — only these fields failed to write. Say so and keep
             // the athlete here with their text, the same contract the save editor honors.
+            .confirmationDialog("Discard your changes?", isPresented: $confirmDiscard,
+                                titleVisibility: .visible) {
+                Button("Discard", role: .destructive) { dismiss() }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("Any photos you added are already saved.")
+            }
             .alert("Couldn't save your changes", isPresented: $saveFailed) {
                 Button("Try again") { save() }
                 Button("Not now", role: .cancel) {}

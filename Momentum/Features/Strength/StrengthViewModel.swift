@@ -56,13 +56,24 @@ final class StrengthViewModel {
     private(set) var restEndsAt: Date?
     private(set) var restTotal: TimeInterval = 0
     private var restExerciseName = "Rest"
+    /// The row the current rest belongs to. Kept alongside the name because two rows can carry the
+    /// SAME exercise (a second bench block later in the session), and the spoken "set 3" has to
+    /// count the sets of the one you just lifted.
+    private var restRowId: UUID?
     private let restActivity = RestActivityController()   // lock-screen / Dynamic Island mirror
 
-    init(container: ModelContainer, type: WorkoutType = .strength, weightUnit: WeightUnit = .default()) {
+    /// The voice coach (PRD §4.10, Pro), or nil when the athlete isn't entitled or has muted it.
+    /// A gym session is the one place the phone is genuinely out of reach — on the floor, under a
+    /// bench — so the whole value of speaking here is that it never has to be picked back up.
+    private let voice: (any VoiceCoachServing)?
+
+    init(container: ModelContainer, type: WorkoutType = .strength, weightUnit: WeightUnit = .default(),
+         voice: (any VoiceCoachServing)? = nil) {
         self.context = ModelContext(container)
         self.engine = StrengthSessionEngine(sink: StrengthWorkoutStore(modelContainer: container))
         self.weightUnit = weightUnit
         self.type = type
+        self.voice = voice
     }
 
     // MARK: Lifecycle
@@ -70,6 +81,9 @@ final class StrengthViewModel {
     func start() async {
         await engine.begin(type: type, now: startedAt)
         workoutId = ActiveWorkoutMarker.pendingID
+        // Warm the speech stack now, not at the first rest: building the synthesizer costs tens of
+        // milliseconds and the first "Rest 90 seconds" would otherwise land after the bar is racked.
+        voice?.prepare()
         await refresh()
     }
 
@@ -313,7 +327,7 @@ final class StrengthViewModel {
                     // A superset round rests for the pair's LONGEST prescription — finishing
                     // the round on the curl must not shortchange the bench's recovery.
                     let restSeconds = max(set.restS, members.map(\.defaultRestS).max() ?? set.restS)
-                    startRest(seconds: restSeconds, exerciseName: ex.name)
+                    startRest(seconds: restSeconds, exerciseName: ex.name, rowId: ex.id)
                 }
             }
             // Finishing the whole GROUP (the pair, or just this exercise when standalone) is its
@@ -410,10 +424,11 @@ final class StrengthViewModel {
 
     // MARK: Rest timer
 
-    func startRest(seconds: TimeInterval, exerciseName: String = "Rest") {
+    func startRest(seconds: TimeInterval, exerciseName: String = "Rest", rowId: UUID? = nil) {
         let now = Date()
         restTotal = seconds
         restExerciseName = exerciseName
+        restRowId = rowId
         let endsAt = now.addingTimeInterval(seconds)
         restEndsAt = endsAt
         restActivity.start(exerciseName: exerciseName, startedAt: now, endsAt: endsAt, setsDone: completedSetCount)
@@ -422,8 +437,12 @@ final class StrengthViewModel {
 
     func skipRest() {
         restEndsAt = nil
+        restRowId = nil
         restActivity.end()
         NotificationService.cancelRestTimer()
+        // Cutting the rest short cuts its line short too — "Rest 90 seconds" is a lie the moment
+        // the athlete skips it, and a set start should not be spoken over.
+        voice?.stop()
     }
 
     func adjustRest(by delta: TimeInterval) {
@@ -438,6 +457,51 @@ final class StrengthViewModel {
     func restRemaining(at now: Date) -> TimeInterval? {
         guard let end = restEndsAt else { return nil }
         return max(0, end.timeIntervalSince(now))
+    }
+
+    /// What the voice coach should name when this rest ends: the exercise you were on and the
+    /// number of the working set it still owes. The whole value of speaking in a gym is that the
+    /// phone can stay on the floor, and "Rest complete" alone doesn't earn that.
+    /// nil once the row is finished, so the cue falls back to its generic wording instead of
+    /// naming a set that no longer exists.
+    var restNextUp: (name: String, setNumber: Int)? {
+        guard let rowId = restRowId, let ex = exercises.first(where: { $0.id == rowId }) else { return nil }
+        // A superset rests between ROUNDS, and the next round opens on the pair's FIRST member —
+        // naming the exercise just put down would send the athlete back to the wrong bar.
+        let candidates = ex.supersetGroup.map { g in exercises.filter { $0.supersetGroup == g } } ?? [ex]
+        for candidate in candidates {
+            let working = candidate.sets.filter { $0.type == .working }
+            if let next = working.firstIndex(where: { !$0.isComplete }) {
+                return (candidate.name, next + 1)
+            }
+        }
+        return nil
+    }
+
+    /// What the coach says when the rest ring hits zero — named set when we know it, generic when
+    /// the row is finished. Pure so the wording is pinned by tests without a synthesizer.
+    var restCompleteCue: String {
+        guard let next = restNextUp else { return CoachingCueBuilder.restComplete() }
+        return CoachingCueBuilder.restComplete(next: next.name, setNumber: next.setNumber)
+    }
+
+    /// Rests shorter than this are not worth a sentence — the coach would still be talking when
+    /// the ring ran out. A long rest is exactly when the phone goes back on the floor and knowing
+    /// the length without looking is worth something.
+    static let spokenRestFloorS: TimeInterval = 45
+
+    /// Spoken as the ring starts (the ring owns the 10 Hz clock; the wording lives here).
+    func announceRestStart() {
+        guard restTotal >= Self.spokenRestFloorS else { return }
+        voice?.announce(CoachingCueBuilder.restStart(seconds: restTotal))
+    }
+
+    /// Spoken by the rest ring at zero (the ring owns the 10 Hz clock; the wording lives here).
+    func announceRestComplete() { voice?.announce(restCompleteCue) }
+
+    /// The session's last line, spoken on the save route only — a discard has nothing to count.
+    func announceSessionComplete() {
+        voice?.announce(CoachingCueBuilder.strengthComplete(sets: completedSetCount))
     }
 
     // MARK: Display helpers

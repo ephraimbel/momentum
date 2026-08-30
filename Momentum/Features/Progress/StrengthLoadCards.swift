@@ -139,7 +139,7 @@ struct RadialMuscleWheel: View {
                                 endAngle: .degrees(base + 30 - Self.gapDegrees / 2 - capDeg),
                                 radius: r)
                             .trim(from: 0, to: grown ? 1 : 0.001)
-                            .stroke(fill(on: on, ring: ring, leader: leader, share: share),
+                            .stroke(fill(on: on, leader: leader, share: share),
                                     style: StrokeStyle(lineWidth: ringW, lineCap: .round))
                             .animation(.spring(response: 0.7, dampingFraction: 0.86)
                                         .delay(0.05 * Double(ring) + 0.03 * Double(StrengthTrends.BodyRegion.allCases.firstIndex(of: l.region) ?? 0)),
@@ -161,19 +161,19 @@ struct RadialMuscleWheel: View {
 
     /// The wheel reads like the muscle map (owner call 2026-08-28): every region is lavender,
     /// and the colour gets STRONGER with volume rather than switching from grey to lit. A lit
-    /// ring's strength is the region's share of the biggest region, ramped outward ring by ring;
-    /// unlit rings keep a faint lavender track so the whole wheel is one graph, not six grey
+    /// ring's strength is the region's share of the biggest region, the same alpha that region's
+    /// muscles carry on the body figure (`MuscleLight`); unlit rings keep a faint lavender track
+    /// so the whole wheel is one graph, not six grey
     /// stubs. The leader alone wears the iridescent burn, the earned top of the scale. Before
     /// this, lit rings were ink grey and a region at 35% of the max looked untrained.
-    private func fill(on: Bool, ring: Int, leader: Bool, share: Double) -> AnyShapeStyle {
+    private func fill(on: Bool, leader: Bool, share: Double) -> AnyShapeStyle {
         guard on else { return AnyShapeStyle(Theme.purple.opacity(0.07)) }
-        if leader {
-            let alpha = [0.5, 0.66, 0.83, 1.0][ring]
-            return AnyShapeStyle(AngularGradient(colors: Theme.iridescent + [Theme.iridescent[0]], center: .center).opacity(alpha))
-        }
-        let ramp = [0.55, 0.7, 0.85, 1.0][ring]
-        let strength = 0.3 + 0.7 * min(max(share, 0), 1)
-        return AnyShapeStyle(Theme.purple.opacity(strength * ramp))
+        // Every lit ring of a region is the SAME colour, and it is the same colour that region's
+        // muscles wear on the body figure — `MuscleLight.regionStyle` is the only thing either
+        // surface asks. The old per-ring inward ramp (0.55…1.0) gave one region four different
+        // depths, so a ring and the muscle it stands for could never be matched by eye; magnitude
+        // is already said twice here anyway, in the colour AND in how many rings light at all.
+        return MuscleLight.regionStyle(share: share, isLeader: leader)
     }
 
     private func labelPoint(center: CGPoint, angle: Double, radius: CGFloat) -> CGPoint {
@@ -454,23 +454,17 @@ struct MuscleLoadDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The figure, lit from the WHEEL's own numbers: every muscle in a region carries that
-    /// region's share of the leader, on the same relative scale the rings use — so the region
-    /// with four rings burns full and a one-ring region is a faint tint. (The absolute
-    /// weekly-sets grading would light the whole body for anyone training everything.)
+    /// The figure, lit from the WHEEL's own numbers — one call, one scale: every muscle in a
+    /// region carries that region's share of the leader, and `.regionShare` grades that share
+    /// exactly the way the rings are drawn. The leading region burns iridescent on both; every
+    /// other region is lavender at the same strength on both. (The absolute weekly-sets grading
+    /// would light the whole body for anyone training everything.)
     private var bodyActivation: [MuscleGroup: Double] {
-        let maxV = loads.map(value).max() ?? 0
-        guard maxV > 0 else { return [:] }
-        var out: [MuscleGroup: Double] = [:]
-        for m in MuscleGroup.allCases where m != .fullBody {
-            guard let r = StrengthTrends.BodyRegion.of(m), let l = loads.first(where: { $0.region == r }) else { continue }
-            out[m] = value(l) / maxV * MuscleMapGrading.fullBurnWeeklySets
-        }
-        return out
+        StrengthTrends.bodyShares(loads, value: value)
     }
 
     private var bodyCard: some View {
-        MuscleMapView(activation: bodyActivation, sides: [.front, .back], grading: .weeklyVolume, forceStatic: reduceMotion)
+        MuscleMapView(activation: bodyActivation, sides: [.front, .back], grading: .regionShare, forceStatic: reduceMotion)
             .frame(height: 320)
             .frame(maxWidth: .infinity)
             .padding(Theme.Space.md)
@@ -489,9 +483,14 @@ struct MuscleLoadDetailView: View {
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
                         .frame(width: 92, alignment: .leading)
                     GeometryReader { geo in
+                        // The third rendering of the same six numbers on this screen, and it used
+                        // to be the odd one out: flat ink for every region (no progression at all)
+                        // plus the pale material for the leader. Same law as the rings and the
+                        // muscles now — the bar's colour says how much, its length says how much.
+                        let share = maxV > 0 ? value(l) / maxV : 0
                         Capsule()
-                            .fill(i == 0 && value(l) > 0 ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.ink.opacity(0.7)))
-                            .frame(width: max(value(l) > 0 ? 6 : 0, geo.size.width * (maxV > 0 ? value(l) / maxV : 0)))
+                            .fill(MuscleLight.regionStyle(share: share, isLeader: i == 0 && value(l) > 0))
+                            .frame(width: max(value(l) > 0 ? 6 : 0, geo.size.width * share))
                             .frame(maxHeight: .infinity, alignment: .center)
                             .animation(.smooth(duration: 0.5), value: metric)
                     }
