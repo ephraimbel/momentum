@@ -18,6 +18,7 @@ struct WatchStrengthView: View {
         // The rest ring owns the screen — no back chevron floating over it.
         .toolbar(model.restEndsAt != nil ? .hidden : .automatic, for: .navigationBar)
         .onAppear {
+            model.begin()
             #if DEBUG
             model.seedDemoIfRequested()
             #endif
@@ -144,7 +145,7 @@ struct WatchStrengthView: View {
             .onChange(of: remaining <= 0) { _, done in
                 if done {
                     WatchHaptics.go()
-                    model.skipRest()
+                    model.completeRest()
                 }
             }
         }

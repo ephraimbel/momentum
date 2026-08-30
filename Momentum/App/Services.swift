@@ -215,6 +215,13 @@ protocol VoiceCoachServing: AnyObject {
     func announce(_ text: String)
     /// Stop any in-flight speech and release the audio session.
     func stop()
+    /// Warm the speech stack (synthesizer + voice lookup) before the first cue, so the opening line
+    /// of a workout lands on the beat. Optional: the default does nothing.
+    func prepare()
+}
+
+extension VoiceCoachServing {
+    func prepare() {}
 }
 
 // MARK: - Pro gating

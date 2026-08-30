@@ -15,6 +15,10 @@ final class PhoneWatchSync: NSObject {
     /// Set at app start (the Services-owned instance) so check-in recomputes can run the full
     /// readiness recipe. nil in tests/previews — receive still saves, recompute quietly skips.
     var health: (any HealthServing)?
+    /// The paywall, for the one gate the wrist can't decide for itself: the voice coach is Pro
+    /// (PRD §4.10) and the watch has no receipt of its own. nil ⇒ the wrist stays silent, which is
+    /// the honest default for a watch that has never heard from its phone.
+    var paywall: (any PaywallServing)?
 
     private var activated = false
     private var pushTask: Task<Void, Never>?
@@ -51,6 +55,11 @@ final class PhoneWatchSync: NSObject {
         else { return }
 
         var context: [String: Any] = [:]
+        // The wrist's voice-coach gate, decided here because both halves of it live on the phone:
+        // the Pro entitlement and the Settings switch. Pushed on every refresh so muting on the
+        // phone silences the watch on the next sync rather than at the next install.
+        context["voiceCoach"] = (paywall?.isEntitled(to: .voiceCoach) ?? false)
+            && (UserDefaults.standard.object(forKey: VoiceCoachService.storageKey) as? Bool ?? true)
         if let r = ReadinessTodayCache.today() {
             context["readinessScore"] = r.score
             context["readinessBand"] = r.band
@@ -80,6 +89,13 @@ final class PhoneWatchSync: NSObject {
                 if s.discipline == .running, let pace = s.targetPaceSPerKm, pace > 0 {
                     context["sessionPaceLo"] = pace * 0.94
                     context["sessionPaceHi"] = pace * 1.07
+                }
+                // The two numbers the wrist's voice coach needs to say anything at all about a
+                // plain planned run: the day's distance ("8 miles today") and the pace to hold.
+                // Without them the watch could only ever call bare splits.
+                if let m = s.targetDistanceM, m > 0 { context["sessionTargetM"] = m }
+                if let pace = s.targetPaceSPerKm, pace > 0, s.discipline != .strength {
+                    context["sessionTargetPace"] = pace
                 }
                 // A quality session's guided structure, whole: the watch runs the same step
                 // tracker the phone does, so the wrist can coach reps without the phone along.

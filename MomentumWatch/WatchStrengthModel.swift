@@ -34,14 +34,33 @@ final class WatchStrengthModel {
         weightKg = max(0, kg)
     }
 
+    /// The wrist's voice coach — the same words the phone's gym coach says, minus the exercise
+    /// name, which the standalone wrist logger doesn't have. Silent unless the phone has pushed
+    /// the Pro gate across (`WatchSyncStore.voiceCoachOn`).
+    private var voice: WatchVoiceCoach { .shared }
+
+    /// Warm the speech stack as the logger opens, so the first rest call lands on the beat.
+    func begin() { voice.prepare() }
+
     /// Log the current set: success haptic + start the rest countdown (fires on the wrist).
     func logSet() {
         completedSets += 1
         WKInterfaceDevice.current().play(.success)
         restEndsAt = Date().addingTimeInterval(restDurationS)
+        voice.announce(CoachingCueBuilder.restStart(seconds: restDurationS))
     }
 
-    func skipRest() { restEndsAt = nil }
+    /// The rest ran out. Distinct from `skipRest` on purpose: a rest the athlete cut short is not
+    /// a rest that finished, and speaking over the set they just started is worse than silence.
+    func completeRest() {
+        restEndsAt = nil
+        voice.announce(CoachingCueBuilder.restComplete())
+    }
+
+    func skipRest() {
+        restEndsAt = nil
+        voice.stop()
+    }
 
     func restRemaining(at now: Date) -> TimeInterval {
         guard let restEndsAt else { return 0 }

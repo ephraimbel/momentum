@@ -321,13 +321,32 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 9)
                 .accessibilityLabel("Voice coach")
+                // The wrist can't see this switch (or the Pro receipt behind it) — the phone owns
+                // both halves of that gate, so muting here has to travel.
+                .onChange(of: voiceCoachEnabled) { _, _ in PhoneWatchSync.shared.scheduleRefresh() }
+                if voiceCoachEnabled {
+                    inset
+                    // "The voice coach doesn't work" is unanswerable over email: the athlete can't
+                    // tell a muted app from a silenced phone from a Bluetooth route that went to the
+                    // car. One tap here settles it, in their own units, without leaving the house.
+                    actionRow("Hear a sample", icon: "speaker.wave.2") {
+                        services.voiceCoach.announce(
+                            CoachingCueBuilder.milestone(unitCount: 3, splitSecPerUnit: 525,
+                                                         unit: sampleDistanceUnit))
+                    }
+                }
             }
         }
     }
 
+    /// The athlete's own distance unit, so the sample cue says the thing they'd actually hear.
+    private var sampleDistanceUnit: DistanceUnit {
+        DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
+    }
+
     private var preferencesFooter: String? {
         services.paywall.isEntitled(to: .voiceCoach)
-            ? "The voice coach speaks splits, step changes, and pace cues on guided runs."
+            ? "The voice coach speaks splits, step changes, and pace cues on runs and rides, the clock on timed sports, and your rests in the gym. It keeps talking with the screen locked."
             : nil
     }
 
@@ -815,9 +834,9 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 dot
-                colophonLink("Terms", url: "https://momentumco.app/terms")
+                colophonLink("Terms", url: "https://momentumrunning.app/terms")
                 dot
-                colophonLink("Privacy", url: "https://momentumco.app/privacy")
+                colophonLink("Privacy", url: "https://momentumrunning.app/privacy")
                 dot
                 colophonLink("© Mapbox", url: "https://www.mapbox.com/about/maps/")
                 dot

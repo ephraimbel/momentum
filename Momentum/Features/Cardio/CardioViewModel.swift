@@ -232,7 +232,7 @@ final class CardioViewModel {
         self.engine = GPSTrackingEngine(type: type, sink: store)
         self.tracker = structured.map { StructuredRunTracker(steps: $0.steps) }
         self.coach = LiveRunCoach(unit: distanceUnit, goalMeters: goalMeters, targetPaceSPerKm: targetPaceSPerKm,
-                                  speaksSplitPace: type.discipline != .cycling)
+                                  speech: CoachSpeech.forType(type))
     }
 
     /// Open the location stream and watch signal quality without recording yet. Fixes report
@@ -332,10 +332,17 @@ final class CardioViewModel {
         }
     }
 
-    /// Speak paused/resumed on any transition (manual or GPS auto-pause), deduped.
+    /// Speak paused/resumed on a MANUAL transition, deduped.
+    ///
+    /// Auto-pause is deliberately silent. It fires on its own at every red light, so speaking it
+    /// turned a city run into "Paused. Resumed. Paused. Resumed." — and it announces a decision the
+    /// athlete never made. The screen and the Live Activity already say "Auto-paused"; the coach
+    /// only speaks about what you did. Spoken rather than cued, deliberately: this confirms a
+    /// button the athlete just pressed, so it goes out immediately, and the live screen already
+    /// carries the state in letters an inch tall.
     private func announcePauseIfChanged() {
         guard voice != nil else { return }
-        let p = isPaused
+        let p = state == .paused
         guard p != lastAnnouncedPaused else { return }
         lastAnnouncedPaused = p
         voice?.announce(p ? CoachingCueBuilder.paused() : CoachingCueBuilder.resumed())
@@ -352,6 +359,9 @@ final class CardioViewModel {
             : LocationService.isRun4 ? Date().addingTimeInterval(-1350)
             : Date()
         await engine.begin(now: startedAt)
+        // Build the synthesizer and resolve the voice now, off the opening line's critical path —
+        // the first cue used to pay tens of milliseconds for the speech stack and land late.
+        voice?.prepare()
         motion.start()      // begin cadence updates now that recording is live
         heartRate.start()   // scan for a BLE HR strap (no-op without one)
         workoutId = ActiveWorkoutMarker.pendingID
@@ -610,7 +620,11 @@ final class CardioViewModel {
         motion.stop()
         heartRate.stop()
         liveActivity.end()
-        voice?.stop()
+        // A guided session that has already said its last line gets to finish saying it: stopping
+        // here cut "Workout complete. That's the work done." off mid-sentence, and that is the one
+        // line the whole session ends on. Anything still in flight on any other run is stale the
+        // moment Finish is tapped, so that still stops.
+        if !structuredCompleteAnnounced { voice?.stop() }
         // A step in progress at Finish is real work — close it out as a partial rep (exactly what
         // Skip records) so the per-rep breakdown never silently drops the final effort.
         if var t = tracker, !t.isComplete, t.current != nil {

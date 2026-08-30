@@ -173,7 +173,7 @@ struct LiveCoachCadenceTests {
         #expect(run(goal: 1.5 * mile, unit: .imperial) == ["1.5 miles today.", "Goal reached. Everything from here is extra."])
     }
 
-    @Test func freeRunIsSilentExceptForSplitsAndARideSkipsThePace() {
+    @Test func freeRunIsSilentExceptForSplitsAndARideCallsSpeed() {
         var h = Harness(coach: LiveRunCoach(unit: .metric, goalMeters: nil, targetPaceSPerKm: nil))
         #expect(h.coach.plannedIntro() == nil)
         var d = 0.0, t = 0.0
@@ -185,15 +185,16 @@ struct LiveCoachCadenceTests {
         #expect(h.texts == ["Kilometer 1. 4:10 per kilometer.", "Kilometer 2. 4:10 per kilometer.",
                             "Kilometer 3. 4:10 per kilometer."])
 
+        // A ride calls the same mile in the rider's instrument: speed, not pace. 8 m/s is 17.9 mph.
         var ride = Harness(coach: LiveRunCoach(unit: .imperial, goalMeters: nil, targetPaceSPerKm: nil,
-                                               speaksSplitPace: false))
+                                               speech: .ride))
         d = 0; t = 0
         while d < 2.1 * mile {
             t += 1; d += 8
             for l in ride.coach.plannedFix(distanceM: d, elapsedS: t, smoothedPaceSPerKm: 125,
                                            paused: false, gpsLost: false) { ride.say(l, at: t) }
         }
-        #expect(ride.texts == ["Mile 1.", "Mile 2."])
+        #expect(ride.texts == ["Mile 1. 17.8 miles per hour.", "Mile 2. 17.9 miles per hour."])
     }
 
     @Test func aParkedMilestoneIsVoidedByAPauseAndNeverDumpsOnResume() {

@@ -97,9 +97,9 @@ struct LiveRunCoach: Equatable, Sendable {
     let unit: DistanceUnit
     let goalMeters: Double?
     let targetPaceSPerKm: Double?
-    /// False for rides: the mile is called, the "per mile" figure is not (it would read as a
-    /// running pace on a bike).
-    let speaksSplitPace: Bool
+    /// The sport's register (`CoachSpeech`). The judgement below is identical for a run, a walk and
+    /// a ride; only the words differ, and they differ in exactly one place each.
+    let speech: CoachSpeech
 
     private var unitMeters: Double { unit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
 
@@ -117,16 +117,17 @@ struct LiveRunCoach: Equatable, Sendable {
     private var encouragedStepIndex = -1
 
     init(unit: DistanceUnit, goalMeters: Double? = nil, targetPaceSPerKm: Double? = nil,
-         speaksSplitPace: Bool = true) {
+         speech: CoachSpeech = .run) {
         self.unit = unit
         self.goalMeters = goalMeters
         self.targetPaceSPerKm = targetPaceSPerKm
-        self.speaksSplitPace = speaksSplitPace
+        self.speech = speech
     }
 
     /// The opening line for a planned (non-structured) run, nil for a free run: silence is the norm.
     func plannedIntro() -> Line? {
-        CoachingCueBuilder.runIntro(goalMeters: goalMeters, targetPaceSPerKm: targetPaceSPerKm, unit: unit)
+        CoachingCueBuilder.runIntro(goalMeters: goalMeters, targetPaceSPerKm: targetPaceSPerKm,
+                                    unit: unit, speech: speech)
             .map { Line(text: $0, priority: .transition, kind: .intro) }
     }
 
@@ -149,8 +150,8 @@ struct LiveRunCoach: Equatable, Sendable {
             // The goal line carries the moment; a split in the same breath would be talked over.
             if !goalReachedNow {
                 out.append(Line(text: CoachingCueBuilder.milestone(unitCount: count,
-                                                                   splitSecPerUnit: speaksSplitPace ? splitS : 0,
-                                                                   unit: unit),
+                                                                   splitSecPerUnit: splitS,
+                                                                   unit: unit, speech: speech),
                                 priority: .milestone, kind: .split))
             }
         }

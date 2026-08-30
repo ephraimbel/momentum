@@ -543,4 +543,69 @@ struct WorkoutLogParserTests {
         #expect(WorkoutLogParser.repeatPhrase(type: .other, durationS: 45 * 60, distanceM: 0,
                                               distanceUnit: .imperial) == nil)
     }
+
+    // MARK: Calisthenics (owner report 2026-08-28 — "I couldn't log push ups and pull ups")
+
+    /// Every grammar before this required BOTH a set count and a rep count, so the way bodyweight
+    /// work is actually spoken logged NOTHING: "20 push ups" parsed to no exercise and, for the
+    /// spaced spellings dictation produces, not even to a strength workout.
+    @Test func bodyweightRepsWithoutSetsLogOneSet() {
+        for (said, name, reps) in [("20 push ups", "Push Ups", 20),
+                                   ("did 20 push ups", "Push Ups", 20),
+                                   ("50 pushups", "Pushups", 50),
+                                   ("100 burpees", "Burpees", 100)] {
+            let r = WorkoutLogParser.parse(said)
+            #expect(r.type == .strength, "\(said): not read as a gym session")
+            #expect(r.exercises == [.init(name: name, sets: 1, reps: reps, weightKg: nil)], "\(said)")
+        }
+    }
+
+    @Test func spacedSpellingsAreReadAsStrength() {
+        // `boundedRange` anchors on word boundaries, so the plural spellings must be listed
+        // explicitly — "push up" does not match inside "push ups".
+        for said in ["pull ups and push ups", "sit ups", "chin ups", "burpees", "air squats"] {
+            #expect(WorkoutLogParser.parse(said).type == .strength, "\(said)")
+        }
+    }
+
+    @Test func severalBodyweightMovesInOneBreath() {
+        let r = WorkoutLogParser.parse("did 20 push ups and 10 pull ups")
+        #expect(r.exercises == [.init(name: "Push Ups", sets: 1, reps: 20, weightKg: nil),
+                                .init(name: "Pull Ups", sets: 1, reps: 10, weightKg: nil)])
+    }
+
+    @Test func setsWithoutRepsLeaveTheRepsBlankNeverInvented() {
+        // Reps 0 = "they didn't say" — the composer renders that many empty fields to fill in.
+        // Inventing a rep count here would put a number in the athlete's log they never spoke.
+        #expect(WorkoutLogParser.parse("3 sets of pull ups").exercises
+                == [.init(name: "Pull Ups", sets: 3, reps: 0, weightKg: nil)])
+        #expect(WorkoutLogParser.parse("pull ups").exercises
+                == [.init(name: "Pull Ups", sets: 1, reps: 0, weightKg: nil)])
+    }
+
+    @Test func repsThenSetsAndTrailingQualifiers() {
+        #expect(WorkoutLogParser.parse("10 pull ups 3 sets").exercises
+                == [.init(name: "Pull Ups", sets: 3, reps: 10, weightKg: nil)])
+        #expect(WorkoutLogParser.parse("did 5 sets of pull ups to failure").exercises
+                == [.init(name: "Pull Ups", sets: 5, reps: 0, weightKg: nil)])
+        // A timed hold logs the MOVEMENT; the seconds are deliberately NOT read as the workout's
+        // duration. `parseDuration` handles hours and minutes only, and teaching it bare seconds
+        // would make "400s in 90 seconds" a 90-second workout — an interval time is not a total.
+        let plank = WorkoutLogParser.parse("plank for 60 seconds")
+        #expect(plank.exercises == [.init(name: "Plank", sets: 1, reps: 0, weightKg: nil)])
+        #expect(plank.durationS == nil)
+    }
+
+    /// The whitelist is what keeps the bare-number grammars safe. "185 bench" is a WEIGHT, and
+    /// reads identically to "20 push ups" — only knowing which movements are bodyweight tells
+    /// them apart. If this ever fails, the barbell log has started inventing rep counts.
+    @Test func bareNumbersNeverBecomeRepsOnLoadedLifts() {
+        for said in ["185 bench", "225 squat", "315 deadlift"] {
+            let r = WorkoutLogParser.parse(said)
+            #expect(!r.exercises.contains { $0.reps > 100 }, "\(said) invented a rep count")
+        }
+        // And the loaded grammars are untouched.
+        #expect(WorkoutLogParser.parse("bench 3x10 at 185", weightUnit: .lb).exercises.first?.sets == 3)
+        #expect(WorkoutLogParser.parse("squatted 225 for 5", weightUnit: .lb).exercises.first?.reps == 5)
+    }
 }

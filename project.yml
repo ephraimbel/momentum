@@ -84,6 +84,12 @@ targets:
         # here answers the question up front so every TestFlight/App Store upload skips the manual gate.
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
+          # The voice coach is USED with the screen locked and the phone in a pocket. Without this
+          # mode iOS refuses the audio session in the background (`setActive` throws), so every cue
+          # was silently dropped on exactly the runs it exists for. `location` keeps the app alive;
+          # only `audio` lets it speak. Nothing plays unless there is a cue to say (see
+          # VoiceCoachService) — we never hold the session open on silence.
+          - audio
           - location
           - fetch                               # morning readiness BGAppRefresh (MorningReadinessRefresh)
         # BGTaskScheduler ids the app may submit — must match MorningReadinessRefresh.taskID.
@@ -262,6 +268,11 @@ targets:
       - path: Momentum/Engines/WorkoutLogParser.swift # shared: the voice-log grammar (pure Swift — receipts on the wrist)
       - path: Momentum/Engines/StructuredWorkout.swift # shared: step model + tracker + pure builders (guided runs on the wrist; the PlannedSession-facing builder stays phone-side)
       - path: Momentum/Features/Plan/StructuredWorkoutSummary.swift # shared: step → human row labels (pure display math over Formatters)
+      # The voice coach, whole: the wrist says the SAME words the phone does because it runs the
+      # same three pure files. Only the speaker (WatchVoiceCoach) is platform-specific.
+      - path: Momentum/Engines/CoachSpeech.swift        # shared: how each sport talks
+      - path: Momentum/Engines/CoachingCueBuilder.swift # shared: the words themselves
+      - path: Momentum/Engines/LiveRunCoach.swift       # shared: what to say and when
     dependencies:
       - target: MomentumWatchWidgets   # embeds the complications extension into the watch app
     settings:

@@ -84,6 +84,20 @@ final class WatchCardioModel: NSObject {
     private var pendingSince: TimeInterval = 0
     private var lastPaceHapticAt: TimeInterval = -60
 
+    // MARK: Voice coach — the SAME words the phone says (PRD §4.10, Pro)
+
+    /// The wrist runs the phone's coach verbatim: `LiveRunCoach` decides what to say and when,
+    /// `CoachingCueBuilder` writes the words, `CoachCueGate` keeps them apart. Nothing here is
+    /// watch-specific except the speaker, so a rep called on the phone and the same rep called on
+    /// the wrist can never disagree.
+    private var coach: LiveRunCoach
+    private var gate = CoachCueGate()
+    private var pendingCueTask: Task<Void, Never>?
+    private var lastAnnouncedPaused = false
+    private var structuredCompleteAnnounced = false
+    private var introTask: Task<Void, Never>?
+    private var voice: WatchVoiceCoach { WatchVoiceCoach.shared }
+
     // HR aggregates for the summary.
     private var hrSum = 0.0
     private var hrTicks = 0.0
@@ -130,7 +144,73 @@ final class WatchCardioModel: NSObject {
 
     init(type: WorkoutType) {
         self.type = type
+        // Today's prescription, if the phone synced one — the same two numbers the phone's coach
+        // opens with. A free run has neither, and silence is the norm there.
+        let planned = WatchSyncStore.shared.todaySession
+        let matches = planned?.typeRaw == type.rawValue
+        self.coach = LiveRunCoach(unit: .auto,
+                                  goalMeters: matches ? planned?.targetM : nil,
+                                  targetPaceSPerKm: matches ? planned?.targetPaceSPerKm : nil,
+                                  speech: CoachSpeech.forType(type))
         super.init()
+    }
+
+    // MARK: Cue routing (mirrors CardioViewModel: one line at a time, milestones park, pauses void)
+
+    private func cue(_ line: CoachCueGate.Line) {
+        let now = elapsed
+        switch gate.admit(line, at: now) {
+        case .deliver:
+            pendingCueTask?.cancel()
+            deliver(line, at: now)
+        case let .park(delayS):
+            pendingCueTask?.cancel()
+            pendingCueTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delayS))
+                guard !Task.isCancelled, let self, !self.paused, !self.hasEnded else { return }
+                let t = self.elapsed
+                if let p = self.gate.takePending(at: t) { self.deliver(p, at: t) }
+            }
+        case .drop:
+            break
+        }
+    }
+
+    private func cue(_ text: String, priority: CoachCueGate.Priority) {
+        cue(CoachCueGate.Line(text: text, priority: priority))
+    }
+
+    private func deliver(_ line: CoachCueGate.Line, at now: TimeInterval) {
+        coach.spoke(line, stepIndex: guide?.index, at: now)
+        voice.announce(line.text)
+    }
+
+    /// Paused/resumed, deduped. Every pause on the wrist is one the athlete made (there is no
+    /// auto-pause here), so unlike the phone there is nothing to suppress.
+    private func syncPauseAnnouncement() {
+        guard paused != lastAnnouncedPaused else { return }
+        lastAnnouncedPaused = paused
+        if paused { pendingCueTask?.cancel(); gate.clearPending() }
+        cue(paused ? CoachingCueBuilder.paused() : CoachingCueBuilder.resumed(), priority: .transition)
+    }
+
+    /// The opening line, once the session is actually recording: a guided session names the day's
+    /// shape and then calls its first step a beat later; a planned run states distance and pace; a
+    /// free run says nothing at all.
+    private func speakOpening() {
+        voice.prepare()
+        if let workout = WatchSyncStore.shared.todaySession?.structured, guide != nil {
+            cue(CoachingCueBuilder.workoutIntro(workout), priority: .transition)
+            if let step = guide?.current {
+                introTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    guard !Task.isCancelled, let self, !self.paused, self.guide?.index == 0 else { return }
+                    self.cue(CoachingCueBuilder.stepStart(step), priority: .transition)
+                }
+            }
+        } else if let intro = coach.plannedIntro() {
+            cue(intro)
+        }
     }
 
     /// Request authorization, then start the session + live collection + the route stream.
@@ -174,6 +254,7 @@ final class WatchCardioModel: NSObject {
             try await builder.beginCollection(at: now)
             running = true
         } catch { failed = true; return }
+        speakOpening()
 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -230,14 +311,25 @@ final class WatchCardioModel: NSObject {
         stepEnteredHaptic()
     }
 
+    /// The step transition, in both channels the wrist has: the haptic vocabulary and the voice.
+    /// One call site so a step can never buzz without being named, or be named without buzzing.
     private func stepEnteredHaptic() {
         guard let g = guide else { return }
-        guard let step = g.current else { WatchHaptics.surge(); return }
+        introTask?.cancel()   // the step call supersedes a pending opening tail
+        coach.stepChanged()
+        guard let step = g.current else {
+            WatchHaptics.surge()
+            guard !structuredCompleteAnnounced else { return }
+            structuredCompleteAnnounced = true
+            cue(CoachingCueBuilder.workoutComplete(), priority: .transition)
+            return
+        }
         switch step.kind {
         case .work: WatchHaptics.go()
         case .recovery, .cooldown: WatchHaptics.easeOff()
         case .warmup: break
         }
+        cue(CoachingCueBuilder.stepStart(step), priority: .transition)
     }
 
     /// Personalize the five zones from Health's date of birth (Tanaka max HR); keep 190 otherwise.
@@ -259,6 +351,7 @@ final class WatchCardioModel: NSObject {
                 demoPausedAccum += Date().timeIntervalSince(began)
                 demoPauseBegan = nil
             }
+            syncPauseAnnouncement()
             return
         }
         guard let session else { return }
@@ -311,8 +404,29 @@ final class WatchCardioModel: NSObject {
         }
         advancePace()
         advanceGuide()
+        speakCoachingIfDue()
         if distanceM - lapStartDistance >= splitLengthM {
             recordSplit()
+        }
+    }
+
+    /// The per-second word. A guided session gets the in-step nudge (and its one "on pace"); every
+    /// other run gets the distance beats — the split, halfway, the last unit, the goal. Exactly the
+    /// phone's split of responsibilities, because it is exactly the phone's coach.
+    private func speakCoachingIfDue() {
+        if let g = guide {
+            guard !g.isComplete else { return }
+            let adherence = g.adherence(currentPaceSPerKm: rollingPaceSPerKm)
+            if let line = coach.structuredTick(stepIndex: g.index, stepAnchorElapsedS: g.anchorElapsedS,
+                                               adherence: adherence, elapsedS: elapsed, paused: paused) {
+                cue(line)
+            }
+            return
+        }
+        for line in coach.plannedFix(distanceM: distanceM, elapsedS: elapsed,
+                                     smoothedPaceSPerKm: rollingPaceSPerKm,
+                                     paused: paused, gpsLost: false) {
+            cue(line)
         }
     }
 
@@ -390,6 +504,7 @@ final class WatchCardioModel: NSObject {
             route = (0...Int(warm)).map { Self.demoCoordinate(tick: $0) }
         }
         #endif
+        speakOpening()
         startMetronome()
     }
 
@@ -434,6 +549,9 @@ final class WatchCardioModel: NSObject {
     func end() async {
         guard !hasEnded else { return }
         hasEnded = true
+        pendingCueTask?.cancel(); introTask?.cancel()
+        gate.clearPending()
+        voice.stop()
         metronome?.invalidate(); metronome = nil
         frozenElapsed = elapsed
         if demo { running = false; return }
@@ -505,6 +623,7 @@ extension WatchCardioModel: HKWorkoutSessionDelegate {
         Task { @MainActor in
             running = (toState == .running)
             paused = (toState == .paused)
+            syncPauseAnnouncement()
         }
     }
 

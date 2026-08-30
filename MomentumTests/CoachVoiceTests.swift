@@ -176,6 +176,21 @@ struct CoachVoiceTests {
             CoachingCueBuilder.stepStart(WorkoutStep(kind: .work, target: .duration(600),
                                                      paceSPerKm: 300, title: "Tempo")),
         ]
+        // The sports that are not runs speak too, and the same rules bind them: the gym's rest and
+        // session lines, the stopwatch sports' clock, and a ride's speed-shaped milestone.
+        cues += [
+            CoachingCueBuilder.restStart(seconds: 90),
+            CoachingCueBuilder.restComplete(next: "Bench press", setNumber: 3),
+            CoachingCueBuilder.restComplete(next: "Bench press"),
+            CoachingCueBuilder.strengthComplete(sets: 1),
+            CoachingCueBuilder.strengthComplete(sets: 14),
+            CoachingCueBuilder.timedMilestone(minutes: 75),
+            CoachingCueBuilder.timedComplete(elapsedS: 4_500),
+            CoachingCueBuilder.milestone(unitCount: 10, splitSecPerUnit: 240, unit: .metric, speech: .ride),
+            CoachingCueBuilder.runIntro(goalMeters: 40_000, targetPaceSPerKm: 120,
+                                        unit: .metric, speech: .ride) ?? "",
+        ]
+        cues += WorkoutType.allCases.filter(\.isTimed).map { CoachingCueBuilder.timedIntro($0) }
         for cue in cues where !cue.isEmpty {
             Self.assertCoachVoice(cue, "CoachingCueBuilder")
         }

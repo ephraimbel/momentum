@@ -13,6 +13,7 @@ struct TimedTrackingView: View {
     @State private var confirmDiscard = false
     @State private var pulse = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(Services.self) private var services
 
     var body: some View {
         ZStack {
@@ -21,7 +22,9 @@ struct TimedTrackingView: View {
         }
         .task {
             guard vm == nil else { return }
-            let model = TimedTrackingViewModel(type: type, container: container)
+            // Voice coach is Pro (PRD §10) — pass it only when entitled, else nil (silent).
+            let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
+            let model = TimedTrackingViewModel(type: type, container: container, voice: voice)
             model.start()
             vm = model
             if !reduceMotion { withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) { pulse = true } }

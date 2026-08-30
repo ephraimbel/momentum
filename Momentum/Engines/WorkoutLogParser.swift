@@ -556,7 +556,42 @@ enum WorkoutLogParser {
         "dumbbell", "barbell", "kettlebell",
         "benched", "squatted", "deadlifted", "curled", "pressed",
         "core", "abs",
+        // Calisthenics, in the SPACED forms dictation actually produces. `boundedRange` anchors
+        // on word boundaries, so "push up" does NOT match inside "push ups" — every plural has to
+        // be listed. Without these, "pull ups and push ups" didn't even register as a gym session
+        // (owner report 2026-08-28).
+        "push up", "push ups", "pull up", "pull ups", "chin up", "chin ups",
+        "sit up", "sit ups", "burpee", "burpees", "dip", "dips",
+        "plank", "planks", "crunch", "crunches", "lunge",
+        "air squat", "air squats", "bodyweight",
     ]
+
+    /// Movements that are normally done at bodyweight, in every spelling dictation produces.
+    ///
+    /// This list is what makes the number-light grammars below SAFE. "20 push ups" is a set of
+    /// 20; "185 bench" is a weight, not 185 reps — and only a whitelist can tell those apart,
+    /// because both are `<number> <name>`. Keys are `ExerciseNameMatch.normalize`d, so "push ups",
+    /// "push-ups" and "pushups" all collapse to `pushups`.
+    static let bodyweightMovements: Set<String> = {
+        let stems = ["pushup", "pullup", "chinup", "situp", "burpee", "dip", "lunge",
+                     "crunch", "plank", "squat", "airsquat", "bodyweightsquat", "gobletsquat",
+                     "jumpingjack", "mountainclimber", "boxjump", "stepup", "calfraise",
+                     "legraise", "kneeraise", "pistolsquat", "muscleup", "handstandpushup",
+                     "pikepushup", "ringrow", "invertedrow", "superman", "hollowhold", "vup"]
+        var out = Set<String>()
+        for s in stems { out.insert(s); out.insert(s + "s"); out.insert(s + "es") }
+        return out
+    }()
+
+    /// Is this cleaned name a movement we can safely read bare numbers against?
+    ///
+    /// Normalizes locally rather than calling `ExerciseNameMatch.normalize` — same rule (letters
+    /// and digits, lowercased), but this parser is compiled into the watch and widget targets,
+    /// which don't build `ExerciseLibrarySeed.swift`. Reaching across would break those builds.
+    private static func isBodyweight(_ cleanedName: String) -> Bool {
+        let key = cleanedName.lowercased().filter { $0.isLetter || $0.isNumber }
+        return bodyweightMovements.contains(key)
+    }
 
     private static func parseSport(_ text: String, into r: inout Result) {
         var best: (pos: Int, len: Int, type: WorkoutType, indoor: Bool)?
@@ -816,9 +851,61 @@ enum WorkoutLogParser {
                 let sets = Int(c[4] ?? "") ?? 1
                 guard (1...20).contains(sets) else { continue }
                 out.append(ParsedExercise(name: cleaned, sets: sets, reps: reps, weightKg: kg))
+                continue
+            }
+
+            // ── Calisthenics: the grammars above ALL require a set count and a rep count, which
+            // is why "20 push ups" — the way bodyweight work is actually spoken — logged nothing
+            // at all (owner report 2026-08-28). These three read the number-light forms, and are
+            // whitelisted to `bodyweightMovements` so "185 bench" can never become 185 reps.
+            //
+            // Bodyweight talk trails qualifiers a barbell log never does ("to failure", "each
+            // side") and states holds as time ("plank for 60 seconds" — the duration is already
+            // on the workout by now). Strip both so the movement can be recognised; a hold lands
+            // as the movement with no reps rather than as nothing at all.
+            let clause = stripSetQualifiers(clause)
+
+            // F: "<reps> <movement> <sets> sets" — "10 pull ups 3 sets".
+            if let c = captures(lead + #"(\d{1,3})\s+"# + name + #"\s+(\d{1,2})\s*sets?$"#, in: clause),
+               let cleaned = cleanName(c[1] ?? ""), isBodyweight(cleaned),
+               let reps = Int(c[0] ?? ""), (1...200).contains(reps),
+               let sets = Int(c[2] ?? ""), (1...20).contains(sets) {
+                out.append(ParsedExercise(name: cleaned, sets: sets, reps: reps, weightKg: nil))
+                continue
+            }
+
+            // G: "<reps> <movement>" — "20 push ups", "100 burpees". One set of N, the honest
+            // reading: they said how many they did, not how they split them up.
+            if let c = captures(lead + #"(\d{1,3})\s+"# + name + "$", in: clause),
+               let cleaned = cleanName(c[1] ?? ""), isBodyweight(cleaned),
+               let reps = Int(c[0] ?? ""), (1...200).contains(reps) {
+                out.append(ParsedExercise(name: cleaned, sets: 1, reps: reps, weightKg: nil))
+                continue
+            }
+
+            // H: sets with NO reps ("3 sets of pull ups"), or a bare movement ("pull ups").
+            // Reps stay 0 — never invented — and the composer renders that many empty rep fields
+            // for the athlete to fill. A draft they can finish beats a receipt that says nothing.
+            if let c = captures(lead + #"(?:(\d{1,2})\s*sets?\s*(?:of\s+)?)?"# + name + "$", in: clause),
+               let cleaned = cleanName(c[1] ?? ""), isBodyweight(cleaned) {
+                let sets = Int(c[0] ?? "") ?? 1
+                guard (1...20).contains(sets) else { continue }
+                out.append(ParsedExercise(name: cleaned, sets: sets, reps: 0, weightKg: nil))
             }
         }
         return out
+    }
+
+    /// Trailing talk that qualifies a bodyweight set rather than naming it. Removed only for the
+    /// calisthenics grammars, so a barbell clause keeps every word it had.
+    private static func stripSetQualifiers(_ clause: String) -> String {
+        var out = clause
+        for tail in [#"\s+to\s+fail(ure)?$"#, #"\s+for\s+time$"#, #"\s+amrap$"#,
+                     #"\s+(each|per)\s+(side|leg|arm)$"#, #"\s+as\s+many\s+as\s+(i\s+)?could$"#,
+                     #"\s+for\s+\d{1,3}\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)$"#] {
+            out = out.replacingOccurrences(of: tail, with: "", options: [.regularExpression])
+        }
+        return out.trimmingCharacters(in: .whitespaces)
     }
 
     /// Comma/"then"/"and"/sentence splitting — shared by the exercise grammar and `looksRicher`.

@@ -29,6 +29,10 @@ final class WatchSyncStore: NSObject {
         var typeRaw: String     // WorkoutType rawValue for the start shortcut
         var paceLoSPerKm: Double?
         var paceHiSPerKm: Double?
+        /// The day's prescribed distance and pace, verbatim from the plan — what the wrist's voice
+        /// coach opens with ("8 miles today. Hold about 9:40 per mile.") and measures against.
+        var targetM: Double?
+        var targetPaceSPerKm: Double?
         var dayKey: String
         /// A quality session's full guided structure (phone-built, phone-encoded) — the wrist
         /// runs the same step tracker the phone does. nil for plain runs.
@@ -46,6 +50,10 @@ final class WatchSyncStore: NSObject {
     /// Day the athlete answered the check-in ON THE WATCH (locally latched so the card flips
     /// immediately; the phone's recompute lands as a readiness push moments later).
     private(set) var checkinSentDayKey: String?
+    /// Whether the wrist may speak: Pro entitlement AND the phone's Settings switch, both decided
+    /// on the phone and pushed across. Defaults to false — a watch that has never heard from its
+    /// phone stays silent rather than guessing at an entitlement it cannot see.
+    private(set) var voiceCoachOn = false
 
     private let defaults = UserDefaults(suiteName: WatchSyncStore.appGroup) ?? .standard
 
@@ -123,9 +131,12 @@ final class WatchSyncStore: NSObject {
             session = TodaySession(title: title, detail: detail, typeRaw: typeRaw,
                                    paceLoSPerKm: defaults.object(forKey: "sync.session.paceLo") as? Double,
                                    paceHiSPerKm: defaults.object(forKey: "sync.session.paceHi") as? Double,
+                                   targetM: defaults.object(forKey: "sync.session.targetM") as? Double,
+                                   targetPaceSPerKm: defaults.object(forKey: "sync.session.targetPace") as? Double,
                                    dayKey: day,
                                    structured: steps)
         }
+        voiceCoachOn = defaults.bool(forKey: "sync.voiceCoach")
         if let name = defaults.string(forKey: "sync.race.name"),
            let dateKey = defaults.string(forKey: "sync.race.dateKey") {
             race = Race(name: name, dateKey: dateKey)
@@ -134,6 +145,10 @@ final class WatchSyncStore: NSObject {
     }
 
     private func apply(context: [String: Any]) {
+        if let on = context["voiceCoach"] as? Bool {
+            voiceCoachOn = on
+            defaults.set(on, forKey: "sync.voiceCoach")
+        }
         if let score = context["readinessScore"] as? Int,
            let band = context["readinessBand"] as? String,
            let day = context["readinessDayKey"] as? String {
@@ -153,6 +168,8 @@ final class WatchSyncStore: NSObject {
             session = TodaySession(title: title, detail: detail, typeRaw: typeRaw,
                                    paceLoSPerKm: context["sessionPaceLo"] as? Double,
                                    paceHiSPerKm: context["sessionPaceHi"] as? Double,
+                                   targetM: context["sessionTargetM"] as? Double,
+                                   targetPaceSPerKm: context["sessionTargetPace"] as? Double,
                                    dayKey: day,
                                    structured: steps)
             defaults.set(title, forKey: "sync.session.title")
@@ -161,6 +178,8 @@ final class WatchSyncStore: NSObject {
             defaults.set(day, forKey: "sync.session.dayKey")
             defaults.set(context["sessionPaceLo"] as? Double, forKey: "sync.session.paceLo")
             defaults.set(context["sessionPaceHi"] as? Double, forKey: "sync.session.paceHi")
+            defaults.set(context["sessionTargetM"] as? Double, forKey: "sync.session.targetM")
+            defaults.set(context["sessionTargetPace"] as? Double, forKey: "sync.session.targetPace")
             if let stepsData, steps != nil {
                 defaults.set(stepsData, forKey: "sync.session.steps")
             } else {
@@ -201,13 +220,19 @@ final class WatchSyncStore: NSObject {
         }
         if args.contains("--watch-session") {
             session = TodaySession(title: "Long run", detail: "6 mi · ~11:56 /mi", typeRaw: "run",
-                                   paceLoSPerKm: 424, paceHiSPerKm: 465, dayKey: Self.dayKey())
+                                   paceLoSPerKm: 424, paceHiSPerKm: 465,
+                                   targetM: 6 * Formatters.metersPerMile, targetPaceSPerKm: 445,
+                                   dayKey: Self.dayKey())
         }
+        // The wrist has no phone on the simulator, so the Pro gate can never arrive — this is the
+        // only way to hear (and log) the watch coach's cue sequence at all.
+        if args.contains("--watch-voice") { voiceCoachOn = true }
         if args.contains("--watch-guided") {
             // A guided fartlek on the sim — the structure built by the shared pure constructor,
             // exactly the shape the phone encodes. Pair with --watch-demo to watch steps advance.
             session = TodaySession(title: "Fartlek", detail: "8×(1min hard / 1min float)", typeRaw: "run",
-                                   paceLoSPerKm: 300, paceHiSPerKm: 345, dayKey: Self.dayKey(),
+                                   paceLoSPerKm: 300, paceHiSPerKm: 345,
+                                   targetM: nil, targetPaceSPerKm: nil, dayKey: Self.dayKey(),
                                    structured: StructuredWorkoutBuilder.fartlek(
                                        reps: 8, onS: 60, floatS: 60, hardPace: 290, floatPace: 380))
         }
