@@ -84,8 +84,8 @@ Momentum keeps you moving: fitness you can trust, without the burnout.
 
 Fueling guidance, never dieting. Coaching, never a diagnosis.
 
-Terms of Use (EULA): https://momentumco.app/terms
-Privacy Policy: https://momentumco.app/privacy
+Terms of Use (EULA): https://momentumrunning.app/terms
+Privacy Policy: https://momentumrunning.app/privacy
 ```
 > **Legal links added 2026-07-22 for guideline 3.1.2(c)** — an auto-renewable-subscription app must
 > expose a functional Terms of Use (EULA) link in the App Store metadata. The two lines above go at
@@ -177,9 +177,9 @@ paywall (both URLs verified live). The miss is ASC metadata:
 1. **App Description** — the two legal-link lines are now appended to the description in this doc;
    paste them onto the end of the live description on the 1.0 version page.
 2. **App Information → License Agreement (EULA)**: replace Apple's standard EULA with your **custom**
-   EULA. Either paste the text of `https://momentumco.app/terms`, or (simpler) keep the description
+   EULA. Either paste the text of `https://momentumrunning.app/terms`, or (simpler) keep the description
    link — Apple accepts "App Description **or** EULA field." Doing both is safest.
-3. **App Privacy → Privacy Policy URL**: confirm it is set to `https://momentumco.app/privacy`.
+3. **App Privacy → Privacy Policy URL**: confirm it is set to `https://momentumrunning.app/privacy` (momentumco.app 308s there, but set the canonical one).
 
 ### Reviewer reply
 Apple asked for confirmation. After the above, reply in Resolution Center with a **screen recording**

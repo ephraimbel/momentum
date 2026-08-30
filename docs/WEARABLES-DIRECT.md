@@ -68,10 +68,10 @@ program; free, approval usually 1–3 weeks). Fill with:
 |---|---|
 | App name | momentum |
 | Company / developer | Ephraim Belachew (individual) |
-| Website | https://momentumco.app |
-| Privacy policy | https://momentumco.app/privacy |
-| Terms | https://momentumco.app/terms |
-| Support | https://momentumco.app/support |
+| Website | https://momentumrunning.app |
+| Privacy policy | https://momentumrunning.app/privacy |
+| Terms | https://momentumrunning.app/terms |
+| Support | https://momentumrunning.app/support |
 | Platform | iOS (App Store; bundle id `com.ephraimbel.momentum.app`) |
 | App description | Running-first adaptive training app for iOS. A deterministic plan engine adapts each athlete's week from recovery and training-load signals; momentum imports completed activities to keep the plan honest and (Training API) delivers the plan's structured workouts to the athlete's Garmin watch. |
 | APIs requested | **Activity API** (activity-summary push) + **Training API** (workout import to device) — request both up front; re-review for added scopes is slower than one application. Do NOT request the all-day **Health API** (wellness/sleep tier — reported to carry a ~$5k production fee, and we read wellness from Apple Health anyway). |

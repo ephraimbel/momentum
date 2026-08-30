@@ -113,16 +113,40 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | xcbeautify
 
-      # `-only-testing` with an identifier that doesn't match runs ZERO tests and exits 0 — a green
-      # check that tested nothing (CLAUDE.md calls this out by name). Assert a real count so the
-      # failure mode this workflow exists to prevent can't hide inside the workflow itself.
+      # TWO ways this suite reports a green that tested far less than it looks like:
+      #   1. `-only-testing` with an identifier that doesn't match runs ZERO tests and exits 0
+      #      (CLAUDE.md calls this out by name).
+      #   2. The test host DIES mid-run. xcodebuild restarts it, logs "Restarting after unexpected
+      #      exit, crash, or test timeout", and then prints a perfectly ordinary
+      #      "✔ Test run with N tests ... passed" with a TRUNCATED N. Observed on one tree the same
+      #      night: 390 and ~1300, against a true ~1700. The trigger is not always the same — the
+      #      instance we chased was a FULL DISK (`NSCocoaErrorDomain Code=640`,
+      #      NSFileWriteOutOfSpaceError, surfacing first as AVFoundation -11800 in the tests that
+      #      write files). What matters here is the shape, not the cause: the summary line looks
+      #      identical whether the host finished or was restarted under it.
+      # So the floor TRACKS THE SUITE rather than being a constant. A fixed 1000 was written when
+      # the suite was ~1,438; by ~1,700 a crash truncating to 1,300 passed it while silently
+      # skipping ~400 tests. 90% leaves room for a genuinely skipped or commented-out case.
       - name: Assert tests actually ran
         run: |
           COUNT=$(xcrun xcresulttool get test-results summary \
             --path build/ci/tests.xcresult --format json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("totalTestCount", 0))')
-          echo "totalTestCount=$COUNT"
-          if [ "$COUNT" -lt 1000 ]; then
-            echo "::error::Only $COUNT tests ran (expected 1000+). The -only-testing identifier or the scheme's test targets probably changed."
+          DECLARED=$(grep -ho "@Test" MomentumTests/*.swift | wc -l | tr -d ' ')
+          FLOOR=$(( DECLARED * 90 / 100 ))
+          [ "$FLOOR" -lt 1000 ] && FLOOR=1000
+          echo "totalTestCount=$COUNT  declared=@$DECLARED  floor=$FLOOR"
+          if [ "$COUNT" -lt "$FLOOR" ]; then
+            echo "::error::Only $COUNT tests ran but $DECLARED are declared (floor $FLOOR). Either the -only-testing identifier changed, or the test host crashed mid-run and the summary is truncated — check the log for 'Restarting after unexpected exit'."
+            exit 1
+          fi
+
+      # A crash-restart can still leave the count above the floor, so name it explicitly: this is
+      # the line that separates "the suite passed" from "the suite died and restarted".
+      - name: Assert the test host did not crash mid-run
+        run: |
+          if xcrun xcresulttool get test-results summary --path build/ci/tests.xcresult --format json \
+             | grep -qi "unexpected exit\|test timeout"; then
+            echo "::error::The test host exited unexpectedly during the run; the reported total is incomplete."
             exit 1
           fi
 

@@ -11,7 +11,7 @@ const appSchema = {
   name: "Momentum: Run Training Plans",
   operatingSystem: "iOS",
   applicationCategory: "HealthApplication",
-  url: "https://momentumco.app",
+  url: "https://momentumrunning.app",
   installUrl: APP_STORE_URL,
   offers: [
     { "@type": "Offer", price: "0", priceCurrency: "USD", description: "Free — track every run" },

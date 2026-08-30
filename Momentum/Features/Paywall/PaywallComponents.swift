@@ -509,9 +509,9 @@ struct PaywallCheckout: View {
             Text("·")
             Button("Restore") { restore() }
             Text("·")
-            Button("Terms") { open("https://momentumco.app/terms") }
+            Button("Terms") { open("https://momentumrunning.app/terms") }
             Text("·")
-            Button("Privacy") { open("https://momentumco.app/privacy") }
+            Button("Privacy") { open("https://momentumrunning.app/privacy") }
         }
         .font(.rounded(10, weight: .medium))
         .foregroundStyle(Theme.inkTertiary)

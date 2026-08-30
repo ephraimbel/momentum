@@ -10,6 +10,10 @@ xcuserdata/
 # XcodeGen generates the project from project.yml — regenerate with `xcodegen generate`.
 Momentum.xcodeproj/
 
+# Python bytecode from the scripts/ helpers
+__pycache__/
+*.pyc
+
 # SwiftPM
 .swiftpm/
 Package.resolved
@@ -28,3 +32,4 @@ Secrets.xcconfig
 *.canvas
 *.base
 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+.vercel
