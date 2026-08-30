@@ -7,11 +7,20 @@ import Foundation
 enum HybridPriority: String, Codable, Sendable, CaseIterable {
     case running, balanced, lifting
     /// Fraction of the week's training days given to lifting.
+    ///
+    /// The whole scale is running-led (owner call 2026-08-29), because this is a running app and
+    /// lifting is here to make people better runners, not to split the week with running:
+    ///  • **running** — as much running as the week holds, with one day in the gym;
+    ///  • **balanced** — still a running plan, with a little more lifting than "mainly running";
+    ///  • **lifting** — a genuine 50/50 week, which is what "I want more lifting" should mean in
+    ///    a running app; it is never lift-DOMINANT.
+    /// Before this, "balanced" meant 3 runs and 3 lifts on a six-day week and "lifting" meant 2
+    /// runs to 4 lifts — a strength programme with some running in it.
     var liftFraction: Double {
         switch self {
-        case .running: 0.35
-        case .balanced: 0.5
-        case .lifting: 0.6
+        case .running: 0.20
+        case .balanced: 0.35
+        case .lifting: 0.55
         }
     }
 }

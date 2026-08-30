@@ -57,6 +57,12 @@ final class OnboardingPerfUITests: XCTestCase {
             let settled = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
                 .contains { $0.isHittable } || app.buttons["Turn on reminders"].waitForExistence(timeout: budget)
             let dt = Date().timeIntervalSince(t0)
+            // The questions end at the build beat, which is a deliberate animated moment with no
+            // Continue on it — reaching it means the walk finished, not that a step stalled.
+            // (2026-08-30: the walk grew past the last question when `.session` became universal,
+            // and the build screen's own animation reported as a 3.39 s stall on the step before
+            // it. Budgeting for it would have hidden a real stall there later.)
+            if app.staticTexts["Building your plan"].exists { advanced += 1; break }
             if !settled || dt > budget { stalls.append("step \(i) (\(heading)) took \(String(format: "%.2f", dt))s") }
             advanced += 1
             usleep(500_000)   // just past the flow's own 0.45s advance debounce

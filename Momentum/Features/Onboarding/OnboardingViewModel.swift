@@ -87,7 +87,7 @@ final class OnboardingViewModel {
                    String(describing: raceDistance), "\(goalHours):\(goalMinutes)",
                    "\(weeklyRunVolumeM ?? -1)", "\(targetWeeklyRunVolumeM ?? -1)", "\(hasRace):\(weeksToRace ?? -1)",
                    String(describing: experience), "\(injuryAreas.count)",
-                   "\(daysPerWeek)", String(describing: intensity)].joined(separator: "|")
+                   "\(plannedRunDays)", String(describing: intensity)].joined(separator: "|")
         if let c = feasibilityCache, c.key == key { return c.value }
         let value = computeFeasibility()
         feasibilityCache = (key, value)
@@ -113,7 +113,7 @@ final class OnboardingViewModel {
             weeksAvailable: hasRace ? (weeksToRace ?? 16) : 999,   // no date → no time pressure
             experience: experience,
             injuryProne: !injuryAreas.isEmpty,
-            daysPerWeek: daysPerWeek,
+            daysPerWeek: plannedRunDays,
             intensity: intensity,   // the banner reacts to how hard they choose to push
             currentRaceTimeS: raceTimeS,
             targetWeeklyVolumeM: targetWeeklyRunVolumeM)
@@ -213,6 +213,18 @@ final class OnboardingViewModel {
     var running: Bool { disciplines.contains(.running) }
     var hybrid: Bool { running && lifting }
 
+    /// How many of the chosen days will actually be RUNS — the number every running verdict has
+    /// to be read against (2026-08-30). A hybrid athlete's week splits between the two
+    /// disciplines, so a five-day balanced athlete gets three runs; telling them a half-marathon
+    /// build wants four days and then calling five days enough was the flow agreeing with itself
+    /// while the plan did something else. One definition, in `PlanEngine.hybridSplit`.
+    var plannedRunDays: Int {
+        guard running else { return 0 }
+        guard lifting else { return daysPerWeek }
+        return PlanEngine.hybridSplit(days: daysPerWeek, priority: hybridPriority, goal: goal,
+                                      raceDistanceM: (goal == .raceDistance && hasRace) ? raceDistance?.meters : nil).runDays
+    }
+
     /// Cache for `steps`/`questionSteps` (perf audit 2026-08-13): the flow's chrome reads these
     /// ~8× per body pass (every keystroke in the name field re-filters `Step.allCases` repeatedly).
     /// Keyed on the only answers that branch the list; `@ObservationIgnored` so the cache itself
@@ -242,10 +254,13 @@ final class OnboardingViewModel {
             case .raceGoalTime: return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
-            // Session length only shapes STRENGTH days (it sets how many exercises fit); running is
-            // prescribed by distance under a time cap, so it means nothing to a pure runner. Show it
-            // only where it changes the plan (2026-07-24).
-            case .session:     return lifting
+            // Session length shapes every discipline now, so everyone is asked (2026-08-30).
+            // It was hidden from pure runners on the grounds that it only set how many exercises
+            // fit in a lifting day — but since the 2026-08-29 audit running honours it too
+            // (`PlanEngine.cardioSessions` caps a midweek session at the stated time), which
+            // meant a runner's plan was quietly shaped by an answer they were never allowed to
+            // give: the untouched 45-minute default. A coach asks how long you have.
+            case .session:     return true
             // How to split the lifting week — only meaningful to athletes who lift (2026-08-20).
             case .strengthSplit: return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits

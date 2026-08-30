@@ -80,6 +80,16 @@ struct GeneratedWeek: Sendable, Equatable {
         sessions.filter { ($0.discipline == .running || $0.discipline == .walking) && $0.runType != .race }
             .reduce(0) { $0 + ($1.targetDistanceM ?? 0) }
     }
+
+    /// The same number for whichever endurance sport the plan is built on — running, walking or
+    /// cycling. The ACWR governor and the cutback passes run on THIS (2026-08-30): a cyclist's
+    /// plan is a plan too, and reading it through `runVolumeM` reported zero for every week, so
+    /// the safety governor and the "a down week goes down" rule both quietly did nothing. A plan
+    /// only ever carries one cardio discipline, so this never mixes sports.
+    var trainingVolumeM: Double {
+        sessions.filter { $0.discipline != .strength && $0.runType != .race }
+            .reduce(0) { $0 + ($1.targetDistanceM ?? 0) }
+    }
 }
 
 struct GeneratedPlan: Sendable, Equatable {

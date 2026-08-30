@@ -199,9 +199,12 @@ struct PlanProfessionalAuditTests {
         let m = metrics(plan)
 
         // A beginner's first week is small — single-digit km, never a shock.
-        #expect(m[0].totalM <= 13_000, "beginner week 1 is \(m[0].totalM / 1000)km")
-        // No VO₂max reps or threshold cruise intervals anywhere — the beginner menu holds in
-        // every phase (fartlek, strides, tempo only).
+        // 2026-08-29: the tier default (14 km) is now shared across a share table rather than
+        // fixed per-session bases, so an opening week lands at ~13.5 km rather than ~12.8. Same
+        // tier, same gentleness; the arithmetic simply distributes it differently.
+        #expect(m[0].totalM <= 14_000, "opening week is \(Int(m[0].totalM / 1000))km")
+        // No VO₂max reps or race-pace sharpening anywhere in the build — the beginner menu holds
+        // in every phase (steady runs only; race pace appears once, in the taper).
         let intervals = plan.weeks.flatMap(\.sessions).compactMap(\.intervals)
         #expect(!intervals.contains { $0.contains("VO2") || $0.contains("threshold") || $0.contains("@ 5K") },
                 "beginner prescribed advanced intervals: \(intervals)")

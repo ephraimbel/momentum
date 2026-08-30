@@ -60,7 +60,18 @@ extension StructuredWorkoutBuilder {
             // A quality long run ("Last 5km @ race pace") guides its finish block; a plain long run
             // needs no structure. Race pace comes from the goal distance when known; a long-race
             // default (marathon) stands in otherwise — this pattern only generates for ≥half plans.
-            guard let finishM = parseRaceFinish(session.intervals) else { return nil }
+            guard let finishM = parseRaceFinish(session.intervals) else {
+                // A new runner's long run carries the same run/walk structure their easy days do
+                // (2026-08-30) — it is the run that most needs it, and without this the guided
+                // runner would show the note and then offer no structure behind it. Run portions
+                // go at LONG pace, not easy pace: it is still the long run.
+                if let rw = parseRunWalk(session.intervals) {
+                    return runWalk(runS: rw.runS, walkS: rw.walkS, runPaceSPerKm: pace,
+                                   totalDistanceM: session.targetDistanceM,
+                                   totalDurationS: session.targetDurationS)
+                }
+                return nil
+            }
             // The finish block runs at the plan's GOAL pace when one is set (2026-08-28).
             let racePace = goalRacePaceSPerKm
                 ?? DanielsPaces.racePaceSPerKm(distanceM: raceDistanceM ?? 42_195, p5kSPerKm: p5k)

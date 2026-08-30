@@ -104,8 +104,11 @@ struct OnboardingFlowTests {
         let vm = OnboardingViewModel()
         vm.activities = [.run]                        // no lifting
         #expect(!vm.steps.contains(.equipment))
-        // Session length only shapes strength days — a pure runner must never be asked it.
-        #expect(!vm.steps.contains(.session))
+        // Session length is asked of EVERYONE (2026-08-30). It used to be hidden from pure
+        // runners on the grounds that it only sized a lifting day — but running honours it too
+        // now (`PlanEngine.cardioSessions` caps a midweek session at the stated time), so hiding
+        // it meant a runner's plan was shaped by an answer they were never allowed to give.
+        #expect(vm.steps.contains(.session))
         vm.activities = [.strength]
         #expect(vm.steps.contains(.equipment))
         #expect(vm.steps.contains(.session))          // lifters set it (it drives exercise count)
@@ -175,7 +178,7 @@ struct OnboardingFlowTests {
         #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
         #expect(try idx(.intensity) < idx(.building))        // last decision before the build
         #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
-        #expect(!steps.contains(.session))                   // …nor session length (strength-only)
+        #expect(steps.contains(.session))                    // …but session length is everyone's
 
         // Walk the whole flow front to back — advance() must traverse every step without a dead end.
         vm.step = steps.first!

@@ -15,6 +15,19 @@ enum CoachProactive {
     static func sweep(profile: UserProfile?, workouts: [Workout], today: Date = Date(),
                       in context: ModelContext, calendar: Calendar = .current) {
         guard let profile else { return }
+        #if DEBUG
+        // `--coach-card` seeds ONE specific proposal so the card + Apply flow can be verified.
+        // A proactive card inserted afterwards becomes the newest message, the thread scrolls to
+        // it, and the seeded proposal is left unrendered off-screen — so the card the launch arg
+        // exists to show is invisible to a UI test. `CoachDemo.seedProposalIfNeeded` already
+        // clears thread state that would "block or bury the verification card", but it runs
+        // BEFORE this sweep and so cannot see what this adds.
+        //
+        // This was date-dependent and therefore invisible most of the week: the weekly recap only
+        // fires in the first two days of a week (`daysIn < 2`), so the suite passed on Thursday
+        // 2026-08-27 and failed on Sunday 2026-08-30 with no code change in between.
+        if ProcessInfo.processInfo.arguments.contains("--coach-card") { return }
+        #endif
         let messages = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
         if seedRaceWeek(profile: profile, messages: messages, today: today,
                         in: context, calendar: calendar) { return }

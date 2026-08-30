@@ -692,11 +692,18 @@ struct OnboardingFlow: View {
             // day floor holds fitness rather than building readiness (PlanFeasibility owns the
             // numbers; the intensity step's verdict banner repeats the full read).
             if vm.goal == .raceDistance, let race = vm.raceDistance,
-               vm.daysPerWeek < PlanFeasibility.minimumEffectiveDays(forDistanceM: race.meters) {
+               vm.plannedRunDays < PlanFeasibility.minimumEffectiveDays(forDistanceM: race.meters) {
                 let minDays = PlanFeasibility.minimumEffectiveDays(forDistanceM: race.meters)
+                // Read against the RUN days, not the total: a five-day hybrid week holds three
+                // runs, and quoting the total told them they were covered when they were not.
+                // When the two differ, say why — the split is theirs to change on the next screen.
+                let runDays = vm.plannedRunDays
+                let split = runDays < vm.daysPerWeek
+                    ? " Your \(vm.daysPerWeek) days split \(runDays) running and \(vm.daysPerWeek - runDays) lifting."
+                    : ""
                 HStack(alignment: .top, spacing: Theme.Space.sm) {
                     Image(systemName: "hand.raised.fill").font(.system(size: 13, weight: .semibold))
-                    Text("Honest note: a \(race.label.lowercased()) build really wants \(minDays)+ days. On \(vm.daysPerWeek) you'll maintain fitness, not race readiness. We'll build your week either way.")
+                    Text("Honest note: a \(race.label.lowercased()) build really wants \(minDays)+ running days. On \(runDays) you'll maintain fitness, not race readiness.\(split) We'll build your week either way.")
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold))
@@ -725,7 +732,10 @@ struct OnboardingFlow: View {
         let opts: [(Int, String, String)] = [
             (30, "30 min", "In and out"), (45, "45 min", "A balanced session"),
             (60, "60 min", "A full workout"), (75, "75+ min", "Go long")]
-        return questionScaffold("How long per session?") {
+        return questionScaffold("How long per session?",
+                                subtitle: vm.lifting
+                                    ? "It sets how much fits in a workout."
+                                    : "Your long run gets whatever it needs. This shapes the rest of the week.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
                 ChoiceCard(title: o.1, subtitle: o.2, isSelected: vm.sessionMinutes == o.0) { pick { vm.sessionMinutes = o.0 } }
                     .reveal(cascade(i))

@@ -472,7 +472,11 @@ struct PlanEngineTests {
         // Peak holds the biggest volume — no further ramp, no dip.
         let peakVol = plan.weeks.first { $0.phase == .peak }?.runVolumeM ?? 0
         let maxBuildVol = plan.weeks.filter { $0.phase == .build || $0.phase == .base }.map(\.runVolumeM).max() ?? 0
-        #expect(abs(peakVol - maxBuildVol) < 1)
+        // Within a kilometre: the peak holds the biggest load and neither ramps past it nor dips
+        // away from it. Exact equality was only ever true while nothing touched volumes after the
+        // multiplier — the ACWR governor now runs last, after clean-distance rounding, so the
+        // safety cap applies to the numbers the athlete actually gets (2026-08-29).
+        #expect(abs(peakVol - maxBuildVol) < 1_000, "peak \(peakVol) vs biggest build \(maxBuildVol)")
     }
 
     @Test func taperKeepsIntensityWhileVolumeFalls() {
@@ -727,10 +731,13 @@ struct PlanEngineTests {
                     week.sessions.filter { $0.discipline == .strength }.count)
         }
         // days:                     2       3       4       5       6       7
+        // Running-led throughout (2026-08-29): lifting supports the running, so "balanced" is a
+        // running plan with a little more gym than "mainly running", and "lifting comes first" is
+        // a true 50/50 week rather than a strength programme with running attached.
         let expected: [HybridPriority: [(Int, Int)]] = [
-            .running:  [(1, 1), (2, 1), (3, 1), (3, 2), (4, 2), (5, 2)],
-            .balanced: [(1, 1), (2, 1), (2, 2), (3, 2), (3, 3), (4, 3)],
-            .lifting:  [(1, 1), (1, 2), (2, 2), (2, 3), (2, 4), (3, 4)],
+            .running:  [(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1)],
+            .balanced: [(1, 1), (2, 1), (3, 1), (3, 2), (4, 2), (5, 2)],
+            .lifting:  [(1, 1), (1, 2), (2, 2), (2, 3), (3, 3), (3, 4)],
         ]
         for (priority, rows) in expected {
             for (i, want) in rows.enumerated() {
@@ -801,7 +808,11 @@ struct PlanEngineTests {
         let inp = inputs(disciplines: [.running], goal: .generalFitness, days: 4)   // helper defaults to .experienced
         let plan = PlanEngine.generate(profile: inp, catalog: [], startDate: Date(timeIntervalSinceReferenceDate: 0))
         let longRun = plan.weeks[0].sessions.first { $0.discipline == .running && $0.runType == .long }?.targetDistanceM ?? 0
-        #expect(longRun >= 15_000)                                    // experienced default long base ≈ 16 km
+        // 2026-08-29: the tier default is now a SHARE of the tier's weekly volume (42 km for
+        // experienced) rather than a fixed 16 km base, so a 4-day week's long run is ~33% of it —
+        // the textbook cap — instead of 38%. The guard's intent is unchanged: the tier default
+        // still governs and still produces a real long run.
+        #expect(longRun >= 13_000)
     }
 
     @Test func generatedPlanHasRealVariety() {

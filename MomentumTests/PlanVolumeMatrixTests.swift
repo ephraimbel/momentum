@@ -166,8 +166,16 @@ struct PlanVolumeMatrixTests {
         #expect((paces.first ?? 0) >= (paces.last ?? 0) - 0.5)
         #expect(paces.allSatisfy { $0 >= goal - 6 })
         // The dose grows: the last session's total goal-pace meters exceed the first's.
-        let doses = racePaceSessions.compactMap { $0.intervals.map { PlanEngine.goalPaceDoseM(String($0.split(separator: "@")[0]).trimmingCharacters(in: .whitespaces)) } }
-        #expect((doses.max() ?? 0) > (doses.first ?? 0), "the goal-pace dose never grew: \(doses)")
+        // Build and peak only: the taper deliberately shrinks the touch to a short sharpener, so
+        // including it would read the taper's 3 km as the ladder going backwards.
+        let ladderSessions = plan.weeks.filter { !$0.isTaper }.flatMap(\.sessions).filter {
+            $0.runType == .intervals && ($0.intervals?.contains("race pace") ?? false)
+        }
+        let doses = ladderSessions.compactMap { $0.intervals.map { PlanEngine.goalPaceDoseM(String($0.split(separator: "@")[0]).trimmingCharacters(in: .whitespaces)) } }
+        // The dose climbs the ladder and then HOLDS at the week's goal-pace budget — it must
+        // never fall back, and it must reach the cap rather than stalling at the opening rung.
+        #expect((doses.last ?? 0) >= (doses.first ?? 0), "the goal-pace dose went backwards: \(doses)")
+        #expect((doses.max() ?? 0) >= 8_000, "the goal-pace dose never got big: \(doses)")
         // The coach's card: one line per week for eyeball review.
         var card = "\n════ GOAL 3:45 marathon · 27:30 5K today · 18w aggressive (paces s/km; goal \(Int(goal)), predicted \(Int(predicted))) ════\n"
         for w in plan.weeks {

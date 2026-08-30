@@ -138,6 +138,25 @@ enum ExerciseLibrarySeed {
             Exercise(name: "Walking Lunge", primaryMuscles: [.quads],
                      secondaryMuscles: [.glutes, .hamstrings], equipment: .bodyweight,
                      category: .compound, trackingMode: .repsOnly, defaultRestS: 90),
+            // Three more calisthenics staples (2026-08-30 coach audit, run against the shipping
+            // library rather than a test fixture): a bodyweight athlete's Push day came out with
+            // two exercises because nothing in the library pressed for the triceps slot, Pull
+            // came out with two because there was no second back movement, and BOTH the
+            // bodyweight and dumbbells-only leg days trained no hamstring at all — Romanian
+            // Deadlift is a barbell and Leg Curl is a machine. All rep-countable, and they reach
+            // existing installs through `topUp` like every curated addition.
+            Exercise(name: "Bench Dip", primaryMuscles: [.triceps],
+                     secondaryMuscles: [.chest, .shoulders], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90,
+                     instructions: "Hands on the bench behind you, elbows straight back, chest tall."),
+            Exercise(name: "Inverted Row", primaryMuscles: [.back],
+                     secondaryMuscles: [.biceps, .core], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90,
+                     instructions: "Body in one line, pull your chest to the bar, squeeze the shoulder blades."),
+            Exercise(name: "Single-Leg Romanian Deadlift", primaryMuscles: [.hamstrings],
+                     secondaryMuscles: [.glutes, .core], equipment: .bodyweight,
+                     category: .compound, trackingMode: .repsOnly, defaultRestS: 90,
+                     instructions: "Hinge at the hip, back leg and torso in one line, feel the hamstring lengthen."),
             Exercise(name: "Glute Bridge", primaryMuscles: [.glutes],
                      secondaryMuscles: [.hamstrings, .core], equipment: .bodyweight,
                      category: .isolation, trackingMode: .repsOnly, defaultRestS: 60),
