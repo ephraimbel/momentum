@@ -14,13 +14,12 @@ const appSchema = {
   url: "https://momentumrunning.app",
   installUrl: APP_STORE_URL,
   offers: [
-    { "@type": "Offer", price: "0", priceCurrency: "USD", description: "Free — track every run" },
     { "@type": "Offer", price: "5.99", priceCurrency: "USD", description: "momentum Pro, weekly" },
     {
       "@type": "Offer",
       price: "29.99",
       priceCurrency: "USD",
-      description: "momentum Pro, annual — $0.58 a week, save 90% vs weekly",
+      description: "momentum Pro, annual — 7-day free trial, then $0.58 a week, save 90% vs weekly",
     },
   ],
 };
@@ -517,9 +516,10 @@ function Pricing() {
                 Get momentum Pro <span className="arrow" aria-hidden>↗</span>
               </a>
               <p className="price-note">
-                $29.99 billed yearly — $0.58 a week, 90% off the weekly price. Or $5.99/week.
+                7 days free, then $29.99 billed yearly — $0.58 a week, 90% off the weekly price. Or
+                $5.99/week, no trial.
                 <br />
-                Tracking every run is free, forever. Billed by Apple · cancel anytime.
+                Billed by Apple · cancel anytime in Settings.
               </p>
             </div>
           </div>
@@ -536,8 +536,8 @@ function Pricing() {
 function FAQ() {
   const items = [
     {
-      q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $29.99 billed yearly, which works out to $0.58 a week, 90% off the weekly price. Prefer to go week to week? $5.99.",
+      q: "Is there a free trial?",
+      a: "Yes. momentum is a membership: every new runner starts with a 7-day free trial of momentum Pro on the annual plan, then $29.99 billed yearly, which works out to $0.58 a week, 90% off the weekly price. Prefer to go week to week? $5.99, no trial. Cancel anytime in your Apple subscriptions and you keep access until the end of the period.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
