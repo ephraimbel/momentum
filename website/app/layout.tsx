@@ -25,9 +25,11 @@ const inter = localFont({
 });
 
 export const metadata: Metadata = {
-  // The canonical home (momentumco.app, live 2026-07-12): absolute URLs for OG/Twitter cards
-  // and canonicals resolve against this, not the per-deployment *.vercel.app hostname.
-  metadataBase: new URL("https://momentumco.app"),
+  // The canonical home (momentumrunning.app, primary since 2026-08-28 — momentumco.app and both
+  // www variants 308 here): absolute URLs for OG/Twitter cards and canonicals resolve against
+  // this, not the per-deployment *.vercel.app hostname. The @momentumco.app EMAIL addresses below
+  // are unchanged — that mailbox is ImprovMX-backed and is what the App Store listing contacts.
+  metadataBase: new URL("https://momentumrunning.app"),
   alternates: { canonical: "/" },
   title: "momentum — the running coach that adapts to you",
   description:
@@ -38,7 +40,7 @@ export const metadata: Metadata = {
     description:
       "The adaptive running coach: deterministic training science, live guidance, and a plan that bends around your life.",
     type: "website",
-    url: "https://momentumco.app",
+    url: "https://momentumrunning.app",
     siteName: "momentum",
     images: [
       {

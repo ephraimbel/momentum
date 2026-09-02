@@ -11,16 +11,15 @@ const appSchema = {
   name: "Momentum: Run Training Plans",
   operatingSystem: "iOS",
   applicationCategory: "HealthApplication",
-  url: "https://momentumco.app",
+  url: "https://momentumrunning.app",
   installUrl: APP_STORE_URL,
   offers: [
-    { "@type": "Offer", price: "0", priceCurrency: "USD", description: "Free — track every run" },
-    { "@type": "Offer", price: "9.99", priceCurrency: "USD", description: "momentum Pro, monthly" },
+    { "@type": "Offer", price: "5.99", priceCurrency: "USD", description: "momentum Pro, weekly" },
     {
       "@type": "Offer",
-      price: "59.99",
+      price: "29.99",
       priceCurrency: "USD",
-      description: "momentum Pro, annual — save 50% vs monthly",
+      description: "momentum Pro, annual — 7-day free trial, then $0.58 a week, save 90% vs weekly",
     },
   ],
 };
@@ -37,6 +36,7 @@ export default function Home() {
         <Training />
         <Intelligence />
         <Fuel />
+        <Gallery />
         <Method />
         <RaceDay />
         <Pricing />
@@ -101,16 +101,16 @@ function Hero() {
           <div className="hero-orbit" aria-hidden />
           {/* Both chips quote the capture beside them — no invented numbers. */}
           <div className="stat-pill pill-1" aria-hidden>
-            <b>Easy 3.5 mi</b>
-            <small>Today&rsquo;s plan · 11:45 /mi</small>
+            <b>26.22 mi</b>
+            <small>Austin Marathon · traced</small>
           </div>
           <div className="stat-pill pill-2" aria-hidden>
-            <b>26.2 mi</b>
-            <small>Austin Marathon · traced</small>
+            <b>2:58:41</b>
+            <small>Finish · 6:49 /mi</small>
           </div>
           <PhoneFrame
             src="/shots/hero-route.png"
-            alt="Momentum's Today screen: the Austin Marathon course traced in lavender on a light map, with today's planned easy run ready to start."
+            alt="A finished Austin Marathon in Momentum: the whole course traced in lavender across the city, 26.22 miles in 2:58:41 at 6:49 per mile."
             large
             priority
           />
@@ -183,11 +183,11 @@ function Training() {
                 Base. Build. Peak. Taper. Every session has a reason, every pace has a purpose, and
                 missed days simply move.
               </p>
-              <p className="story-note">Week 1 · Base — laying the foundation</p>
+              <p className="story-note">Week 4 · Recovery — a planned down week</p>
               <div className="story-media">
                 <PhoneFrame
                   src="/shots/plan.png"
-                  alt="Momentum's weekly plan: a base week with an easy run and a strength day, each with its target."
+                  alt="Momentum's weekly plan: a marathon block 28 weeks out, showing a planned recovery week of 32 miles with an easy run, a recovery jog, two rest days, and a progression run."
                 />
               </div>
             </article>
@@ -265,7 +265,7 @@ function Intelligence() {
               <div className="aurora" aria-hidden />
               <PhoneFrame
                 src="/shots/coach.png"
-                alt="The Momentum coach: a chat that opens with suggested questions about today's session, your last workout, and what you could race."
+                alt="The Momentum coach: asked to brief today, it lays out the session step by step — a 4 mile tempo at 8:25 per mile, the warm up and cool down around it, and the Z4 heart-rate band it should sit in."
               />
             </div>
           </Reveal>
@@ -287,7 +287,7 @@ function Fuel() {
           <div className="duo-media">
             <PhoneFrame
               src="/shots/fuel.png"
-              alt="Momentum's Fuel page: calories and carbs banked for tomorrow's session, macro rings, and meals logged in plain language."
+              alt="Momentum's Fuel page: 3,050 calories against a 2,100 floor, roughly 390 grams of carbs banked for tomorrow's session, macro rings for carbs, protein, fat and sodium, and meals logged in plain language."
             />
           </div>
         </Reveal>
@@ -302,6 +302,72 @@ function Fuel() {
             </p>
           </div>
         </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ————————————————————————————————————————————————————————————
+   6b · The rest of the app — the four screens the tour deck shows that the
+        sections above don't. A WRAPPING grid, never a horizontal scroller:
+        no page on this site moves sideways (owner rule 2026-08-20).
+   ———————————————————————————————————————————————————————————— */
+
+function Gallery() {
+  const shots = [
+    {
+      src: "/shots/trends.png",
+      cap: "Trends",
+      note: "469 miles this year, 88 active days",
+      alt: "Momentum's Trends: daily movement averaging 7.8 thousand steps, 144 miles this month against 469 this year, and a consistency heatmap of 88 active days over sixteen weeks.",
+    },
+    {
+      src: "/shots/vitals.png",
+      cap: "Vitals",
+      note: "HRV, resting heart rate, breathing, temperature",
+      alt: "Momentum's vitals: heart-rate variability at 68 milliseconds, three above normal, a resting heart rate of 52, breathing at 14.3 a minute and a wrist temperature of 34.6 degrees, each with its own trend.",
+    },
+    {
+      src: "/shots/strength.png",
+      cap: "Strength",
+      note: "165,000 lb moved in seven days",
+      alt: "Momentum's muscle load: 165 thousand pounds moved across every lift in seven days, split around a wheel by region — legs, arms, back, shoulders, core and chest.",
+    },
+    {
+      src: "/shots/run-detail.png",
+      cap: "Every run, kept",
+      note: "10.16 mi · 1:30:12 · 8:53 /mi",
+      alt: "A finished long run in Momentum: the Lady Bird Lake loop traced in lavender through Austin, 10.16 miles in 1 hour 30 at 8:53 per mile.",
+    },
+  ];
+  return (
+    <section className="section" id="more">
+      <div className="wrap">
+        <Reveal>
+          <div className="section-head">
+            <div>
+              <p className="kicker">Everything else</p>
+              <h2 className="display">The rest of the picture.</h2>
+            </div>
+            <p className="lede">
+              Training is one screen of many. What you did, what it cost you, and what your body did
+              about it — all of it kept, all of it yours.
+            </p>
+          </div>
+        </Reveal>
+        <div className="gallery">
+          {shots.map((shot) => (
+            <Reveal key={shot.src}>
+              <figure className="gallery-item">
+                <PhoneFrame src={shot.src} alt={shot.alt} />
+                <figcaption>
+                  <b>{shot.cap}</b>
+                  <span>{shot.note}</span>
+                </figcaption>
+              </figure>
+            </Reveal>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -356,6 +422,9 @@ function Method() {
 
 /* ————————————————————————————————————————————————————————————
    8 · Race day — the charcoal proof card. The numbers quote the capture.
+        The marathon RESULT moved up to the hero (2026-08-29), so this card shows the other half
+        of the promise the copy already made — "a taper that delivers you to the start line
+        ready" — and its three numbers quote the readiness screen beside them, not the finish.
    ———————————————————————————————————————————————————————————— */
 
 function RaceDay() {
@@ -372,16 +441,16 @@ function RaceDay() {
             </p>
             <div className="race-stats">
               <div className="race-stat">
-                <b className="num">26.22 mi</b>
-                <small>Austin Marathon</small>
+                <b className="num">100</b>
+                <small>Readiness · primed</small>
               </div>
               <div className="race-stat">
-                <b className="num">2:58:41</b>
-                <small>Finish · sub-3</small>
+                <b className="num">7h 19m</b>
+                <small>Sleep</small>
               </div>
               <div className="race-stat">
-                <b className="num">6:49 /mi</b>
-                <small>Avg pace</small>
+                <b className="num">0.89</b>
+                <small>Training load</small>
               </div>
             </div>
           </div>
@@ -389,8 +458,8 @@ function RaceDay() {
         <Reveal>
           <div className="race-media">
             <PhoneFrame
-              src="/shots/run-detail.png"
-              alt="A finished marathon in Momentum: the Austin course traced in lavender, 26.22 miles in 2:58:41 at 6:49 per mile."
+              src="/shots/readiness.png"
+              alt="Momentum's readiness on race morning: a ring reading 100, primed, with the note 'well recovered — a good day to push', over the day's strain, training load and sleep."
             />
           </div>
         </Reveal>
@@ -432,7 +501,7 @@ function Pricing() {
             <div className="price-row">
               <h3>momentum Pro</h3>
               <p className="price">
-                $59.99 <span>/ year</span>
+                $0.58 <span>/ week</span>
               </p>
             </div>
             <div className="features">
@@ -447,9 +516,10 @@ function Pricing() {
                 Get momentum Pro <span className="arrow" aria-hidden>↗</span>
               </a>
               <p className="price-note">
-                $59.99/year — under $5 a month, half the monthly price. Or $9.99/month.
+                7 days free, then $29.99 billed yearly — $0.58 a week, 90% off the weekly price. Or
+                $5.99/week, no trial.
                 <br />
-                Tracking every run is free, forever. Billed by Apple · cancel anytime.
+                Billed by Apple · cancel anytime in Settings.
               </p>
             </div>
           </div>
@@ -466,8 +536,8 @@ function Pricing() {
 function FAQ() {
   const items = [
     {
-      q: "Is momentum free?",
-      a: "Tracking every run is free, forever. momentum Pro — the full adaptive plan, AI coach, voice guidance, and advanced analytics — is $59.99/year, which works out to under $5 a month, half the monthly price. Prefer month to month? $9.99.",
+      q: "Is there a free trial?",
+      a: "Yes. momentum is a membership: every new runner starts with a 7-day free trial of momentum Pro on the annual plan, then $29.99 billed yearly, which works out to $0.58 a week, 90% off the weekly price. Prefer to go week to week? $5.99, no trial. Cancel anytime in your Apple subscriptions and you keep access until the end of the period.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
